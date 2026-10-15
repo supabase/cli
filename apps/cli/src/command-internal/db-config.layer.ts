@@ -47,6 +47,7 @@ import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { stackLocalDatabaseConn } from "./stack-local-database.ts";
 import { block, type OperationEntry } from "./command-permissions/model.ts";
 import { renderDbUrlTarget, renderLocalTarget } from "./target/target-identity.ts";
+import { isCheckoutLinked } from "../shared/config/temp-paths.ts";
 import { rejectTargetPassword } from "./target/target-password.ts";
 
 const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
@@ -799,8 +800,10 @@ export const dbConfigResolverLayer = Layer.effect(
     const resolveConnection = (input: DbConnectionInput) =>
       Effect.gen(function* () {
         const { target } = input;
+        const linkedCheckout =
+          target.kind === "local" && (yield* isCheckoutLinked(fs, path, cliSettings.workdir));
         if (target.kind !== "linked") {
-          yield* rejectTargetPassword(target.kind, input.password);
+          yield* rejectTargetPassword(target.kind, input.password, linkedCheckout);
         }
         const resolveVaultSecrets = input.resolveVaultSecrets ?? true;
         if (target.kind === "linked") {
@@ -829,7 +832,13 @@ export const dbConfigResolverLayer = Layer.effect(
         }
         const resolved = yield* resolveLocalStack(localHost, resolveVaultSecrets);
         yield* commandTarget.announce(renderLocalTarget(resolved.conn.host, resolved.conn.port));
-        return { ...resolved, target };
+        return {
+          ...resolved,
+          conn: linkedCheckout
+            ? { ...resolved.conn, suggestionContext: { ...suggestionContext, linkedCheckout } }
+            : resolved.conn,
+          target,
+        };
       });
 
     // When a linked dump's pg_dump container fails with an IPv6 connectivity error (the direct
@@ -874,7 +883,7 @@ export const dbConfigResolverLayer = Layer.effect(
     // so each connecting command inherits the hint without per-call-site wiring.
     const withSuggestion = (conn: PgConnInput): PgConnInput => ({
       ...conn,
-      suggestionContext,
+      suggestionContext: conn.suggestionContext ?? suggestionContext,
     });
     return DbConfigResolver.of({
       resolveConnection: (input) =>

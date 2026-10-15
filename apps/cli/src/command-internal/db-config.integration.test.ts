@@ -301,6 +301,31 @@ describe("dbConfigResolver (local + db-url)", () => {
     ),
   );
 
+  it.effect(
+    "local mode on a linked checkout carries the --linked pointer in its connect hint",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* withWorkdir();
+        yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(dir, "supabase", ".temp", "project-ref"),
+          "abcdefghijklmnopqrst",
+        );
+        const r = yield* resolveConnection(dir, inputFor(localTarget));
+        expect(r.conn.suggestionContext).toMatchObject({ linkedCheckout: true });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("local mode on an unlinked checkout adds no --linked pointer", () =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir();
+      const r = yield* resolveConnection(dir, inputFor(localTarget));
+      expect(r.conn.suggestionContext?.linkedCheckout).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.effect("local mode: falls back to default port/password without a config.toml", () =>
     Effect.gen(function* () {
       const dir = yield* withWorkdir();

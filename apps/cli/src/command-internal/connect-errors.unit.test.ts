@@ -274,6 +274,13 @@ describe("connectSuggestion", () => {
     expect(connectSuggestion(err, { ...ctx, isLocal: true })).toBe(SUGGEST_LOCAL_STACK);
   });
 
+  it("points a refused local connection at --linked when the checkout is linked", () => {
+    const err = sqlError(systemError("connect ECONNREFUSED 127.0.0.1:54322", "ECONNREFUSED"));
+    expect(connectSuggestion(err, { ...ctx, isLocal: true, linkedCheckout: true })).toBe(
+      `${SUGGEST_LOCAL_STACK}\nTo use the linked project instead, pass --linked.`,
+    );
+  });
+
   it("maps an AggregateError of refused dials to the network-restrictions hint", () => {
     const err = sqlError(
       Object.assign(new AggregateError([], "all attempts failed"), {
