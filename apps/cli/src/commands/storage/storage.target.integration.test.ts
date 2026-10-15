@@ -11,7 +11,7 @@ import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import { resolveStorageTarget } from "./storage.flags.ts";
 
 const FLIP_WARNING =
-  'Warning: supabase storage ls will target the local stack by default in the next major version. Pass --linked, or set target = "remote" in your Supabase config (or SUPABASE_TARGET=remote), to keep targeting the linked project.';
+  'Warning: supabase storage ls will target the local stack by default in the next major version. Pass --linked to keep targeting the linked project. Setting target = "remote" in your Supabase config (or SUPABASE_TARGET=remote) also works, but applies to every database command that can run locally, including db reset.';
 
 describe("storage target resolution", () => {
   const workdir = useTempWorkdir("supabase-storage-target-");

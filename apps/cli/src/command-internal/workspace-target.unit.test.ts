@@ -281,7 +281,7 @@ describe("workspace target resolution", () => {
       expect(resolved).toMatchObject({ connType: "linked", source: "legacy" });
       expect(out.stdoutText).toBe("");
       expect(out.stderrText).toContain(
-        'Warning: supabase db dump will target the local database by default in the next major version. Pass --linked, or set target = "remote" in your Supabase config (or SUPABASE_TARGET=remote), to keep targeting the linked project.',
+        'Warning: supabase db dump will target the local database by default in the next major version. Pass --linked to keep targeting the linked project. Setting target = "remote" in your Supabase config (or SUPABASE_TARGET=remote) also works, but applies to every database command that can run locally, including db reset.',
       );
       expect(out.stderrText.match(/Warning:/g)).toHaveLength(1);
       expect(out.stderrText).not.toContain("Targeting the linked project");

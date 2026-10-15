@@ -1494,7 +1494,7 @@ describe("db dump permissions through the real resolver and cache", () => {
   });
   describe("workspace target", () => {
     const FLIP_WARNING =
-      'Warning: supabase db dump will target the local database by default in the next major version. Pass --linked, or set target = "remote" in your Supabase config (or SUPABASE_TARGET=remote), to keep targeting the linked project.';
+      'Warning: supabase db dump will target the local database by default in the next major version. Pass --linked to keep targeting the linked project. Setting target = "remote" in your Supabase config (or SUPABASE_TARGET=remote) also works, but applies to every database command that can run locally, including db reset.';
 
     const writeTarget = (target: string) =>
       Effect.gen(function* () {

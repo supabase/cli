@@ -78,7 +78,7 @@ When neither is set the command keeps targeting the linked project and writes on
 working while the next major version moves it to the local stack:
 
 ```
-Warning: supabase storage mv will target the local stack by default in the next major version. Pass --linked, or set target = "remote" in your Supabase config (or SUPABASE_TARGET=remote), to keep targeting the linked project.
+Warning: supabase storage mv will target the local stack by default in the next major version. Pass --linked to keep targeting the linked project. Setting target = "remote" in your Supabase config (or SUPABASE_TARGET=remote) also works, but applies to every database command that can run locally, including db reset.
 ```
 
 No warning is written when a selector flag, `--project-ref`, `SUPABASE_TARGET` or `target` is set.

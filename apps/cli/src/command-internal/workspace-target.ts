@@ -176,7 +176,7 @@ const emitTargetDefaultFlipWarning = (command: string, localLabel = "local datab
     const output = yield* Output;
     yield* output.raw(
       `${yellow(
-        `Warning: supabase ${command} will target the ${localLabel} by default in the next major version. Pass --linked, or set target = "remote" in your Supabase config (or SUPABASE_TARGET=remote), to keep targeting the linked project.`,
+        `Warning: supabase ${command} will target the ${localLabel} by default in the next major version. Pass --linked to keep targeting the linked project. Setting target = "remote" in your Supabase config (or SUPABASE_TARGET=remote) also works, but applies to every database command that can run locally, including db reset.`,
       )}\n`,
       "stderr",
     );
