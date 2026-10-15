@@ -237,6 +237,9 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // The first migrations endpoint resolved wins: the engine provisions a single migrations
       // shadow/catalog, so only refs resolved before that point should influence it.
       let migrationsToml: DbTomlValues | undefined;
+      // Each linked resolution mints a temporary login role that invalidates the previous one,
+      // so the preflight and every `linked` ref share a single connection.
+      let linkedEndpoint: PgDeltaDatabaseEndpoint | undefined;
       // The preflight target resolve below validates a changed target flag and is stateful: a
       // changed `--linked` resolves the project ref and merges `[remotes.<ref>]`, so the
       // explicit `local`/`migrations` refs below see that override. `--local`/`--db-url` load
@@ -260,6 +263,12 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
             yield* Ref.set(linkedRefForCache, Option.some(preflightRef));
             mergedLinkedRef = preflightRef;
           }
+          linkedEndpoint = {
+            kind: "database",
+            ref: toPostgresURL(preflight.conn),
+            connection: preflight.conn,
+            connectOptions: { isLocal: preflight.isLocal, dnsResolver },
+          };
         }
       }
       // Read config once, after the preflight: the `[remotes.<ref>]`-merged config
@@ -269,9 +278,6 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         mergedLinkedRef !== undefined
           ? yield* readDbToml(fs, path, cliSettings.workdir, mergedLinkedRef)
           : yield* readDbToml(fs, path, cliSettings.workdir);
-      // Each linked resolution mints a temporary login role that invalidates the previous one,
-      // so `--from linked --to linked` shares a single connection.
-      let linkedEndpoint: PgDeltaDatabaseEndpoint | undefined;
       // Each ref resolves in order; the `linked` branch re-merges the matching
       // `[remotes.<ref>]` block so a later `local` ref read and the trailing
       // `pgDeltaFormatOptions()` see the override. Thread the merged config through.
