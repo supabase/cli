@@ -55,9 +55,14 @@ import {
 import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
 import type { StatusFlags } from "./status.command.ts";
 
+const REMOVED_OVERRIDE_KEYS: ReadonlyMap<string, string> = new Map([
+  ["inbucket.url", "mailpit.url"],
+]);
+
 /**
  * Parses `--override-name api.url=NEXT_PUBLIC_SUPABASE_URL` entries into a `fieldKey -> outputName`
- * map. Each entry must be `KEY=VALUE`; an unknown `KEY` is silently ignored, not an error.
+ * map. Each entry must be `KEY=VALUE`; a removed `KEY` fails naming its replacement and any other
+ * unknown `KEY` is silently ignored.
  */
 const parseOverrides = Effect.fnUntraced(function* (entries: ReadonlyArray<string>) {
   const knownKeys = new Set(STATUS_FIELDS.map((field) => field.fieldKey));
@@ -71,6 +76,12 @@ const parseOverrides = Effect.fnUntraced(function* (entries: ReadonlyArray<strin
     }
     const key = entry.slice(0, separatorIndex);
     const value = entry.slice(separatorIndex + 1);
+    const replacement = REMOVED_OVERRIDE_KEYS.get(key);
+    if (replacement !== undefined) {
+      return yield* new StatusOverrideParseError({
+        message: `--override-name entry "${entry}" refers to ${key}, which was removed; use ${replacement} instead.`,
+      });
+    }
     if (!knownKeys.has(key)) {
       continue;
     }

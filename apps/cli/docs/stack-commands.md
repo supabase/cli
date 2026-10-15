@@ -122,10 +122,9 @@ are quoted so that sourcing the file performs no shell expansion. The exported v
 `PUBLISHABLE_KEY`, `SECRET_KEY`, `ANON_KEY`, and `SERVICE_ROLE_KEY`; `REST_URL` and
 `FUNCTIONS_URL` are `<API_URL>/rest/v1` and `<API_URL>/functions/v1`, `MCP_URL` is `<API_URL>/mcp`,
 whose port is assigned per project, and `DB_URL` uses the `postgres` role with the saved database
-password, URI-encoded, and no query string. `INBUCKET_URL` is also exported alongside
-`MAILPIT_URL`, with the same value, as a deprecated alias. `start` and `status` text output shows
-only the publishable and secret keys; `ANON_KEY` and `SERVICE_ROLE_KEY` appear only in JSON `env`
-and `status --env`. `start` and `status` JSON/stream-JSON results include this same connection map
+password, URI-encoded, and no query string. `start` and `status` text output shows only the
+publishable and secret keys; `ANON_KEY` and `SERVICE_ROLE_KEY` appear only in JSON `env` and
+`status --env`. `start` and `status` JSON/stream-JSON results include this same connection map
 under `env`; `status --env` remains the dotenv/variable-map export, and `--override-name` only
 applies there. `--override-name` accepts repeated or comma-separated `EXPORTED_VARIABLE=NAME`
 entries, requires `--env`, and rejects unknown variables, invalid names, and collisions. The

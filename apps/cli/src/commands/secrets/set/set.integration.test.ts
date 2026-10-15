@@ -919,6 +919,35 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
     },
   );
 
+  it.effect(
+    "fails with CliConfigRemovedKeyError naming [local_smtp] and sends no request when config.toml uses [inbucket]",
+    () => {
+      const { layer, out, api } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[inbucket]
+enabled = true
+
+[edge_runtime.secrets]
+FROM_CONFIG = "config-value"
+`,
+        );
+        const message = yield* secretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: ["FOO=bar"],
+        }).pipe(
+          Effect.catchTag("CliConfigRemovedKeyError", (error) => Effect.succeed(error.message)),
+        );
+        expect(message).toBe(
+          "[inbucket] in supabase/config.toml is no longer supported. Use [local_smtp] instead.",
+        );
+        expect(api.requests).toHaveLength(0);
+        expect(out.stdoutText).not.toContain("Finished supabase secrets set.");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("fails with SecretsSetNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {

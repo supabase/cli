@@ -379,6 +379,17 @@ export const describeCliConfigOrigin = (
   }
 };
 
+/** Where an env name's value was set, for `set in …` messages: the shell, or the project env file relative to the workdir. */
+export const describeCliConfigEnvLocation = (
+  sources: Pick<CliConfigSources, "shell" | "projectEnv">,
+  ctx: Pick<CliConfigKeyContext, "workdir" | "path">,
+  name: string,
+): string => {
+  if (sources.shell(name) !== undefined) return "the shell environment";
+  const file = sources.projectEnv(name)?.file;
+  return file === undefined ? "the project env file" : displayFile(ctx, file);
+};
+
 interface CliConfigValueFailure {
   readonly path: string;
   readonly raw: string;

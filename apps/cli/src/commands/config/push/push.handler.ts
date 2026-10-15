@@ -155,7 +155,7 @@ function toSecretReport(decision: PushSecretDecision) {
   return report;
 }
 
-/** Loads the resolved config once per push, so the load-time deprecation warnings print once. */
+/** Loads the resolved config once per push. */
 const loadPushConfig = Effect.fn("config.push.loadConfig")(function* (
   cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
   ref: string,
@@ -178,9 +178,7 @@ const loadPushConfig = Effect.fn("config.push.loadConfig")(function* (
   const projectYes = resolvedConfig.projectEnvValues["SUPABASE_YES"];
   const projectEnv: Record<string, string> =
     projectYes === undefined ? {} : { SUPABASE_YES: projectYes };
-  const referenced = yield* resolvedConfig.envValues(
-    envReferenceNames(loaded.document, loaded.removedDeprecatedExternalProviders),
-  );
+  const referenced = yield* resolvedConfig.envValues(envReferenceNames(loaded.document));
   return {
     loaded,
     lookup: (name: string) => referenced[name],
@@ -280,18 +278,8 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
 
     // 3. Assert every `encrypted:` value in the document can be decrypted, even fields `config
     // push` never itself pushes — this must run before the cost matrix or any service is touched.
-    //
-    // Deprecated `auth.external.{linkedin,slack}` blocks are stripped from `loaded.document`
-    // before this decode, so scan `removedDeprecatedExternalProviders` too, or a secret hiding in
-    // one of them would skip the check.
-    const secretError = yield* Effect.sync(
-      () =>
-        assertDecryptableSecrets(loaded.document, lookup, dotenvPrivateKeys) ??
-        assertDecryptableSecrets(
-          { auth: { external: loaded.removedDeprecatedExternalProviders } },
-          lookup,
-          dotenvPrivateKeys,
-        ),
+    const secretError = yield* Effect.sync(() =>
+      assertDecryptableSecrets(loaded.document, lookup, dotenvPrivateKeys),
     ).pipe(Effect.withSpan("config.push.verifyDecryptable"));
     if (secretError !== undefined) {
       return yield* new ConfigPushLoadConfigError({ message: secretError });

@@ -1438,28 +1438,24 @@ describe("db start", () => {
   );
 
   it.effect(
-    "prints @supabase/config's deprecated-[inbucket]-section WARN only once on a fresh, not-already-running start",
+    "fails before creating any container when config.toml uses the removed [inbucket] section",
     () => {
-      // The deprecation WARN is Console.error-pinned to the real console, not this file's
-      // Output service, so it must be observed with a raw console.error spy, like
-      // stop/status's identical tests.
-      const { layer } = setup({
+      const { layer, child } = setup({
         configContents: 'project_id = "test"\n[inbucket]\n',
         route: freshVolumeRoute(defaultRoute()),
       });
-      const warnings: Array<string> = [];
-      const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-        warnings.push(args.map((a) => String(a)).join(" "));
-      });
       return Effect.gen(function* () {
-        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        const inbucketWarnings = warnings.filter((m) =>
-          m.includes(
-            "WARN: config section [inbucket] is deprecated. Please use [local_smtp] instead.",
-          ),
-        );
-        expect(inbucketWarnings).toHaveLength(1);
-      }).pipe(Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
+        const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const message = Cause.pretty(exit.cause);
+          expect(message).toContain("DbConfigLoadError");
+          expect(message).toContain(
+            "[inbucket] in supabase/config.toml is no longer supported. Use [local_smtp] instead.",
+          );
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
     },
   );
 

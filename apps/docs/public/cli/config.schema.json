@@ -2420,10 +2420,6 @@
           "type": "boolean",
           "description": "Use the new local stack backend for start, stop, and status, and for --local targets of the db, migration, test db, gen types, inspect, and pull command families."
         },
-        "orioledb_version": {
-          "type": "string",
-          "description": "Deprecated: use `db.orioledb_version` instead. Postgres storage engine version for OrioleDB."
-        },
         "s3_host": {
           "type": "string",
           "description": "S3 bucket URL.",
@@ -4938,10 +4934,6 @@
                       "stack": {
                         "type": "boolean",
                         "description": "Use the new local stack backend for start, stop, and status, and for --local targets of the db, migration, test db, gen types, inspect, and pull command families."
-                      },
-                      "orioledb_version": {
-                        "type": "string",
-                        "description": "Deprecated: use `db.orioledb_version` instead. Postgres storage engine version for OrioleDB."
                       },
                       "s3_host": {
                         "type": "string",

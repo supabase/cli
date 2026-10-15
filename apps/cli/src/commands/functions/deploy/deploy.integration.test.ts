@@ -651,6 +651,169 @@ describe("functions deploy", () => {
     },
   );
 
+  describe("per-function import_map.json", () => {
+    const functionDir = (slug: string) => `${tempRoot.current}/supabase/functions/${slug}`;
+
+    const harnessRecordingImportMapPaths = () => {
+      const importMapPaths: Array<string> = [];
+      const harness = apiDeployHarness((request, recorded) => {
+        if (Predicate.isTagged(request.body, "FormData")) {
+          const metadata = request.body.formData.get("metadata");
+          if (typeof metadata === "string")
+            importMapPaths.push(JSON.parse(metadata).import_map_path);
+        }
+        return deployedHelloWorld(request, recorded);
+      });
+      return { ...harness, importMapPaths };
+    };
+
+    it.effect(
+      "fails every function that only has import_map.json before anything is uploaded",
+      () => {
+        const { api, layer } = apiDeployHarness(deployedHelloWorld);
+
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* writeCliConfig(tempRoot.current);
+          for (const slug of ["hello-world", "other-fn"]) {
+            yield* writeLocalFunction(tempRoot.current, slug);
+            yield* fs.remove(`${functionDir(slug)}/deno.json`);
+            yield* fs.writeFileString(`${functionDir(slug)}/import_map.json`, '{"imports":{}}\n');
+          }
+
+          const error = yield* functionsDeploy({
+            ...baseFlags,
+            functionNames: [],
+          }).pipe(Effect.flip);
+
+          expect(error).toMatchObject({
+            message: expect.stringContaining("hello-world, other-fn"),
+            suggestion:
+              'Rename it to deno.json, or set functions.hello-world.import_map = "./functions/hello-world/import_map.json" in config.toml to keep the file.',
+          });
+          expect(api.requests).toEqual([]);
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+      },
+    );
+
+    it.effect("deploys with deno.json when the function directory has both files", () => {
+      const { importMapPaths, layer } = harnessRecordingImportMapPaths();
+
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* fs.writeFileString(
+          `${functionDir("hello-world")}/import_map.json`,
+          '{"imports":{}}\n',
+        );
+
+        yield* functionsDeploy(baseFlags);
+
+        expect(importMapPaths).toEqual(["supabase/functions/hello-world/deno.json"]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("deploys an import_map.json that config.toml names explicitly", () => {
+      const { importMapPaths, layer } = harnessRecordingImportMapPaths();
+
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* writeCliConfig(
+          tempRoot.current,
+          [
+            'project_id = "test-project"',
+            '[functions."hello-world"]',
+            'import_map = "./functions/hello-world/import_map.json"',
+            "",
+          ].join("\n"),
+        );
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* fs.remove(`${functionDir("hello-world")}/deno.json`);
+        yield* fs.writeFileString(
+          `${functionDir("hello-world")}/import_map.json`,
+          '{"imports":{}}\n',
+        );
+
+        yield* functionsDeploy(baseFlags);
+
+        expect(importMapPaths).toEqual(["supabase/functions/hello-world/import_map.json"]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect(
+      "uses the shared fallback import map for an entrypoint directly under functions/",
+      () => {
+        const { importMapPaths, out, layer } = harnessRecordingImportMapPaths();
+
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* writeCliConfig(
+            tempRoot.current,
+            [
+              'project_id = "test-project"',
+              '[functions."hello-world"]',
+              'entrypoint = "./functions/hello-world.ts"',
+              "",
+            ].join("\n"),
+          );
+          yield* fs.makeDirectory(`${tempRoot.current}/supabase/functions`, { recursive: true });
+          yield* fs.writeFileString(
+            `${tempRoot.current}/supabase/functions/hello-world.ts`,
+            "Deno.serve(() => new Response())\n",
+          );
+          yield* fs.writeFileString(
+            `${tempRoot.current}/supabase/functions/import_map.json`,
+            '{"imports":{}}\n',
+          );
+
+          yield* functionsDeploy(baseFlags);
+
+          expect(importMapPaths).toEqual(["supabase/functions/import_map.json"]);
+          expect(out.stderrText).toContain(
+            "WARNING: Functions using fallback import map: hello-world\n",
+          );
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+      },
+    );
+
+    it.effect(
+      "skips a disabled function that only has import_map.json and deploys the enabled ones",
+      () => {
+        const { out, api, layer } = apiDeployHarness(deployedHelloWorld);
+
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* writeCliConfig(
+            tempRoot.current,
+            ['project_id = "test-project"', '[functions."legacy-fn"]', "enabled = false", ""].join(
+              "\n",
+            ),
+          );
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
+          yield* writeLocalFunction(tempRoot.current, "legacy-fn");
+          yield* fs.remove(`${functionDir("legacy-fn")}/deno.json`);
+          yield* fs.writeFileString(
+            `${functionDir("legacy-fn")}/import_map.json`,
+            '{"imports":{}}\n',
+          );
+
+          yield* functionsDeploy({ ...baseFlags, functionNames: [] });
+
+          const deployRequests = api.requests.filter(
+            (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
+          );
+          expect(deployRequests).toHaveLength(1);
+          expect(deployRequests[0]?.urlParams).toContain("slug=hello-world");
+          expect(api.requests.some((request) => request.urlWithParams.includes("legacy-fn"))).toBe(
+            false,
+          );
+          expect(out.stderrText).toContain("Skipping disabled Function: legacy-fn\n");
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+      },
+    );
+  });
+
   it.effect("keeps collecting upload files after the deploy is interrupted", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ handler: deployedHelloWorld });

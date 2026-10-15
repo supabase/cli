@@ -468,8 +468,7 @@ export function classifyParseErrorConsoleOutput(
  * `Console.log`/`Console.error` writes are captured instead of reaching the real console, then
  * disposed of per `classifyParseErrorConsoleOutput`: dropped for a missing-required-flag failure,
  * replayed to stderr for other parse/validation failures, and replayed unchanged otherwise. Safe
- * to wrap the whole call since no handler here writes through `Console` directly except
- * `@supabase/config`'s `loadCliConfigFile`, which pins itself to the real console.
+ * to wrap the whole call since no handler here writes through `Console` directly.
  *
  * TODO: remove once https://github.com/Effect-TS/effect/issues/6313 is fixed upstream.
  */

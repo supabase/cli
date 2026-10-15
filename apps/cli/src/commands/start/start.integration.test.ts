@@ -2923,6 +2923,42 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.effect(
+      "logs 'Skipped serving Function' once for a disabled function when Studio is excluded",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const workdir = tempRoot.current;
+          yield* fs.makeDirectory(path.join(workdir, "supabase", "functions", "foo"), {
+            recursive: true,
+          });
+          yield* fs.writeFileString(
+            path.join(workdir, "supabase", "functions", "foo", "index.ts"),
+            "export {};\n",
+          );
+          const { layer, out } = yield* setup({
+            configContents: 'project_id = "demo"\n[functions.foo]\nenabled = false\n',
+          });
+          return yield* Effect.gen(function* () {
+            yield* start(flags({ exclude: ["studio"] }));
+            expect(out.stderrText.split("Skipped serving Function: foo")).toHaveLength(2);
+          }).pipe(
+            Effect.provide(layer),
+            Effect.ensuring(
+              Effect.gen(function* () {
+                const fs = yield* FileSystem.FileSystem;
+                const path = yield* Path.Path;
+                yield* fs.remove(path.join(workdir, "supabase", "functions"), {
+                  recursive: true,
+                  force: true,
+                });
+              }).pipe(Effect.orDie),
+            ),
+          );
+        }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect(
       "does not pick up an unrelated ancestor project's functions for a config-less --workdir subdirectory",
       () =>
         Effect.gen(function* () {
@@ -2968,6 +3004,38 @@ content_path = "./supabase/templates/custom_notice.html"
               }).pipe(Effect.orDie),
             ),
           );
+        }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect(
+      "fails before pulling images or creating containers when a function has import_map.json and Studio is excluded",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { layer, child, workdir } = yield* setup();
+          const functionDir = path.join(workdir, "supabase", "functions", "hello");
+          yield* fs.makeDirectory(functionDir, { recursive: true });
+          yield* fs.writeFileString(path.join(functionDir, "index.ts"), "export {};\n");
+          yield* fs.writeFileString(path.join(functionDir, "import_map.json"), '{"imports":{}}\n');
+
+          const exit = yield* Effect.exit(
+            start(flags({ exclude: ["studio"] })).pipe(Effect.provide(layer)),
+          );
+
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain(
+              "import_map.json in a function directory is no longer supported: hello",
+            );
+          }
+          expect(createdContainerNames(child.spawned)).toEqual([]);
+          expect(edgeRuntimeRunCalls(child.spawned)).toEqual([]);
+          expect(
+            child.spawned.some(
+              (s) => s.args[0] === "pull" || (s.args[0] === "image" && s.args[1] === "inspect"),
+            ),
+          ).toBe(false);
         }).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -4536,6 +4604,31 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_DB_ORIOLEDB_VERSION override", () => {
+    it.effect(
+      "fails before any container work when the removed SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is set",
+      () =>
+        withEnvVar(
+          "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
+          "16.0.0.1",
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
+
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const message = Cause.pretty(exit.cause);
+              expect(message).toContain(
+                "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION (set in the shell environment) is no longer supported. Use SUPABASE_DB_ORIOLEDB_VERSION instead.",
+              );
+              expect(message).not.toContain("invalid config for");
+              expect(message).not.toContain("failed to read config");
+            }
+            expect(child.spawned).toEqual([]);
+          }).pipe(Effect.provide(BunServices.layer)),
+        ).pipe(Effect.provide(BunServices.layer)),
+    );
+
     it.effect(
       "selects the OrioleDB Postgres image and enables the container's S3 env when set only via env",
       () =>

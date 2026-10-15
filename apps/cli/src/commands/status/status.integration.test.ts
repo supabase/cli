@@ -21,7 +21,6 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequestModule from "effect/http/HttpClientRequest";
-import { vi } from "vitest";
 
 import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";
@@ -619,20 +618,6 @@ project_id = "short"
     },
   );
 
-  it.effect("warns on stderr for a deprecated auth.external provider", () => {
-    // `normalizeDeprecatedExternalProviders` (packages/config/src/io.ts) emits this warning via
-    // `Console.error` only under the CLI's config-loading semantics.
-    const { layer } = setup();
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    return Effect.gen(function* () {
-      yield* writeConfig('project_id = "demo"\n[auth.external.slack]\nenabled = true\n');
-      yield* status(flags());
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('WARN: disabling deprecated "slack" provider'),
-      );
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
-  });
-
   it.effect("fails when --workdir/SUPABASE_WORKDIR points at a missing path", () =>
     Effect.gen(function* () {
       // Must fail before falling through to the workdir-basename default.
@@ -1162,6 +1147,21 @@ content_path = "./supabase/templates/password_changed_notification.html"
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StatusOverrideParseError");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects an --override-name entry for the removed inbucket.url key", () => {
+    const { layer, out, child } = setup({ outputFlag: Option.some("json") });
+    return Effect.gen(function* () {
+      yield* writeConfig();
+      const message = yield* status(flags({ overrideName: ["inbucket.url=MAIL_URL"] })).pipe(
+        Effect.catchTag("StatusOverrideParseError", (error) => Effect.succeed(error.message)),
+      );
+      expect(message).toBe(
+        '--override-name entry "inbucket.url=MAIL_URL" refers to inbucket.url, which was removed; use mailpit.url instead.',
+      );
+      expect(out.stdoutText).toBe("");
+      expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 

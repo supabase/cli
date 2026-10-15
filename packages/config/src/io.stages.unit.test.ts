@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { mkdtempSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
@@ -160,31 +160,24 @@ describe("config pipeline stages", () => {
     expect(decoded?.config.auth.site_url).toBe("env(SITE)");
   });
 
-  test("onWarning receives each deprecation warning instead of the real console", async () => {
+  test("the parse stage rejects removed keys, including in a remote no stage selects", async () => {
     const cwd = await makeProject(
-      '[inbucket]\nenabled = true\n[auth.external.slack]\nenabled = true\nclient_id = "a"\nsecret = "b"\n',
-    );
-    const warnings: Array<string> = [];
-    const onWarning = (message: string) => Effect.sync(() => void warnings.push(message));
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      await run(
-        Effect.gen(function* () {
-          const parsed = yield* parseCliConfigDocumentFile(cwd, { search: false, onWarning });
-          if (parsed === null) return;
-          const merged = yield* mergeParsedCliConfig(parsed, { selectRemote: () => undefined });
-          yield* decodeMergedCliConfig(merged, { envValues: {}, cliCompat: true, onWarning });
-        }),
-      );
+      `[remotes.staging]
+project_id = "abcdefghijklmnopqrst"
 
-      expect(warnings).toEqual([
-        "WARN: config section [inbucket] is deprecated. Please use [local_smtp] instead.",
-        'WARN: disabling deprecated "slack" provider. Please use [auth.external.slack_oidc] instead',
-      ]);
-      expect(errorSpy).not.toHaveBeenCalled();
-    } finally {
-      errorSpy.mockRestore();
-    }
+[remotes.staging.inbucket]
+enabled = true
+`,
+    );
+
+    const failure = await run(Effect.flip(parseCliConfigDocumentFile(cwd, { search: false })));
+
+    expect(failure).toMatchObject({
+      _tag: "CliConfigRemovedKeyError",
+      removedKeys: [
+        { key: "[remotes.staging.inbucket]", replacement: "[remotes.staging.local_smtp]" },
+      ],
+    });
   });
 });
 

@@ -8,7 +8,6 @@ import {
 } from "@supabase/config/internal";
 import {
   Cache,
-  Console,
   Data,
   Duration,
   Effect,
@@ -26,7 +25,7 @@ import { loadCliProjectEnvFiles, readShellEnvironment } from "../shared/config/c
 import { CliConfigLoadError } from "../shared/config/cli-config-load.errors.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { Output } from "../shared/output/output.service.ts";
-import { CLI_CONFIG_FAMILIES } from "./cli-config-key-annotations.ts";
+import { CLI_CONFIG_FAMILIES, CLI_CONFIG_REMOVED_ENV_NAMES } from "./cli-config-key-annotations.ts";
 import {
   cloneDocumentRecord,
   collectEnvReferences,
@@ -40,6 +39,7 @@ import {
 import { CliConfigFlagInputs, cliConfigFlagConflictError } from "./cli-config-flags.ts";
 import {
   decodingFailedMessage,
+  describeCliConfigEnvLocation,
   describeCliConfigOrigin,
   lookupCliConfigEnv,
   pickCliConfigKey,
@@ -62,7 +62,7 @@ import {
   type ResolvedCliConfig,
   type CliConfigWithheldEnv,
 } from "./cli-config-values.service.ts";
-import { CliConfigValueError } from "./cli-config.errors.ts";
+import { CliConfigRemovedEnvError, CliConfigValueError } from "./cli-config.errors.ts";
 
 class LoadKey extends Data.Class<{
   readonly workdir: string;
@@ -208,20 +208,8 @@ export const cliConfigValuesLayer = Layer.effect(
       return output.warn(message);
     };
 
-    const deprecationsSeen = new Set<string>();
-    const warnDeprecationOnce = (message: string) => {
-      if (deprecationsSeen.has(message)) return Effect.void;
-      deprecationsSeen.add(message);
-      return Console.error(message).pipe(
-        Effect.provideService(Console.Console, globalThis.console),
-      );
-    };
-
     const parsedDocuments = yield* Cache.makeWith(
-      (workdir: string) =>
-        withPlatform(
-          parseCliConfigDocumentFile(workdir, { search: false, onWarning: warnDeprecationOnce }),
-        ),
+      (workdir: string) => withPlatform(parseCliConfigDocumentFile(workdir, { search: false })),
       {
         capacity: 8,
         timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
@@ -238,7 +226,12 @@ export const cliConfigValuesLayer = Layer.effect(
       const rawDocument = parsed?.rawDocument ?? {};
 
       const shell = yield* readShellEnvironment({
-        names: [...registryEnvNames, "DOTENV_PRIVATE_KEY", ...documentEnvNames(rawDocument)],
+        names: [
+          ...registryEnvNames,
+          ...Object.keys(CLI_CONFIG_REMOVED_ENV_NAMES),
+          "DOTENV_PRIVATE_KEY",
+          ...documentEnvNames(rawDocument),
+        ],
         namesWithPrefix: ["DOTENV_PRIVATE_KEY"],
       });
       const projectEnv = yield* withPlatform(loadCliProjectEnvFiles(target.workdir, { shell }));
@@ -289,6 +282,19 @@ export const cliConfigValuesLayer = Layer.effect(
       };
       const lookupEnv = (name: string) =>
         lookupCliConfigEnv({ shell: shellFor, projectEnv: projectEnvFor }, name);
+
+      for (const [envName, { replacement }] of Object.entries(CLI_CONFIG_REMOVED_ENV_NAMES)) {
+        if (lookupEnv(envName) === undefined) continue;
+        return yield* new CliConfigRemovedEnvError({
+          envName,
+          replacement,
+          location: describeCliConfigEnvLocation(
+            { shell: shellFor, projectEnv: projectEnvFor },
+            { workdir: target.workdir, path },
+            envName,
+          ),
+        });
+      }
 
       const remotes = parsed?.rawDocument?.["remotes"];
       if (isDocumentRecord(remotes)) {
@@ -465,7 +471,6 @@ export const cliConfigValuesLayer = Layer.effect(
             cliCompat: true,
             document: declaredDraft,
             resolvedPaths: declaredResolved,
-            onWarning: warnDeprecationOnce,
           }),
         ),
         declaredEnvOrigins,
@@ -476,7 +481,6 @@ export const cliConfigValuesLayer = Layer.effect(
           cliCompat: true,
           document: fileDraft,
           resolvedPaths: fileResolved,
-          onWarning: warnDeprecationOnce,
         }),
       ).pipe(Effect.map((decoded) => withEnvOrigins(decoded, fileEnvOrigins)));
       const materializedLoaded = withEnvOrigins(
@@ -486,7 +490,6 @@ export const cliConfigValuesLayer = Layer.effect(
             cliCompat: true,
             document: materializedDraft,
             resolvedPaths: materializedResolved,
-            onWarning: warnDeprecationOnce,
           }),
         ),
         materializedEnvOrigins,

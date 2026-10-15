@@ -45,13 +45,6 @@ export const experimental = Schema.Struct({
       tags,
     }),
   ),
-  orioledb_version: Schema.optionalKey(
-    Schema.String.annotate({
-      description:
-        "Deprecated: use `db.orioledb_version` instead. Postgres storage engine version for OrioleDB.",
-      tags,
-    }),
-  ),
   s3_host: Schema.optionalKey(
     Schema.String.annotate({
       description: "S3 bucket URL.",

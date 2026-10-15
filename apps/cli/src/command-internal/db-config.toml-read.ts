@@ -60,9 +60,8 @@ export interface DbTomlValues {
   /** `[db] major_version`, default 17. */
   readonly majorVersion: number;
   /**
-   * `[db] orioledb_version` (env-expanded); the deprecated `[experimental] orioledb_version` is
-   * already promoted into this path by `normalizeDeprecatedOrioleDBVersion`. Set on a 15/17
-   * project to rewrite the Postgres image to the OrioleDB tag; `None` for a vanilla project.
+   * `[db] orioledb_version` (env-expanded). Set on a 15/17 project to rewrite the Postgres image
+   * to the OrioleDB tag; `None` for a vanilla project.
    */
   readonly orioledbVersion: Option.Option<string>;
   /**

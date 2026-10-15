@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { Console, Effect, FileSystem, Path, Predicate, Redacted } from "effect";
+import { Effect, FileSystem, Path, Predicate, Redacted } from "effect";
 import * as SmolToml from "smol-toml";
 import { CliConfigSchema, type CliConfig } from "./base.ts";
 import {
@@ -21,6 +21,7 @@ import {
 } from "./errors.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
 import { findCliProjectPaths } from "./paths.ts";
+import { rejectRemovedConfigKeys } from "./removed-config-keys.ts";
 import { setOwnProperty } from "./sparse.ts";
 import { loadCliProjectEnvironment } from "./project.ts";
 import { validateCliConfig } from "./validate.ts";
@@ -219,206 +220,6 @@ function parseCliConfigDocument(content: string, format: ConfigFormat): unknown 
   return format === "json" ? JSON.parse(content) : SmolToml.parse(content);
 }
 
-interface NormalizedSMTPDocument {
-  readonly document: unknown;
-  /** Section paths that used the deprecated `inbucket` key, e.g. `inbucket`, `remotes.staging.inbucket`. */
-  readonly deprecatedSections: ReadonlyArray<string>;
-}
-
-/**
- * Rewrites the deprecated `[inbucket]` config section (top-level and per `[remotes.*]`) to its
- * preferred `[local_smtp]` name; when both are present, the explicit `local_smtp` wins.
- */
-function normalizeDeprecatedSMTPSections(document: unknown): NormalizedSMTPDocument {
-  if (!isObject(document)) {
-    return { document, deprecatedSections: [] };
-  }
-  const deprecatedSections: Array<string> = [];
-  const normalized = { ...document };
-  if ("inbucket" in normalized) {
-    deprecatedSections.push("inbucket");
-    if (!("local_smtp" in normalized)) {
-      normalized.local_smtp = normalized.inbucket;
-    }
-    delete normalized.inbucket;
-  }
-  if (isObject(normalized.remotes)) {
-    normalized.remotes = Object.fromEntries(
-      Object.entries(normalized.remotes).map(([name, remote]) => {
-        if (!isObject(remote) || !("inbucket" in remote)) {
-          return [name, remote];
-        }
-        deprecatedSections.push(`remotes.${name}.inbucket`);
-        const normalizedRemote = { ...remote };
-        if (!("local_smtp" in normalizedRemote)) {
-          normalizedRemote.local_smtp = normalizedRemote.inbucket;
-        }
-        delete normalizedRemote.inbucket;
-        return [name, normalizedRemote];
-      }),
-    );
-  }
-  return { document: normalized, deprecatedSections };
-}
-
-export interface NormalizedOrioleDBVersionDocument {
-  readonly document: unknown;
-  /**
-   * Dotted paths whose legacy `experimental.orioledb_version` was non-empty, e.g.
-   * `experimental.orioledb_version` or `remotes.staging.experimental.orioledb_version`. Emitted
-   * whether or not the value was actually promoted (an explicit `db.orioledb_version` still
-   * wins, but the legacy key is deprecated either way).
-   */
-  readonly deprecatedPaths: ReadonlyArray<string>;
-}
-
-/**
- * Moves a section's string `experimental.orioledb_version` out of `experimental`, promoting a
- * non-empty value to `db.orioledb_version` when that is absent or `""` (the init template always
- * writes `""`). Non-string values, a non-empty `db.orioledb_version`, and a non-table `db` are
- * left untouched so schema validation still sees them.
- */
-function promoteOrioleDBVersion(section: Record<string, unknown>): {
-  readonly section: Record<string, unknown>;
-  readonly warned: boolean;
-} {
-  const experimental = section.experimental;
-  if (!isObject(experimental) || !("orioledb_version" in experimental)) {
-    return { section, warned: false };
-  }
-  const legacyValue = experimental.orioledb_version;
-  if (typeof legacyValue !== "string") {
-    return { section, warned: false };
-  }
-  const legacyNonEmpty = legacyValue.length > 0;
-
-  const normalizedExperimental = { ...experimental };
-  delete normalizedExperimental.orioledb_version;
-  const normalizedSection: Record<string, unknown> = {
-    ...section,
-    experimental: normalizedExperimental,
-  };
-
-  if (!legacyNonEmpty) {
-    return { section: normalizedSection, warned: false };
-  }
-  if ("db" in section && !isObject(section.db)) {
-    return { section: normalizedSection, warned: true };
-  }
-
-  const db = isObject(section.db) ? section.db : undefined;
-  const dbValue = db?.orioledb_version;
-  const dbCanBePromotedOver = dbValue === undefined || dbValue === "";
-  if (dbCanBePromotedOver) {
-    normalizedSection.db = { ...db, orioledb_version: legacyValue };
-  }
-
-  return { section: normalizedSection, warned: true };
-}
-
-/**
- * Rewrites the deprecated `experimental.orioledb_version` (top-level and per `[remotes.*]`) to
- * `db.orioledb_version`, following the same shape as {@link normalizeDeprecatedSMTPSections}.
- * Exposed via `@supabase/config/internal` so `apps/cli`'s raw TOML reader
- * (`db-config.toml-read.ts`) can apply the same precedence before its own `[remotes.*]` merge.
- */
-export function normalizeDeprecatedOrioleDBVersion(
-  document: unknown,
-): NormalizedOrioleDBVersionDocument {
-  if (!isObject(document)) {
-    return { document, deprecatedPaths: [] };
-  }
-  const deprecatedPaths: Array<string> = [];
-  let normalized: Record<string, unknown> = { ...document };
-
-  const top = promoteOrioleDBVersion(normalized);
-  normalized = top.section;
-  if (top.warned) {
-    deprecatedPaths.push("experimental.orioledb_version");
-  }
-
-  if (isObject(normalized.remotes)) {
-    normalized = {
-      ...normalized,
-      remotes: Object.fromEntries(
-        Object.entries(normalized.remotes).map(([name, remote]) => {
-          if (!isObject(remote)) {
-            return [name, remote];
-          }
-          const result = promoteOrioleDBVersion(remote);
-          if (result.warned) {
-            deprecatedPaths.push(`remotes.${name}.experimental.orioledb_version`);
-          }
-          return [name, result.section];
-        }),
-      ),
-    };
-  }
-
-  return { document: normalized, deprecatedPaths };
-}
-
-interface NormalizedExternalProvidersDocument {
-  readonly document: unknown;
-  /** Provider ids (`"linkedin"` | `"slack"`) whose deprecated top-level block was `enabled`. */
-  readonly deprecatedProviders: ReadonlyArray<string>;
-  /**
-   * The removed top-level `auth.external.{linkedin,slack}` sub-objects (provider id → the
-   * removed object), regardless of `enabled`. A caller checking these for an `encrypted:`
-   * secret against the already-stripped {@link LoadedCliConfig.document} can fold this back in.
-   * Only the top-level blocks are captured, not any surviving `remotes.*.auth.external.*`.
-   */
-  readonly removedProviders: Readonly<Record<string, unknown>>;
-}
-
-const DEPRECATED_EXTERNAL_PROVIDERS = ["linkedin", "slack"] as const;
-
-/**
- * Strips the deprecated `auth.external.{linkedin,slack}` providers, unconditionally, reporting
- * one only when it was `enabled`. Runs on the post-remote-merge document, since only the final
- * merged config's `auth.external` matters. Also strips (without reporting) any surviving
- * `remotes.*.auth.external.{linkedin,slack}`, purely so an unselected remote's deprecated block
- * doesn't get rejected by this package's eager, whole-map schema decode.
- */
-function normalizeDeprecatedExternalProviders(
-  document: unknown,
-): NormalizedExternalProvidersDocument {
-  if (!isObject(document)) {
-    return { document, deprecatedProviders: [], removedProviders: {} };
-  }
-  const normalized = { ...document };
-  const deprecatedProviders: Array<string> = [];
-  const removedProviders: Record<string, unknown> = {};
-  if (isObject(normalized.auth) && isObject(normalized.auth.external)) {
-    const external = { ...normalized.auth.external };
-    for (const ext of DEPRECATED_EXTERNAL_PROVIDERS) {
-      const provider = external[ext];
-      if (provider === undefined) continue;
-      removedProviders[ext] = provider;
-      if (isObject(provider) && provider.enabled === true) {
-        deprecatedProviders.push(ext);
-      }
-      delete external[ext];
-    }
-    normalized.auth = { ...normalized.auth, external };
-  }
-  if (isObject(normalized.remotes)) {
-    normalized.remotes = Object.fromEntries(
-      Object.entries(normalized.remotes).map(([name, remote]) => {
-        if (!isObject(remote) || !isObject(remote.auth) || !isObject(remote.auth.external)) {
-          return [name, remote];
-        }
-        const external = { ...remote.auth.external };
-        for (const ext of DEPRECATED_EXTERNAL_PROVIDERS) {
-          delete external[ext];
-        }
-        return [name, { ...remote, auth: { ...remote.auth, external } }];
-      }),
-    );
-  }
-  return { document: normalized, deprecatedProviders, removedProviders };
-}
-
 /**
  * Wraps every `edge_runtime.secrets` value in `Redacted` before it's attached to
  * `CliConfigParseError.document`, so an uncaught parse error can't leak a resolved secret into
@@ -544,8 +345,9 @@ export const decodeCliConfigDocumentForValidationEffect = Effect.fn(
   });
   const cliCompat = options.cliCompat ?? false;
 
+  const withoutTolerated = yield* rejectRemovedConfigKeys(document, options.path, options.format);
   const { document: documentForDecode, appliedRemote } = mergeSelectedRemoteForValidation(
-    document,
+    withoutTolerated,
     options.remoteName,
   );
 
@@ -555,8 +357,7 @@ export const decodeCliConfigDocumentForValidationEffect = Effect.fn(
     CliConfigSchema,
     { cliCompat },
   );
-  const { document: normalizedForDecode } = normalizeDeprecatedExternalProviders(interpolated);
-  return yield* parseCliConfig(normalizedForDecode, options.format, options.path, appliedRemote);
+  return yield* parseCliConfig(interpolated, options.format, options.path, appliedRemote);
 });
 
 export const configJsonPath = Effect.fnUntraced(function* (cwd: string) {
@@ -571,14 +372,7 @@ export const configTomlPath = Effect.fnUntraced(function* (cwd: string) {
   return configTomlPathWith(path, project?.projectRoot ?? cwd);
 });
 
-/** Writes to the real console so a caller's deferred or buffered `Console` cannot delay or swallow it. */
-const warnOnRealConsole = (message: string): Effect.Effect<void> =>
-  Console.error(message).pipe(Effect.provideService(Console.Console, globalThis.console));
-
-const readAndNormalizeCliConfigFile = Effect.fnUntraced(function* (
-  filePath: string,
-  onWarning: (message: string) => Effect.Effect<void> = warnOnRealConsole,
-) {
+const readCliConfigDocumentFile = Effect.fnUntraced(function* (filePath: string) {
   const fs = yield* FileSystem.FileSystem;
   const format = filePath.endsWith(".json") ? "json" : "toml";
   const content = yield* fs.readFileString(filePath);
@@ -586,20 +380,14 @@ const readAndNormalizeCliConfigFile = Effect.fnUntraced(function* (
     try: () => parseCliConfigDocument(content, format),
     catch: (cause) => new CliConfigParseError({ path: filePath, format, cause }),
   });
-  const { document: smtpNormalized, deprecatedSections } =
-    normalizeDeprecatedSMTPSections(document);
-  const { document: normalized, deprecatedPaths: deprecatedOrioleDBPaths } =
-    normalizeDeprecatedOrioleDBVersion(smtpNormalized);
-  for (const section of deprecatedSections) {
-    const replacement = section.replace(/inbucket$/, "local_smtp");
-    yield* onWarning(
-      `WARN: config section [${section}] is deprecated. Please use [${replacement}] instead.`,
-    );
-  }
-  for (const path of deprecatedOrioleDBPaths) {
-    const replacement = path.replace(/experimental\.orioledb_version$/, "db.orioledb_version");
-    yield* onWarning(`WARN: ${path} is deprecated. Please use ${replacement} instead.`);
-  }
+  return { format, content, document } as const;
+});
+
+const readAndNormalizeCliConfigFile = Effect.fnUntraced(function* (filePath: string) {
+  const { format, content, document } = yield* readCliConfigDocumentFile(filePath);
+  const normalized = isObject(document)
+    ? yield* rejectRemovedConfigKeys(document, filePath, format)
+    : document;
   return { format, content, document, normalized } as const;
 });
 
@@ -614,7 +402,7 @@ export interface MergedCliConfigDocument {
   readonly rawText: string;
   readonly schemaRef: string | undefined;
   readonly ignoredPaths: ReadonlyArray<string>;
-  /** The document as parsed and deprecation-normalized, before any `[remotes.*]` merge. */
+  /** The document as parsed, before any `[remotes.*]` merge. */
   readonly rawDocument: Record<string, unknown> | undefined;
   /** The merged document; `remotes` is stripped when a block matched. */
   readonly document: unknown;
@@ -664,16 +452,14 @@ const mergeRemoteForLoad = (
 
 /**
  * Not covered by semver — exported from `@supabase/config/internal` only. Stage two of the
- * pipeline: interpolates `env()` references against `options.envValues`, strips the deprecated
- * external providers, and decodes + validates. `options.document` replaces the merged document,
- * so a caller can decode a document it has overlaid with effective values.
+ * pipeline: interpolates `env()` references against `options.envValues`, then decodes +
+ * validates. `options.document` replaces the merged document, so a caller can decode a document
+ * it has overlaid with effective values.
  */
 export interface DecodeMergedCliConfigOptions {
   readonly envValues: Readonly<Record<string, string>>;
   readonly cliCompat?: boolean;
   readonly document?: Record<string, unknown>;
-  /** Receives each deprecation warning; defaults to writing it to the real console. */
-  readonly onWarning?: (message: string) => Effect.Effect<void>;
   /** Paths whose values are already resolved: the decode keeps them verbatim instead of expanding `env()` again. */
   readonly resolvedPaths?: ReadonlyArray<ReadonlyArray<string>>;
 }
@@ -683,7 +469,6 @@ export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(functio
   options: DecodeMergedCliConfigOptions,
 ) {
   const cliCompat = options.cliCompat ?? false;
-  const onWarning = options.onWarning ?? warnOnRealConsole;
   const resolvedPathKeys = new Set((options.resolvedPaths ?? []).map(pathKey));
   const interpolateDocument = (
     document: unknown,
@@ -725,23 +510,8 @@ export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(functio
       )
     : documentToDecode;
 
-  // Strip the deprecated `auth.external.{linkedin,slack}` provider ids from the post-remote-merge
-  // document (see `normalizeDeprecatedExternalProviders`).
-  const {
-    document: normalizedForDecode,
-    deprecatedProviders,
-    removedProviders,
-  } = normalizeDeprecatedExternalProviders(documentForDecode);
-  if (cliCompat) {
-    for (const ext of deprecatedProviders) {
-      yield* onWarning(
-        `WARN: disabling deprecated "${ext}" provider. Please use [auth.external.${ext}_oidc] instead`,
-      );
-    }
-  }
-
   const config = yield* parseCliConfig(
-    normalizedForDecode,
+    documentForDecode,
     merged.format,
     merged.path,
     merged.appliedRemote,
@@ -750,8 +520,8 @@ export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(functio
   const localPathKeys = new Set(collectLeafPaths(merged.rawDocument).map(pathKey));
   const remotePathKeys = new Set(merged.remoteLeafPaths.map(pathKey));
   const environmentPathKeys = new Set(resolvedEnvironmentPaths.map(pathKey));
-  const valueOrigins = isObject(normalizedForDecode)
-    ? collectLeafPaths(normalizedForDecode).flatMap((path) => {
+  const valueOrigins = isObject(documentForDecode)
+    ? collectLeafPaths(documentForDecode).flatMap((path) => {
         const key = pathKey(path);
         const source: CliConfigValueSource | undefined = environmentPathKeys.has(key)
           ? "environment"
@@ -776,11 +546,10 @@ export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(functio
     schemaRef: merged.schemaRef,
     ignoredPaths: merged.ignoredPaths,
     rawText: merged.rawText,
-    document: isObject(normalizedForDecode) ? normalizedForDecode : undefined,
+    document: isObject(documentForDecode) ? documentForDecode : undefined,
     rawDocument: merged.rawDocument,
     interpolatedRemotes,
     appliedRemote: merged.appliedRemote,
-    removedDeprecatedExternalProviders: removedProviders,
     valueOrigins,
   } satisfies LoadedCliConfig;
 });
@@ -894,7 +663,7 @@ export const loadCliConfig = Effect.fn("CliConfig.load")(function* (
 
 /**
  * Not covered by semver — exported from `@supabase/config/internal` only. The output of the parse
- * half of stage one: the config file read and deprecation-normalized, before any `[remotes.*]`
+ * half of stage one: the config file read and checked for removed keys, before any `[remotes.*]`
  * merge.
  */
 export interface ParsedCliConfigDocument {
@@ -917,7 +686,6 @@ export const parseCliConfigDocumentFile = Effect.fn("CliConfig.parseDocument")(f
   options?: {
     readonly search?: boolean;
     readonly tomlOnly?: boolean;
-    readonly onWarning?: (message: string) => Effect.Effect<void>;
   },
 ) {
   const located = yield* locateCliConfigFile(cwd, options);
@@ -928,7 +696,6 @@ export const parseCliConfigDocumentFile = Effect.fn("CliConfig.parseDocument")(f
 
   const { format, content, document, normalized } = yield* readAndNormalizeCliConfigFile(
     located.filePath,
-    options?.onWarning,
   );
 
   return {
@@ -1015,15 +782,27 @@ const writeFileAtomic = Effect.fnUntraced(function* (filePath: string, content: 
   }).pipe(Effect.ensuring(fs.remove(tmpPath).pipe(Effect.ignore)));
 });
 
+/** Reads `$schema` from the existing file without decoding it, so a legacy document can be overwritten. */
+const readExistingSchemaRef = Effect.fnUntraced(function* (cwd: string) {
+  const located = yield* locateCliConfigFile(cwd, undefined);
+  if (located === null) {
+    return undefined;
+  }
+  const { document } = yield* readCliConfigDocumentFile(located.filePath);
+  return getSchemaRef(document);
+});
+
 export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: SaveCliConfigOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const project = yield* findCliProjectPaths(options.cwd);
   const baseCwd = project?.projectRoot ?? options.cwd;
   const format = yield* resolveSaveFormat(baseCwd, options.format);
-  const existingConfig =
-    options.schemaRef !== undefined || project === null ? null : yield* loadCliConfig(baseCwd);
-  const schemaRef = options.schemaRef ?? existingConfig?.schemaRef;
+  const existingSchemaRef =
+    options.schemaRef !== undefined || project === null
+      ? undefined
+      : yield* readExistingSchemaRef(baseCwd);
+  const schemaRef = options.schemaRef ?? existingSchemaRef;
   const filePath =
     format === "json" ? configJsonPathWith(path, baseCwd) : configTomlPathWith(path, baseCwd);
   const siblingPath = siblingConfigPathWith(path, baseCwd, format);

@@ -204,8 +204,7 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
 
   // Not running → bring up the container natively. `context` (loaded eagerly above) is threaded
   // through as `preloadedContext` so this call reuses it instead of calling
-  // `loadLocalProjectContext` a second time, which would double-print deprecated-config-section
-  // warnings.
+  // `loadLocalProjectContext` a second time.
   const inputs = yield* buildLocalDbContainerInputs(
     spawner,
     cliSettings.workdir,

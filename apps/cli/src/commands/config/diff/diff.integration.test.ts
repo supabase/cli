@@ -1,7 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
-import { vi } from "vitest";
 
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import {
@@ -522,34 +521,16 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "an env()-resolving [remotes.*] project_id does not match the target and does not double-warn (CLI-2287)",
-    () => {
-      const { layer, out } = setup({
-        toml: [
-          'project_id = "test"',
-          "[inbucket]",
-          "enabled = true",
-          "port = 12345",
-          "[remotes.x]",
-          'project_id = "env(REMOTE_REF)"',
-          "",
-        ].join("\n"),
-        dotenv: `REMOTE_REF=${VALID_REF}\n`,
-      });
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      return Effect.gen(function* () {
-        yield* configDiff(noFlags);
-        expect(out.stderrText).toContain(
-          `Comparing against project ${VALID_REF} using base config`,
-        );
-        const inbucketWarnings = errorSpy.mock.calls.filter((call) =>
-          String(call[0]).includes("[inbucket] is deprecated"),
-        );
-        expect(inbucketWarnings).toHaveLength(1);
-      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
-    },
-  );
+  it.effect("an env()-resolving [remotes.*] project_id does not match the target", () => {
+    const { layer, out } = setup({
+      toml: ['project_id = "test"', "[remotes.x]", 'project_id = "env(REMOTE_REF)"', ""].join("\n"),
+      dotenv: `REMOTE_REF=${VALID_REF}\n`,
+    });
+    return Effect.gen(function* () {
+      yield* configDiff(noFlags);
+      expect(out.stderrText).toContain(`Comparing against project ${VALID_REF} using base config`);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("a branch-named --project-ref resolves via the parent project", () => {
     const { layer, out, api } = setup({

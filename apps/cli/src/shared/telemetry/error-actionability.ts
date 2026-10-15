@@ -908,6 +908,7 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
 
   // @supabase/config
   CliConfigParseError: () => actionability.invalidConfig,
+  CliConfigRemovedKeyError: () => actionability.invalidConfig,
   CliProjectEnvParseError: () => actionability.invalidConfig,
   DuplicateRemoteProjectIdError: () => actionability.invalidConfig,
   InvalidRemoteProjectIdError: () => actionability.invalidConfig,

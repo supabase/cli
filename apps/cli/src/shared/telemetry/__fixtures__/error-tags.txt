@@ -41,6 +41,8 @@ BranchesUpdateUnexpectedStatusError
 CliConfigFlagConflictError
 CliConfigLoadError
 CliConfigParseError
+CliConfigRemovedEnvError
+CliConfigRemovedKeyError
 CliConfigValueError
 CliConfigWriteError
 CliProjectEnvParseError

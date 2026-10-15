@@ -7,7 +7,7 @@ import { resolveLocalConfigValues, type LocalConfigValues } from "./local-config
 /**
  * A status output field: the dotted key `--override-name <key>=<name>` matches against
  * (`fieldKey`), and its default output env-var name (`defaultName`). Deprecated fields
- * (`inbucket`, `jwt_secret`, `anon_key`, `service_role_key`) are still emitted.
+ * (`jwt_secret`, `anon_key`, `service_role_key`) are still emitted.
  */
 export interface StatusField {
   readonly fieldKey: string;
@@ -28,7 +28,6 @@ const FUNCTIONS_URL: StatusField = {
 };
 const DB_URL: StatusField = { fieldKey: "db.url", defaultName: "DB_URL" };
 const STUDIO_URL: StatusField = { fieldKey: "studio.url", defaultName: "STUDIO_URL" };
-const INBUCKET_URL: StatusField = { fieldKey: "inbucket.url", defaultName: "INBUCKET_URL" };
 const MAILPIT_URL: StatusField = { fieldKey: "mailpit.url", defaultName: "MAILPIT_URL" };
 const PUBLISHABLE_KEY: StatusField = {
   fieldKey: "auth.publishable_key",
@@ -54,7 +53,7 @@ const STORAGE_S3_REGION: StatusField = {
   defaultName: "S3_PROTOCOL_REGION",
 };
 
-/** All 18 fields, in declaration order. */
+/** All 17 fields, in declaration order. */
 export const STATUS_FIELDS: ReadonlyArray<StatusField> = [
   API_URL,
   REST_URL,
@@ -64,7 +63,6 @@ export const STATUS_FIELDS: ReadonlyArray<StatusField> = [
   FUNCTIONS_URL,
   DB_URL,
   STUDIO_URL,
-  INBUCKET_URL,
   MAILPIT_URL,
   PUBLISHABLE_KEY,
   SECRET_KEY,
@@ -365,7 +363,6 @@ export function statusValuesFromState(
   }
   if (inbucketEnabled) {
     values[names.mailpitUrl] = local.mailpitUrl;
-    values[overrides.get(INBUCKET_URL.fieldKey) ?? INBUCKET_URL.defaultName] = local.mailpitUrl;
   }
   if (storageEnabled && storageS3ProtocolEnabled) {
     values[names.storageS3Url] = local.storageS3Url;

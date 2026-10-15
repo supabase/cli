@@ -439,15 +439,33 @@ Load-time warnings print once per runtime. Outside the foundation files the CLI 
 `[auth.email.smtp]` table that omits `enabled` as on, so a partial table, for example one holding
 only `pass = "env(SMTP_PASS)"`, still loads.
 
+### Removed keys
+
+A config that declares a removed key fails to load with `CliConfigRemovedKeyError`, which names
+every removed key in the file, `[remotes.*]` blocks included, with its replacement:
+
+| Removed                                             | Replacement                                                   |
+| --------------------------------------------------- | ------------------------------------------------------------- |
+| `[inbucket]`                                        | `[local_smtp]`                                                |
+| `[auth.external.linkedin]`, `[auth.external.slack]` | `[auth.external.linkedin_oidc]`, `[auth.external.slack_oidc]` |
+| `experimental.orioledb_version` with a value        | `db.orioledb_version`                                         |
+
+A remote's keys are reported with their `remotes.<name>.` prefix. An empty
+`experimental.orioledb_version = ""`, which older `supabase init` templates wrote, is ignored: it is
+dropped from `rawDocument` before decoding, so it never appears as a value, origin or difference.
+The CLI also rejects a non-empty `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` environment variable; use
+`SUPABASE_DB_ORIOLEDB_VERSION`.
+
 ### Pipeline stages from `./internal`
 
 `@supabase/config/internal` exposes the stages the CLI composes in place of `loadCliConfig`:
 
-1. `parseCliConfigDocumentFile` reads `config.json` or `config.toml` without decoding.
+1. `parseCliConfigDocumentFile` reads `config.json` or `config.toml` without decoding, and fails
+   with `CliConfigRemovedKeyError` when the document uses a removed key.
 2. `mergeParsedCliConfig` applies the remote chosen by the `selectRemote` callback.
 3. The CLI overlays flag, env and default values onto the merged document.
-4. `decodeMergedCliConfig` expands `env()` references, strips deprecated external providers, then decodes and
-   validates the overlaid document.
+4. `decodeMergedCliConfig` expands `env()` references, then decodes and validates the overlaid
+   document.
 
 The result is the `materialized` config on the resolved config; `get(key)` also reports the tier a value
 came from.

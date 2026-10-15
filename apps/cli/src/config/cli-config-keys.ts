@@ -5,7 +5,6 @@ import {
   CLI_CONFIG_CODEC_OVERRIDES,
   CLI_CONFIG_CONTEXT_DEFAULTS,
   CLI_CONFIG_DOCUMENT_KEYS,
-  CLI_CONFIG_ENV_EXCLUDED,
   CLI_CONFIG_FAMILIES,
   CLI_CONFIG_FLAGS,
   CLI_CONFIG_LINKED_KEYS,
@@ -174,7 +173,6 @@ export const cliConfigSchemaKeyDefs = (root: SchemaAST.Objects): ReadonlyArray<C
             ? { default: configured }
             : { defaultFrom }),
         ...(leaf.node.annotations?.["x-secret"] === true ? { secret: true as const } : {}),
-        ...(CLI_CONFIG_ENV_EXCLUDED[path] === undefined ? {} : { noEnv: true as const }),
       },
     ];
   });

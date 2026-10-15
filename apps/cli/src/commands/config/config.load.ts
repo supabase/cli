@@ -70,7 +70,7 @@ export const loadResolvedConfig = Effect.fnUntraced(function* <E>(
 /**
  * The resolved config for the resolved target. A command loads once before it knows the target, to fail
  * on a missing or invalid config before any network call; that resolved config stands unless a
- * `[remotes.*]` block selects `ref`, since loading again prints its warnings twice.
+ * `[remotes.*]` block selects `ref`.
  */
 export const loadTargetResolvedConfig = Effect.fnUntraced(function* <E>(
   cliSettings: ConfigWorkdir,

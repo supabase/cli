@@ -3,7 +3,6 @@ import { describe, expect, it } from "@effect/vitest";
 import type { CliConfig } from "@supabase/config";
 import { loadCliConfig } from "@supabase/config/internal";
 import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
-import { vi } from "vitest";
 
 import { withConfigEnv } from "../../tests/helpers/command-mocks.ts";
 import { definedEnv } from "../../tests/helpers/config-env-pins.ts";
@@ -1742,43 +1741,140 @@ sql_paths = ["env(SEED_PATH)", 42]
       expect(resolvedConfig.loaded.config.db.seed.sql_paths).toEqual(["env(CHAIN_W)"]);
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
+});
 
-  it.live("prints each deprecation warning once across targets and invalidation", () => {
-    const warnings: Array<string> = [];
-    const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-      warnings.push(args.map((arg) => String(arg)).join(" "));
-    });
-    return Effect.gen(function* () {
+describe("CliConfigValues removed config", () => {
+  const load = (root: string, options: { readonly ignoreConfigFile?: true } = {}) =>
+    CliConfigValues.use((values) =>
+      values.load({ workdir: root, projectRef: Option.none(), ...options }),
+    );
+
+  it.live("names every removed key and loads once the config is fixed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const root = yield* project(
         `[inbucket]
 enabled = true
 
 [auth.external.slack]
-enabled = true
-client_id = "a"
-secret = "b"
+enabled = false
 `,
       );
       const layer = configValuesLayer();
 
-      yield* Effect.gen(function* () {
-        const values = yield* CliConfigValues;
-        yield* values.load({ workdir: root, projectRef: Option.none() });
-        yield* values.load({ workdir: root, projectRef: Option.some(LINKED) });
-        yield* values.invalidate;
-        yield* values.load({ workdir: root, projectRef: Option.none() });
-      }).pipe(Effect.provide(layer));
+      const failure = yield* load(root).pipe(Effect.flip, Effect.provide(layer));
+      yield* fs.writeFileString(
+        path.join(root, "supabase", "config.toml"),
+        "[local_smtp]\nenabled = true\n",
+      );
+      const loaded = yield* load(root).pipe(Effect.provide(layer));
 
-      const warned = (needle: string) => warnings.filter((message) => message.includes(needle));
-      expect(warned("config section [inbucket] is deprecated")).toHaveLength(1);
-      expect(warned('disabling deprecated "slack" provider')).toHaveLength(1);
+      expect(failure).toMatchObject({
+        _tag: "CliConfigRemovedKeyError",
+        removedKeys: [
+          { key: "[inbucket]", replacement: "[local_smtp]" },
+          { key: "[auth.external.slack]", replacement: "[auth.external.slack_oidc]" },
+        ],
+      });
+      expect(loaded.materialized.config.local_smtp.enabled).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("rejects a removed key in a [remotes.*] block no target selects", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        `[remotes.staging]
+project_id = "${LINKED}"
+
+[remotes.staging.experimental]
+orioledb_version = "15.1.0.150"
+`,
+      );
+
+      const failure = yield* load(root).pipe(Effect.flip, Effect.provide(configValuesLayer()));
+
+      expect(failure).toMatchObject({
+        _tag: "CliConfigRemovedKeyError",
+        removedKeys: [
+          {
+            key: "remotes.staging.experimental.orioledb_version",
+            replacement: "remotes.staging.db.orioledb_version",
+          },
+        ],
+      });
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("drops an empty experimental.orioledb_version from the loaded raw document", () =>
+    Effect.gen(function* () {
+      const root = yield* project('[experimental]\norioledb_version = ""\n');
+
+      const resolvedConfig = yield* load(root).pipe(Effect.provide(configValuesLayer()));
+
+      expect(resolvedConfig.loaded.rawDocument?.["experimental"]).toEqual({});
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  const removedEnv = "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION";
+
+  it.live.each([
+    {
+      name: "the shell",
+      shell: { [removedEnv]: "15.1.0.150" },
+      projectOptions: {},
+      location: "the shell environment",
+    },
+    {
+      name: "a project .env file",
+      shell: {},
+      projectOptions: { supabaseEnv: `${removedEnv}=15.1.0.150\n` },
+      location: "supabase/.env",
+    },
+  ])("fails when $name sets the removed orioledb variable", ({ shell, projectOptions, location }) =>
+    Effect.gen(function* () {
+      const root = yield* project('project_id = "p"\n', projectOptions);
+
+      const failure = yield* load(root).pipe(Effect.flip, Effect.provide(configValuesLayer()));
+
+      expect(failure).toMatchObject({
+        _tag: "CliConfigRemovedEnvError",
+        envName: removedEnv,
+        message: `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION (set in ${location}) is no longer supported. Use SUPABASE_DB_ORIOLEDB_VERSION instead.`,
+      });
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell(shell, effect), Effect.scoped),
+  );
+
+  it.live("fails on the removed orioledb variable even when the config file is ignored", () =>
+    Effect.gen(function* () {
+      const root = yield* project('project_id = "p"\n');
+
+      const failure = yield* load(root, { ignoreConfigFile: true }).pipe(
+        Effect.flip,
+        Effect.provide(configValuesLayer()),
+      );
+
+      expect(failure).toMatchObject({ _tag: "CliConfigRemovedEnvError", envName: removedEnv });
     }).pipe(
       Effect.provide(BunServices.layer),
-      (effect) => withShell({}, effect),
+      (effect) => withShell({ [removedEnv]: "15.1.0.150" }, effect),
       Effect.scoped,
-      Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())),
-    );
-  });
+    ),
+  );
+
+  it.live("treats an empty removed orioledb variable as unset", () =>
+    Effect.gen(function* () {
+      const root = yield* project('project_id = "p"\n');
+
+      const resolvedConfig = yield* load(root).pipe(Effect.provide(configValuesLayer()));
+
+      expect(resolvedConfig.hasConfigFile).toBe(true);
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ [removedEnv]: "" }, effect),
+      Effect.scoped,
+    ),
+  );
 });
 
 describe("CliConfigValues over a lookup-only provider", () => {

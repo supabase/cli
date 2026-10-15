@@ -59,9 +59,14 @@ export const CLI_CONFIG_SCHEMA_EXCLUDED: Readonly<Record<string, string>> = {
   "experimental.inspect.rules": "a list of tables, not strings; read from the document",
 };
 
-/** Schema leaves that are not env-overridable, with the reason. */
-export const CLI_CONFIG_ENV_EXCLUDED: Readonly<Record<string, string>> = {
-  "experimental.orioledb_version": "deprecated; promoted to db.orioledb_version before resolution",
+/** Removed `SUPABASE_*` config overrides with the key and variable that replace them; a non-empty value fails config resolution. */
+export const CLI_CONFIG_REMOVED_ENV_NAMES: Readonly<
+  Record<string, { readonly path: string; readonly replacement: string }>
+> = {
+  SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: {
+    path: "db.orioledb_version",
+    replacement: "SUPABASE_DB_ORIOLEDB_VERSION",
+  },
 };
 
 const emptyString = () => "";

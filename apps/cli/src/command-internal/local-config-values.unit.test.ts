@@ -700,12 +700,6 @@ describe("resolveLocalConfigValues", () => {
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document)).not.toThrow();
     });
 
-    it("skips deprecated linkedin/slack providers", () => {
-      const config = baseConfig();
-      const document = { auth: { external: { slack: { enabled: true } } } };
-      expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR, document)).not.toThrow();
-    });
-
     it("does not validate a disabled unmodeled external provider", () => {
       const config = baseConfig();
       const document = { auth: { external: { custom: { enabled: false } } } };
