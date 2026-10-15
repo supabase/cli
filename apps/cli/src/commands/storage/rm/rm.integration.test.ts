@@ -912,7 +912,7 @@ describe("storage rm", () => {
           expect(yield* fs.exists(`${tmp.current}/${CACHE_FILE}`)).toBe(true);
           assertPermissionDrift({
             command: "storage rm",
-            activeFlags: { local: false },
+            activeFlags: { linked: true },
             requests: managementRequests,
           });
         }).pipe(Effect.provide(layer));

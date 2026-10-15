@@ -492,7 +492,7 @@ project_id = "env(STAGING_REF)"
         expect(yield* fs.exists(`${tmp.current}/${CACHE_FILE}`)).toBe(true);
         assertPermissionDrift({
           command: "storage ls",
-          activeFlags: { local: false },
+          activeFlags: { linked: true },
           requests: managementRequests,
         });
       }).pipe(Effect.provide(BunServices.layer)),
@@ -515,7 +515,7 @@ project_id = "env(STAGING_REF)"
         ]);
         assertPermissionDrift({
           command: "storage ls",
-          activeFlags: { local: false },
+          activeFlags: { linked: true },
           requests: managementRequests,
         });
       }),
@@ -558,32 +558,6 @@ project_id = "env(STAGING_REF)"
           }),
         ).toThrow(/condition doesn't hold/);
       }).pipe(Effect.provide(BunServices.layer)),
-    ),
-  );
-
-  it.effect("--linked=false still targets the linked project", () =>
-    withEnvVar(
-      "SUPABASE_AUTH_SERVICE_ROLE_KEY",
-      undefined,
-      Effect.gen(function* () {
-        const { layer, out, requests, managementRequests } = setupStorage(tmp.current, {
-          recordManagementApi: true,
-          routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
-        });
-        yield* storageLs({ ...lsFlags({ local: false }), linked: false }).pipe(
-          Effect.provide(layer),
-        );
-        expect(out.stdoutText).toBe("remote/\n");
-        expect(requests[0]?.url.startsWith(`https://${VALID_REF}.supabase.co`)).toBe(true);
-        expect(
-          managementRequests.map(({ method, urlWithParams }) => `${method} ${urlWithParams}`),
-        ).toEqual([REVEALED_API_KEYS, PROJECT_LOOKUP]);
-        assertPermissionDrift({
-          command: "storage ls",
-          activeFlags: { linked: false, local: false },
-          requests: managementRequests,
-        });
-      }),
     ),
   );
 });

@@ -3485,7 +3485,7 @@ describe("gen types permissions through the real layers", () => {
   );
 
   it.effect(
-    "the implicit linked fallback generates from the saved ref when no target flag is given",
+    "targets the local database without management requests when no target flag is given",
     () =>
       Effect.gen(function* () {
         const ctx = yield* setupRecorded({
@@ -3494,12 +3494,11 @@ describe("gen types permissions through the real layers", () => {
         });
         yield* ctx.run(genTypes(defaultFlags()));
 
-        expect(methodPaths(ctx.api.requests)).toEqual([
-          `GET /v1/projects/${VALID_REF}/types/typescript`,
-        ]);
+        expect(ctx.generator.calls).toHaveLength(1);
+        expect(ctx.recordedRequests()).toEqual([]);
         assertPermissionDrift({
           command: "gen types",
-          activeFlags: { ...DEFAULT_SWITCHES, linked: true, lang: "typescript" },
+          activeFlags: { ...DEFAULT_SWITCHES, lang: "typescript" },
           requests: ctx.recordedRequests(),
           exact: true,
         });

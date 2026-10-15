@@ -1593,8 +1593,8 @@ describe("functions deploy", () => {
       yield* functionsDeploy({ ...baseFlags, noVerifyJwt: true, prune: true });
 
       expect(requestLines(api.requests)).toEqual([
-        `POST https://api.supabase.com/v1/projects/${VALID_REF}/functions/deploy`,
         `GET https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
+        `POST https://api.supabase.com/v1/projects/${VALID_REF}/functions/deploy`,
         `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/functions/remote-only`,
       ]);
       assertPermissionDrift({

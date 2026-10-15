@@ -1917,7 +1917,7 @@ allowed_cidrs_v6 = ["::1/128"]
           `PATCH ${API}/v1/projects/${REF}/postgrest`,
           `GET ${API}/v1/projects/${REF}`,
         ]);
-        expect(out.stderrText).toContain(`Pushing config to project: ${REF}`);
+        expect(out.stderrText).toContain(`Target: project ${REF} · identity unverified`);
         expect(yield* decodeJsonText(yield* fs.readFileString(cachePath))).toMatchObject({
           ref: REF,
         });
@@ -1940,7 +1940,7 @@ allowed_cidrs_v6 = ["::1/128"]
         `GET ${API}/v2/projects/${REF}/config`,
         `PATCH ${API}/v1/projects/${REF}/postgrest`,
       ]);
-      expect(out.stderrText).toContain("could not determine whether this is a branch");
+      expect(out.stderrText).toContain(`Target: project ${REF} · identity unverified`);
       assertPermissionDrift({ command: "config push", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });

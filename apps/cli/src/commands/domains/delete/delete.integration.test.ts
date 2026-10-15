@@ -183,7 +183,9 @@ describe("domains delete integration", () => {
         const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
         expect(yield* fs.exists(cachePath)).toBe(false);
         yield* domainsDelete(baseFlags);
-        expect(out.stderrText).toBe("Deleted custom hostname config successfully.\n");
+        expect(out.stderrText).toBe(
+          unverifiedTargetBanner() + confirmed + "Deleted custom hostname config successfully.\n",
+        );
         expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
           "GET https://api.supabase.com/v1/projects",
           `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname`,
