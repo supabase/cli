@@ -2,6 +2,9 @@
 
 **Status**: accepted
 **Date**: 2026-09-29
+**Amended**: 2026-10-15 — stack mode resolves versions into a project lock file; see "The lock
+file is the stack-mode version table". Catalog statements below apply to legacy mode and to the
+`bundled` pins the lock can select.
 
 ## Problem Statement
 
@@ -34,11 +37,11 @@ semver library — ordering is the service's upstream version key, then revision
 **Legacy tags** (without `-rN`) are frozen: nothing parses, audits, rewrites, or unpublishes
 them, so CLIs pinned to a legacy tag keep working.
 
-### The catalog is the single version table
+### The catalog is the version table for legacy mode
 
-The CLI's stack catalog (`packages/stack/src/Artifacts.ts`) is the single version table for
-every consumer of a slim-capable service: the new stack, legacy `supabase start`, and legacy
-slim mode. Each slim-capable service pins exactly one committed slim-services release per
+The CLI's stack catalog (`packages/stack/src/Artifacts.ts`) is the version table for legacy
+`supabase start` and legacy slim mode, and supplies the `bundled` pins that stack mode can
+select (see the next section). Each slim-capable service pins exactly one committed slim-services release per
 release line it carries (`ArtifactPin`, keyed by upstream version; only postgres carries more
 than one line, its default plus additional Postgres 15 and OrioleDB pins). Everything else is derived from
 that pin — never the other way around.
@@ -54,6 +57,31 @@ share `library/kong`'s or `supabase/postgres`'s Dependabot `ignore` entry — se
 The one-shot job images (migra, pg_prove, pgadmin-schema-diff) also have no slim build, but are
 upstream-only: they are the images Dependabot still bumps.
 
+### The lock file is the stack-mode version table
+
+In stack mode, the project lock file `supabase/supabase.lock` (committed JSON, written by the
+CLI) is the version table. For every service it records the effective specifier, the resolution
+outcome, and the exact pin: `<U>-r<N>`, the sha256 of each target's native archive and manifest,
+and the GHCR image digest. The CLI builds the stack's artifact selection from the lock, never from
+the compiled default.
+
+Users request versions in `config.toml` under `[local.services]`:
+`<svc> = { version = "linked" | "bundled" | "<U>" | "<U>-rN" }`. `default` applies to services
+without an entry, and the implicit default is `linked`.
+
+- `linked` follows the versions of the linked hosted project. When the project is not linked, a
+  version cannot be observed, or the hosted build is not published, the service falls back to its
+  bundled pin and the lock records the reason as the resolution outcome.
+- `bundled` selects the pin compiled into the CLI's catalog.
+- `<U>` selects the highest published revision of that upstream version; `<U>-rN` selects exactly
+  that revision.
+
+GitHub releases of slim-services are authoritative at resolution time. The CLI probes the
+`<producer>-<U>-r<N>` release assets (`SHA256SUMS`; a 404 is the only "not published" signal) and
+reads the GHCR digest, then writes both into the lock. S3 and ECR remain byte mirrors of those
+releases: downloads may come from any mirror, and every download is verified against the hashes
+and digests in the lock.
+
 ### Content pins, not runtime checksums
 
 Every `ArtifactPin` pins its release by content:
@@ -68,7 +96,8 @@ Every `ArtifactPin` pins its release by content:
 field must equal `R`) and hash-checks the archive against its pin while it streams. There is no
 runtime checksum authority: **GitHub Releases, the S3 mirror, GHCR, and ECR Public are byte
 mirrors only** for both images and native archives. None of them is consulted for the expected
-hash — that comes only from the pin already committed to the catalog.
+hash at download time — that comes only from the pin already committed to the catalog (legacy
+mode) or to the lock file (stack mode).
 
 ### Invocations
 
@@ -105,6 +134,11 @@ GitHub is the primary mirror — but a host that can only reach S3 would otherwi
 verification with no fallback.
 
 ### Hotfix and upgrade pickup
+
+The catalog PRs below keep the catalog, and so legacy mode and the `bundled` pins, current. In
+stack mode a hotfix revision reaches a project only when its lock is rewritten by `stack update`
+(or by `link`, for `linked` services); `start` re-resolves only services whose request changed. A
+CLI upgrade does not move any service already in the lock, including `bundled` ones.
 
 The last step of slim-services' `publish-release` sends a `repository_dispatch`
 (`slim-release-published`) to the CLI repo with `{service, upstream_version, revision,
@@ -226,13 +260,17 @@ or considered stale and backfilled — never rewritten in place.
 - Hotfixing packaging never touches previously published bytes; it always publishes a new
   revision.
 - The CLI verifies every artifact it downloads against a pin already committed to its own
-  catalog — no destination is trusted to supply the expected hash at runtime.
+  catalog or to the project lock file — no destination is trusted to supply the expected hash at
+  download time.
 - A same-version republish is no longer possible; every fix is a new, allocatable revision.
 - A revision's ECR/S3 copy can briefly lag GitHub after publish; the sync's S3-staleness check
   and the mirror backfill are what keep them converging.
 - Old CLI releases keep pulling their originally pinned image digest and native bytes forever.
 
 ### Tradeoffs of moving updates onto the catalog
+
+These apply to legacy mode and to `bundled` pins. A stack-mode project with a lock picks up
+updates only when the lock is rewritten, as described under "Hotfix and upgrade pickup".
 
 - Upstream and security fixes for slim-capable images now reach the CLI only once
   slim-services publishes a release. Direct Dependabot discovery is gone for them; Dependabot's
