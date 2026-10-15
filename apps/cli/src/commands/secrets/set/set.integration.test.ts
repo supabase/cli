@@ -12,14 +12,25 @@ import {
   Schema,
 } from "effect";
 
-import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
+import {
+  mockOutput,
+  mockRuntimeInfo,
+  mockTty,
+  processEnvLayer,
+} from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockCommandPlatformApi,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import { secretsSet } from "./set.handler.ts";
@@ -115,6 +126,8 @@ const writeConfig = (content: string) => writeSupabaseFile("config.toml", conten
 
 const writeSupabaseDotEnv = (content: string) => writeSupabaseFile(".env", content);
 
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 const decodePostBody = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ name: Schema.String, value: Schema.String })),
   { onExcessProperty: "error" },
@@ -132,6 +145,7 @@ describe("secrets set integration", () => {
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.body).toEqual([{ name: "FOO", value: "bar" }]);
       expect(out.stdoutText).toBe("Finished supabase secrets set.\n");
+      assertPermissionDrift({ command: "secrets set", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -171,6 +185,7 @@ describe("secrets set integration", () => {
         expect(names.has(`KEY${i}`)).toBe(true);
       }
       expect(out.stdoutText).toContain("Finished supabase secrets set.");
+      assertPermissionDrift({ command: "secrets set", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -186,6 +201,60 @@ describe("secrets set integration", () => {
       expect(yield* decodePostBody(api.requests[0]?.body)).toHaveLength(100);
       expect(yield* decodePostBody(api.requests[1]?.body)).toHaveLength(100);
       expect(yield* decodePostBody(api.requests[2]?.body)).toHaveLength(50);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists projects for the picker and fills the real linked-project cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.method === "POST") return Effect.succeed(jsonResponse(request, 201, null));
+        return Effect.succeed(
+          request.url === "https://api.supabase.com/v1/projects"
+            ? jsonResponse(request, 200, [projectResponse(VALID_REF)])
+            : jsonResponse(request, 200, projectResponse(VALID_REF)),
+        );
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      mockRuntimeInfo({ cwd: tempRoot.current }),
+      processEnvLayer({}),
+      mockDebugLoggerTracked().layer,
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* secretsSet({
+        projectRef: Option.none(),
+        envFile: Option.none(),
+        secrets: ["FOO=bar"],
+      });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `POST https://api.supabase.com/v1/projects/${VALID_REF}/secrets`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(api.requests[1]?.body).toEqual([{ name: "FOO", value: "bar" }]);
+      expect(out.stdoutText).toBe("Finished supabase secrets set.\n");
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({ command: "secrets set", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -229,6 +298,12 @@ describe("secrets set integration", () => {
         secrets: [],
       });
       expect(api.requests[0]?.body).toEqual([{ name: "FROM_FILE", value: "fromvalue" }]);
+      assertPermissionDrift({
+        command: "secrets set",
+        activeFlags: { "env-file": true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
