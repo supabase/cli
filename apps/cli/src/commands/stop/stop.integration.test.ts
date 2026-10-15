@@ -159,24 +159,35 @@ function mockRoutedContainerCliSpawner(
 }
 
 /**
- * Default happy-path router: `ps` lists one container, `docker version` reports an API version
- * above the `volume prune --all` gate (see `dockerSupportsVolumePruneAllFlag`), everything else
- * succeeds empty.
+ * Default happy-path router: `ps` lists one container, `docker version` renders the requested
+ * `--format` with client and daemon API versions above the `volume prune --all` gate (see
+ * `dockerSupportsVolumePruneAllFlag`), everything else succeeds empty.
  */
 function defaultRoute(
   opts: {
     readonly containerIds?: ReadonlyArray<string>;
     readonly volumeNames?: ReadonlyArray<string>;
-    readonly dockerApiVersion?: string;
+    readonly dockerClientApiVersion?: string;
+    readonly dockerServerApiVersion?: string;
   } = {},
 ) {
   const containerIds = opts.containerIds ?? ["c1"];
   const volumeNames = opts.volumeNames ?? [];
-  const dockerApiVersion = opts.dockerApiVersion ?? "1.45";
+  const dockerClientApiVersion = opts.dockerClientApiVersion ?? "1.45";
+  const dockerServerApiVersion = opts.dockerServerApiVersion ?? "1.45";
   return (args: ReadonlyArray<string>): RouteResult => {
     if (args[0] === "ps") return { stdout: containerIds.map((id) => `${id}\t${id}`) };
     if (args[0] === "volume" && args[1] === "ls") return { stdout: volumeNames };
-    if (args[0] === "version") return { stdout: [dockerApiVersion] };
+    if (args[0] === "version") {
+      const format = args[args.indexOf("--format") + 1] ?? "";
+      return {
+        stdout: [
+          format
+            .replaceAll("{{.Client.APIVersion}}", dockerClientApiVersion)
+            .replaceAll("{{.Server.APIVersion}}", dockerServerApiVersion),
+        ],
+      };
+    }
     return { exitCode: 0 };
   };
 }
@@ -717,7 +728,7 @@ describe("stop integration", () => {
         // nothing) on an older daemon.
         const { layer, child } = yield* setup({
           configuredProjectId: "demo",
-          route: defaultRoute({ dockerApiVersion: "1.41" }),
+          route: defaultRoute({ dockerServerApiVersion: "1.41" }),
         });
         yield* stop(flags({ noBackup: true })).pipe(Effect.provide(layer));
         const volumePrune = child.spawned.find(
@@ -733,11 +744,31 @@ describe("stop integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.effect("omits --all from docker's volume prune when an old client talks to a new daemon", () =>
+    Effect.gen(function* () {
+      const { layer, child } = yield* setup({
+        configuredProjectId: "demo",
+        route: defaultRoute({ dockerClientApiVersion: "1.41", dockerServerApiVersion: "1.44" }),
+      });
+      yield* stop(flags({ noBackup: true })).pipe(Effect.provide(layer));
+      const volumePrune = child.spawned.find(
+        (s) => s.command === "docker" && s.args[0] === "volume" && s.args[1] === "prune",
+      );
+      expect(volumePrune?.args).toEqual([
+        "volume",
+        "prune",
+        "--force",
+        "--filter",
+        "label=com.supabase.cli.project=demo",
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("includes --all in docker's volume prune when the API is exactly 1.42", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({
         configuredProjectId: "demo",
-        route: defaultRoute({ dockerApiVersion: "1.42" }),
+        route: defaultRoute({ dockerClientApiVersion: "1.42", dockerServerApiVersion: "1.42" }),
       });
       yield* stop(flags({ noBackup: true })).pipe(Effect.provide(layer));
       const volumePrune = child.spawned.find(
