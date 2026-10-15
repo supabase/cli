@@ -501,6 +501,25 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("the json target carries the linked identity alongside the scope fields", () => {
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
+      format: "json",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* configPull({ ...noFlags, dryRun: true });
+      const success = out.messages.find((message) => message.type === "success");
+      const data = yield* decodeJsonRecord(success?.data);
+      expect(data["target"]).toEqual({
+        kind: "linked",
+        project_ref: VALID_REF,
+        environment: "unverified",
+        local_scope: "base",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("a branch-named target creates a new [remotes.<name>] block at EOF", () => {
     const before = 'project_id = "test"\n';
     const { layer } = setup({
