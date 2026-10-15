@@ -76,7 +76,7 @@ The `--output {json,yaml,toml,env}` flags all collapse to the same text-mode `Fi
 
 ### `--output-format json`
 
-Single JSON object emitted via `Output.success` with `{project_ref, count}` as the `data` field, plus a `target` object (`kind: "linked"`, `project_ref`, and when known `project_name`, `environment`, `parent_project_ref`). Needs `--yes` or a shell `SUPABASE_YES`, because machine output never prompts.
+Single JSON object emitted via `Output.success` with `{project_ref, count}` as the `data` field, plus a [`target`](../../../../docs/command-target.md) object. Needs `--yes` or a shell `SUPABASE_YES`, because machine output never prompts.
 
 ### `--output-format stream-json`
 

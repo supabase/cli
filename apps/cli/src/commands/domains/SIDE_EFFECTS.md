@@ -107,7 +107,7 @@ suppressed on stderr. `delete` ignores `-o`.
   - In a structured `-o` mode the human status is suppressed on stderr, keeping stdout clean.
   - The CNAME pre-check's "failed to locate" error text embeds a readable, 1024-byte-capped JSON dump of the DNS answers, rather than an uncapped decimal byte-value array — see `domains.cname.ts`'s comment at the failure site for detail.
 
-- Prints `Target: <project>` once on stderr in every output format, for example `Target: project <name> (<ref>) · production`. `--output-format json|stream-json` object results and error envelopes also carry a `target` object; `--output {json,yaml,toml,env}` payloads are unchanged.
+- Prints `Target: <project>` once on stderr in every output format, for example `Target: project <name> (<ref>) · production`. `--output-format json|stream-json` object results and error envelopes also carry a `target` object (see [Command target](../../../docs/command-target.md)); `--output {json,yaml,toml,env}` payloads are unchanged.
 - **Consent (`create`).** Asks once, after the CNAME pre-check passes and before the POST, with default Yes: `Create custom hostname <hostname>`.
 - **Consent (`activate`).** Asks once before the POST, with default No: `Activate the custom hostname`. The question notes that third-party auth providers stop working on the Supabase-provisioned subdomain.
 - **Consent (`delete`).** Asks once before the DELETE, with default No: `Delete the custom hostname config`.

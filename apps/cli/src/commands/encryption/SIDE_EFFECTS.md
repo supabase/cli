@@ -88,6 +88,6 @@ One `result` event carrying `{root_key}` (both subcommands).
 - The TTY prompt is a clack masked prompt labelled `Enter a new root key: `
   (clack adds its own framing). Piped (non-TTY) mode does not print the
   prompt at all — it reads stdin directly.
-- After the project ref resolves, one `Target: project <ref> · <identity>` line is printed on stderr in every output format.
+- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../docs/command-target.md).
 - `update-root-key` asks `Replace the project's root encryption key on <target>?` (default No) before the first write. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.
 - The new key is read (masked TTY prompt or piped stdin) before the confirmation, which never reads stdin.

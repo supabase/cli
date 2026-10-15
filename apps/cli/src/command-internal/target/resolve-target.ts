@@ -114,6 +114,6 @@ export const resolveTarget = Effect.fn("Target.resolve")(function* (input: Targe
   if (workspaceTarget.value === "remote") {
     return yield* finish(yield* linked(Option.none()), selectedBy);
   }
-  yield* hintLinkedAlternative();
+  if (selectedBy === "default") yield* hintLinkedAlternative();
   return yield* finish({ kind: "local" }, selectedBy);
 });

@@ -90,6 +90,6 @@ One `result` event on success when the `--output` flag is unset.
   `SUPABASE_EXPERIMENTAL`), checked before the login check.
   A closed gate exits 1 before project-ref resolution, the API call, the `linked-project.json`
   write, the `telemetry.json` write, and the `cli_command_executed` event.
-- After the project ref resolves, one `Target: project <ref> · <identity>` line is printed on stderr in every output format.
+- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
 - Asks `Remove network bans on <target>?` (default No) before the first write, after printing the IPs to unban (or the caller's own IP when `--db-unban-ip` is omitted). `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.
 - The `LinkedDbNetworkBannedError` raised by commands that connect to a linked database points at this command; it needs `--experimental` and the confirmation above like any other run.

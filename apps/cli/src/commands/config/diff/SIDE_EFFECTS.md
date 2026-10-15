@@ -114,7 +114,7 @@ masked/unmanaged caveats too, so echoing it never claims "in sync" on a
 partial response (e.g. a scoped token returning `auth: {}`) or while masked
 values may have drifted. The payload contains `schema_version` (integer
 version of THIS payload contract, currently `1`), `config_schema` (the file's
-`$schema` URL), `target` (`kind: "linked"`, `project_ref`, `project_name` and `environment` (`production`, `branch` or `unverified`) when known, `parent_project_ref` for a branch, optional `branch`, and `local_scope`),
+`$schema` URL), `target` (the [command target](../../../../docs/command-target.md) plus optional `branch` and `local_scope`),
 `scope` (`{present, missing}` block lists — the block set is owned by
 `@supabase/config`), `changes[]` (`path` as a SEGMENT ARRAY — a record key may
 contain a `.` — plus `class`, `declared`, `local`, `remote`, optional

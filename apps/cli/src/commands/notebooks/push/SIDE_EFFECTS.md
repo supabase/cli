@@ -57,7 +57,7 @@ entry are canonicalized and refused when they resolve outside the project root.
 
 ## Confirmation
 
-- After the project ref resolves, one `Target: project <ref> · <identity>` line is printed on stderr in every output format.
+- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
 - Asks `Push <n> notebook(s) on <target>?` (`Push <n> notebook(s) and delete <m> from the project on <target>?` for the delete answer; default No) before the first write, after printing one `Create`, `Update` or `Delete` line per notebook. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.
 - No confirmation is asked when nothing would be uploaded or deleted (an empty notebooks directory with the `keep` or write-locally answer). The reconciliation question above is separate: it chooses what to do with project-only notebooks, and the confirmation covers the resulting uploads and deletes together.
 

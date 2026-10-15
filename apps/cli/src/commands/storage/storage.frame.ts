@@ -22,7 +22,10 @@ import {
   parseStorageUrl,
 } from "../../command-internal/storage-url.ts";
 import { StorageConfigError } from "../../command-internal/storage-credentials.errors.ts";
-import { missingProjectConfigMessageEffect } from "../../command-internal/workdir-project.ts";
+import {
+  describeConfigParseError,
+  missingProjectConfigMessageEffect,
+} from "../../command-internal/workdir-project.ts";
 import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
 import {
   StorageInvalidUrlError,
@@ -82,7 +85,7 @@ export const loadStorageConfig = Effect.fn("Storage.loadConfig")(function* (
       "CliConfigParseError",
       (cause) =>
         new StorageConfigError({
-          message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
+          message: describeConfigParseError(cliSettings.workdir, cause),
         }),
     ),
     Effect.mapError((cause) =>

@@ -4,10 +4,14 @@ import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Tracer 
 
 import { configValuesLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { VALID_REF, mockCommandSettings } from "../../../tests/helpers/command-mocks.ts";
+import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import { ProjectRefNotLinkedError } from "../../config/project-ref.errors.ts";
 import { ProjectRefResolver } from "../../config/project-ref.service.ts";
 import type { ProjectRefSource } from "../../config/project-ref.service.ts";
+import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
+import { announceTarget } from "../../shared/output/command-target.service.ts";
 import { resolveTarget } from "./resolve-target.ts";
+import { renderLocalTarget } from "./target-identity.ts";
 import { TargetPolicy } from "./target-policy.ts";
 import type { TargetGroup } from "./target-policy.ts";
 import type { TargetSelectorInput } from "./target-selector.ts";
@@ -54,6 +58,8 @@ const run = (
     readonly env?: Readonly<Record<string, string>>;
     readonly linked?: boolean;
     readonly projectId?: Option.Option<string>;
+    readonly savedRef?: string;
+    readonly cache?: { readonly ref: string; readonly name?: string };
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -67,7 +73,20 @@ const run = (
     if (options.dotenv !== undefined) {
       yield* fs.writeFileString(path.join(dir, "supabase", ".env"), options.dotenv);
     }
+    if (options.savedRef !== undefined || options.cache !== undefined) {
+      yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
+    }
+    if (options.savedRef !== undefined) {
+      yield* fs.writeFileString(path.join(dir, "supabase", ".temp", "project-ref"), options.savedRef);
+    }
+    if (options.cache !== undefined) {
+      yield* fs.writeFileString(
+        path.join(dir, "supabase", ".temp", "linked-project.json"),
+        JSON.stringify(options.cache),
+      );
+    }
     const resolver = projectRefResolver({ linked: options.linked ?? true });
+    const out = mockOutput();
     const spans: Array<Tracer.NativeSpan> = [];
     const tracer = Tracer.make({
       span(spanOptions) {
@@ -77,9 +96,11 @@ const run = (
       },
     });
     const exit = yield* resolveTarget(input).pipe(
+      Effect.tap(() => announceTarget(renderLocalTarget("127.0.0.1", 54322))),
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(TargetPolicy, { group, consent: "none" }),
+          commandTargetLayer.pipe(Layer.provide(out.layer)),
           resolver.layer,
           mockCommandSettings({
             workdir: dir,
@@ -95,6 +116,7 @@ const run = (
     const attributes = spans.find((span) => span.name === "Target.resolve")?.attributes;
     return {
       exit,
+      stderr: out.stderrText,
       refFlags: resolver.flags,
       kind: attributes?.get("target.kind"),
       selection: attributes?.get("target.selection"),
@@ -231,6 +253,52 @@ describe("resolveTarget (selectable)", () => {
     Effect.gen(function* () {
       const result = yield* run("selectable", { ...none, local: true, linked: true });
       expect(JSON.stringify(result.exit)).toContain("TargetSelectorConflictError");
+    }),
+  );
+
+  it.effect("hints at --linked on a default-local banner when the checkout is linked", () =>
+    Effect.gen(function* () {
+      const result = yield* run("selectable", none, {
+        savedRef: FILE_REF,
+        cache: { ref: FILE_REF, name: "alpha" },
+      });
+      expect(succeeded(result.exit)).toEqual({ kind: "local" });
+      expect(result.stderr).toBe(
+        `Target: local stack (127.0.0.1:54322) · default; pass --linked for alpha (${FILE_REF})\n`,
+      );
+    }),
+  );
+
+  it.effect("hints with the bare ref when the cache does not name the linked project", () =>
+    Effect.gen(function* () {
+      const result = yield* run("selectable", none, { savedRef: FILE_REF });
+      expect(result.stderr).toBe(
+        `Target: local stack (127.0.0.1:54322) · default; pass --linked for ${FILE_REF}\n`,
+      );
+    }),
+  );
+
+  it.effect("adds no hint when the checkout is not linked", () =>
+    Effect.gen(function* () {
+      const result = yield* run("selectable", none, { cache: { ref: FILE_REF, name: "alpha" } });
+      expect(result.stderr).toBe("Target: local stack (127.0.0.1:54322)\n");
+    }),
+  );
+
+  it.effect("adds no hint when a selector chose local", () =>
+    Effect.gen(function* () {
+      const result = yield* run("selectable", { ...none, local: true }, { savedRef: FILE_REF });
+      expect(result.stderr).toBe("Target: local stack (127.0.0.1:54322)\n");
+    }),
+  );
+
+  it.effect("adds no hint when the workspace config chose local", () =>
+    Effect.gen(function* () {
+      const result = yield* run("selectable", none, {
+        toml: 'target = "local"\n',
+        savedRef: FILE_REF,
+      });
+      expect(result.stderr).toBe("Target: local stack (127.0.0.1:54322)\n");
     }),
   );
 

@@ -107,5 +107,5 @@ One `result` event:
   A closed gate exits 1 before the enable/disable mutex check, project-ref
   resolution, the API call, the `linked-project.json` write, the `telemetry.json` write, and the
   `cli_command_executed` event.
-- After the project ref resolves, one `Target: project <ref> · <identity>` line is printed on stderr in every output format.
+- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
 - Asks `Enable SSL enforcement for database connections on <target>?` (`Disable SSL enforcement for database connections on <target>?` with `--disable-db-ssl-enforcement`; default No) before the first write. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.

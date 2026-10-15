@@ -19,7 +19,8 @@ it actually pulls a migration-mode schema change, and that step requires Docker 
 initial-pull `pg_dump` container). See "Consent", "Database writes" and "Docker" below.
 
 The target is always a linked project or branch, announced once as `Target: …` on stderr (the
-banner comes from the target resolution, not from the sub-steps).
+banner comes from the target resolution, not from the sub-steps); see
+[Command target](../../../docs/command-target.md).
 
 ## Files Read
 
@@ -238,10 +239,7 @@ Shape (`pull.format.ts`):
 {
   "schema_version": 1,
   "target": {
-    "kind": "linked",
-    "project_ref": "...",
-    "project_name": "...", // from the linked-project cache, when it names this project
-    "environment": "production", // or "branch" (with "parent_project_ref") or "unverified"
+    // the command target (docs/command-target.md), plus:
     "branch": "...", // only when --project-ref named a branch
   },
   "dry_run": false,

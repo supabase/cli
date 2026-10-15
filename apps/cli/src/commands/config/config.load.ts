@@ -7,6 +7,7 @@ import { selectCliConfigRemote } from "../../config/cli-config-remote.ts";
 import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 import type { ResolvedCliConfig } from "../../config/cli-config-values.service.ts";
 import {
+  describeConfigParseError,
   missingProjectConfigMessageEffect,
   relativeConfigPath,
 } from "../../command-internal/workdir-project.ts";
@@ -23,7 +24,7 @@ const describeLoadFailure = (
   cause: { readonly message: string },
 ): string =>
   cause instanceof CliConfigParseError
-    ? `failed to parse ${relativeConfigPath(cliSettings.workdir, cause.path)}: ${String(cause.cause)}`
+    ? describeConfigParseError(cliSettings.workdir, cause)
     : cause.message;
 
 /**

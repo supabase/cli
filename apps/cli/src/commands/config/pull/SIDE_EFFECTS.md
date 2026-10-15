@@ -148,7 +148,7 @@ apply.`, `[remotes.<label>] would be created (dry run); no config differences to
 
 `output.success(message, payload)`. `schema_version` is this command's OWN payload version
 (`CONFIG_PULL_PAYLOAD_VERSION`, currently `1`) — independent of `config diff`'s. The payload
-contains `config_schema`, `config_path`, `format`, `target` (`kind: "linked"`, `project_ref`, `project_name` and `environment` (`production`, `branch` or `unverified`) when known, `parent_project_ref` for a branch, optional `branch`, and
+contains `config_schema`, `config_path`, `format`, `target` (the [command target](../../../../docs/command-target.md) plus optional `branch` and
 `local_scope` — the block the LOCAL comparison operand came from, `"base"` when pulling into a
 brand-new `[remotes.*]` block since there is nothing to overlay yet), `destination` (`scope`,
 optional `label`, `created` — WHERE this run writes, independent of `target.local_scope`),

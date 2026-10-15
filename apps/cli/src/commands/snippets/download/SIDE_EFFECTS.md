@@ -86,4 +86,4 @@ NDJSON `success` event with the same full payload as `--output-format json`.
 - The `--output` flag has **no effect** on this command — `--output` values (`pretty|json|yaml|toml|env`) do not change text-mode rendering. Only the TS-extension `--output-format json|stream-json` produces a structured payload.
 - UUID validation runs **after** project-ref resolution but **before** the API call. Error messages: `invalid snippet ID: invalid UUID length: N` for malformed lengths, `invalid snippet ID: invalid UUID format` for length-36 inputs with wrong dash positions or hex chars.
 - The linked-project cache fires after project-ref resolves; the telemetry state always flushes. Both run on success and on every error path — including invalid-UUID early-exit — via the two `Effect.ensuring` blocks in the handler.
-- After the project ref resolves, one `Target: project <ref> · <identity>` line is printed on stderr in every output format.
+- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
