@@ -226,6 +226,8 @@ The stack is a session stack composed with `composition.supabase` and `{ eager: 
 
 Every test stack for the current OS user shares one state root and the package's artifact cache root under the OS temp directory, so their ports are coordinated and Docker uses one data volume (Podman uses host directories); each gets a unique temporary project root and name. Pass `stateRoot`, `cacheRoot`, or `projectRoot` to override them. The runtime comes from `runtime`, then `SUPABASE_STACK_TEST_RUNTIME`, then the platform default: native where the catalog publishes native artifacts and Docker elsewhere. A startup failure names the state of each registered service and the owner log.
 
+Services run the compiled default pins. With a caller-owned `projectRoot`, the stack reads `supabase/supabase.lock` once at creation and runs the pins it records, so a test runs the versions the project locked; it never resolves versions or checks the lock for staleness. A lock that is malformed or from a newer format fails creation with `LockInvalidError`, `LockUnsupportedVersionError`, or `LockIoError`, never a fallback to the defaults. An explicit `pin` on a service still wins.
+
 `checkpoint(name)` stops the composition, saves the database data as an instance-scoped snapshot, and starts the composition again. `reset(name)` stops it, clears the database data, restores that snapshot, and waits until every service is ready. Checkpoints are never evicted by other stacks' snapshots and are removed when the test stack is destroyed.
 
 Effect tests use the scoped `makeTestStack`, which destroys the stack when its scope closes:
