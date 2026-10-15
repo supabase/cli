@@ -1,6 +1,7 @@
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { machineErrorContextLayer } from "../../../../shared/output/machine-error-context.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
@@ -60,6 +61,10 @@ export const stackStartCommand = Command.make("start", config).pipe(
       description: "Start a named Docker stack",
     },
   ]),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["exclude", "stack", "stack-id", "runtime", "preparation", "eager"],
+  }),
   Command.withHandler((flags) =>
     stackStart(flags).pipe(
       withCommandTelemetry({ flags, config, aliases: { x: "exclude" } }),

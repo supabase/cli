@@ -26,16 +26,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
 
   "pull",
 
-  "stack start",
-  "stack status",
-  "stack stop",
-
-  "start",
-
-  "status",
-
-  "stop",
-
   "telemetry disable",
   "telemetry enable",
   "telemetry status",
