@@ -2217,10 +2217,14 @@ export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs
     const [firstUnsupported] = unsupportedImportMaps;
     if (firstUnsupported !== undefined) {
       const [slug, importMapPath] = firstUnsupported;
-      const configPath = path.relative(input.supabaseDir, importMapPath).split(path.sep).join("/");
+      const relativePath = path
+        .relative(input.supabaseDir, importMapPath)
+        .split(path.sep)
+        .join("/");
+      const configPath = relativePath.startsWith("../") ? relativePath : `./${relativePath}`;
       return yield* new FunctionDeployError({
         message: `import_map.json in a function directory is no longer supported: ${[...unsupportedImportMaps.keys()].join(", ")}`,
-        suggestion: `Rename it to deno.json, or set functions.${slug}.import_map = "./${configPath}" in config.toml to keep the file.`,
+        suggestion: `Rename it to deno.json, or set functions.${slug}.import_map = "${configPath}" in config.toml to keep the file.`,
       });
     }
 

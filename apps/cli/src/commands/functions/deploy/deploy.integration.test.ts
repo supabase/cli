@@ -696,6 +696,38 @@ describe("functions deploy", () => {
       },
     );
 
+    it.effect(
+      "suggests a parent-relative import_map path for an entrypoint outside supabase/",
+      () => {
+        const { api, layer } = apiDeployHarness(deployedHelloWorld);
+
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* writeCliConfig(
+            tempRoot.current,
+            [
+              'project_id = "test-project"',
+              '[functions."hello-world"]',
+              'entrypoint = "../src/hello-world/index.ts"',
+              "",
+            ].join("\n"),
+          );
+          const sourceDir = `${tempRoot.current}/src/hello-world`;
+          yield* fs.makeDirectory(sourceDir, { recursive: true });
+          yield* fs.writeFileString(`${sourceDir}/index.ts`, "Deno.serve(() => new Response())\n");
+          yield* fs.writeFileString(`${sourceDir}/import_map.json`, '{"imports":{}}\n');
+
+          const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
+
+          expect(error).toMatchObject({
+            suggestion:
+              'Rename it to deno.json, or set functions.hello-world.import_map = "../src/hello-world/import_map.json" in config.toml to keep the file.',
+          });
+          expect(api.requests).toEqual([]);
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+      },
+    );
+
     it.effect("deploys with deno.json when the function directory has both files", () => {
       const { importMapPaths, layer } = harnessRecordingImportMapPaths();
 
