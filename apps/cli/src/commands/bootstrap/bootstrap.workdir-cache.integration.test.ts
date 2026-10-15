@@ -35,6 +35,7 @@ import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { SuccessTrailer, successTrailerLayer } from "../../shared/cli/success-trailer.ts";
 import { DbConnection, type PgConnInput } from "../../command-internal/db-connection.service.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
+import { TargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
 import { linkedProjectCacheLayer } from "../../telemetry/linked-project-cache.layer.ts";
@@ -167,6 +168,7 @@ describe("bootstrap linked-project cache location", () => {
           Layer.succeed(ProfileFlag, "supabase"),
           Layer.succeed(WorkdirFlag, Option.none()),
           Layer.succeed(YesFlag, false),
+          Layer.succeed(TargetPolicy, { group: "account", consent: "yes" }),
           Layer.succeed(OutputFlag, Option.none()),
           Layer.succeed(DebugFlag, false),
           Layer.succeed(DnsResolverFlag, "native"),
@@ -298,13 +300,11 @@ describe("bootstrap linked-project cache location", () => {
         expect(pushConnectCalls[0]?.host).toBe("aws-0-us-east-1.pooler.supabase.com");
         expect(pushConnectCalls[0]?.user).toBe(`postgres.${VALID_REF}`);
         expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
-        // The confirm prompt is interactive UI (clack), not `output.raw` text, so it's recorded
-        // in `promptConfirmCalls`, not `stderrText`.
-        expect(
-          out.promptConfirmCalls.some((c) =>
-            c.message.includes("Do you want to create custom roles in the database cluster?"),
-          ),
-        ).toBe(true);
+        const questions = out.promptConfirmCalls.map((c) => c.message);
+        expect(questions).toEqual([
+          expect.stringContaining("Create a new Supabase project from the"),
+          expect.stringContaining("overwrite existing files"),
+        ]);
         expect(out.stderrText).toContain("Seeding globals from roles.sql...");
         // With no `supabase/seed.sql` file, the seed glob matches nothing, so this line only
         // prints when `includeSeed` is true.

@@ -10,6 +10,12 @@ with IPv4 transaction-pooler fallback) and then appends the migra diff.
 `SUPABASE_EXPERIMENTAL` resolving true without `--declarative`) are removed — see
 "Removed surfaces" below.
 
+The default target is the linked project; `--local` selects the local database and `--db-url`
+another database, and `--project-ref` selects a linked project. One `Target: …` line on stderr
+names the resolved database. In migration mode a hosted target (the linked project or a
+non-local `--db-url`) needs one confirmation (default **No**) that covers writing the migration
+file(s) and recording them in the remote migration history; see "Consent" below.
+
 When `[experimental].stack` is on, each shadow is a fresh database in an invocation-owned,
 unique temporary stack namespace. The command applies the catalog and project migrations as needed,
 then destroys its namespace when the Effect scope closes. If its container engine is unreachable
@@ -111,15 +117,15 @@ at all, so nothing is cached for it.
 
 ## API Routes / DB
 
-| Method | Path / SQL                                          | Auth   | Purpose                             |
-| ------ | --------------------------------------------------- | ------ | ----------------------------------- |
-| POST   | `/v1/projects/{ref}/cli/login-role`                 | Bearer | Temp login role when no password    |
-| GET    | `/v1/projects/{ref}/config/database/pooler`         | Bearer | IPv4 pooler fallback                |
-| POST   | `/v1/projects/{ref}/network-bans/retrieve`          | Bearer | List bans during pooler login retry |
-| DELETE | `/v1/projects/{ref}/network-bans`                   | Bearer | Unban during pooler login retry     |
-| GET    | `/v1/projects/{ref}`                                | Bearer | Linked-project cache (post-run)     |
-| SQL    | `SELECT version FROM …schema_migrations`            | —      | history reconciliation (remote)     |
-| SQL    | `INSERT … ON CONFLICT … schema_migrations` (UPSERT) | —      | history update (on confirmation)    |
+| Method | Path / SQL                                          | Auth   | Purpose                                              |
+| ------ | --------------------------------------------------- | ------ | ---------------------------------------------------- |
+| POST   | `/v1/projects/{ref}/cli/login-role`                 | Bearer | Temp login role when no password                     |
+| GET    | `/v1/projects/{ref}/config/database/pooler`         | Bearer | IPv4 pooler fallback                                 |
+| POST   | `/v1/projects/{ref}/network-bans/retrieve`          | Bearer | List bans during pooler login retry                  |
+| DELETE | `/v1/projects/{ref}/network-bans`                   | Bearer | Unban during pooler login retry (only under `--yes`) |
+| GET    | `/v1/projects/{ref}`                                | Bearer | Linked-project cache (post-run)                      |
+| SQL    | `SELECT version FROM …schema_migrations`            | —      | history reconciliation (remote)                      |
+| SQL    | `INSERT … ON CONFLICT … schema_migrations` (UPSERT) | —      | history update (after consent)                       |
 
 ## Environment Variables
 
@@ -139,12 +145,13 @@ at all, so nothing is cached for it.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                          |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success (migration written + optional history update; declarative export)                                                                                                          |
-| `1`  | target mutex; `--declarative` with `--diff-engine`; migration-history conflict; **no schema changes ("No schema changes found")**; connection/shadow/engine failure; file IO error |
-| `1`  | `--use-pg-delta` passed at all (any value, including `=false`); `--experimental`/`SUPABASE_EXPERIMENTAL` resolving true without `--declarative` — removed, see Removed surfaces    |
-| `1`  | `--project-ref` set with a resolved target other than linked                                                                                                                       |
+| Code | Condition                                                                                                                                                                                      |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success (migration written and recorded in the history; declarative export)                                                                                                                    |
+| `1`  | conflicting target flags; `--declarative` with `--diff-engine`; migration-history conflict; **no schema changes ("No schema changes found")**; connection/shadow/engine failure; file IO error |
+| `1`  | `--use-pg-delta` passed at all (any value, including `=false`); `--experimental`/`SUPABASE_EXPERIMENTAL` resolving true without `--declarative` — removed, see Removed surfaces                |
+| `1`  | `--project-ref` combined with `--local` or `--db-url`                                                                                                                                          |
+| `1`  | hosted confirmation declined (`context canceled`), or needed in a run that cannot prompt (non-interactive, JSON, stream-json, agent) without `--yes`                                           |
 
 > Note: unlike `db diff`, an empty diff (`No schema changes found`) is a **non-zero
 > exit** for `db pull`. Instead of the generic
@@ -159,7 +166,7 @@ at all, so nothing is cached for it.
 Progress to stderr. Migration path: `Creating shadow database...`,
 `Diffing schemas[: <list>]`, `Schema written to <path>`. Declarative path:
 `Preparing declarative schema export using pg-delta...`, `Declarative schema
-written to <dir>`. Plus the history-update prompt. On success the PostRun line `Finished supabase db pull.` is printed to
+written to <dir>`. On a hosted target the confirmation question precedes any file write. On success the PostRun line `Finished supabase db pull.` is printed to
 stdout.
 
 A configured `[db.migrations].schema_paths` also warns on the migration path
@@ -168,8 +175,25 @@ that it no longer replaces the migrations baseline.
 ### `--output-format json` / `stream-json`
 
 Progress strings still go to stderr; stdout carries a single structured envelope
-`{ declarative, schemaWritten, remoteHistoryUpdated, engine }` and suppresses the
-`Finished supabase db pull.` line.
+`{ declarative, schemaWritten, remoteHistoryUpdated, engine }` (`remoteHistoryUpdated` is `true`
+for every migration-mode pull) and suppresses the `Finished supabase db pull.` line. The
+resolved `target` object is merged into the payload.
+
+## Consent
+
+- Declarative pulls and pulls against the local stack ask nothing.
+- A migration pull against a hosted target asks `Update the remote migration history table on
+<target>?` (default **No**), listing the number of migration files it will write. It is asked
+  after the diff and the in-sync check, so an in-sync pull asks nothing. The initial migra pull
+  asks before its `pg_dump` seed writes the file.
+- Declining exits non-zero with `context canceled` before any file is written; the migration
+  history is never updated without the files and the files are never written without the history
+  update.
+- `--yes` or a `SUPABASE_YES` in the shell environment confirms it (`Confirmed by --yes: …`). A
+  `SUPABASE_YES` in the project `supabase/.env` does not. JSON, stream-json, `-o` resource formats and
+  non-TTY runs cannot prompt and fail without `--yes`; a piped answer on stdin is ignored.
+- `--yes` also lets the connection remove a network ban that blocks the temporary login role;
+  without it the pull fails and points to `supabase network-bans remove`.
 
 ## Notes
 
@@ -179,18 +203,15 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   block. The linked-database password env is withheld when the target differs from
   `.temp/project-ref`, with a `Not sending SUPABASE_DB_PASSWORD to <target>: ...` warning and a
   temporary login role instead. `--password` is rejected with `--db-url` or `--local`.
-- `--declarative` is mutually exclusive with
-  `--diff-engine`; `--db-url` / `--linked` (default) / `--local` are a target group.
+- `--declarative` is mutually exclusive with `--diff-engine`; `--db-url`, `--linked` and `--local`
+  are mutually exclusive, and the default target is the linked project.
 - `--diff-engine` defaults to pg-delta. Without the flag, migra is selected only by
   `[experimental.pgdelta] enabled = false`; the historical
   `SUPABASE_EXPERIMENTAL_PG_DELTA` opt-in is not read.
-- **`--project-ref`** overrides ONLY the linked-ref resolution `ProjectRefResolver`
-  performs (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`) — unlike
-  `SUPABASE_PROJECT_ID`, it does not affect the shadow container's project
-  id/labels. It never implies `--linked`: passing it with a resolved
-  `--local`/`--db-url` target is a hard error rather than a silently discarded
-  flag (deliberately stricter than `SUPABASE_PROJECT_ID`, which is simply
-  unused on a non-linked target).
+- **`--project-ref`** selects a linked project (flag > `SUPABASE_PROJECT_ID` >
+  `.temp/project-ref`) and implies `--linked`; unlike `SUPABASE_PROJECT_ID`, it does not
+  affect the shadow container's project id/labels. Combining it with `--local` or `--db-url`
+  is a hard error.
 - Migration-style pulls always compare migrations with the live target;
   declarative files and `schema_paths` do not replace that baseline.
 - Bundled nontransactional files begin with

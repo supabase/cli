@@ -1,6 +1,7 @@
 import type { DownloadFunctionsResult } from "../../shared/functions/download.ts";
 import type { MigrationFetchOutcome } from "../../command-internal/migration-fetch-run.ts";
 import type { DbPullOutcome } from "../../command-internal/db-pull-run.ts";
+import type { TargetJson } from "../../shared/output/command-target.service.ts";
 import type {
   PullAggregate,
   PullStepFailure,
@@ -34,7 +35,7 @@ export interface PullConfigStepOutcome {
 
 /**
  * `config` step: `unchanged` with no work at all, `planned` when work exists but was skipped
- * (dry run or a declined confirmation), and `changed` once the plan applied. `detail` is always
+ * (dry run), and `changed` once the plan applied. `detail` is always
  * the payload passed in, since `config pull` computes a diff report even when nothing applied.
  */
 export function pullConfigStepResult(
@@ -54,12 +55,11 @@ export function pullConfigStepResult(
 export type PullMigrationHistoryStepOutcome =
   | {
       /**
-       * Never attempted: `"not_needed"` when migrations already existed and
-       * `--with-migration-history` wasn't passed, or `"declined"` when the aggregated
-       * confirmation was declined before this step could run.
+       * Never attempted: migrations already existed and `--with-migration-history` wasn't
+       * passed.
        */
       readonly kind: "skipped";
-      readonly reason: "not_needed" | "declined";
+      readonly reason: "not_needed";
     }
   | {
       /**
@@ -339,6 +339,7 @@ export function pullCounts(results: ReadonlyArray<PullStepResult>): PullCounts {
 export function pullAggregate(input: {
   readonly ref: string;
   readonly branch: string | undefined;
+  readonly targetIdentity: TargetJson;
   readonly dryRun: boolean;
   readonly confirmed: boolean;
   readonly dirtyPaths: ReadonlyArray<string>;
@@ -347,6 +348,7 @@ export function pullAggregate(input: {
   return {
     ref: input.ref,
     branch: input.branch,
+    targetIdentity: input.targetIdentity,
     dryRun: input.dryRun,
     confirmed: input.confirmed,
     dirtyPaths: input.dirtyPaths,

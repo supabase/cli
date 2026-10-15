@@ -8,7 +8,10 @@ import { unsupportedOutputFlagMessage } from "../../command-internal/output-form
 import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
 import { MachineErrorContext } from "../../shared/output/machine-error-context.service.ts";
 import { resolveYes, OutputFlag } from "../../command-internal/global-flags.ts";
-import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
+import { requireHostedMutationConsent } from "../../command-internal/hosted-consent/hosted-consent.ts";
+import type { ResolvedTarget } from "../../command-internal/target/resolve-target.ts";
+import { CommandTarget, type TargetJson } from "../../shared/output/command-target.service.ts";
+import { readProjectRefFile } from "../../shared/config/temp-paths.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
@@ -95,9 +98,9 @@ const configPullPayloadFor = (runPlan: ConfigPullRunPlan, outcome: ConfigPullOut
   configPullPayload(runPlan.changeSet, runPlan.scope, runPlan.plan, runPlan.context, outcome);
 
 /**
- * Emits the aggregate for every non-failure disposition (dry run, declined, or fully
- * succeeded). The mixed-failure disposition is inlined separately instead, since machine mode
- * there feeds the payload into `MachineErrorContext` ahead of a re-failed cause.
+ * Emits the aggregate for every non-failure disposition (dry run or fully succeeded). The
+ * mixed-failure disposition is inlined separately instead, since machine mode there feeds the
+ * payload into `MachineErrorContext` ahead of a re-failed cause.
  */
 const pullEmit = (output: typeof Output.Service, aggregate: PullAggregate) =>
   output.format === "text"
@@ -192,6 +195,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const machineErrorContext = yield* MachineErrorContext;
+  const commandTarget = yield* CommandTarget;
 
   const requested = Option.filter(flags.projectRef, (value) => value.length > 0);
   const remoteLabel = Option.getOrUndefined(
@@ -230,6 +234,18 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
       });
       return { ref: target.ref, branch: target.branch, runPlan: plan, source: pullSource };
     }).pipe(Effect.withSpan("pull.resolveTarget"));
+
+    // `resolveConfigTarget` already announced the target; wrapping its ref here avoids a second banner.
+    const linkedRef = yield* readProjectRefFile(fs, path, cliSettings.workdir).pipe(
+      Effect.orElseSucceed(() => Option.none<string>()),
+    );
+    const linkedTarget: ResolvedTarget = {
+      kind: "linked",
+      ref,
+      source: "flag",
+      matchesLinkedRef: Option.contains(linkedRef, ref),
+    };
+    const targetIdentity: TargetJson = Option.getOrElse(yield* commandTarget.json, () => ({}));
 
     // Retry hints below use the planned remote destination's label, not the raw `remoteLabel`
     // flag: for a branch-derived implicit target, that's the `[remotes.<branch>]` block the
@@ -349,6 +365,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
       const aggregate = pullAggregate({
         ref,
         branch,
+        targetIdentity,
         dryRun: true,
         confirmed: false,
         dirtyPaths,
@@ -367,40 +384,22 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
       }
     }
 
-    const confirmed = yield* promptYesNo(output, yes, "Proceed with pull?", dirty ? false : true);
-    if (!confirmed) {
-      const results: ReadonlyArray<PullStepResult> = [
-        pullConfigStepResult(
-          {
-            dryRun: false,
-            hasWork: runPlan.hasWork,
-            confirmed: false,
-            configFilePath: runPlan.context.configPath,
-          },
-          configPullPayloadFor(runPlan, { dryRun: false, declined: true }),
-        ),
-        pullMigrationHistoryStepResult({
-          kind: "skipped",
-          reason: shouldFetchMigrationHistory ? "declined" : "not_needed",
-        }),
-        pullDbStepResult({ kind: "planned" }),
-        pullFunctionsStepResult({ kind: "planned" }),
-      ];
-      const aggregate = pullAggregate({
-        ref,
-        branch,
-        dryRun: false,
-        confirmed: false,
-        dirtyPaths,
-        results,
-      });
-      yield* pullEmit(output, aggregate);
-      return;
-    }
+    const preapproved = yield* requireHostedMutationConsent({
+      action: "Pull project state and update the remote migration history table",
+      details: [
+        "Write a migration file for the remote schema to supabase/migrations.",
+        "Record it as applied in the remote migration history.",
+      ],
+    }).pipe(Effect.map(Option.some));
 
     // Each step is failure-isolated: one failing doesn't stop the rest from running and being
     // reported.
-    const stepContext: PullStepContext = { ref, assumeYes: true };
+    const stepContext: PullStepContext = {
+      ref,
+      assumeYes: true,
+      target: linkedTarget,
+      preapproved,
+    };
     const { results, firstFailureCause } = yield* Effect.gen(function* () {
       let firstFailureCause: Cause.Cause<PullStepFailureCause> | undefined;
       const results: Array<PullStepResult> = [];
@@ -410,7 +409,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
         results.push(
           pullConfigStepResult(
             // `pullConfigStep` returns the plan's absolute `configFilePath`; overridden here to
-            // the workdir-relative path, matching the dry-run/declined branches above.
+            // the workdir-relative path, matching the dry-run branch above.
             { ...configCapture.value, configFilePath: runPlan.context.configPath },
             configPullPayloadFor(runPlan, { dryRun: false, declined: false }),
           ),
@@ -494,6 +493,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     const aggregate = pullAggregate({
       ref,
       branch,
+      targetIdentity,
       dryRun: false,
       confirmed: true,
       dirtyPaths,

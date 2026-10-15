@@ -9,7 +9,6 @@ import { projectRefLayer } from "../../../config/project-ref.layer.ts";
 import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
 import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
-import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { identityStitchLayer } from "../../../command-internal/identity-stitch.ts";
 import { linkedProjectCacheLayer } from "../../../telemetry/linked-project-cache.layer.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
@@ -70,9 +69,5 @@ export const dbPushRuntimeLayer = Layer.mergeAll(
   linkedProjectCache,
   identityStitchLayer,
   telemetryStateLayer,
-  // `promptYesNo`'s non-TTY branch reads the piped answer via `Stdin`;
-  // without it a CI/piped `db push` that reaches a confirmation prompt fails
-  // with a missing-service defect instead of honoring `y`/`n` or the default.
-  stdinLayer,
   commandRuntimeLayer(["db", "push"]),
 );

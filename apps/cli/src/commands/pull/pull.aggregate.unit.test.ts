@@ -53,21 +53,6 @@ describe("pullConfigStepResult", () => {
     });
   });
 
-  it("reports planned for a declined confirmation that has work, identically to a dry run", () => {
-    const outcome: PullConfigStepOutcome = {
-      dryRun: false,
-      hasWork: true,
-      confirmed: false,
-      configFilePath: "supabase/config.toml",
-    };
-    expect(pullConfigStepResult(outcome, payload)).toEqual({
-      step: "config",
-      status: "planned",
-      written: [],
-      detail: payload,
-    });
-  });
-
   it("reports changed and writes the config file path once actually applied", () => {
     const outcome: PullConfigStepOutcome = {
       dryRun: false,
@@ -107,17 +92,6 @@ describe("pullMigrationHistoryStepResult", () => {
       written: [],
       detail: { files: [] },
       reason: "not_needed",
-    });
-  });
-
-  it("reports skipped with reason declined", () => {
-    const outcome: PullMigrationHistoryStepOutcome = { kind: "skipped", reason: "declined" };
-    expect(pullMigrationHistoryStepResult(outcome)).toEqual({
-      step: "migration_history",
-      status: "skipped",
-      written: [],
-      detail: { files: [] },
-      reason: "declined",
     });
   });
 
@@ -564,6 +538,7 @@ describe("pullAggregate", () => {
       pullAggregate({
         ref: "abcdefghijklmnopqrst",
         branch: "staging",
+        targetIdentity: { kind: "linked", environment: "branch" },
         dryRun: true,
         confirmed: false,
         dirtyPaths: ["supabase/config.toml"],
@@ -572,6 +547,7 @@ describe("pullAggregate", () => {
     ).toEqual({
       ref: "abcdefghijklmnopqrst",
       branch: "staging",
+      targetIdentity: { kind: "linked", environment: "branch" },
       dryRun: true,
       confirmed: false,
       dirtyPaths: ["supabase/config.toml"],
@@ -584,6 +560,7 @@ describe("pullAggregate", () => {
       pullAggregate({
         ref: "abcdefghijklmnopqrst",
         branch: undefined,
+        targetIdentity: {},
         dryRun: false,
         confirmed: true,
         dirtyPaths: [],
@@ -609,6 +586,7 @@ describe("pullAggregate", () => {
     const aggregate = pullAggregate({
       ref: "abcdefghijklmnopqrst",
       branch: undefined,
+      targetIdentity: {},
       dryRun: false,
       confirmed: true,
       dirtyPaths: [],

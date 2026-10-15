@@ -21,6 +21,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbPull, resolveRemovedExperimental } from "./pull.handler.ts";
 import { dbPullRuntimeLayer } from "./pull.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
@@ -62,25 +63,7 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription(
-      "Pulls from the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Pulls from the linked project."),
-    Flag.optional,
-  ),
-  local: Flag.Boolean("local").pipe(
-    Flag.withDescription("Pulls from the local database."),
-    Flag.optional,
-  ),
-  // TS-only override of the linked project ref — see push.command.ts.
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...targetFlags({ group: "sync", subject: "database", dbUrl: true }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
@@ -122,7 +105,7 @@ const telemetryOptions = (flags: DbPullFlags) => ({
 
 export const dbPullCommand = Command.make("pull", config).pipe(
   Command.withDescription(
-    "Migration mode compares supabase/migrations with the selected live database (--linked by default), writes the complete difference as migration files, and may record them in that database's migration history. --declarative instead replaces the declarative schema tree and does not create migrations or update migration history.",
+    "Migration mode compares supabase/migrations with the selected live database (the linked project by default), writes the complete difference as migration files, and records them in that database's migration history; a hosted database asks for confirmation first, or needs --yes in a non-interactive run. --declarative instead replaces the declarative schema tree and does not create migrations or update migration history.",
   ),
   Command.withShortDescription("Pull schema from the remote database"),
   withPermissions(

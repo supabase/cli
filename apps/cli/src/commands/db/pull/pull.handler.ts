@@ -10,6 +10,8 @@ import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { runDbPull } from "../../../command-internal/db-pull-run.ts";
+import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
+import { DbPullEngineConflictError } from "./pull.errors.ts";
 import type { DbPullFlags } from "./pull.command.ts";
 
 /**
@@ -48,7 +50,14 @@ export const dbPull = Effect.fn("db.pull")(function* (
   projectEnv?: Record<string, string>,
 ) {
   const output = yield* Output;
-  const outcome = yield* runDbPull(flags, { projectEnv });
+  if (Option.isSome(flags.declarative) && Option.isSome(flags.diffEngine)) {
+    return yield* new DbPullEngineConflictError({
+      message:
+        "if any flags in the group [declarative diff-engine] are set none of the others can be; [declarative diff-engine] were all set",
+    });
+  }
+  const target = yield* resolveTarget(flags);
+  const outcome = yield* runDbPull(flags, target, { projectEnv });
 
   yield* Effect.annotateCurrentSpan({
     "db.pull.outcome": outcome.kind,
