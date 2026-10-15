@@ -7,7 +7,7 @@ import { compose } from "../../command-internal/command-permissions/model.ts";
 import { projectApiKeys } from "../../command-internal/get-api-keys.ts";
 import { linkServices } from "../../command-internal/link-services-core.ts";
 import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
-import { organizationPicker } from "../projects/projects.prompt.ts";
+import { organizationPicker } from "../../command-internal/organization-picker.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { cliConfigProviderLayer } from "../../shared/config/cli-config-provider.layer.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";

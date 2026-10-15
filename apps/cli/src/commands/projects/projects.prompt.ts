@@ -3,7 +3,6 @@ import { randomInt } from "node:crypto";
 import { Effect } from "effect";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
-import { block } from "../../command-internal/command-permissions/model.ts";
 import { mapHttpError } from "../../command-internal/http-errors.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import {
@@ -56,15 +55,6 @@ export const promptProjectName = Effect.fnUntraced(function* () {
     message: "project name cannot be empty",
   });
 });
-
-/** `promptOrgId`'s organization listing, made when no organization ID is given. */
-export const organizationPicker = block("organization-picker", [
-  {
-    operationId: "v1-list-all-organizations",
-    kind: "required",
-    when: [{ flag: "org-id", present: false }],
-  },
-]);
 
 /**
  * Lists the user's organizations and prompts for one. The prompt shows the

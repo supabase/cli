@@ -24,7 +24,7 @@ import {
   assertPermissionDrift,
 } from "../../../../tests/helpers/permission-drift.ts";
 import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
-import { organizationPicker } from "../projects.prompt.ts";
+import { organizationPicker } from "../../../command-internal/organization-picker.ts";
 import { projectsCreateCommand, type ProjectsCreateFlags } from "./create.command.ts";
 import { projectsCreate } from "./create.handler.ts";
 

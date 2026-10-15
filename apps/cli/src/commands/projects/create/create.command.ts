@@ -8,7 +8,7 @@ import {
   withContext,
 } from "../../../command-internal/command-permissions/model.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
-import { organizationPicker } from "../projects.prompt.ts";
+import { organizationPicker } from "../../../command-internal/organization-picker.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
