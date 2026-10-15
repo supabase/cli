@@ -35,12 +35,14 @@ import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { AiTool } from "../../../shared/telemetry/ai-tool.service.ts";
 import type { DbQueryFlags } from "./query.command.ts";
 import { RLS_CHECK_SQL, buildRlsAdvisory } from "./query.advisory.ts";
+import { findReadOnlyViolation } from "./query.read-only.ts";
 import {
   DbQueryExecError,
   DbQueryLoginRequiredError,
   DbQueryNoSqlError,
   DbQueryNoStdinSqlError,
   DbQueryReadFileError,
+  DbQueryReadOnlyStatementError,
   DbQueryUnexpectedStatusError,
 } from "./query.errors.ts";
 import {
@@ -349,6 +351,19 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
       "query.agent_mode": agentMode,
       "query.read_only": flags.readOnly,
     });
+
+    // `--read-only` skips consent only because the statement cannot write, so SQL that ends the
+    // transaction or flips its read-only mode is refused before anything connects or prompts.
+    if (flags.readOnly) {
+      const violation = findReadOnlyViolation(sql);
+      if (violation !== undefined) {
+        return yield* new DbQueryReadOnlyStatementError({
+          message: `--read-only does not allow transaction control or read-only setting changes (found: ${violation})`,
+          suggestion:
+            "Drop --read-only to run this statement; a hosted database then asks you to confirm the write.",
+        });
+      }
+    }
 
     // 3. A hosted statement may write, so it needs consent unless `--read-only` confines it.
     if (!flags.readOnly) {

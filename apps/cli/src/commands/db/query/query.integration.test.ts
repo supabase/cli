@@ -82,6 +82,7 @@ import {
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { RLS_CHECK_SQL } from "./query.advisory.ts";
 import type { DbQueryFlags } from "./query.command.ts";
+import { DbQueryReadOnlyStatementError } from "./query.errors.ts";
 import { dbQuery } from "./query.handler.ts";
 
 const LOCAL_CONN: PgConnInput = {
@@ -128,6 +129,7 @@ function mockDbConnection(opts: {
   queryFails?: boolean;
 }) {
   const statements: Array<string> = [];
+  let connects = 0;
   let inReadOnly = false;
   const layer = Layer.succeed(DbConnection, {
     connect: () =>
@@ -166,12 +168,21 @@ function mockDbConnection(opts: {
               ? Effect.fail(new DbExecError({ message: "failed to execute query: boom" }))
               : Effect.succeed(opts.result ?? { fields: [], rows: [], commandTag: "CREATE TABLE" });
           }),
-      }),
+      }).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            connects += 1;
+          }),
+        ),
+      ),
   });
   return {
     layer,
     get statements() {
       return statements;
+    },
+    get connects() {
+      return connects;
     },
   };
 }
@@ -1232,6 +1243,51 @@ describe("db query integration", () => {
         expect(httpClient.bodies).toEqual([{ query: "select 1", read_only: true }]);
       }).pipe(Effect.provide(layer));
     });
+
+    const rejectedTargets = [
+      ["a local target", { local: true }, {}],
+      ["a --db-url target", { dbUrl: Option.some("postgres://x/y") }, { isLocal: false }],
+      ["a linked target", { linked: true }, {}],
+    ] as const;
+    for (const [name, target, opts] of rejectedTargets) {
+      it.effect(
+        `refuses COMMIT; DELETE before connecting, calling the API or asking on ${name}`,
+        () => {
+          const sessionOpts = {
+            ...opts,
+            result: SELECT_RESULT,
+            linkedStatus: 201,
+            linkedBody: '[{"id":1}]',
+            yes: false,
+            interactive: true,
+            confirm: [true],
+          };
+          const rejected = setup(sessionOpts);
+          const read = setup(sessionOpts);
+          return Effect.gen(function* () {
+            const exit = yield* dbQuery(
+              flags({ ...target, sql: Option.some("COMMIT; DELETE FROM users"), readOnly: true }),
+            ).pipe(Effect.provide(rejected.layer), Effect.exit);
+            expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(
+              DbQueryReadOnlyStatementError,
+            );
+            expect(failMessage(exit)).toBe(
+              "--read-only does not allow transaction control or read-only setting changes (found: COMMIT)",
+            );
+            expect(rejected.dbConnection.connects).toBe(0);
+            expect(rejected.dbConnection.statements).toEqual([]);
+            expect(rejected.httpClient.requests).toEqual([]);
+            expect(rejected.out.promptConfirmCalls).toEqual([]);
+
+            yield* dbQuery(
+              flags({ ...target, sql: Option.some("select * from users"), readOnly: true }),
+            ).pipe(Effect.provide(read.layer));
+            expect(read.out.promptConfirmCalls).toEqual([]);
+            expect(read.out.stdoutText).not.toBe("");
+          });
+        },
+      );
+    }
 
     it.effect("omits read_only from the Management API request by default", () => {
       const { layer, httpClient } = setup({ linkedStatus: 201, linkedBody: '[{"id":1}]' });

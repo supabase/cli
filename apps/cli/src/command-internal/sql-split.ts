@@ -50,14 +50,16 @@ function isBeginAtomic(data: string): boolean {
   return endsWithKeyword(data.slice(0, end), "BEGIN");
 }
 
-function isCommentsAndWhitespace(text: string): boolean {
+// Index of the first character past leading blanks and comments, or `text.length` when only
+// trivia (or an unterminated comment) remains.
+function skipLeadingTrivia(text: string, isBlank: (char: string) => boolean): number {
   let i = 0;
   while (i < text.length) {
-    if (isSqlWhitespace(text[i]!)) {
+    if (isBlank(text[i]!)) {
       i += 1;
     } else if (text.startsWith("--", i)) {
       const newline = text.slice(i + 2).search(/[\n\r]/u);
-      if (newline === -1) return true;
+      if (newline === -1) return text.length;
       i += newline + 3;
     } else if (text.startsWith("/*", i)) {
       // Match `BlockState`'s sliding-window scan so both agree on overlapping delimiters.
@@ -69,13 +71,28 @@ function isCommentsAndWhitespace(text: string): boolean {
         else if (window === "*/") depth -= 1;
         i += 1;
       }
-      if (depth > 0) return true;
+      if (depth > 0) return text.length;
     } else {
-      return false;
+      return i;
     }
   }
-  return true;
+  return text.length;
 }
+
+const isCommentsAndWhitespace = (text: string): boolean =>
+  skipLeadingTrivia(text, isSqlWhitespace) === text.length;
+
+const BYTE_ORDER_MARK = "\uFEFF";
+
+/**
+ * Strips leading whitespace, byte order marks and line/block comments (block comments nest, as
+ * PostgreSQL scans them) so a keyword check sees the statement's first token. Empty when only
+ * trivia or an unterminated comment remains.
+ */
+export const trimLeadingSqlComments = (sql: string): string =>
+  sql
+    .slice(skipLeadingTrivia(sql, (char) => isSqlWhitespace(char) || char === BYTE_ORDER_MARK))
+    .trim();
 
 class ReadyState implements State {
   next(char: string, data: string): State | null {

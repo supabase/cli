@@ -198,6 +198,7 @@ DbQueryMutuallyExclusiveFlagsError
 DbQueryNoSqlError
 DbQueryNoStdinSqlError
 DbQueryReadFileError
+DbQueryReadOnlyStatementError
 DbQueryUnexpectedStatusError
 DbResetApplyError
 DbResetCancelledError

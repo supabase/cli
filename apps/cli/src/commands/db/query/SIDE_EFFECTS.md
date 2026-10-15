@@ -54,6 +54,7 @@ confirmation and makes the statement unable to write (see Notes). The local stac
 | `1`  | more than one of `--db-url`/`--linked`/`--local` (`TargetSelectorConflictError`); no SQL provided; empty stdin; unreadable `--file`; linked target without login; query exec failure; non-201 linked status |
 | `1`  | `--project-ref` with `--local` or `--db-url` (`TargetProjectRefConflictError`)                                                                                                                              |
 | `1`  | hosted target without `--read-only` in a JSON, piped, agent or non-TTY run without `--yes` or a shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`); nothing is sent                                |
+| `1`  | `--read-only` with transaction control or a read-only setting change (`DbQueryReadOnlyStatementError`); nothing is sent                                                                                     |
 | `1`  | hosted target confirmation declined (`HostedMutationDeclinedError`, `context canceled`); nothing is sent                                                                                                    |
 
 ## Output
@@ -109,8 +110,13 @@ from the environment. Agent mode defaults the format to JSON (table for humans).
 - **`--read-only`.** Skips the hosted confirmation entirely and prints no question. A linked
   target sends `"read_only": true` in the Management API request, so the server rejects writes.
   The local stack and a `--db-url` database run the statement inside `BEGIN READ ONLY` … `ROLLBACK`,
-  so Postgres rejects writes. A statement that ends the transaction itself (`COMMIT`,
-  `SET TRANSACTION READ WRITE`) can leave that guard on a direct connection.
+  so Postgres rejects writes. On every target, before the statement is sent or any question is asked, the
+  SQL is split into statements and any whose leading keywords (after whitespace, a BOM and comments)
+  are `BEGIN`, `START TRANSACTION`, `COMMIT`, `END`, `ABORT`, `ROLLBACK`, `PREPARE TRANSACTION`,
+  `SET TRANSACTION`, `SET SESSION CHARACTERISTICS`, `RESET ALL`, or a `SET`/`SET SESSION`/`SET LOCAL`/
+  `RESET` of `transaction_read_only` or `default_transaction_read_only` fails with
+  `DbQueryReadOnlyStatementError` naming only that keyword. Keywords inside strings, dollar quotes
+  and comments, and reads such as `SELECT set_config(...)`, pass.
 - **Linked-project cache.** On the `--linked` path,
   after the query runs — whether it succeeds or fails — the handler issues
   `GET /v1/projects/{ref}` and writes `supabase/.temp/linked-project.json`. The
