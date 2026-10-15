@@ -115,6 +115,9 @@ function isPoolerHost(host: string, poolerHost: string): boolean {
 
 const GEN_TYPES_COMMAND_PATH = ["gen", "types"] as const;
 
+// `--project-ref` refines `--linked`, so the pair counts as one member of a mutex group.
+const REMOTE_TARGET_FLAGS: ReadonlySet<string> = new Set(["linked", "project-ref"]);
+
 // Validation reports only the first violated group, in this listed order.
 const GEN_TYPES_MUTEX_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
   ["linked", "project-ref", "postgrest-v9-compat"],
@@ -619,7 +622,10 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     };
     for (const group of GEN_TYPES_MUTEX_GROUPS) {
       const set = group.filter((flagName) => changedMutexFlags[flagName]);
-      if (set.length > 1) {
+      const members = new Set(
+        set.map((flagName) => (REMOTE_TARGET_FLAGS.has(flagName) ? "linked" : flagName)),
+      );
+      if (members.size > 1) {
         return yield* new GenTypesFlagUsageError({
           message: mutuallyExclusiveFlagsMessage(group, set),
         });
@@ -666,11 +672,11 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         return;
       }
 
-      yield* assertLocalDbRunning(projectId);
       const host = yield* getHostname(
         yield* configValues.load({ workdir: cliSettings.workdir, projectRef: Option.none() }),
       );
       yield* announceTarget(renderLocalTarget(host, config.port));
+      yield* assertLocalDbRunning(projectId);
       yield* runGenerate({
         conn: {
           host,
