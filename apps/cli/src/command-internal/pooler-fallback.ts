@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Predicate } from "effect";
 
 import { Output } from "../shared/output/output.service.ts";
 import { yellow } from "./colors.ts";
@@ -7,6 +7,21 @@ import type { PgConnInput } from "./db-connection.service.ts";
 export function isDirectDbHost(host: string, projectHost: string): boolean {
   return host.startsWith("db.") && host.endsWith(`.${projectHost}`);
 }
+
+/**
+ * Treats a failed pooler resolution as "no fallback" so the caller keeps its original error, except
+ * an unapproved network-ban removal, whose "re-run with --yes" guidance would otherwise be lost.
+ */
+export const orNoPoolerFallback = <E, R>(
+  resolve: Effect.Effect<Option.Option<PgConnInput>, E, R>,
+) =>
+  resolve.pipe(
+    Effect.catch((error) =>
+      Predicate.isTagged(error, "LinkedDbNetworkBannedError")
+        ? Effect.fail(error)
+        : Effect.succeed(Option.none<PgConnInput>()),
+    ),
+  );
 
 export interface PoolerFallbackOptions<A, E, R, R2, RF, EF> {
   readonly run: Effect.Effect<A, E, R>;
@@ -32,10 +47,12 @@ export const emitPoolerFallbackWarning = (host: string): Effect.Effect<void, nev
 
 export function runWithPoolerFallback<A, E, R, R2, RF, EF>(
   options: PoolerFallbackOptions<A, E, R, R2, RF, EF>,
-): Effect.Effect<A, E, R | R2 | RF | Output> {
-  const resolveFallback = options.resolveFallback.pipe(
-    Effect.orElseSucceed(() => Option.none<PgConnInput>()),
-  );
+): Effect.Effect<
+  A,
+  E | (EF & { readonly _tag: "LinkedDbNetworkBannedError" }),
+  R | R2 | RF | Output
+> {
+  const resolveFallback = orNoPoolerFallback(options.resolveFallback);
 
   const retryOrReturn = (result: A) =>
     Effect.gen(function* () {

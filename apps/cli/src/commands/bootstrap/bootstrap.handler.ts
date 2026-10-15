@@ -25,7 +25,10 @@ import type { ConnectSuggestionContext } from "../../command-internal/connect-er
 import { resolveLinkedConn } from "../../command-internal/db-config.layer.ts";
 import { checkDbToml } from "../../command-internal/db-config.toml-read.ts";
 import { dbPushCore } from "../../command-internal/db-push-core.ts";
-import { requireHostedMutationConsent } from "../../command-internal/hosted-consent/hosted-consent.ts";
+import {
+  hostedMutationPreapproval,
+  requireHostedMutationConsent,
+} from "../../command-internal/hosted-consent/hosted-consent.ts";
 import { planDbSeed } from "../../command-internal/seed-remote-consent.ts";
 import { linkServicesCore } from "../../command-internal/link-services-core.ts";
 import { projectCreateCore } from "../../command-internal/project-create-core.ts";
@@ -321,6 +324,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       cliSettings.poolerHost,
       dnsResolver,
       Option.some(created.dbPassword),
+      { removeNetworkBans: Option.isSome(yield* hostedMutationPreapproval) },
     ).pipe(
       Effect.catchTag("DbConfigIpv6Error", (error) =>
         output.raw(`${error.message}\n`, "stderr").pipe(Effect.as(dbConfig)),
@@ -340,7 +344,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       projectRef,
       conn,
       isLocal: false,
-      repairSuggestsLocalFlag: false,
+      repairTargetFlags: "--linked",
       dryRun: false,
       includeAll: false,
       includeRoles: true,

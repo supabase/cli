@@ -135,6 +135,8 @@ describe("parseTargetSelector", () => {
         _tag: "TargetEmptyValueError",
         flag: "--db-url",
         message: "--db-url cannot be empty.",
+        suggestion:
+          "Pass a connection string, for example --db-url postgresql://postgres:postgres@127.0.0.1:54322/postgres",
       });
     });
 
@@ -143,6 +145,7 @@ describe("parseTargetSelector", () => {
         _tag: "TargetEmptyValueError",
         flag: "--project-ref",
         message: "--project-ref cannot be empty.",
+        suggestion: "Pass a project ref, for example --project-ref abcdefghijklmnopqrst",
       });
     });
 

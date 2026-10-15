@@ -9,7 +9,10 @@ import {
   runWithPoolerFallback as runWithSharedPoolerFallback,
 } from "../../../command-internal/pooler-fallback.ts";
 
-export { emitPoolerFallbackWarning } from "../../../command-internal/pooler-fallback.ts";
+export {
+  emitPoolerFallbackWarning,
+  orNoPoolerFallback,
+} from "../../../command-internal/pooler-fallback.ts";
 
 /** The exit/stderr pair a dump attempt surfaces for pooler-fallback classification. */
 interface PoolerFallbackResult {
@@ -41,7 +44,11 @@ export const isDirectLinkedHost = (params: {
  * warning and retries once via `runWithConn`. Otherwise returns the original `result`
  * unchanged, so the caller's failure classification always reads the correct stderr.
  */
-export const runWithPoolerFallback = Effect.fn("PoolerFallback.run")(function* <E, RRun>(params: {
+export const runWithPoolerFallback = Effect.fn("PoolerFallback.run")(function* <
+  E,
+  RRun,
+  EP,
+>(params: {
   /** The first attempt's result; returned unchanged when no fallback fires. */
   readonly result: PoolerFallbackResult;
   readonly connType: ResolvedTarget["kind"];
@@ -51,11 +58,11 @@ export const runWithPoolerFallback = Effect.fn("PoolerFallback.run")(function* <
   /** `cliSettings.projectHost` — the direct-DB-host suffix (`supabase.co`/`.red`). */
   readonly projectHost: string;
   /**
-   * Resolves the IPv4 pooler connection, already error-neutralized to `None` (a resolution
-   * failure means "no fallback"). A thunk, since resolving the pooler creates a temp role —
-   * it only runs once the eligibility gate passes, never on the happy path.
+   * Resolves the IPv4 pooler connection; a failure means "no fallback" except an unapproved
+   * network-ban removal, which propagates. A thunk, since resolving the pooler creates a temp
+   * role — it only runs once the eligibility gate passes, never on the happy path.
    */
-  readonly resolvePooler: () => Effect.Effect<Option.Option<PgConnInput>>;
+  readonly resolvePooler: () => Effect.Effect<Option.Option<PgConnInput>, EP>;
   /** Re-runs the dump against a connection (`db dump`/`db pull` each adapt their runner). */
   readonly runWithConn: (conn: PgConnInput) => Effect.Effect<PoolerFallbackResult, E, RRun>;
   /** `db dump` re-prints "Dumping ..." on retry; `db pull` passes `Effect.void`. */

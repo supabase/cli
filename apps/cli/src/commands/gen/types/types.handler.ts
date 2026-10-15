@@ -125,7 +125,8 @@ const GEN_TYPES_MUTEX_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
   ...GEN_TYPES_LANGUAGE_FLAG_NAMES.map((name) => ["linked", "project-ref", name]),
 ];
 
-const PROJECT_ID_DEPRECATION_LINE = "--project-id is deprecated; use --project-ref instead.";
+const PROJECT_ID_DEPRECATION_LINE =
+  "--project-id is deprecated and will be removed in v4; use --project-ref instead.";
 
 const POSTGREST_V9_COMPAT_DEPRECATION_LINE =
   "Flag --postgrest-v9-compat has been deprecated, PostgREST 9 reached end of life; the flag still disables one-to-one relationship detection.";

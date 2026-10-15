@@ -67,6 +67,7 @@ import { identityStitchLayer } from "./identity-stitch.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import type { DbConnectionInput } from "./db-config.types.ts";
 import { hostedMutationPreapproval } from "./hosted-consent/hosted-consent.ts";
+import type { HostedMutationConsent } from "./hosted-consent/hosted-consent.token.ts";
 import type { ResolvedTarget } from "./target/resolve-target.ts";
 import { DbConnectError } from "./db-connection.errors.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
@@ -298,6 +299,31 @@ describe("dbConfigResolver (local + db-url)", () => {
       Effect.scoped,
       Effect.provide(BunServices.layer),
     ),
+  );
+
+  it.effect(
+    "local mode on a linked checkout carries the --linked pointer in its connect hint",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* withWorkdir();
+        yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(dir, "supabase", ".temp", "project-ref"),
+          "abcdefghijklmnopqrst",
+        );
+        const r = yield* resolveConnection(dir, inputFor(localTarget));
+        expect(r.conn.suggestionContext).toMatchObject({ linkedCheckout: true });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("local mode on an unlinked checkout adds no --linked pointer", () =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir();
+      const r = yield* resolveConnection(dir, inputFor(localTarget));
+      expect(r.conn.suggestionContext?.linkedCheckout).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
   it.effect("local mode: falls back to default port/password without a config.toml", () =>
@@ -1959,7 +1985,11 @@ describe("dbConfigResolver.resolveConnection", () => {
       });
       return { attempts, layer };
     };
-    const forkResolve = (input: DbConnectionInput, connection: Layer.Layer<DbConnection>) =>
+    const forkResolve = (
+      input: DbConnectionInput,
+      connection: Layer.Layer<DbConnection>,
+      output?: ReturnType<typeof mockOutput>,
+    ) =>
       Effect.gen(function* () {
         const retries = yield* Queue.unbounded<string>();
         const debugLogger = Layer.succeed(DebugLogger, {
@@ -1973,18 +2003,46 @@ describe("dbConfigResolver.resolveConnection", () => {
           dbConnection: connection,
           debugLogger,
           configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+          output,
         }).pipe(Effect.forkChild({ startImmediately: true }));
         const advance = (retryMessages: number) =>
           Effect.gen(function* () {
             for (let seen = 1; seen <= retryMessages; seen++) {
               yield* Queue.take(retries).pipe(Effect.raceFirst(Fiber.join(fiber)));
-              yield* TestClock.adjust("10 seconds");
+              yield* TestClock.adjust("1 minute");
             }
           });
         return { fiber, advance };
       });
 
-    it.effect("fails with LinkedDbNetworkBannedError and removes nothing without approval", () => {
+    it.effect("reports the listed bans once the retries run out and removes nothing", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(Number.POSITIVE_INFINITY);
+      return Effect.gen(function* () {
+        yield* bannedRequests(requests, ["203.0.113.7", "198.51.100.2"]);
+        const { fiber, advance } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+          connection.layer,
+        );
+        yield* advance(8);
+        const exit = yield* Fiber.await(fiber);
+        expect(failureText(exit)).toContain("LinkedDbNetworkBannedError");
+        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+        expect(error).toEqual(
+          Option.some(
+            expect.objectContaining({
+              message: expect.stringContaining("203.0.113.7, 198.51.100.2"),
+              suggestion:
+                "Re-run with --yes to remove them, or run supabase network-bans remove --db-unban-ip 203.0.113.7,198.51.100.2 --experimental --yes.",
+            }),
+          ),
+        );
+        expect(connection.attempts.count).toBe(9);
+        expect(requests.some((request) => request.method === "DELETE")).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    });
+
+    it.effect("connects without removing bans that are not blocking the caller", () => {
       const requests: Array<{ readonly method: string; readonly path: string }> = [];
       const connection = failingConnect(3);
       return Effect.gen(function* () {
@@ -1993,23 +2051,10 @@ describe("dbConfigResolver.resolveConnection", () => {
           inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
           connection.layer,
         );
-        yield* advance(2);
-        const exit = yield* Fiber.await(fiber);
-        expect(failureText(exit)).toContain("LinkedDbNetworkBannedError");
-        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
-        expect(error).toEqual(
-          Option.some(
-            expect.objectContaining({
-              message: expect.stringContaining("203.0.113.7"),
-              suggestion: expect.stringContaining("supabase network-bans remove"),
-            }),
-          ),
-        );
-        expect(connection.attempts.count).toBe(3);
-        expect(requests).toContainEqual({
-          method: "POST",
-          path: `/v1/projects/${ref}/network-bans/retrieve`,
-        });
+        yield* advance(3);
+        const r = yield* Fiber.join(fiber);
+        expect(r.conn).toMatchObject({ user: `cli_login_role.${ref}` });
+        expect(connection.attempts.count).toBe(4);
         expect(requests.some((request) => request.method === "DELETE")).toBe(false);
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
     });
@@ -2031,9 +2076,10 @@ describe("dbConfigResolver.resolveConnection", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
     });
 
-    it.effect("removes the bans once the caller holds an approval", () => {
+    it.effect("removes the bans and says so once the caller holds a --yes approval", () => {
       const requests: Array<{ readonly method: string; readonly path: string }> = [];
       const connection = failingConnect(3);
+      const output = mockOutput();
       return Effect.gen(function* () {
         yield* bannedRequests(requests, ["203.0.113.7"]);
         const { fiber, advance } = yield* forkResolve(
@@ -2041,6 +2087,7 @@ describe("dbConfigResolver.resolveConnection", () => {
             networkBanRemoval: yield* approval,
           }),
           connection.layer,
+          output,
         );
         yield* advance(3);
         const r = yield* Fiber.join(fiber);
@@ -2050,7 +2097,31 @@ describe("dbConfigResolver.resolveConnection", () => {
           method: "DELETE",
           path: `/v1/projects/${ref}/network-bans`,
         });
+        expect(output.stderrText).toContain("Removing network bans (203.0.113.7)...\n");
         assertDbConfigDrift(requests, { linked: true, "project-ref": ref });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    });
+
+    it.effect("does not remove bans for an approval obtained by prompting", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(Number.POSITIVE_INFINITY);
+      // The brand is type-only; only the consent module mints tokens in production.
+      const promptApproval = Option.some({
+        action: "Push",
+        via: "prompt",
+      } as HostedMutationConsent);
+      return Effect.gen(function* () {
+        yield* bannedRequests(requests, ["203.0.113.7"]);
+        const { fiber, advance } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false }), {
+            networkBanRemoval: promptApproval,
+          }),
+          connection.layer,
+        );
+        yield* advance(8);
+        const exit = yield* Fiber.await(fiber);
+        expect(failureText(exit)).toContain("LinkedDbNetworkBannedError");
+        expect(requests.some((request) => request.method === "DELETE")).toBe(false);
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
     });
   });

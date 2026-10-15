@@ -47,6 +47,7 @@ import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { stackLocalDatabaseConn } from "./stack-local-database.ts";
 import { block, type OperationEntry } from "./command-permissions/model.ts";
 import { renderDbUrlTarget, renderLocalTarget } from "./target/target-identity.ts";
+import { isCheckoutLinked } from "../shared/config/temp-paths.ts";
 import { rejectTargetPassword } from "./target/target-password.ts";
 
 const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
@@ -149,6 +150,10 @@ export const dbConfigPoolerFallback = block(
   })),
 );
 
+/** Only a `--yes`-sourced approval may clear bans; a prompt answer never does, since removal clears every listed address. */
+const canRemoveNetworkBans = (input: DbConnectionInput): boolean =>
+  Option.exists(input.networkBanRemoval, (approval) => approval.via === "yes");
+
 const DIRECT_PORT = 5432;
 const TCP_PROBE_TIMEOUT = Duration.seconds(5);
 const MAX_RETRIES = 8;
@@ -233,34 +238,42 @@ const initLoginRole = Effect.fn("DbConfig.initLoginRole")(function* (
   return { ...conn, user: role.role, password: role.password };
 });
 
-const listAndUnban = Effect.fnUntraced(function* (ref: string, removeBans: boolean) {
+const listBans = Effect.fnUntraced(function* (ref: string) {
   const api = yield* (yield* CommandPlatformApiFactory).make;
   const bans = yield* api.v1.listAllNetworkBans({ ref }).pipe(Effect.catch(listBansErrorMapper));
-  const addrs = bans.banned_ipv4_addresses;
-  if (addrs.length === 0) return;
-  if (!removeBans) {
-    return yield* new Errors.LinkedDbNetworkBannedError({
-      message: `Network bans (${addrs.join(", ")}) may be blocking the connection, and removing them needs approval.`,
-      suggestion:
-        "Re-run with --yes to remove the bans, or run supabase network-bans remove --db-unban-ip <ip> --experimental --yes first.",
-    });
-  }
+  return bans.banned_ipv4_addresses;
+});
+
+const removeBans = Effect.fnUntraced(function* (ref: string, addrs: ReadonlyArray<string>) {
+  const output = yield* Output;
+  const api = yield* (yield* CommandPlatformApiFactory).make;
+  yield* output.raw(`Removing network bans (${addrs.join(", ")})...\n`, "stderr");
   yield* api.v1
     .deleteNetworkBans({ ref, ipv4_addresses: [...addrs], requester_ip: false })
     .pipe(Effect.catch(unbanErrorMapper));
 });
 
-// Verify-connect with backoff while the pooler refreshes the temp password. On attempt ≥ 3,
-// clear any network ban on the requester.
+const networkBannedError = (addrs: ReadonlyArray<string>) =>
+  new Errors.LinkedDbNetworkBannedError({
+    message: `Network bans (${addrs.join(", ")}) may be blocking the connection. Removing them clears every listed address, so it needs --yes.`,
+    suggestion: `Re-run with --yes to remove them, or run supabase network-bans remove --db-unban-ip ${addrs.join(",")} --experimental --yes.`,
+  });
+
+// Verify-connect with backoff while the pooler refreshes the temp password. From attempt 3 on, look
+// for network bans on the project: with approval they are removed, without it the last listing is
+// reported if the retries run out.
 const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
   ref: string,
   conn: PgConnInput,
   dnsResolver: "native" | "https",
-  removeBans: boolean,
+  removeNetworkBans: boolean,
 ) {
   const dbConn = yield* DbConnection;
   const debug = yield* DebugLogger;
-  const attempt = (n: number): Effect.Effect<void, DbConfigError, CommandPlatformApiFactory> =>
+  const attempt = (
+    n: number,
+    listedBans: ReadonlyArray<string>,
+  ): Effect.Effect<void, DbConfigError, CommandPlatformApiFactory | Output> =>
     // The temp-role probe always targets the remote Supavisor pooler, so it connects with TLS
     // and honors `--dns-resolver`.
     Effect.scoped(dbConn.connect(conn, { isLocal: false, dnsResolver }).pipe(Effect.asVoid)).pipe(
@@ -270,38 +283,43 @@ const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
         // up only after attempt 9 (`n > MAX_RETRIES`), not at attempt 8.
         if (n > MAX_RETRIES) {
           return Effect.fail(
-            new Errors.DbConfigConnectTempRoleError({
-              message: `failed to connect as temp role: ${cause.message}`,
-              suggestion: SUGGEST_ENV_VAR,
-            }),
+            listedBans.length > 0
+              ? networkBannedError(listedBans)
+              : new Errors.DbConfigConnectTempRoleError({
+                  message: `failed to connect as temp role: ${cause.message}`,
+                  suggestion: SUGGEST_ENV_VAR,
+                }),
           );
         }
-        // From the 3rd failure onward, clear any network ban on the requester. Uses a
-        // deterministic backoff curve rather than jittered, since jitter only matters under
-        // concurrent pooler refreshes.
+        // Deterministic backoff rather than jittered, since jitter only matters under concurrent
+        // pooler refreshes.
         const delayMs = Math.min(
           Duration.toMillis(BACKOFF_INITIAL) * 1.5 ** (n - 1),
           Duration.toMillis(BACKOFF_MAX),
         );
         return Effect.gen(function* () {
-          // A transient ban-list/unban failure must not propagate out of the retry loop; log
-          // it to --debug, then discard. An unapproved ban removal is the one failure that ends it.
-          if (n >= 3) {
-            yield* listAndUnban(ref, removeBans).pipe(
-              Effect.catch((banError) =>
-                banError._tag === "LinkedDbNetworkBannedError"
-                  ? Effect.fail(banError)
-                  : debug.debug(banError.message),
-              ),
-            );
-          }
+          // A transient ban-list/unban failure must not propagate out of the retry loop; log it
+          // to --debug, then discard.
+          const bans =
+            n < 3
+              ? listedBans
+              : yield* listBans(ref).pipe(
+                  Effect.flatMap((addrs) =>
+                    addrs.length > 0 && removeNetworkBans
+                      ? removeBans(ref, addrs).pipe(Effect.as([]))
+                      : Effect.succeed(addrs),
+                  ),
+                  Effect.catch((banError) =>
+                    debug.debug(banError.message).pipe(Effect.as(listedBans)),
+                  ),
+                );
           yield* debug.debug(`Retry (${n}/${MAX_RETRIES}): ${cause.message}`);
           yield* Effect.sleep(Duration.millis(delayMs));
-          return yield* attempt(n + 1);
+          return yield* attempt(n + 1, bans);
         });
       }),
     );
-  return yield* attempt(1);
+  return yield* attempt(1, []);
 });
 
 /**
@@ -413,7 +431,7 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   // `ref` from the Management API instead.
   ignoreSavedUrl = false,
   resolveVaultSecrets = true,
-  removeNetworkBans = true,
+  removeNetworkBans: boolean,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -485,6 +503,8 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
   dnsResolver: "native" | "https",
   explicitPassword: Option.Option<string>,
   options: {
+    /** Whether the temp-role retry may clear listed network bans; only a `--yes`-sourced approval sets it. */
+    readonly removeNetworkBans: boolean;
     readonly adHocProjectRef?: boolean;
     readonly resolveVaultSecrets?: boolean;
     /**
@@ -497,16 +517,14 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     readonly fetchPoolerFromApi?: boolean;
     /** Whether the calling command binds `--password`, so the withheld-password notice can name it. */
     readonly hasPasswordFlag?: boolean;
-    /** When false, a network ban that blocks the temp role fails with `LinkedDbNetworkBannedError` instead of being removed. */
-    readonly removeNetworkBans?: boolean;
-  } = {},
+  },
 ) {
   const {
     adHocProjectRef = false,
     resolveVaultSecrets = true,
     fetchPoolerFromApi = false,
     hasPasswordFlag = false,
-    removeNetworkBans = true,
+    removeNetworkBans,
   } = options;
   const dbPassword = yield* resolveLinkedPassword(ref, workdir, explicitPassword, hasPasswordFlag);
   const host = `db.${ref}.${projectHost}`;
@@ -782,8 +800,10 @@ export const dbConfigResolverLayer = Layer.effect(
     const resolveConnection = (input: DbConnectionInput) =>
       Effect.gen(function* () {
         const { target } = input;
+        const linkedCheckout =
+          target.kind === "local" && (yield* isCheckoutLinked(fs, path, cliSettings.workdir));
         if (target.kind !== "linked") {
-          yield* rejectTargetPassword(target.kind, input.password);
+          yield* rejectTargetPassword(target.kind, input.password, linkedCheckout);
         }
         const resolveVaultSecrets = input.resolveVaultSecrets ?? true;
         if (target.kind === "linked") {
@@ -795,7 +815,7 @@ export const dbConfigResolverLayer = Layer.effect(
               adHocProjectRef: !target.matchesLinkedRef,
               fetchPoolerFromApi: target.source === "flag",
               hasPasswordFlag: input.hasPasswordFlag ?? false,
-              removeNetworkBans: Option.isSome(input.networkBanRemoval),
+              removeNetworkBans: canRemoveNetworkBans(input),
             }),
           );
           return { conn, isLocal: false, ref: Option.some(target.ref), target };
@@ -812,7 +832,13 @@ export const dbConfigResolverLayer = Layer.effect(
         }
         const resolved = yield* resolveLocalStack(localHost, resolveVaultSecrets);
         yield* commandTarget.announce(renderLocalTarget(resolved.conn.host, resolved.conn.port));
-        return { ...resolved, target };
+        return {
+          ...resolved,
+          conn: linkedCheckout
+            ? { ...resolved.conn, suggestionContext: { ...suggestionContext, linkedCheckout } }
+            : resolved.conn,
+          target,
+        };
       });
 
     // When a linked dump's pg_dump container fails with an IPv6 connectivity error (the direct
@@ -841,7 +867,7 @@ export const dbConfigResolverLayer = Layer.effect(
             true,
             !target.matchesLinkedRef,
             input.resolveVaultSecrets ?? true,
-            Option.isSome(input.networkBanRemoval),
+            canRemoveNetworkBans(input),
           );
         }).pipe(
           Effect.provide(
@@ -857,7 +883,7 @@ export const dbConfigResolverLayer = Layer.effect(
     // so each connecting command inherits the hint without per-call-site wiring.
     const withSuggestion = (conn: PgConnInput): PgConnInput => ({
       ...conn,
-      suggestionContext,
+      suggestionContext: conn.suggestionContext ?? suggestionContext,
     });
     return DbConfigResolver.of({
       resolveConnection: (input) =>

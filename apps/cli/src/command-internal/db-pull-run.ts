@@ -16,6 +16,7 @@ import {
 } from "./hosted-consent/hosted-consent.ts";
 import type { HostedMutationConsent } from "./hosted-consent/hosted-consent.token.ts";
 import type { ResolvedTarget } from "./target/resolve-target.ts";
+import { flagsForTarget } from "./target/target-flags.ts";
 import { resolveDbImage } from "./db-image.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
 import { loadProjectEnvValues, readDbToml, resolveDeclarativeDir } from "./db-config.toml-read.ts";
@@ -43,6 +44,7 @@ import {
 import {
   emitPoolerFallbackWarning,
   isDirectLinkedHost,
+  orNoPoolerFallback,
   runWithPoolerFallback,
 } from "../commands/db/shared/pooler-fallback.ts";
 import { dumpSchemaScript } from "./pg-dump.scripts.ts";
@@ -227,11 +229,9 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               }) &&
               isIPv6ConnectivityError(error.message)
             ) {
-              // A pooler resolution failure is treated as "no fallback" (re-fail the
-              // original diff error), not surfaced as its own error.
-              const pooler = yield* resolver
-                .resolvePoolerFallback(connectionInput)
-                .pipe(Effect.orElseSucceed(() => Option.none()));
+              const pooler = yield* orNoPoolerFallback(
+                resolver.resolvePoolerFallback(connectionInput),
+              );
               if (Option.isSome(pooler)) {
                 yield* emitPoolerFallbackWarning(resolved.conn.host);
                 return yield* attempt({
@@ -327,7 +327,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           path,
           path.join(cliSettings.workdir, "supabase", "migrations"),
         );
-        const sync = reconcileMigrations(remote, local, connType === "local");
+        const sync = reconcileMigrations(remote, local, flagsForTarget(target));
         if (sync.kind === "conflict") {
           return yield* new DbPullMigrationConflictError({
             message:
@@ -443,9 +443,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             isLocal: resolved.isLocal,
             projectHost: cliSettings.projectHost,
             resolvePooler: () =>
-              resolver
-                .resolvePoolerFallback(connectionInput)
-                .pipe(Effect.orElseSucceed(() => Option.none())),
+              orNoPoolerFallback(resolver.resolvePoolerFallback(connectionInput)),
             runWithConn: runSchemaDump,
             reprintOnRetry: Effect.void,
           });

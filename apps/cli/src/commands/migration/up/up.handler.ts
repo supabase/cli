@@ -23,6 +23,7 @@ import {
   suggestRevertHistory,
 } from "../../../command-internal/migration-history.ts";
 import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
+import { flagsForTarget } from "../../../command-internal/target/target-flags.ts";
 import { upsertVaultSecrets } from "../../../command-internal/vault.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -74,7 +75,7 @@ const runUp = Effect.fnUntraced(function* (flags: MigrationUpFlags) {
               Effect.fail(
                 new MigrationMissingLocalError({
                   message: "Remote migration versions not found in local migrations directory.",
-                  suggestion: suggestRevertHistory(result.versions, target.kind === "local"),
+                  suggestion: suggestRevertHistory(result.versions, flagsForTarget(target)),
                 }),
               ),
             "missing-remote": (result) => {

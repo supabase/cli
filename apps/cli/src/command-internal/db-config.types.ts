@@ -27,7 +27,7 @@ export interface DbConnectionInput {
   readonly resolveVaultSecrets?: boolean;
   /** Set when the command binds `--password`, so the withheld-password notice can name it. */
   readonly hasPasswordFlag?: boolean;
-  /** `Some` lets the temp-role retry clear a network ban; `None` fails with `LinkedDbNetworkBannedError` instead. */
+  /** A `--yes`-sourced `Some` lets the temp-role retry clear network bans; otherwise a ban surfaces as `LinkedDbNetworkBannedError`. */
   readonly networkBanRemoval: Option.Option<HostedMutationConsent>;
 }
 

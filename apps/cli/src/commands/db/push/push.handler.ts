@@ -10,6 +10,7 @@ import { dbPushCore } from "../../../command-internal/db-push-core.ts";
 import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { planDbSeed } from "../../../command-internal/seed-remote-consent.ts";
 import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
+import { flagsForTarget } from "../../../command-internal/target/target-flags.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { DbPushFlags } from "./push.command.ts";
@@ -86,7 +87,7 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
       projectRef,
       conn: cfg.conn,
       isLocal: cfg.isLocal,
-      repairSuggestsLocalFlag: target.kind === "local",
+      repairTargetFlags: flagsForTarget(target),
       dryRun: flags.dryRun,
       includeAll: flags.includeAll,
       includeRoles: flags.includeRoles,

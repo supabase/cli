@@ -144,7 +144,7 @@ export class DbConfigConnectTempRoleError extends Data.TaggedError("DbConfigConn
   }
 }
 
-/** The temporary login role cannot connect because the requester is network-banned and removing the ban was not approved. */
+/** The temporary login role could not connect while network bans were listed and removing them was not approved with `--yes`. */
 export class LinkedDbNetworkBannedError extends Data.TaggedError("LinkedDbNetworkBannedError")<{
   readonly message: string;
   readonly suggestion?: string;

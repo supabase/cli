@@ -1,6 +1,8 @@
 import type { Option } from "effect";
 import { Flag, GlobalFlag } from "effect/cli";
 
+import type { ResolvedTarget } from "./resolve-target.ts";
+
 type TargetFlagGroup = "sync" | "selectable";
 type TargetSubject = "database" | "Storage API";
 
@@ -14,7 +16,7 @@ const localFlag = ({ group, subject }: TargetFlagOptions) =>
     Flag.withDescription(
       group === "sync"
         ? `Target the local ${subject}.`
-        : `Target the local ${subject}. Default unless the workspace target is "remote".`,
+        : `Target the local ${subject} (default unless target = "remote" is set in config.toml or SUPABASE_TARGET).`,
     ),
     Flag.withDefault(false),
   );
@@ -24,7 +26,7 @@ const linkedFlag = ({ group }: TargetFlagOptions) =>
     Flag.withDescription(
       group === "sync"
         ? "Target the linked project (default)."
-        : 'Target the linked project. Default when the workspace target is "remote".',
+        : 'Target the linked project (default when target = "remote" is set in config.toml or SUPABASE_TARGET).',
     ),
     Flag.withDefault(false),
   );
@@ -70,6 +72,18 @@ export function targetFlags(
   return options.dbUrl ? { ...base, dbUrl: dbUrlFlag() } : base;
 }
 
+/** The flags that point a suggested follow-up command at `target`; a `--db-url` value is never echoed. */
+export const flagsForTarget = (target: ResolvedTarget): string => {
+  switch (target.kind) {
+    case "local":
+      return "--local";
+    case "db-url":
+      return "--db-url <redacted>";
+    case "linked":
+      return target.matchesLinkedRef ? "--linked" : `--linked --project-ref ${target.ref}`;
+  }
+};
+
 /**
  * `seed` accepts the selectors before or after its subcommand, which needs scoped globals; they
  * share their definitions with {@link targetFlags}.
@@ -85,7 +99,7 @@ export const seedTargetGlobalFlags = {
 
 /** Hidden alias of `--project-ref`, accepted only by `gen types`. */
 export const deprecatedProjectIdFlag = Flag.String("project-id").pipe(
-  Flag.withDescription("Deprecated: use --project-ref."),
+  Flag.withDescription("Deprecated, removed in v4: use --project-ref."),
   Flag.optional,
   Flag.withHidden,
 );

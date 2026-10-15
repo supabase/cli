@@ -32,6 +32,7 @@ export class TargetProjectRefConflictError extends Data.TaggedError(
 export class TargetEmptyValueError extends Data.TaggedError("TargetEmptyValueError")<{
   readonly flag: "--db-url" | "--project-ref";
   readonly message: string;
+  readonly suggestion: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;

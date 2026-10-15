@@ -43,9 +43,9 @@
 
 ### `--output-format text`
 
-Prints `Target: …` to stderr first, then an ASCII table `|Local|Remote|Time (UTC)|` to stdout (cells are backtick-wrapped inline code). Queries `SELECT version FROM
+Prints `Target: …` to stderr first, then an ASCII table `|Local|Remote|Time (UTC)|` to stdout (cells are backtick-wrapped inline code). The database column is headed `Remote` for a linked or `--db-url` target and `Local DB` for the local database. Queries `SELECT version FROM
 supabase_migrations.schema_migrations ORDER BY version` (a missing table → empty
-Remote column).
+database column).
 
 ### `--output-format json`
 

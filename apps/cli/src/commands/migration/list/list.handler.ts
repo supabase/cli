@@ -11,13 +11,17 @@ import {
   listRemoteMigrations,
   loadLocalVersions,
 } from "../../../command-internal/migration-history.ts";
-import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
+import {
+  resolveTarget,
+  type ResolvedTarget,
+} from "../../../command-internal/target/resolve-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { MigrationListFlags } from "./list.command.ts";
 import { makeMigrationListRows, migrationListTableCells } from "./list.format.ts";
 
-const LIST_HEADERS = ["Local", "Remote", "Time (UTC)"] as const;
+const listHeaders = (target: ResolvedTarget) =>
+  ["Local", target.kind === "local" ? "Local DB" : "Remote", "Time (UTC)"] as const;
 
 const runList = Effect.fnUntraced(function* (flags: MigrationListFlags) {
   const output = yield* Output;
@@ -61,7 +65,9 @@ const runList = Effect.fnUntraced(function* (flags: MigrationListFlags) {
       "migration.count": rows.length,
     });
     if (output.format === "text") {
-      yield* output.raw(renderGlamourTable([...LIST_HEADERS], migrationListTableCells(rows)));
+      yield* output.raw(
+        renderGlamourTable([...listHeaders(target)], migrationListTableCells(rows)),
+      );
     } else {
       yield* output.success("Migrations listed", { migrations: rows });
     }

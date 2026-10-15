@@ -34,7 +34,12 @@ export const parseTargetSelector = (
 
   if (dbUrl === "") {
     return Result.fail(
-      new TargetEmptyValueError({ flag: "--db-url", message: "--db-url cannot be empty." }),
+      new TargetEmptyValueError({
+        flag: "--db-url",
+        message: "--db-url cannot be empty.",
+        suggestion:
+          "Pass a connection string, for example --db-url postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+      }),
     );
   }
   if (projectRef === "") {
@@ -42,6 +47,7 @@ export const parseTargetSelector = (
       new TargetEmptyValueError({
         flag: "--project-ref",
         message: "--project-ref cannot be empty.",
+        suggestion: "Pass a project ref, for example --project-ref abcdefghijklmnopqrst",
       }),
     );
   }

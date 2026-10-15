@@ -62,7 +62,8 @@ wasn't refreshed this run.
 Queries run directly against Postgres (server-side `COPY (<query>) TO STDOUT WITH
 CSV HEADER`). The Management API is used lazily only on a linked target, to
 resolve the connection (via `DbConfigResolver`); a network ban is cleared there only under
-`--yes` or a shell `SUPABASE_YES`, otherwise the command fails with `LinkedDbNetworkBannedError`.
+`--yes` or a shell `SUPABASE_YES`, otherwise the command fails with `LinkedDbNetworkBannedError` once the
+connect retries run out while bans are still listed.
 
 ## Environment Variables
 

@@ -79,3 +79,14 @@ export const readProjectRefFile = (
     const trimmed = content.trim();
     return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
   });
+
+/** Whether `<workdir>/supabase/.temp/project-ref` names a linked project; an unreadable file counts as unlinked. */
+export const isCheckoutLinked = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+): Effect.Effect<boolean> =>
+  readProjectRefFile(fs, path, workdir).pipe(
+    Effect.map(Option.isSome),
+    Effect.orElseSucceed(() => false),
+  );

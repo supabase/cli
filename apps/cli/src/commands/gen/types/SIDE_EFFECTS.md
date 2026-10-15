@@ -130,8 +130,8 @@ ref and whether its identity is verified, the local stack host and port, or the 
 Postgres host) and `Connecting to …` for database introspection. On the legacy Docker Compose
 stack the banner prints before the running check, so a stopped stack still shows the chosen
 target. In-process TypeScript also prints a stderr note that the output is unformatted.
-`--project-id` additionally prints `--project-id is deprecated; use --project-ref instead.` on
-stderr.
+`--project-id` additionally prints
+`--project-id is deprecated and will be removed in v4; use --project-ref instead.` on stderr.
 
 ### `--output-format json`
 

@@ -194,7 +194,8 @@ describe("migration list", () => {
       yield* seedMigrations(tmp.current, ["20240101000000_a.sql", "20240103000000_c.sql"]);
       yield* migrationList(flags());
       const stdout = stripAnsi(ctx.out.stdoutText);
-      expect(stdout).toContain("Local");
+      expect(stdout).toContain("Local DB");
+      expect(stdout).not.toContain("Remote");
       expect(stdout).toContain("Time (UTC)");
       expect(stdout).toContain("`20240101000000`");
       expect(stdout).toContain("`20240102000000`");
@@ -214,6 +215,9 @@ describe("migration list", () => {
         yield* migrationList(flags());
         expect(ctx.resolverCalls[0]?.target).toMatchObject({ kind: "linked", ref: VALID_REF });
         expect(ctx.cache.cachedRef).toBe(VALID_REF);
+        const stdout = stripAnsi(ctx.out.stdoutText);
+        expect(stdout).toContain("Remote");
+        expect(stdout).not.toContain("Local DB");
       }).pipe(Effect.provide(ctx.layer));
     },
   );
