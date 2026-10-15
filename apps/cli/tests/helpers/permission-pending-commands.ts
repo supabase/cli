@@ -18,9 +18,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "db branch switch",
   "db remote changes",
 
-  "encryption get-root-key",
-  "encryption update-root-key",
-
   "feedback add",
   "feedback delete",
 
@@ -43,20 +40,11 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
 
   "logout",
 
-  "network-bans get",
-  "network-bans remove",
-
-  "network-restrictions get",
-  "network-restrictions update",
-
   "postgres-config delete",
   "postgres-config get",
   "postgres-config update",
 
   "pull",
-
-  "ssl-enforcement get",
-  "ssl-enforcement update",
 
   "stack destroy",
   "stack list",
@@ -76,11 +64,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "telemetry disable",
   "telemetry enable",
   "telemetry status",
-
-  "vanity-subdomains activate",
-  "vanity-subdomains check-availability",
-  "vanity-subdomains delete",
-  "vanity-subdomains get",
 
   "whoami",
 ];
