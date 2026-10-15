@@ -43,6 +43,7 @@ import {
 import {
   emitPoolerFallbackWarning,
   isDirectLinkedHost,
+  orNoPoolerFallback,
   runWithPoolerFallback,
 } from "../commands/db/shared/pooler-fallback.ts";
 import { dumpSchemaScript } from "./pg-dump.scripts.ts";
@@ -227,11 +228,9 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               }) &&
               isIPv6ConnectivityError(error.message)
             ) {
-              // A pooler resolution failure is treated as "no fallback" (re-fail the
-              // original diff error), not surfaced as its own error.
-              const pooler = yield* resolver
-                .resolvePoolerFallback(connectionInput)
-                .pipe(Effect.orElseSucceed(() => Option.none()));
+              const pooler = yield* orNoPoolerFallback(
+                resolver.resolvePoolerFallback(connectionInput),
+              );
               if (Option.isSome(pooler)) {
                 yield* emitPoolerFallbackWarning(resolved.conn.host);
                 return yield* attempt({
@@ -443,9 +442,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             isLocal: resolved.isLocal,
             projectHost: cliSettings.projectHost,
             resolvePooler: () =>
-              resolver
-                .resolvePoolerFallback(connectionInput)
-                .pipe(Effect.orElseSucceed(() => Option.none())),
+              orNoPoolerFallback(resolver.resolvePoolerFallback(connectionInput)),
             runWithConn: runSchemaDump,
             reprintOnRetry: Effect.void,
           });

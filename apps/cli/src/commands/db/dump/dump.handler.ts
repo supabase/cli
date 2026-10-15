@@ -50,7 +50,7 @@ import {
 } from "../../../command-internal/stack-local-database.ts";
 import { resolveBundledPostgresRuntime } from "../../../command-internal/bundled-postgres-client.ts";
 import { supabaseEnvStringWithProjectFallback } from "../../../command-internal/supabase-env.ts";
-import { runWithPoolerFallback } from "../shared/pooler-fallback.ts";
+import { orNoPoolerFallback, runWithPoolerFallback } from "../shared/pooler-fallback.ts";
 import {
   dumpDataScript,
   dumpRoleScript,
@@ -401,10 +401,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
           host: conn.host,
           isLocal,
           projectHost: cliSettings.projectHost,
-          resolvePooler: () =>
-            resolver
-              .resolvePoolerFallback(connectionInput)
-              .pipe(Effect.orElseSucceed(() => Option.none())),
+          resolvePooler: () => orNoPoolerFallback(resolver.resolvePoolerFallback(connectionInput)),
           runWithConn: (c) => runContainer(mode.buildEnv(c, opt)),
           reprintOnRetry: output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr"),
         }),
