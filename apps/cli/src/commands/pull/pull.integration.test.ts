@@ -850,7 +850,7 @@ describe("pull integration", () => {
         yield* fs.makeDirectory(yield* projectPath("supabase", ".temp"), { recursive: true });
         yield* fs.writeFileString(
           yield* projectPath("supabase", ".temp", "linked-project.json"),
-          JSON.stringify({ ref: VALID_REF, name: "Acme" }),
+          `{"ref":"${VALID_REF}","name":"Acme"}`,
         );
         yield* runPull(pullFlags());
 

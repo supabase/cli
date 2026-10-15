@@ -6,10 +6,8 @@ import {
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
 
-/**
- * Conflicting database-target flags (`db-url`/`linked`/`local`); message text
- * is an established output contract.
- */
+// TODO(CLI-2695): delete with its entry in the error-tag snapshot; the target selector replaced it.
+/** @public */
 export class DbPullTargetFlagsError extends Data.TaggedError("DbPullTargetFlagsError")<{
   readonly message: string;
 }> {

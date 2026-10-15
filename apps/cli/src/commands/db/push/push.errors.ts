@@ -5,10 +5,8 @@ import {
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
 
-/**
- * Conflicting database-target flags (`db-url`/`linked`/`local`); message text
- * is an established output contract.
- */
+// TODO(CLI-2695): delete with its entry in the error-tag snapshot; the target selector replaced it.
+/** @public */
 export class DbPushTargetFlagsError extends Data.TaggedError("DbPushTargetFlagsError")<{
   readonly message: string;
 }> {
@@ -45,10 +43,8 @@ export class DbPushMissingRemoteError extends Data.TaggedError("DbPushMissingRem
   }
 }
 
-/**
- * The user declined a confirmation prompt; message text (`context canceled`)
- * is an established output contract.
- */
+// TODO(CLI-2695): delete with its entry in the error-tag snapshot; hosted consent replaced it.
+/** @public */
 export class DbPushCancelledError extends Data.TaggedError("DbPushCancelledError")<{
   readonly message: string;
   readonly suggestion?: string;

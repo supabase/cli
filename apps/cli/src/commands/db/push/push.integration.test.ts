@@ -1016,7 +1016,7 @@ describe("db push", () => {
   });
 
   it.effect("still validates non-vault secrets with --skip-vault", () => {
-    const { layer, out, conn } = setup(tmp.current, {
+    const { layer, conn } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db]\nroot_key = "encrypted:not-valid"\n',
       files: migrationFile("20240101000000"),
     });
