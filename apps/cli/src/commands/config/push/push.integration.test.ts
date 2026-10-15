@@ -172,7 +172,6 @@ function authWriteResponseFixture(): Record<string, unknown> {
 // a branch, its parent, and an unrelated project simultaneously.
 const BRANCH_REF = "cccccccccccccccccccc";
 const PARENT_REF = "pppppppppppppppppppp";
-const OTHER_PARENT_REF = "qqqqqqqqqqqqqqqqqqqq";
 const PROBE_REF = "zzzzzzzzzzzzzzzzzzzz";
 const UUID_TARGET_REF = "rrrrrrrrrrrrrrrrrrrr";
 const BRANCH_UUID = "11111111-1111-4111-8111-111111111111";
@@ -3244,7 +3243,7 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
   it.effect(
     "--project-ref <branch-name> resolves via the already-known parent, no extra live probe",
     () => {
-      const { layer, out, api } = setup({
+      const { layer, api } = setup({
         toml: BRANCH_PUSH_TOML,
         yes: true,
         branchByName: { status: 200, body: BRANCH_BY_NAME },

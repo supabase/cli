@@ -1,12 +1,7 @@
-import { Data, Effect, Option } from "effect";
+import { Effect, Option } from "effect";
 
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import {
-  actionability,
-  type CliErrorActionabilityDeclaration,
-  ErrorActionabilityId,
-} from "../../../shared/telemetry/error-actionability.ts";
 import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
