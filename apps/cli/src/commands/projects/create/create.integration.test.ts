@@ -3,7 +3,6 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option, Schema } from "effect";
 import { CliError, CliOutput, Command } from "effect/cli";
 
-import { withAccountTargetBanner } from "../../../../tests/helpers/account-consent.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput, mockTelemetryRuntime, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { ExperimentalRequiredError } from "../../../command-internal/experimental-gate.ts";
@@ -663,14 +662,12 @@ function rejectsInvalidSizeChoice(error: unknown): boolean {
 describeHostedConsent("projects create", {
   api: { byMethod: { POST: { status: 201, body: CREATED } } },
   invoke: () => ({
-    run: withAccountTargetBanner(
-      projectsCreate({
-        ...BASE_FLAGS,
-        name: Option.some("alpha"),
-        orgId: Option.some("acme"),
-        dbPassword: Option.some("s3cret-pass"),
-        region: Option.some("us-east-1"),
-      }),
-    ).pipe(Effect.provideService(ExperimentalFlag, false)),
+    run: projectsCreate({
+      ...BASE_FLAGS,
+      name: Option.some("alpha"),
+      orgId: Option.some("acme"),
+      dbPassword: Option.some("s3cret-pass"),
+      region: Option.some("us-east-1"),
+    }).pipe(Effect.provideService(ExperimentalFlag, false)),
   }),
 });

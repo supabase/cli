@@ -47,7 +47,6 @@ import { describeHostedConsent } from "../../../tests/helpers/hosted-consent.ts"
 import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
-import { announceTarget } from "../../shared/output/command-target.service.ts";
 import { DbConnectError } from "../../command-internal/db-connection.errors.ts";
 import { DbConnection, type PgConnInput } from "../../command-internal/db-connection.service.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
@@ -801,8 +800,7 @@ describeHostedConsent("bootstrap", {
       }),
     );
     return {
-      run: announceTarget({ text: "account", json: { kind: "account" } }).pipe(
-        Effect.andThen(bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF)),
+      run: bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
         Effect.provide(substrate),
       ),
     };
