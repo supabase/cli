@@ -145,8 +145,7 @@ shell environment first, then the project `.env*` files), then `target` in `supa
 `config.json`), then the local default. `remote` targets the linked project through the existing
 linked path (same prompts and checks as `--linked`). An explicit selector flag always wins over the
 target. `--project-ref` is not a selector: a `remote` target resolves it to the linked project, while with no target or
-`target = "local"` it behaves exactly as it did before the target existed. An invalid `SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. Config
-is only read for the target when no selector flag is given; an unreadable config counts as unset.
+`target = "local"` it behaves exactly as it did before the target existed. An invalid `SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. The project `.env*` files and the config are only read for the target when no selector flag is given; an unreadable or malformed one exits `1` with `DbConfigLoadError` instead of counting as unset.
 No deprecation warning is written: the local default is unchanged. Explicit `--from`/`--to` mode names its own endpoints and ignores the target. With `--use-pg-schema`, a `remote` target is forwarded to the delegated child as `--linked`.
 
 When the target resolves to the linked project, the command writes one line to **stderr** naming where the

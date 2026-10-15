@@ -2879,6 +2879,26 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
+    it.effect("fails on a malformed config instead of generating from the linked project", () =>
+      Effect.gen(function* () {
+        const workdir = yield* makeWorkdir("supabase-gen-types-target-malformed-");
+        yield* writeConfig(workdir, "not = [valid toml");
+        const { layer, api } = yield* setup({
+          workdir,
+          explicitWorkdir: true,
+          projectId: Option.some(VALID_REF),
+          projectTypes: "ok",
+        });
+        const error = yield* genTypes(defaultFlags({ schema: ["public"] })).pipe(
+          Effect.provide(Layer.mergeAll(layer, pinnedEnv)),
+          Effect.flip,
+        );
+
+        expect(error).toBeInstanceOf(DbConfigLoadError);
+        expect(api.requests).toEqual([]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
     it.effect("warns once on stderr and still generates from the linked project when unset", () =>
       Effect.gen(function* () {
         const workdir = yield* makeWorkdir("supabase-gen-types-target-unset-");

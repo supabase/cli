@@ -38,6 +38,7 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { MigrationsReadError } from "../../../command-internal/migration.errors.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { WorkspaceTargetError } from "../../../command-internal/workspace-target.ts";
@@ -497,6 +498,31 @@ describe("migration list", () => {
         expect(ctx.out.stderrText).not.toContain("Warning:");
         expect(ctx.out.stderrText).not.toContain("Targeting the linked project");
       }).pipe(Effect.provide(Layer.mergeAll(ctx.layer, envLayer())));
+    });
+
+    it.effect("fails on a malformed project env file before any API call or connection", () => {
+      const ctx = setup(tmp.current, { explicitWorkdir: true, realLayers: true });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+        yield* fs.makeDirectory(`${tmp.current}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${tmp.current}/supabase/.env`,
+          "SUPABASE_TARGET=local\nBAD LINE!\n",
+        );
+        const error = yield* migrationList(flags()).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(DbConfigLoadError);
+        expect(error.message).toBe("failed to parse environment file: .env");
+        expect(requests).toEqual([]);
+        expect(ctx.http.calls).toEqual([]);
+        expect(ctx.out.stderrText).not.toContain("Connecting to");
+        expect(ctx.telemetry.flushed).toBe(true);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(ctx.layer),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
     });
 
     it.effect("flushes telemetry when the workspace target is invalid", () => {

@@ -9,6 +9,7 @@ import {
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
 import { yellow } from "./colors.ts";
+import { DbConfigLoadError } from "./db-config.errors.ts";
 import { loadProjectEnvEntries } from "./db-config.toml-read.ts";
 import type { DbConnType, DbTargetSelection } from "./db-target-flags.ts";
 import { relativeConfigPath } from "./workdir-project.ts";
@@ -131,50 +132,57 @@ const readEnvTarget = Effect.fnUntraced(function* (projectEnv: ProjectEnvEntries
   return { target: raw, origin } satisfies WorkspaceTargetReading;
 });
 
+const configLoadError = (cause: unknown) =>
+  new DbConfigLoadError({
+    message: `failed to load config: ${cause instanceof Error ? cause.message : String(cause)}`,
+  });
+
 const readConfigTarget = Effect.fnUntraced(function* (settings: {
   readonly workdir: string;
   readonly explicitWorkdir: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
-  const loaded = yield* Effect.gen(function* () {
-    const project = yield* findCliProjectPaths(settings.workdir, {
-      search: shouldSearchAncestors(settings),
-    });
-    if (project === null) return undefined;
-    const content = yield* fs.readFileString(project.configPath);
-    const document = project.configPath.endsWith(".json")
-      ? yield* Schema.decodeEffect(UnknownFromJsonString)(content)
-      : yield* Effect.try(() => SmolToml.parse(content));
-    return { configPath: project.configPath, document };
-  }).pipe(Effect.orElseSucceed(() => undefined));
-  if (loaded === undefined) return undefined;
-  const decoded = yield* Schema.decodeUnknownEffect(targetConfigSchema)(loaded.document).pipe(
+  const project = yield* findCliProjectPaths(settings.workdir, {
+    search: shouldSearchAncestors(settings),
+  });
+  if (project === null) return undefined;
+  const content = yield* fs
+    .readFileString(project.configPath)
+    .pipe(
+      Effect.mapError(
+        (error) =>
+          new DbConfigLoadError({ message: `failed to read file config: ${error.message}` }),
+      ),
+    );
+  const document = yield* project.configPath.endsWith(".json")
+    ? Schema.decodeEffect(UnknownFromJsonString)(content).pipe(Effect.mapError(configLoadError))
+    : Effect.try({ try: () => SmolToml.parse(content), catch: configLoadError });
+  const decoded = yield* Schema.decodeUnknownEffect(targetConfigSchema)(document).pipe(
     Effect.mapError(
       () =>
         new WorkspaceTargetError({
-          message: `target in ${loaded.configPath} must be "local" or "remote"`,
+          message: `target in ${project.configPath} must be "local" or "remote"`,
         }),
     ),
   );
   if (decoded.target === undefined) return undefined;
   return {
     target: decoded.target,
-    origin: originFromPath(settings.workdir, loaded.configPath),
+    origin: originFromPath(settings.workdir, project.configPath),
   } satisfies WorkspaceTargetReading;
 });
 
 /**
  * Reads the workspace `target` and where it came from: `SUPABASE_TARGET` (shell env, then project
- * `.env*`), then the `target` key of the config file. An unreadable config is treated as unset; an
- * invalid value fails.
+ * `.env*`), then the `target` key of the config file. A missing file is unset; an unreadable or
+ * malformed `.env*` file or config fails with `DbConfigLoadError`, an invalid value with
+ * `WorkspaceTargetError`.
  */
 export const readWorkspaceTarget = Effect.fn("WorkspaceTarget.read")(function* () {
   const settings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const projectEnv = yield* loadProjectEnvEntries(fs, path, settings.workdir).pipe(
-    Effect.orElseSucceed((): ProjectEnvEntries => ({ values: {}, sources: {} })),
-  );
+  const projectEnv = yield* loadProjectEnvEntries(fs, path, settings.workdir);
   const fromEnv = yield* readEnvTarget(projectEnv, settings.workdir);
   if (fromEnv !== undefined) return fromEnv;
   return yield* readConfigTarget(settings);

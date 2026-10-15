@@ -6,6 +6,7 @@ import { ConfigProvider, Effect, Layer, Option } from "effect";
 
 import { mockCommandSettings, useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
+import { DbConfigLoadError } from "./db-config.errors.ts";
 import { dbTargetSelectionOf } from "./db-target-flags.ts";
 import {
   originFromPath,
@@ -266,13 +267,47 @@ describe("workspace target resolution", () => {
     },
   );
 
-  it.effect("treats a missing or unparsable config as unset", () => {
-    const empty = layerFor();
+  it.effect("treats a missing config as unset", () =>
+    Effect.gen(function* () {
+      expect(yield* readWorkspaceTarget()).toBeUndefined();
+    }).pipe(Effect.provide(layerFor().layer)),
+  );
+
+  it.effect("fails with DbConfigLoadError on an unparsable TOML config", () => {
+    writeConfig("not = [valid toml");
     return Effect.gen(function* () {
-      expect(yield* readWorkspaceTarget()).toBeUndefined();
-      writeConfig("not = [valid toml");
-      expect(yield* readWorkspaceTarget()).toBeUndefined();
-    }).pipe(Effect.provide(empty.layer));
+      const error = yield* readWorkspaceTarget().pipe(Effect.flip);
+      expect(error).toBeInstanceOf(DbConfigLoadError);
+      expect(error.message).toMatch(/^failed to load config: /);
+    }).pipe(Effect.provide(layerFor().layer));
+  });
+
+  it.effect("fails with DbConfigLoadError on an unparsable JSON config", () => {
+    writeConfig('{"target":', "config.json");
+    return Effect.gen(function* () {
+      const error = yield* readWorkspaceTarget().pipe(Effect.flip);
+      expect(error).toBeInstanceOf(DbConfigLoadError);
+      expect(error.message).toMatch(/^failed to load config: /);
+    }).pipe(Effect.provide(layerFor().layer));
+  });
+
+  it.effect("fails with DbConfigLoadError when the config path cannot be read", () => {
+    mkdirSync(join(workdir.current, "supabase", "config.toml"), { recursive: true });
+    return Effect.gen(function* () {
+      const error = yield* readWorkspaceTarget().pipe(Effect.flip);
+      expect(error).toBeInstanceOf(DbConfigLoadError);
+      expect(error.message).toMatch(/^failed to read file config: /);
+    }).pipe(Effect.provide(layerFor().layer));
+  });
+
+  it.effect("fails with DbConfigLoadError on a malformed project .env file", () => {
+    mkdirSync(join(workdir.current, "supabase"), { recursive: true });
+    writeFileSync(join(workdir.current, "supabase", ".env"), "SUPABASE_TARGET=local\nBAD LINE!\n");
+    return Effect.gen(function* () {
+      const error = yield* readWorkspaceTarget().pipe(Effect.flip);
+      expect(error).toBeInstanceOf(DbConfigLoadError);
+      expect(error.message).toBe("failed to parse environment file: .env");
+    }).pipe(Effect.provide(layerFor().layer));
   });
 
   it.effect("rejects an invalid SUPABASE_TARGET", () =>
