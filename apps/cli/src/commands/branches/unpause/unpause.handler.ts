@@ -4,6 +4,7 @@ import { CommandPlatformApi } from "../../../auth/command-platform-api.service.t
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
 import {
@@ -37,6 +38,11 @@ export const branchesUnpause = Effect.fn("branches.unpause")(function* (
   yield* Effect.gen(function* () {
     const branchInput = yield* promptBranchId(flags.name, ref);
     const branchRef = yield* resolveBranchProjectRef(branchInput, ref);
+
+    yield* requireHostedMutationConsent({
+      action: `Unpause preview branch ${branchInput}`,
+      details: [`Branch project ref: ${branchRef}`],
+    });
 
     const restoring =
       output.format === "text" ? yield* output.task("Unpausing branch...") : undefined;

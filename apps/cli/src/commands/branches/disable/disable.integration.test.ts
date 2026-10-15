@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -11,10 +11,20 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import type { BranchesDisableFlags } from "./disable.command.ts";
 import { branchesDisable } from "./disable.handler.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const tempRoot = useTempWorkdir("supabase-branches-disable-int-");
+
+const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
+  Layer.mergeAll(
+    buildTestRuntime(opts),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
 
 interface SetupOpts {
   readonly status?: number;
@@ -26,7 +36,7 @@ function setup(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 200, body: null },
   });
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
-  const layer = buildTestRuntime({ out, api, cliSettings });
+  const layer = buildRuntime({ out, api, cliSettings });
   return { layer, out, api };
 }
 
@@ -38,7 +48,7 @@ function setupTracked(opts: SetupOpts = {}) {
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
-  const layer = buildTestRuntime({
+  const layer = buildRuntime({
     out,
     api,
     cliSettings,
@@ -85,4 +95,9 @@ describe("branches disable integration", () => {
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("branches disable", {
+  api: { response: { status: 200, body: null } },
+  invoke: () => ({ run: branchesDisable(baseFlags) }),
 });

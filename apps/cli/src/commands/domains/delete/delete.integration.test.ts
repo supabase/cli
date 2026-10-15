@@ -1,8 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
+  VALID_REF,
   buildTestRuntime,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
@@ -11,7 +12,10 @@ import {
   useTempWorkdir,
   unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { domainsDelete } from "./delete.handler.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
@@ -24,6 +28,15 @@ interface SetupOpts {
 
 const tempRoot = useTempWorkdir("supabase-domains-delete-int-");
 
+const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
+  Layer.mergeAll(
+    buildTestRuntime(opts),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
+
+const confirmed = `Confirmed by --yes: Delete the custom hostname config on project ${VALID_REF} · identity unverified\n`;
+
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const api = mockCommandPlatformApi({
@@ -33,7 +46,7 @@ function setup(opts: SetupOpts = {}) {
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const telemetry = mockTelemetryStateTracked();
   const linkedProjectCache = mockLinkedProjectCacheTracked();
-  const layer = buildTestRuntime({
+  const layer = buildRuntime({
     out,
     api,
     cliSettings,
@@ -52,7 +65,7 @@ describe("domains delete integration", () => {
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
       expect(out.stderrText).toBe(
-        unverifiedTargetBanner() + "Deleted custom hostname config successfully.\n",
+        unverifiedTargetBanner() + confirmed + "Deleted custom hostname config successfully.\n",
       );
       expect(out.stdoutText).toBe("");
       expect(api.requests[0]?.method).toBe("DELETE");
@@ -84,7 +97,7 @@ describe("domains delete integration", () => {
       yield* domainsDelete(baseFlags);
       expect(out.stdoutText).toBe("");
       expect(out.stderrText).toBe(
-        unverifiedTargetBanner() + "Deleted custom hostname config successfully.\n",
+        unverifiedTargetBanner() + confirmed + "Deleted custom hostname config successfully.\n",
       );
     }).pipe(Effect.provide(layer));
   });
@@ -121,4 +134,9 @@ describe("domains delete integration", () => {
       expect(out.progressEvents).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("domains delete", {
+  api: { response: { status: 200, body: {} } },
+  invoke: () => ({ run: domainsDelete(baseFlags) }),
 });

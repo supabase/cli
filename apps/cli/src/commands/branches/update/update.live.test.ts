@@ -30,6 +30,7 @@ test("renames a preview branch", ({ cliEffect, project }) =>
           renamed,
           "--output",
           "json",
+          "--yes",
         ]);
         expect(updated.exitCode, updated.stderr).toBe(0);
         expect(updated.stderr).toContain("Updated preview branch");

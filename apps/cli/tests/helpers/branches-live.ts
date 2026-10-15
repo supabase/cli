@@ -147,7 +147,7 @@ export function createLiveBranchEffect<E>(
 ): Effect.Effect<string, BranchError<E>, never> {
   const created = command(
     cli,
-    ["branches", "create", name, "--project-ref", project.ref, "--output-format", "json"],
+    ["branches", "create", name, "--project-ref", project.ref, "--output-format", "json", "--yes"],
     "branches create",
     undefined,
   );

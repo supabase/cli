@@ -293,6 +293,7 @@ export class BranchesEnvNotSupportedError extends Data.TaggedError("BranchesEnvN
   }
 }
 
+/** @public */
 export class BranchesCreateCancelledError extends Data.TaggedError("BranchesCreateCancelledError")<{
   readonly message: string;
 }> {

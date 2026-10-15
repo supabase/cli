@@ -4,7 +4,7 @@ import type {
   V1GetVanitySubdomainConfigOutput,
 } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
@@ -18,16 +18,28 @@ import {
   useTempWorkdir,
   unverifiedTargetBanner,
 } from "../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../tests/helpers/hosted-consent.ts";
 import { vanitySubdomainsActivate } from "./activate/activate.handler.ts";
 import { vanitySubdomainsCheckAvailability } from "./check-availability/check-availability.handler.ts";
 import { vanitySubdomainsDelete } from "./delete/delete.handler.ts";
 import { vanitySubdomainsGet } from "./get/get.handler.ts";
+import { YesFlag } from "../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 type VanityConfig = typeof V1GetVanitySubdomainConfigOutput.Type;
 type AvailabilityResponse = typeof V1CheckVanitySubdomainAvailabilityOutput.Type;
 type ActivateResponse = typeof V1ActivateVanitySubdomainConfigOutput.Type;
 
 const tempRoot = useTempWorkdir("supabase-vanity-int-");
+
+const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
+  Layer.mergeAll(
+    buildTestRuntime(opts),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
+
+const confirmedDelete = `Confirmed by --yes: Delete the vanity subdomain on project ${VALID_REF} · identity unverified\n`;
 
 const SAMPLE_GET: VanityConfig = {
   status: "custom-domain-used",
@@ -57,7 +69,7 @@ function runtimeWith(opts: {
   readonly linkedProjectCache?: ReturnType<typeof mockLinkedProjectCacheTracked>["layer"];
   readonly outputFlag?: OutputFlagValue;
 }) {
-  return buildTestRuntime({
+  return buildRuntime({
     out: opts.out,
     api: opts.api,
     analytics: opts.analytics,
@@ -636,7 +648,7 @@ describe("vanity-subdomains delete", () => {
     return Effect.gen(function* () {
       yield* vanitySubdomainsDelete({ projectRef: Option.none() });
       expect(out.stderrText).toBe(
-        unverifiedTargetBanner() + "Deleted vanity subdomain successfully.\n",
+        unverifiedTargetBanner() + confirmedDelete + "Deleted vanity subdomain successfully.\n",
       );
       expect(api.requests[0]?.method).toBe("DELETE");
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/vanity-subdomain`);
@@ -663,7 +675,7 @@ describe("vanity-subdomains delete", () => {
     return Effect.gen(function* () {
       yield* vanitySubdomainsDelete({ projectRef: Option.none() });
       expect(out.stderrText).toBe(
-        unverifiedTargetBanner() + "Deleted vanity subdomain successfully.\n",
+        unverifiedTargetBanner() + confirmedDelete + "Deleted vanity subdomain successfully.\n",
       );
       expect(out.messages.find((m) => m.type === "success")).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -772,4 +784,19 @@ describe("vanity-subdomains PersistentPostRun parity", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describeHostedConsent("vanity-subdomains activate", {
+  api: { response: { status: 201, body: SAMPLE_ACTIVATE } },
+  invoke: () => ({
+    run: vanitySubdomainsActivate({
+      projectRef: Option.none(),
+      desiredSubdomain: Option.some("example"),
+    }),
+  }),
+});
+
+describeHostedConsent("vanity-subdomains delete", {
+  api: { response: { status: 200, body: null } },
+  invoke: () => ({ run: vanitySubdomainsDelete({ projectRef: Option.none() }) }),
 });

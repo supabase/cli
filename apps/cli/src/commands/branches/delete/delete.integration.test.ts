@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -8,11 +8,15 @@ import {
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
+  type MockCommandPlatformApiOpts,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import type { BranchesDeleteFlags } from "./delete.command.ts";
 import { branchesDelete } from "./delete.handler.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 // `branch_id_or_ref` is a oneOf [project-ref, uuid]; a 20-lowercase ref would match both shapes
 // and get rejected, so tests use a v4 UUID to pick exactly one.
@@ -32,13 +36,20 @@ const BRANCH_CONFIG = {
 
 const tempRoot = useTempWorkdir("supabase-branches-delete-int-");
 
+const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
+  Layer.mergeAll(
+    buildTestRuntime(opts),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
+
 interface SetupOpts {
   readonly deleteStatus?: number;
 }
 
-function buildApi(opts: SetupOpts) {
+function apiOptions(opts: SetupOpts): MockCommandPlatformApiOpts {
   const deleteStatus = opts.deleteStatus ?? 200;
-  return mockCommandPlatformApi({
+  return {
     handler: (request) =>
       Effect.sync(() => {
         if (request.method === "DELETE" && request.url.includes("/v1/branches/")) {
@@ -49,14 +60,18 @@ function buildApi(opts: SetupOpts) {
         }
         return jsonResponse(request, 200, null);
       }),
-  });
+  };
+}
+
+function buildApi(opts: SetupOpts) {
+  return mockCommandPlatformApi(apiOptions(opts));
 }
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: "text" });
   const api = buildApi(opts);
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
-  const layer = buildTestRuntime({ out, api, cliSettings });
+  const layer = buildRuntime({ out, api, cliSettings });
   return { layer, out, api };
 }
 
@@ -66,7 +81,7 @@ function setupTracked(opts: SetupOpts = {}) {
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
-  const layer = buildTestRuntime({
+  const layer = buildRuntime({
     out,
     api,
     cliSettings,
@@ -172,7 +187,7 @@ describe("branches delete integration", () => {
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildTestRuntime({ out, api, cliSettings });
+      const layer = buildRuntime({ out, api, cliSettings });
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -197,4 +212,9 @@ describe("branches delete integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describeHostedConsent("branches delete", {
+  api: apiOptions({}),
+  invoke: () => ({ run: branchesDelete({ ...baseFlags, name: Option.some(BRANCH_UUID) }) }),
 });
