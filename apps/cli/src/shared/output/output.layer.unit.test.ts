@@ -1,6 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
 import { beforeEach, vi } from "vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schema, Sink, Stdio, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  PlatformError,
+  Schema,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
 import { TestClock } from "effect/testing";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
 import { mockTty } from "../../../tests/helpers/mocks.ts";
@@ -95,6 +107,33 @@ function mockStdio() {
     }),
   );
   return { layer, stdout, stderr };
+}
+
+function failingStdoutStdio(code: string) {
+  let attempts = 0;
+  const layer = Layer.succeed(
+    Stdio.Stdio,
+    Stdio.make({
+      args: Effect.succeed([]),
+      stdin: Stream.empty,
+      stdout: () =>
+        Sink.forEach((_item: string | Uint8Array) =>
+          Effect.suspend(() => {
+            attempts++;
+            return Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "Stdio",
+                method: "stdout",
+                cause: Object.assign(new Error(code), { code }),
+              }),
+            );
+          }),
+        ),
+      stderr: () => Sink.forEach((_item: string | Uint8Array) => Effect.void),
+    }),
+  );
+  return { layer, attempts: () => attempts };
 }
 
 function getFailError(exit: Exit.Exit<unknown, unknown>): unknown {
@@ -762,6 +801,27 @@ describe("Output", () => {
   });
 
   describe("json layer", () => {
+    it.effect("stops writing stdout once its reader has closed the pipe", () => {
+      const stdio = failingStdoutStdio("EPIPE");
+      const layer = jsonOutputLayer.pipe(Layer.provide(stdio.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.raw("first\n");
+        yield* out.raw("second\n");
+        expect(stdio.attempts()).toBe(1);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("dies on any other stdout write failure", () => {
+      const stdio = failingStdoutStdio("EIO");
+      const layer = jsonOutputLayer.pipe(Layer.provide(stdio.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const exit = yield* Effect.exit(out.raw("first\n"));
+        expect(Exit.hasDies(exit)).toBe(true);
+      }).pipe(Effect.provide(layer));
+    });
+
     it.effect("interactive is false", () => {
       const mock = mockStdio();
       const layer = jsonOutputLayer.pipe(Layer.provide(mock.layer));

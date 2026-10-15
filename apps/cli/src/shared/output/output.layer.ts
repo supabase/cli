@@ -14,7 +14,17 @@ import {
   text,
 } from "@clack/prompts";
 import { styleText } from "node:util";
-import { DateTime, Effect, Fiber, Layer, Option, Schema, Stdio, Stream } from "effect";
+import {
+  DateTime,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  PlatformError,
+  Schema,
+  Stdio,
+  Stream,
+} from "effect";
 
 import { Tty } from "../runtime/tty.service.ts";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
@@ -48,17 +58,35 @@ function formatTaskMessage(message: string | undefined): string | undefined {
   return [firstLine, ...rest.map((line) => `${guide}${line}`)].join("\n");
 }
 
+const isBrokenPipe = (error: PlatformError.PlatformError): boolean => {
+  const cause = error.reason.cause;
+  return typeof cause === "object" && cause !== null && "code" in cause && cause.code === "EPIPE";
+};
+
 /**
  * Shared by all three layers. The sink waits for `drain`; `process.stdout.write`
  * does not, so a streamed payload piped to a slow consumer buffers in memory.
+ *
+ * A reader that exits early (`| head`) ends the output, not the command. Later writes to that
+ * stream are skipped: a closed stream never emits `drain` or `error` again, so the sink would hang.
  */
-const stdioWriter =
-  (stdio: typeof Stdio.Stdio.Service) =>
-  (chunk: string | Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
-    Stream.make(chunk).pipe(
-      Stream.run(stream === "stderr" ? stdio.stderr() : stdio.stdout()),
-      Effect.orDie,
+const stdioWriter = (stdio: typeof Stdio.Stdio.Service) => {
+  const closed = { stdout: false, stderr: false };
+  return (chunk: string | Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
+    Effect.suspend(() =>
+      closed[stream]
+        ? Effect.void
+        : Stream.make(chunk).pipe(
+            Stream.run(stream === "stderr" ? stdio.stderr() : stdio.stdout()),
+            Effect.catchIf(isBrokenPipe, () =>
+              Effect.sync(() => {
+                closed[stream] = true;
+              }),
+            ),
+            Effect.orDie,
+          ),
     );
+};
 
 /**
  * Output layers - Concrete output mode implementations for the CLI.
