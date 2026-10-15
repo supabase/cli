@@ -26,8 +26,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "compute push",
   "compute status",
 
-  "config diff",
-  "config pull",
   "config push",
 
   "db branch create",
