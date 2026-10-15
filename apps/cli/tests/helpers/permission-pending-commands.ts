@@ -22,8 +22,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "issue docs",
   "issue feature",
 
-  "login",
-
   "logout",
 
   "pull",
@@ -46,6 +44,4 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "telemetry disable",
   "telemetry enable",
   "telemetry status",
-
-  "whoami",
 ];
