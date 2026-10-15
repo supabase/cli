@@ -36,12 +36,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "db branch switch",
   "db remote changes",
 
-  "domains activate",
-  "domains create",
-  "domains delete",
-  "domains get",
-  "domains reverify",
-
   "encryption get-root-key",
   "encryption update-root-key",
 
@@ -101,13 +95,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
 
   "ssl-enforcement get",
   "ssl-enforcement update",
-
-  "sso add",
-  "sso info",
-  "sso list",
-  "sso remove",
-  "sso show",
-  "sso update",
 
   "stack destroy",
   "stack list",

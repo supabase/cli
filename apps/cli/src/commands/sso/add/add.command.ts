@@ -1,6 +1,11 @@
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
+import { upgradeSuggestion } from "../../../command-internal/upgrade-suggest.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts";
@@ -70,6 +75,25 @@ export const ssoAddCommand = Command.make("add", config).pipe(
       description: "Add a new SAML SSO provider",
     },
   ]),
+  withPermissions(
+    compose(
+      {
+        operations: [{ operationId: "v1-create-a-sso-provider", kind: "required" }],
+        noApiEffectFlags: [
+          "type",
+          "domains",
+          "metadata-file",
+          "metadata-url",
+          "skip-url-validation",
+          "attribute-mapping-file",
+          "name-id-format",
+        ],
+      },
+      upgradeSuggestion,
+      projectRefPicker,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     ssoAdd(flags).pipe(
       withCommandTelemetry({
