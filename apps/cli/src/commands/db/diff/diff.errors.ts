@@ -7,18 +7,6 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 /**
- * Unused: target conflicts raise `TargetSelectorConflictError`.
- * @public
- */
-export class DbDiffTargetFlagsError extends Data.TaggedError("DbDiffTargetFlagsError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
  * Conflicting diff-engine flags (`use-migra`/`use-pgadmin`/`use-pg-delta`); message text is
  * an established output contract. `use-pg-schema` is rejected unconditionally before this
  * check runs, so it can never appear in a real conflict.

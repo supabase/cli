@@ -45,19 +45,6 @@ export class DeclarativeMutuallyExclusiveFlagsError extends Data.TaggedError(
 }
 
 /**
- * Retained for its telemetry tag; no command raises it now that no prompt asks for a URL.
- *
- * @public
- */
-export class DeclarativeInvalidDbUrlError extends Data.TaggedError("DeclarativeInvalidDbUrlError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
  * `db schema declarative generate` ran but produced no declarative files (sync's post-generate
  * guard); message text is an established output contract.
  */

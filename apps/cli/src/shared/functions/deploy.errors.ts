@@ -33,16 +33,6 @@ export class NoFunctionsToDeployError extends Data.TaggedError("NoFunctionsToDep
   }
 }
 
-// TODO(CLI-2695): delete with its entry in the error-tag snapshot once consent replaced it.
-/** @public */
-export class FunctionDeployCancelledError extends Data.TaggedError("FunctionDeployCancelledError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
-  }
-}
-
 export class FunctionImportNotDirectoryError extends Data.TaggedError(
   "FunctionImportNotDirectoryError",
 )<{

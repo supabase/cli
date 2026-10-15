@@ -18,8 +18,6 @@ import { assertPermissionDrift } from "../../../../../../tests/helpers/permissio
 import {
   provideEnv,
   realDbConfigResolver,
-  realLinkedProjectCache,
-  recordingProjectHttpClient,
   serveLinkedDatabase,
   stubManagementApi,
   type StubbedRequest,
@@ -44,7 +42,6 @@ import {
   VALID_REF,
   VALID_TOKEN,
   mockCommandSettings,
-  mockLinkedProjectCacheTracked,
   mockLocalDockerEngineUnavailableLayer,
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
@@ -114,7 +111,7 @@ interface SetupOpts {
   removals?: PgDeltaRemovalSummary;
   planErrors?: ReadonlyArray<PgDeltaEngineError>;
   stackBackend?: boolean;
-  /** Runs the real resolver and linked-project cache; `workdir` must be a real directory. */
+  /** Runs the real db-config resolver; `workdir` must be a real directory. */
   realLayers?: boolean;
 }
 
@@ -219,7 +216,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     promptTextResponses: opts.promptTextResponses,
   });
   const telemetry = mockTelemetryStateTracked();
-  const cache = mockLinkedProjectCacheTracked();
   const localPostgresImageChecks: Array<true> = [];
   const platformApi = mockCommandPlatformApiService({});
   // Backs `resetLocalDatabase`'s real, native container-recreate, reached when the
@@ -290,17 +286,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     },
   });
   const resolver = Layer.succeed(DbConfigResolver, {
-    resolve: () =>
-      Effect.succeed({
-        conn: {
-          host: "db.remote",
-          port: 5432,
-          user: "postgres",
-          password: "x",
-          database: "postgres",
-        },
-        isLocal: false,
-      }),
     resolveConnection: ({ target }) =>
       Effect.succeed({
         conn: {
@@ -388,7 +373,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         }).pipe(Effect.provide(BunServices.layer)),
     }),
   );
-  const projectHttp = recordingProjectHttpClient(VALID_REF);
   const layer = Layer.mergeAll(
     out.layer,
     configValuesLayer({
@@ -399,12 +383,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
     }),
     telemetry.layer,
-    opts.realLayers === true
-      ? realLinkedProjectCache({
-          httpClient: projectHttp.layer,
-          cliSettings: mockCommandSettings({ workdir }),
-        })
-      : cache.layer,
     seam,
     engine,
     mockLocalDockerEngineUnavailableLayer,
@@ -451,9 +429,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dbExec,
     dbBatches,
     dbConnectPorts,
-    cache,
     telemetry,
-    projectHttp,
     localPostgresImageChecks,
     declarativeExportCalls,
     planDebug,
@@ -924,22 +900,6 @@ describe("db schema declarative sync integration", () => {
           path.join(tmp.current, "supabase", "schemas", "public", "tables", "players.sql"),
         ),
       ).toBe(true);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("bootstrap never fills the linked-project cache, even in a linked workdir", () => {
-    const s = setup(tmp.current, {
-      experimental: true,
-      stdinIsTty: true,
-      diffSql: "",
-      projectId: Option.some(VALID_REF),
-      promptConfirmResponses: [true, false], // [generate a new one? yes][reset? no]
-    });
-    return Effect.gen(function* () {
-      yield* seedMigration(tmp.current);
-      yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      expect(s.cache.cached).toBe(false);
-      expect(s.telemetry.flushCount).toBe(1);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1561,7 +1521,7 @@ describe("db schema declarative sync integration", () => {
   });
 });
 
-describe("db schema declarative sync permissions through the real resolver and cache", () => {
+describe("db schema declarative sync permissions through the real resolver", () => {
   const tmp = useTempWorkdir();
   const saveLinkedRef = Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -1569,7 +1529,7 @@ describe("db schema declarative sync permissions through the real resolver and c
     yield* fs.writeFileString(`${tmp.current}/supabase/.temp/project-ref`, VALID_REF);
   });
 
-  it.effect("the bootstrap makes no Management API request and leaves the cache alone", () => {
+  it.effect("the bootstrap makes no Management API request", () => {
     const s = setup(tmp.current, {
       realLayers: true,
       experimental: true,
@@ -1589,7 +1549,6 @@ describe("db schema declarative sync permissions through the real resolver and c
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(s.declarativeExportCalls).toHaveLength(1);
       expect(requests).toEqual([]);
-      expect(s.projectHttp.calls).toEqual([]);
       assertPermissionDrift({
         command: "db schema declarative sync",
         activeFlags: { "no-apply": true },

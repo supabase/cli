@@ -16,18 +16,6 @@ import {
  */
 
 /**
- * Unused: target conflicts raise `TargetSelectorConflictError`.
- * @public
- */
-export class DbAdvisorsMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "DbAdvisorsMutuallyExclusiveFlagsError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
  * `--linked` PreRunE: no access token; message text and the "Run supabase
  * login first." suggestion are an established output contract.
  */

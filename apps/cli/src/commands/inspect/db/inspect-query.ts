@@ -42,19 +42,6 @@ export interface InspectQuerySpec {
 }
 
 /**
- * Retained for its telemetry tag; the shared target selector now rejects conflicting target flags.
- *
- * @public
- */
-export class InspectMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "InspectMutuallyExclusiveFlagsError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
  * The backtick-wrapped `` `…` `` text cell. An empty code span isn't a valid glamour token, so
  * empty/null values render as the two literal backticks too, keeping the same column width as
  * a populated cell. Unwrapped columns use `inspectPlainText` instead.

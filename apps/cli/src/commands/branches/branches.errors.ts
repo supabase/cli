@@ -293,15 +293,6 @@ export class BranchesEnvNotSupportedError extends Data.TaggedError("BranchesEnvN
   }
 }
 
-/** @public */
-export class BranchesCreateCancelledError extends Data.TaggedError("BranchesCreateCancelledError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
-  }
-}
-
 export class BranchesBranchNameEmptyError extends Data.TaggedError("BranchesBranchNameEmptyError")<{
   readonly message: string;
 }> {

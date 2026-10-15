@@ -14,18 +14,6 @@ import {
  * connection layer — not re-wrapped here.
  */
 
-/**
- * Unused: target conflicts raise `TargetSelectorConflictError`.
- * @public
- */
-export class DbLintMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "DbLintMutuallyExclusiveFlagsError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
 /** `failed to begin transaction: <cause>`; message text is an established output contract. */
 export class DbLintBeginTxError extends Data.TaggedError("DbLintBeginTxError")<{
   readonly message: string;

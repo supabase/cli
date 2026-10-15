@@ -162,23 +162,6 @@ export function withCondition(
 }
 
 /**
- * Adds `prerequisite` to every entry's `context`, for a condition that isn't a flag, e.g. a choice
- * the user makes at a prompt.
- */
-export function withContext(
-  fragment: PermissionFragment,
-  prerequisite: string,
-): PermissionFragment {
-  return {
-    ...fragment,
-    operations: fragment.operations.map((entry) => ({
-      ...entry,
-      context: entry.context === undefined ? prerequisite : `${prerequisite}, and ${entry.context}`,
-    })),
-  };
-}
-
-/**
  * Gives every entry in `fragment` the `kind` the including command handles it with, when that
  * differs from the block's own (e.g. a command that carries on after a 403 on a call its
  * block treats as required).

@@ -20,7 +20,7 @@ import { startCommand } from "../../commands/start/start.command.ts";
 import { stopCommand } from "../../commands/stop/stop.command.ts";
 import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { RemovedSurfaceError } from "../../command-internal/removed-command.ts";
-import { TestDbMutuallyExclusiveFlagsError } from "../../command-internal/test-db.errors.ts";
+import { TargetSelectorConflictError } from "../../command-internal/target/target.errors.ts";
 import {
   mockAnalytics,
   mockOutput,
@@ -320,8 +320,8 @@ describe("hidden subcommands", () => {
 
   it.effect("still executes the native `db test` hidden alias by exact name (CLI-1962)", () =>
     Effect.gen(function* () {
-      // `--local --linked` fail inside the native handler's mutual-exclusivity check before any
-      // DB/docker IO, so that typed failure (not success) is what proves dispatch reached it.
+      // `--local --linked` fail in the target selector before any DB/docker IO, so that typed
+      // failure (not success) is what proves dispatch reached the handler.
       const fs = yield* FileSystem.FileSystem;
       const home = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-hidden-flag-" });
       const run = (args: ReadonlyArray<string>) =>
@@ -335,7 +335,7 @@ describe("hidden subcommands", () => {
       );
       expect(Exit.isFailure(dbTestExit)).toBe(true);
       if (!Exit.isFailure(dbTestExit)) return;
-      expect(Cause.squash(dbTestExit.cause)).toBeInstanceOf(TestDbMutuallyExclusiveFlagsError);
+      expect(Cause.squash(dbTestExit.cause)).toBeInstanceOf(TargetSelectorConflictError);
 
       const unknownExit = yield* run(["db", "not-a-real-command"]);
       expect(yield* encodeJson(unknownExit)).toContain("UnknownSubcommand");

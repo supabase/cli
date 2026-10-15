@@ -6,16 +6,6 @@ import {
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
 
-// TODO(CLI-2695): delete with its entry in the error-tag snapshot; the target selector replaced it.
-/** @public */
-export class DbPullTargetFlagsError extends Data.TaggedError("DbPullTargetFlagsError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
 /**
  * `--declarative` combined with `--diff-engine`; message text is an established output
  * contract.

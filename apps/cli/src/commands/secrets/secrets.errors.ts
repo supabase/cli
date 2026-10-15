@@ -133,33 +133,10 @@ export class SecretsUnsetInputError extends Data.TaggedError("SecretsUnsetInputE
   }
 }
 
-// TODO(CLI-2695): delete with its entry in the error-tag snapshot once consent replaced it.
-/** @public */
-export class SecretsUnsetConfirmationRequiredError extends Data.TaggedError(
-  "SecretsUnsetConfirmationRequiredError",
-)<{
-  readonly message: string;
-  readonly suggestion: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
 export class SecretsEnvNotSupportedError extends Data.TaggedError("SecretsEnvNotSupportedError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidInput;
-  }
-}
-
-// TODO(CLI-2695): delete with its entry in the error-tag snapshot once consent replaced it.
-/** @public */
-export class SecretsUnsetCancelledError extends Data.TaggedError("SecretsUnsetCancelledError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
   }
 }

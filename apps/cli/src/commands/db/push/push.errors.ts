@@ -5,16 +5,6 @@ import {
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
 
-// TODO(CLI-2695): delete with its entry in the error-tag snapshot; the target selector replaced it.
-/** @public */
-export class DbPushTargetFlagsError extends Data.TaggedError("DbPushTargetFlagsError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
 /**
  * Remote migration versions are missing from the local directory; message
  * text is an established output contract. The `migration repair` / `db pull`
@@ -40,17 +30,6 @@ export class DbPushMissingRemoteError extends Data.TaggedError("DbPushMissingRem
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.migrationDrift;
-  }
-}
-
-// TODO(CLI-2695): delete with its entry in the error-tag snapshot; hosted consent replaced it.
-/** @public */
-export class DbPushCancelledError extends Data.TaggedError("DbPushCancelledError")<{
-  readonly message: string;
-  readonly suggestion?: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
   }
 }
 

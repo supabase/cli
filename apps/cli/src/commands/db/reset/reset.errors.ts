@@ -7,18 +7,6 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 /**
- * Unused: target conflicts raise `TargetSelectorConflictError`.
- * @public
- */
-export class DbResetTargetFlagsError extends Data.TaggedError("DbResetTargetFlagsError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
  * `--version` and `--last` together; message text is an established output
  * contract.
  */
@@ -53,19 +41,6 @@ export class DbResetMigrationFileError extends Data.TaggedError("DbResetMigratio
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
-  }
-}
-
-/**
- * Unused: a declined hosted confirmation raises `HostedMutationDeclinedError`.
- * @public
- */
-export class DbResetCancelledError extends Data.TaggedError("DbResetCancelledError")<{
-  readonly message: string;
-  readonly suggestion?: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
   }
 }
 

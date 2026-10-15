@@ -120,17 +120,6 @@ export class ConfigPushBranchResolveStatusError extends Data.TaggedError(
 // transport failure, or an unexpected status) degrades to an uncertain target rather than
 // aborting the push. There is no error class for this probe — it never fails the command.
 
-// TODO(CLI-2695): delete with its entry in the error-tag snapshot once consent replaced it.
-/** @public */
-export class ConfigPushCancelledError extends Data.TaggedError("ConfigPushCancelledError")<{
-  readonly message: string;
-  readonly suggestion?: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
-  }
-}
-
 export class ConfigPushListAddonsNetworkError extends Data.TaggedError(
   "ConfigPushListAddonsNetworkError",
 )<DecodableNetworkErrorArgs> {

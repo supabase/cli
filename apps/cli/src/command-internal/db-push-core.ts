@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
-import type { planDbSeed } from "./seed-remote-consent.ts";
+import type { DbSeedPlan } from "./seed-remote-consent.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { listLocalMigrations } from "./migration-list.ts";
 import {
@@ -78,7 +78,7 @@ export interface DbPushCoreInput {
   readonly includeAll: boolean;
   readonly includeRoles: boolean;
   readonly includeSeed: boolean;
-  readonly seed: Effect.Success<ReturnType<typeof planDbSeed>>;
+  readonly seed: DbSeedPlan;
   readonly includeVault: boolean;
   readonly dnsResolver: "native" | "https";
   /** Already loaded + validated `config.toml`, e.g. via `checkDbToml`. */

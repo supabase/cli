@@ -173,20 +173,6 @@ export class StorageFileError extends Data.TaggedError("StorageFileError")<{
 }
 
 /**
- * Unused: target conflicts raise `TargetSelectorConflictError`.
- * @public
- */
-export class StorageMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "StorageMutuallyExclusiveFlagsError",
-)<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
  * The resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a
  * directory (`validateWorkdirIsDirectory`). Only reachable when the
  * user explicitly set it — beats every other guard in `ls`/`mv`/`rm`/`cp`.

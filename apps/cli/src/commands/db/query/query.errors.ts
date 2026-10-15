@@ -82,20 +82,6 @@ export class DbQueryExecError extends Data.TaggedError("DbQueryExecError")<{
 }
 
 /**
- * Unused: target conflicts raise `TargetSelectorConflictError`.
- * @public
- */
-export class DbQueryMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "DbQueryMutuallyExclusiveFlagsError",
-)<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
  * The linked Management API returned a non-201 status; message text
  * (`"unexpected status <status>: <body>"`) is an established output contract.
  */
