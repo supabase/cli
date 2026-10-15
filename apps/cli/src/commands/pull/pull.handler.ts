@@ -9,15 +9,14 @@ import { validateWorkdirIsDirectory } from "../../command-internal/workdir-valid
 import { MachineErrorContext } from "../../shared/output/machine-error-context.service.ts";
 import { resolveYes, OutputFlag } from "../../command-internal/global-flags.ts";
 import { requireHostedMutationConsent } from "../../command-internal/hosted-consent/hosted-consent.ts";
-import type { ResolvedTarget } from "../../command-internal/target/resolve-target.ts";
 import { CommandTarget, type TargetJson } from "../../shared/output/command-target.service.ts";
-import { readProjectRefFile } from "../../shared/config/temp-paths.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import {
   configTargetErrorsFor,
+  linkedTargetForConfigRef,
   resolveConfigTarget,
 } from "../../command-internal/project-target.ts";
 import { unexpectedStatusMessage } from "../../command-internal/http-errors.ts";
@@ -235,16 +234,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
       return { ref: target.ref, branch: target.branch, runPlan: plan, source: pullSource };
     }).pipe(Effect.withSpan("pull.resolveTarget"));
 
-    // `resolveConfigTarget` already announced the target; wrapping its ref here avoids a second banner.
-    const linkedRef = yield* readProjectRefFile(fs, path, cliSettings.workdir).pipe(
-      Effect.orElseSucceed(() => Option.none<string>()),
-    );
-    const linkedTarget: ResolvedTarget = {
-      kind: "linked",
-      ref,
-      source: "flag",
-      matchesLinkedRef: Option.contains(linkedRef, ref),
-    };
+    const linkedTarget = yield* linkedTargetForConfigRef(requested, ref);
     const targetIdentity: TargetJson = Option.getOrElse(yield* commandTarget.json, () => ({}));
 
     // Retry hints below use the planned remote destination's label, not the raw `remoteLabel`

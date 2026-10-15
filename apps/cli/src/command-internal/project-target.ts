@@ -1,7 +1,9 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Data, Effect, Option } from "effect";
+import { Data, Effect, FileSystem, Option, Path } from "effect";
 
+import { CommandSettings } from "../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../config/project-ref.service.ts";
+import { readProjectRefFile } from "../shared/config/temp-paths.ts";
 import {
   parentNotLinkedMessage,
   parentRefInvalidMessage,
@@ -14,6 +16,7 @@ import { Output } from "../shared/output/output.service.ts";
 import { resolveBranchProjectRef } from "./branch-ref.resolver.ts";
 import { sanitizeInlineName } from "./http-errors.ts";
 import { BRANCH_PROJECT_REF_PATTERN, BRANCH_UUID_PATTERN } from "./ref-patterns.ts";
+import type { ResolvedTarget } from "./target/resolve-target.ts";
 import { renderBranchTarget } from "./target/target-identity.ts";
 import {
   actionability,
@@ -223,4 +226,27 @@ export const resolveConfigTarget = Effect.fn("ProjectTarget.resolve")(function* 
 
   yield* Effect.annotateCurrentSpan("project.ref", ref);
   return { ref, branch };
+});
+
+/**
+ * The linked {@link ResolvedTarget} for a ref {@link resolveConfigTarget} already announced, so
+ * connection resolution can use it without a second banner. Only `matchesLinkedRef` feeds
+ * connection resolution; `source` is informational.
+ */
+export const linkedTargetForConfigRef = Effect.fn("ProjectTarget.linkedTarget")(function* (
+  requested: Option.Option<string>,
+  ref: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const { workdir } = yield* CommandSettings;
+  const linkedRef = yield* readProjectRefFile(fs, path, workdir).pipe(
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+  return {
+    kind: "linked",
+    ref,
+    source: Option.isSome(requested) ? "flag" : "file",
+    matchesLinkedRef: Option.contains(linkedRef, ref),
+  } satisfies ResolvedTarget;
 });
