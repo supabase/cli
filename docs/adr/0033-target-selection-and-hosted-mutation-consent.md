@@ -97,17 +97,19 @@ credentials.
 
 ```text
 Target: local stack (<host>:<port>)
-Target: custom Postgres (<host>)
+Target: local stack (<host>:<port>) · default; pass --linked for <name> (<ref>)
+Target: custom Postgres (<host>:<port>)
 Target: project <name> (<ref>) · production
-Target: project <parent name> (<parent ref>) · branch (<ref>)
-Target: project <ref> · identity unverified
+Target: project <parent ref> · branch <name> (<ref>)
+Target: project <ref>
+Target: project <ref> (not the linked project)
 ```
 
-Project identity comes from `supabase/.temp/linked-project.json` alone. A ref that is its own parent
-in the cache is production. A ref from the ref file whose cache names another parent is a branch of
-that parent. Any other ref, for example one from `--project-ref`, is unverified. A branch the
-`config` family selects by name prints `Target: project <parent ref> · branch <name> (<ref>)`
-instead.
+Project identity comes from `supabase/.temp/linked-project.json` with no API call. A cache that
+names the resolved ref itself is a production project. The cache can be stale or missing, so it
+never proves a branch: "branch" is shown only on positive evidence (a branch lookup by name or
+UUID, or a live probe), and anything else is the bare ref, reported `unverified` in JSON. The full
+table and the JSON shape live in [the command target doc](../../apps/cli/docs/command-target.md).
 
 JSON results carry the same information as `target`:
 
@@ -214,8 +216,8 @@ to No makes the Enter key safe.
 - A hosted `db query` needs consent unless it is `--read-only`.
 - `db reset`'s JSON `target` changes from a string to the `target` object.
 - Declining the `db pull` or `pull` history update loses the "write the file only" path.
-- Every command that resolves a target adds a stderr line. A ref that is not in the cache shows
-  `identity unverified`.
+- Every command that resolves a target adds a stderr line. A ref the cache does not vouch for
+  shows as the bare ref, and JSON reports it `unverified`.
 - The cancelled-error tags are consolidated and new tags are added, so telemetry keyed on the old
   tags needs updating.
 
