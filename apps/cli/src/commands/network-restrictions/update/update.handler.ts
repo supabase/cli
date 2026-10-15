@@ -9,6 +9,7 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   encodeEnv,
@@ -63,6 +64,13 @@ export const networkRestrictionsUpdate = Effect.fn("network-restrictions.update"
     const ref = yield* resolver.resolve(flags.projectRef);
 
     yield* Effect.gen(function* () {
+      yield* requireHostedMutationConsent({
+        action: flags.append
+          ? "Append to the network restrictions"
+          : "Replace the network restrictions",
+        details: [`IPv4: ${v4.join(", ") || "(none)"}`, `IPv6: ${v6.join(", ") || "(none)"}`],
+      });
+
       const updating =
         output.format === "text"
           ? yield* output.task("Updating network restrictions...")

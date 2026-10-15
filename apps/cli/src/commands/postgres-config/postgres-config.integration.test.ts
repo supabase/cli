@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 
+import { describeHostedConsent } from "../../../tests/helpers/hosted-consent.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -14,6 +15,8 @@ import {
   useTempWorkdir,
   unverifiedTargetBanner,
 } from "../../../tests/helpers/command-mocks.ts";
+import { YesFlag } from "../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { postgresConfigDelete } from "./delete/delete.handler.ts";
 import { postgresConfigGet } from "./get/get.handler.ts";
 import { postgresConfigUpdate } from "./update/update.handler.ts";
@@ -22,6 +25,11 @@ type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
 const tempRoot = useTempWorkdir("supabase-postgres-config-int-");
 
+const confirmedBy = (action: string) =>
+  `Confirmed by --yes: ${action} on project ${VALID_REF} · identity unverified\n`;
+const UPDATE_CONFIRMED = confirmedBy("Update the Postgres config overrides");
+const DELETE_CONFIRMED = confirmedBy("Delete Postgres config overrides");
+
 function runtimeWith(opts: {
   readonly out: ReturnType<typeof mockOutput>;
   readonly api: ReturnType<typeof mockCommandPlatformApi>;
@@ -29,14 +37,18 @@ function runtimeWith(opts: {
   readonly linkedProjectCache?: ReturnType<typeof mockLinkedProjectCacheTracked>["layer"];
   readonly outputFlag?: OutputFlagValue;
 }) {
-  return buildTestRuntime({
-    out: opts.out,
-    api: opts.api,
-    cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-    telemetry: opts.telemetry,
-    linkedProjectCache: opts.linkedProjectCache,
-    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
-  });
+  return Layer.mergeAll(
+    buildTestRuntime({
+      out: opts.out,
+      api: opts.api,
+      cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+      telemetry: opts.telemetry,
+      linkedProjectCache: opts.linkedProjectCache,
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
+    }),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
 }
 
 describe("postgres-config get", () => {
@@ -290,6 +302,7 @@ describe("postgres-config update", () => {
         });
         expect(out.stderrText).toBe(
           unverifiedTargetBanner() +
+            UPDATE_CONFIRMED +
             "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
         );
       }).pipe(Effect.provide(layer));
@@ -356,7 +369,7 @@ describe("postgres-config update", () => {
           noRestart: false,
         }).pipe(Effect.provide(layer));
         expect(out.stdoutText).toContain(testCase.expected);
-        expect(out.stderrText).toBe(unverifiedTargetBanner());
+        expect(out.stderrText).toBe(unverifiedTargetBanner() + UPDATE_CONFIRMED);
       }
     }),
   );
@@ -505,6 +518,7 @@ describe("postgres-config delete", () => {
       expect(out.stdoutText).toContain("shared_buffers");
       expect(out.stderrText).toBe(
         unverifiedTargetBanner() +
+          DELETE_CONFIRMED +
           "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
       );
     }).pipe(Effect.provide(layer));
@@ -567,7 +581,7 @@ describe("postgres-config delete", () => {
           noRestart: false,
         }).pipe(Effect.provide(layer));
         expect(out.stdoutText).toContain(testCase.expected);
-        expect(out.stderrText).toBe(unverifiedTargetBanner());
+        expect(out.stderrText).toBe(unverifiedTargetBanner() + DELETE_CONFIRMED);
       }
     }),
   );
@@ -658,4 +672,37 @@ describe("postgres-config delete", () => {
       }
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("postgres-config update", {
+  api: {
+    byMethod: {
+      GET: { status: 200, body: { wal_keep_size: "1GB" } },
+      PUT: { status: 200, body: { wal_keep_size: "1GB", max_connections: 100 } },
+    },
+  },
+  invoke: () => ({
+    run: postgresConfigUpdate({
+      projectRef: Option.some(VALID_REF),
+      config: ["max_connections=100"],
+      replaceExistingOverrides: false,
+      noRestart: false,
+    }),
+  }),
+});
+
+describeHostedConsent("postgres-config delete", {
+  api: {
+    byMethod: {
+      GET: { status: 200, body: { max_connections: 100, shared_buffers: "1GB" } },
+      PUT: { status: 200, body: { shared_buffers: "1GB" } },
+    },
+  },
+  invoke: () => ({
+    run: postgresConfigDelete({
+      projectRef: Option.some(VALID_REF),
+      config: ["max_connections"],
+      noRestart: false,
+    }),
+  }),
 });

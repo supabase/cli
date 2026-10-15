@@ -1,9 +1,10 @@
 import { BunServices } from "@effect/platform-bun";
 import { type V1GetSslEnforcementConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -14,6 +15,8 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { sslEnforcementUpdate } from "./update.handler.ts";
 
 const SSL_ENFORCED: typeof V1GetSslEnforcementConfigOutput.Type = {
@@ -30,6 +33,11 @@ const SSL_DESIRED_BUT_NOT_APPLIED: typeof V1GetSslEnforcementConfigOutput.Type =
   currentConfig: { database: true },
   appliedSuccessfully: false,
 };
+
+const consentApproved = Layer.mergeAll(
+  Layer.succeed(YesFlag, true),
+  Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+);
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -48,12 +56,15 @@ function setup(opts: SetupOpts = {}) {
     network: opts.network,
   });
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
-  const layer = buildTestRuntime({
-    out,
-    api,
-    cliSettings,
-    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
-  });
+  const layer = Layer.mergeAll(
+    buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
+    }),
+    consentApproved,
+  );
   return { layer, out, api };
 }
 
@@ -66,13 +77,16 @@ function setupTracked(opts: SetupOpts = {}) {
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
-  const layer = buildTestRuntime({
-    out,
-    api,
-    cliSettings,
-    telemetry: telemetry.layer,
-    linkedProjectCache: cache.layer,
-  });
+  const layer = Layer.mergeAll(
+    buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      telemetry: telemetry.layer,
+      linkedProjectCache: cache.layer,
+    }),
+    consentApproved,
+  );
   return { layer, out, api, telemetry, cache };
 }
 
@@ -381,7 +395,7 @@ describe("ssl-enforcement update integration", () => {
         workdir: localTempRoot,
         projectId: Option.none(),
       });
-      const layer = buildTestRuntime({ out, api, cliSettings });
+      const layer = Layer.mergeAll(buildTestRuntime({ out, api, cliSettings }), consentApproved);
 
       yield* sslEnforcementUpdate({
         projectRef: Option.none(),
@@ -404,7 +418,7 @@ describe("ssl-enforcement update integration", () => {
         workdir: localTempRoot,
         projectId: Option.none(),
       });
-      const layer = buildTestRuntime({ out, api, cliSettings });
+      const layer = Layer.mergeAll(buildTestRuntime({ out, api, cliSettings }), consentApproved);
 
       const exit = yield* Effect.exit(
         sslEnforcementUpdate({
@@ -486,4 +500,20 @@ describe("ssl-enforcement update integration", () => {
       expect(out.messages.some((m) => m.type === "fail")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("ssl-enforcement update", {
+  api: {
+    response: {
+      status: 200,
+      body: { currentConfig: { database: true }, appliedSuccessfully: true },
+    },
+  },
+  invoke: () => ({
+    run: sslEnforcementUpdate({
+      projectRef: Option.some(VALID_REF),
+      enableDbSslEnforcement: true,
+      disableDbSslEnforcement: false,
+    }),
+  }),
 });

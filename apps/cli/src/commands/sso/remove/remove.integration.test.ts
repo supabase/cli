@@ -1,7 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
@@ -12,6 +13,8 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import { ssoRemove } from "./remove.handler.ts";
@@ -108,15 +111,19 @@ function setup(opts: SetupOpts = {}) {
   });
 
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
-  const layer = buildTestRuntime({
-    out,
-    api,
-    cliSettings,
-    telemetry: telemetry.layer,
-    linkedProjectCache: cache.layer,
-    analytics,
-    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
-  });
+  const layer = Layer.mergeAll(
+    buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      telemetry: telemetry.layer,
+      linkedProjectCache: cache.layer,
+      analytics,
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
+    }),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
 
   return { layer, out, api, analytics, telemetry, cache };
 }
@@ -292,4 +299,11 @@ describe("sso remove integration", () => {
       }
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("sso remove", {
+  api: { response: { status: 200, body: PROVIDER } },
+  invoke: () => ({
+    run: ssoRemove({ projectRef: Option.some(VALID_REF), providerId: VALID_PROVIDER_ID }),
+  }),
 });

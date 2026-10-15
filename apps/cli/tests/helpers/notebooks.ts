@@ -9,14 +9,16 @@ import * as UrlParams from "effect/http/UrlParams";
 import { CommandPlatformApi } from "../../src/auth/command-platform-api.service.ts";
 import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts";
 import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
-import { OutputFlag } from "../../src/command-internal/global-flags.ts";
+import { OutputFlag, YesFlag } from "../../src/command-internal/global-flags.ts";
+import { TargetPolicy } from "../../src/command-internal/target/target-policy.ts";
+import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import {
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
   mockCommandSettings,
   transportFailure,
 } from "./command-mocks.ts";
-import { mockOutput, mockContextualAnalytics, mockProcessControl } from "./mocks.ts";
+import { mockOutput, mockContextualAnalytics, mockProcessControl, mockTty } from "./mocks.ts";
 import { commandRuntimeLayer } from "../../src/shared/runtime/command-runtime.layer.ts";
 
 /**
@@ -252,20 +254,28 @@ export interface NotebooksSetupOptions {
   readonly linked?: boolean;
   /** Answers the reconciliation prompt: `"keep"`, `"copy"` or `"delete"`. */
   readonly promptSelectResponses?: ReadonlyArray<string>;
+  /** Answers the hosted-mutation confirmation. */
+  readonly promptConfirmResponses?: ReadonlyArray<boolean>;
   readonly routes?: NotebooksHttpRoutes;
   /** The `-o`/`--output` flag, which every command family here honours. */
   readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
   readonly command?: "pull" | "push";
   readonly args?: ReadonlyArray<string>;
+  /** The global `--yes` flag; on by default so push tests are not blocked by the hosted-mutation consent. */
+  readonly yes?: boolean;
 }
 
 export function setupNotebooks(options: NotebooksSetupOptions) {
+  const interactive = options.interactive ?? (options.format ?? "text") === "text";
   const out = mockOutput({
     format: options.format ?? "text",
-    interactive: options.interactive ?? (options.format ?? "text") === "text",
+    interactive,
     ...(options.promptSelectResponses === undefined
       ? {}
       : { promptSelectResponses: options.promptSelectResponses }),
+    ...(options.promptConfirmResponses === undefined
+      ? {}
+      : { promptConfirmResponses: options.promptConfirmResponses }),
   });
   const http = mockNotebooksHttp(options.routes ?? {});
 
@@ -297,6 +307,10 @@ export function setupNotebooks(options: NotebooksSetupOptions) {
       ),
       BunServices.layer,
       Stdio.layerTest({ args: Effect.succeed(options.args ?? ["notebooks", command]) }),
+      Layer.succeed(YesFlag, options.yes ?? true),
+      Layer.succeed(CliArgs, { args: [] }),
+      mockTty({ stdinIsTty: interactive, stdoutIsTty: interactive }),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: command === "push" ? "no" : "none" }),
     ),
   };
 }

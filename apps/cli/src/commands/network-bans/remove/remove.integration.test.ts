@@ -1,9 +1,10 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
@@ -12,7 +13,11 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withEmptyConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { networkBansRemoveDbUnbanIpFlag } from "./remove.command.ts";
 import { networkBansRemove } from "./remove.handler.ts";
 
@@ -23,6 +28,11 @@ const parseDbUnbanIp = (rawValues: ReadonlyArray<string>) =>
     Effect.map(([, values]) => values),
     Effect.provide(BunServices.layer),
   );
+
+const consentApproved = Layer.mergeAll(
+  Layer.succeed(YesFlag, true),
+  Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+);
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -40,12 +50,15 @@ function setup(opts: SetupOpts = {}) {
     network: opts.network,
   });
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
-  const layer = buildTestRuntime({
-    out,
-    api,
-    cliSettings,
-    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
-  });
+  const layer = Layer.mergeAll(
+    buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
+    }),
+    consentApproved,
+  );
   return { layer, out, api };
 }
 
@@ -58,13 +71,16 @@ function setupTracked(opts: SetupOpts = {}) {
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
-  const layer = buildTestRuntime({
-    out,
-    api,
-    cliSettings,
-    telemetry: telemetry.layer,
-    linkedProjectCache: cache.layer,
-  });
+  const layer = Layer.mergeAll(
+    buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      telemetry: telemetry.layer,
+      linkedProjectCache: cache.layer,
+    }),
+    consentApproved,
+  );
   return { layer, out, api, telemetry, cache };
 }
 
@@ -245,7 +261,7 @@ describe("network-bans remove integration", () => {
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildTestRuntime({ out, api, cliSettings });
+      const layer = Layer.mergeAll(buildTestRuntime({ out, api, cliSettings }), consentApproved);
 
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
@@ -286,6 +302,30 @@ describe("network-bans remove integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.effect("lists the IPs to unban before asking and sends nothing when declined", () => {
+    const out = mockOutput({ format: "text", interactive: true, promptConfirmResponses: [false] });
+    const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        tty: mockTty({ stdinIsTty: true, stdoutIsTty: true }),
+      }),
+      Layer.succeed(YesFlag, false),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+    );
+    return Effect.gen(function* () {
+      const error = yield* withEmptyConfigEnv(
+        networkBansRemove({ projectRef: Option.none(), dbUnbanIp: ["1.2.3.4", "5.6.7.8"] }),
+      ).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(HostedMutationDeclinedError);
+      expect(out.stderrText).toContain("Unban: 1.2.3.4, 5.6.7.8");
+      expect(out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
+      expect(api.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("fails with NetworkBansRemoveUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503 });
@@ -360,4 +400,10 @@ describe("network-bans remove integration", () => {
       expect(cache.cached).toBe(true);
     });
   });
+});
+
+describeHostedConsent("network-bans remove", {
+  invoke: () => ({
+    run: networkBansRemove({ projectRef: Option.some(VALID_REF), dbUnbanIp: ["1.2.3.4"] }),
+  }),
 });
