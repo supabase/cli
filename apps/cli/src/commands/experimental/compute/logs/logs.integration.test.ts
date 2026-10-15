@@ -451,12 +451,17 @@ describe("compute logs", () => {
   const tailZeroRuns: ReadonlyArray<{
     readonly argv: string;
     readonly kind: Option.Option<"requests">;
+    readonly activeFlags: Readonly<Record<string, string | boolean>>;
   }> = [
-    { argv: "--tail 0", kind: Option.none() },
-    { argv: "--tail 0 --kind requests", kind: Option.some("requests") },
+    { argv: "--tail 0", kind: Option.none(), activeFlags: { tail: "0", follow: false } },
+    {
+      argv: "--tail 0 --kind requests",
+      kind: Option.some("requests"),
+      activeFlags: { tail: "0", kind: "requests", follow: false },
+    },
   ];
 
-  it.effect.each(tailZeroRuns)("makes no Management request for $argv", ({ kind }) =>
+  it.effect.each(tailZeroRuns)("makes no Management request for $argv", ({ kind, activeFlags }) =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, http } = setupCompute({
@@ -470,6 +475,13 @@ describe("compute logs", () => {
         yield* computeLogs(flags({ tail: 0, kind }));
 
         expect(http.routeKeys).toEqual([]);
+        assertPermissionDrift({
+          command: "compute logs",
+          variant: { computeEnabled: true },
+          activeFlags,
+          requests: http.driftRequests,
+          exact: true,
+        });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
