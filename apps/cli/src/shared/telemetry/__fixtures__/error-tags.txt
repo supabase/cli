@@ -466,6 +466,8 @@ SecretsSetInputError
 SecretsSetNetworkError
 SecretsSetUnexpectedStatusError
 SecretsUnsetCancelledError
+SecretsUnsetConfirmationRequiredError
+SecretsUnsetInputError
 SecretsUnsetNetworkError
 SecretsUnsetUnexpectedStatusError
 SeedConfigLoadError
