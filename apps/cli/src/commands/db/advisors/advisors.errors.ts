@@ -15,7 +15,10 @@ import {
  * `InvalidProjectRefError`.
  */
 
-/** Conflicting `db-url`/`linked`/`local` flags; message text is an established output contract. */
+/**
+ * Unused: target conflicts raise `TargetSelectorConflictError`.
+ * @public
+ */
 export class DbAdvisorsMutuallyExclusiveFlagsError extends Data.TaggedError(
   "DbAdvisorsMutuallyExclusiveFlagsError",
 )<{ readonly message: string }> {

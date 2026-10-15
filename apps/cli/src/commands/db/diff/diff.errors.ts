@@ -7,8 +7,8 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 /**
- * Conflicting database-target flags (`db-url`/`linked`/`local`); message text
- * is an established output contract.
+ * Unused: target conflicts raise `TargetSelectorConflictError`.
+ * @public
  */
 export class DbDiffTargetFlagsError extends Data.TaggedError("DbDiffTargetFlagsError")<{
   readonly message: string;

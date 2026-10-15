@@ -7,8 +7,8 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 /**
- * Conflicting database-target flags (`db-url`/`linked`/`local`); message text
- * is an established output contract.
+ * Unused: target conflicts raise `TargetSelectorConflictError`.
+ * @public
  */
 export class DbResetTargetFlagsError extends Data.TaggedError("DbResetTargetFlagsError")<{
   readonly message: string;
@@ -57,8 +57,8 @@ export class DbResetMigrationFileError extends Data.TaggedError("DbResetMigratio
 }
 
 /**
- * The user declined the reset confirmation; message text (`context canceled`)
- * is an established output contract.
+ * Unused: a declined hosted confirmation raises `HostedMutationDeclinedError`.
+ * @public
  */
 export class DbResetCancelledError extends Data.TaggedError("DbResetCancelledError")<{
   readonly message: string;

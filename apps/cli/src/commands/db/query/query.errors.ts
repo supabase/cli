@@ -70,9 +70,8 @@ export class DbQueryExecError extends Data.TaggedError("DbQueryExecError")<{
 }
 
 /**
- * More than one of `--db-url` / `--linked` / `--local` was set; message text
- * is an established output contract, so the invocation fails before any SQL
- * runs.
+ * Unused: target conflicts raise `TargetSelectorConflictError`.
+ * @public
  */
 export class DbQueryMutuallyExclusiveFlagsError extends Data.TaggedError(
   "DbQueryMutuallyExclusiveFlagsError",
