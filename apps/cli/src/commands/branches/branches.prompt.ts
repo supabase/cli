@@ -3,6 +3,7 @@ import { styleText } from "node:util";
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
+import { block } from "../../command-internal/command-permissions/model.ts";
 import { mapHttpError } from "../../command-internal/http-errors.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { detectGitBranch } from "../../shared/git/git-branch.ts";
@@ -13,6 +14,15 @@ import {
   BranchesListNetworkError,
   BranchesListUnexpectedStatusError,
 } from "./branches.errors.ts";
+
+/** `promptBranchId`'s branch listing, shown when no branch is given on a TTY. */
+export const branchPrompt = block("branch-prompt", [
+  {
+    operationId: "v1-list-all-branches",
+    kind: "required",
+    context: "the branch argument is omitted or empty and stdin is a TTY",
+  },
+]);
 
 const mapListError = mapHttpError({
   networkError: BranchesListNetworkError,

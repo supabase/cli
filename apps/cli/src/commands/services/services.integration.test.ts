@@ -32,6 +32,7 @@ import {
   processEnvLayer,
 } from "../../../tests/helpers/mocks.ts";
 import { mockTelemetryStateTracked, useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 import { postgresImageForDbMajorVersion } from "../../shared/services/services.shared.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
@@ -559,6 +560,7 @@ major_version = 15
       );
       yield* writeTempFile(workdir, "project-ref", "abcdefghijklmnopqrst");
 
+      const requests: Array<{ method: string; url: string }> = [];
       const server = yield* Effect.acquireRelease(
         Effect.try({
           catch: (cause) =>
@@ -568,6 +570,7 @@ major_version = 15
               hostname: "127.0.0.1",
               port: 0,
               fetch(request) {
+                requests.push({ method: request.method, url: request.url });
                 const url = new URL(request.url);
                 if (url.pathname === "/v1/projects/abcdefghijklmnopqrst") {
                   return Response.json({
@@ -625,6 +628,21 @@ major_version = 15
 
       yield* services({}).pipe(Effect.provide(layer));
 
+      const remoteRequests = requests.splice(0).map(({ method, url }) => ({
+        method,
+        url,
+        path: `${new URL(url).pathname}${new URL(url).search}`,
+      }));
+      expect(remoteRequests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        "GET /v1/projects/abcdefghijklmnopqrst/api-keys?reveal=true",
+        "GET /v1/projects/abcdefghijklmnopqrst",
+      ]);
+      assertPermissionDrift({
+        command: "services",
+        requests: remoteRequests,
+        apiUrl: server.url.origin,
+        exact: true,
+      });
       expect(out.stderrText).not.toContain(INVALID_PROJECT_REF_MESSAGE);
       const rows = yield* decodeServiceRows(out.stdoutText);
       expect(rows).toContainEqual(

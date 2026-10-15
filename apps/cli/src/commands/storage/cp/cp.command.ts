@@ -3,6 +3,8 @@ import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
@@ -10,6 +12,7 @@ import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-ru
 import { storageInvalidJobsMessage } from "../storage.errors.ts";
 import { parseUintBase0 } from "../../../command-internal/parse-uint.ts";
 import {
+  STORAGE_PERMISSIONS,
   StorageLinkedFlagDef,
   StorageLocalFlagDef,
   StorageProjectRefFlagDef,
@@ -85,6 +88,12 @@ export const storageCpCommand = Command.make("cp", config).pipe(
       description: "Download a directory from storage",
     },
   ]),
+  withPermissions(
+    compose(STORAGE_PERMISSIONS, {
+      operations: [],
+      noApiEffectFlags: ["cache-control", "content-type", "jobs"],
+    }),
+  ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // Gate before the mutex check below; see requireExperimental's doc comment for why. A

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 
-import { mockOutput, mockStdin } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
+  jsonResponse,
   VALID_REF,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
@@ -11,7 +12,14 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { encryptionUpdateRootKey } from "./update-root-key.handler.ts";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const ROOT_KEY_RESPONSE = { root_key: "new-key" };
 
@@ -71,6 +79,62 @@ describe("encryption update-root-key integration", () => {
       expect(out.stderrText).toContain("Finished ");
       expect(out.stderrText).toContain("supabase root-key update");
       expect(out.stdoutText).toBe("\n");
+      assertPermissionDrift({
+        command: "encryption update-root-key",
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists projects for the picker and fills the real linked-project cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        const path = new URL(request.url).pathname;
+        if (path === "/v1/projects") {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (path === `/v1/projects/${VALID_REF}`) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        if (path === `/v1/projects/${VALID_REF}/pgsodium`) {
+          return Effect.succeed(jsonResponse(request, 200, ROOT_KEY_RESPONSE));
+        }
+        return Effect.succeed(jsonResponse(request, 404, { message: "unexpected request" }));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      tty: mockTty({ stdinIsTty: true }),
+      stdin: mockStdin(false, "new-key"),
+      linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* encryptionUpdateRootKey(baseFlags);
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `PUT https://api.supabase.com/v1/projects/${VALID_REF}/pgsodium`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(api.requests[1]?.body).toEqual({ root_key: "new-key" });
+      expect(out.stderrText).toContain("Finished ");
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "encryption update-root-key",
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 

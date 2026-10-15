@@ -7,6 +7,7 @@ import {
   type ApiClient,
 } from "@supabase/api/effect";
 import { Effect, Option, Schedule } from "effect";
+import { block } from "../../command-internal/command-permissions/model.ts";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import {
@@ -166,6 +167,11 @@ export const listCompute = Effect.fnUntraced(function* (api: ApiClient, projectR
   return decoded.data.map(toComputeRecord);
 });
 
+/** The Management API call `getCompute` makes. */
+export const computeRead = block("compute-read", [
+  { operationId: "v2-get-a-compute-instance", kind: "required" },
+]);
+
 /** One compute, or `None` when this project has no record of it — see the 404 notes above. */
 export const getCompute = Effect.fnUntraced(function* (
   api: ApiClient,
@@ -216,7 +222,7 @@ export const createComputeUpload = Effect.fnUntraced(function* (
 });
 
 /**
- * PUTs the archive straight at the presigned slot, with no Supabase credentials attached — the
+ * Sends the archive straight to the presigned slot (POST or PUT, as the slot says), with no Supabase credentials attached — the
  * signature in the URL is the authorization. That's also why `httpClientLayer` redacts query
  * strings before logging: under `--debug` this URL is a write-capable credential.
  */

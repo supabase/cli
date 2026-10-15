@@ -167,6 +167,9 @@ const waitForLocalPostgres = Effect.fnUntraced(function* (containerName: string)
         "PGPASSWORD=postgres",
         containerName,
         "psql",
+        // The entrypoint's init server listens only on the Unix socket, so TCP reaches the final server.
+        "-h",
+        "127.0.0.1",
         "-U",
         "postgres",
         "-d",

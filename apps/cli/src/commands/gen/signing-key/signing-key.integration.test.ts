@@ -33,6 +33,7 @@ import {
   withConfigEnv,
   withEmptyConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
 import { GLOBAL_FLAGS, YesFlag } from "../../../command-internal/global-flags.ts";
@@ -117,7 +118,7 @@ function setup(options: SetupOptions = {}) {
     // Listed after buildTestRuntime so it overrides the real spawner from BunServices.
     mockGitCheckIgnore(options.gitCheckIgnoreExitCode ?? 1),
   );
-  return { layer, out, telemetry };
+  return { layer, out, telemetry, api };
 }
 
 const writeConfig = Effect.fnUntraced(function* (contents: string) {
@@ -217,10 +218,16 @@ const testRoot = Command.make("supabase").pipe(
 
 describe("gen signing-key integration", () => {
   it.effect("prints a generated key to stdout when no signing_keys_path is configured", () => {
-    const { layer, out } = setup();
+    const { layer, out, api } = setup();
     return Effect.gen(function* () {
       const path = yield* Path.Path;
       yield* genSigningKey({ algorithm: "ES256", append: false });
+      assertPermissionDrift({
+        command: "gen signing-key",
+        activeFlags: { algorithm: true },
+        requests: api.requests,
+        exact: true,
+      });
 
       const parsed = yield* Schema.decodeEffect(storedSigningKeyJson)(out.stdoutText);
       expect(parsed.alg).toBe("ES256");

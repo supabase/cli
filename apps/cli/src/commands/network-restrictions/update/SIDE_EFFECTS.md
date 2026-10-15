@@ -2,24 +2,27 @@
 
 ## Files Read
 
-| Path                                   | Format                    | When                                                                   |
-| -------------------------------------- | ------------------------- | ---------------------------------------------------------------------- |
-| `~/.supabase/access-token`             | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable             |
-| `<workdir>/supabase/.temp/project-ref` | plain text (project ref)  | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are both unset |
+| Path                                           | Format                    | When                                                                                                                 |
+| ---------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                           |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always, after the project ref resolves — `linkedProjectCache` checks it exists to decide whether to write            |
+| `<workdir>/supabase/.temp/project-ref`         | plain text (project ref)  | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are both unset; also by `linkedProjectCache` on a cache miss |
 
 ## Files Written
 
-| Path                                             | Format | When                                                                                                                                                                                            |
-| ------------------------------------------------ | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | once the `--experimental` gate is open, after ref resolution, via `Effect.ensuring` — success and HTTP failure                                                                                  |
-| `~/.supabase/telemetry.json`                     | JSON   | once the `--experimental` gate is open, via outermost `Effect.ensuring` — including CIDR validation failures. Not written if closed or if flag parsing fails (malformed `--db-allow-cidr` CSV). |
+| Path                                           | Format | When                                                                                                                                                                                                                                                                                                    |
+| ---------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | once the `--experimental` gate is open, in `Effect.ensuring` after the project ref resolves (only if CIDR validation passes), on success or failure — only when no cached file exists, `.temp/project-ref` is absent or names the same ref, a token is available, and `GET /v1/projects/{ref}` succeeds |
+| `~/.supabase/telemetry.json`                   | JSON   | once the `--experimental` gate is open, via outermost `Effect.ensuring` — including CIDR validation failures. Not written if closed or if flag parsing fails (malformed `--db-allow-cidr` CSV).                                                                                                         |
 
 ## API Routes
 
-| Method  | Path                                            | Auth         | Request body                                                        | Response (used fields)                                                                                 |
-| ------- | ----------------------------------------------- | ------------ | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `POST`  | `/v1/projects/{ref}/network-restrictions/apply` | Bearer token | `{ dbAllowedCidrs: string[], dbAllowedCidrsV6: string[] }`          | `{ config: { dbAllowedCidrs?, dbAllowedCidrsV6? }, status }` (`V1UpdateNetworkRestrictionsOutput`)     |
-| `PATCH` | `/v1/projects/{ref}/network-restrictions`       | Bearer token | `{ add: { dbAllowedCidrs: string[], dbAllowedCidrsV6: string[] } }` | `{ config: { dbAllowedCidrs?: Array<{address, type}> }, status }` (`V1PatchNetworkRestrictionsOutput`) |
+| Method  | Path                                            | Auth         | Request body                                                        | Response (used fields)                                                                                                                                                                                       |
+| ------- | ----------------------------------------------- | ------------ | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`   | `/v1/projects`                                  | Bearer token | none                                                                | project list for the interactive picker — only when no ref comes from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref` and stdin is a TTY with interactive output                               |
+| `POST`  | `/v1/projects/{ref}/network-restrictions/apply` | Bearer token | `{ dbAllowedCidrs: string[], dbAllowedCidrsV6: string[] }`          | `{ config: { dbAllowedCidrs?, dbAllowedCidrsV6? }, status }` (`V1UpdateNetworkRestrictionsOutput`)                                                                                                           |
+| `PATCH` | `/v1/projects/{ref}/network-restrictions`       | Bearer token | `{ add: { dbAllowedCidrs: string[], dbAllowedCidrsV6: string[] } }` | `{ config: { dbAllowedCidrs?: Array<{address, type}> }, status }` (`V1PatchNetworkRestrictionsOutput`)                                                                                                       |
+| `GET`   | `/v1/projects/{ref}`                            | Bearer token | none                                                                | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available |
 
 `POST /apply` is the default (replace mode). `PATCH` is used when `--append=true`.
 
@@ -28,12 +31,12 @@ when no `--db-allow-cidr` was supplied).
 
 ## Environment Variables
 
-| Variable                | Purpose                                                  | Required?                                                      |
-| ----------------------- | -------------------------------------------------------- | -------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)     | no (falls back to keyring → `~/.supabase/access-token`)        |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                  | no (falls back to `~/.supabase/profile` -> `supabase`)         |
-| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset       | no (falls back to `supabase/.temp/project-ref` → prompt)       |
-| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag | no (pass `--experimental` instead; one of the two is required) |
+| Variable                | Purpose                                                  | Required?                                                                                     |
+| ----------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)     | no (falls back to keyring → `~/.supabase/access-token`)                                       |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                  | no (falls back to `~/.supabase/profile` -> `supabase`)                                        |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset       | no (falls back to `supabase/.temp/project-ref`, then the interactive project picker on a TTY) |
+| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag | no (pass `--experimental` instead; one of the two is required)                                |
 
 ## Exit Codes
 
@@ -112,8 +115,7 @@ One `result` event whose `data` is the full response object.
   (see `--output` above).
 - `--append=true` switches the HTTP method (`POST /apply` → `PATCH`) and the request
   envelope (`{ dbAllowedCidrs, dbAllowedCidrsV6 }` → `{ add: { dbAllowedCidrs, dbAllowedCidrsV6 } }`).
-- `linked-project.json` writes after a successful project-ref resolution, regardless of
-  whether the subsequent API call succeeds.
+- `.temp/linked-project.json` is written after ref resolution (once the `--experimental` gate is open), even when the API call fails, but only on a cache miss with a token when `GET /v1/projects/{ref}` succeeds and `.temp/project-ref` does not name another ref. A closed gate writes nothing.
 - `telemetry.json` writes on every invocation past the `--experimental` gate, including
   CIDR validation failures, ref resolution failures, and API failures. A closed gate
   writes nothing. A malformed `--db-allow-cidr` CSV value (e.g. an unterminated quote) also

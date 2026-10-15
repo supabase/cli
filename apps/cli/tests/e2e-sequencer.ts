@@ -4,7 +4,9 @@ import { BaseSequencer, type TestSpecification } from "vitest/node";
 
 /** Bun `--timings` file of measured e2e file durations, refreshed from CI artifacts. */
 const TIMINGS_FILE = "tests/e2e-timings.json";
-const E2E_PROJECTS = new Set(["e2e", "e2e-exclusive"]);
+const E2E_PROJECT = "e2e";
+const E2E_EXCLUSIVE_PROJECT = "e2e-exclusive";
+const E2E_PROJECTS = new Set([E2E_PROJECT, E2E_EXCLUSIVE_PROJECT]);
 
 /** Duration assumed for every file while no timing has been measured yet. */
 export const DEFAULT_DURATION_MS = 30_000;
@@ -28,31 +30,70 @@ function compareKeys(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+/** An e2e file to shard; exclusive files run one at a time after the concurrent ones. */
+export interface ShardFile {
+  readonly key: string;
+  readonly exclusive: boolean;
+}
+
+interface ShardLoad {
+  readonly longestConcurrent: number;
+  readonly concurrentTotal: number;
+  readonly exclusiveTotal: number;
+}
+
+function withFile(load: ShardLoad, duration: number, exclusive: boolean): ShardLoad {
+  return exclusive
+    ? { ...load, exclusiveTotal: load.exclusiveTotal + duration }
+    : {
+        ...load,
+        longestConcurrent: Math.max(load.longestConcurrent, duration),
+        concurrentTotal: load.concurrentTotal + duration,
+      };
+}
+
+function estimatedWall(load: ShardLoad, workers: number): number {
+  return Math.max(load.longestConcurrent, load.concurrentTotal / workers) + load.exclusiveTotal;
+}
+
 /**
- * Splits keys into `count` shards by measured duration, longest first into the emptiest shard.
- * The result depends only on the set of keys, so every shard process derives the same partition.
+ * Splits files into `count` shards by estimated wall time, longest first into the shard whose
+ * estimate stays lowest, the less loaded one on ties. Concurrent files share `workers` slots;
+ * exclusive files add their full duration.
+ * The result depends only on the set of files, so every shard process derives the same partition.
  */
 export function packShards(
-  keys: readonly string[],
+  files: readonly ShardFile[],
   timings: Readonly<Record<string, number>>,
   count: number,
+  workers: number,
 ): string[][] {
   const fallback = fallbackDuration(timings);
-  const durations = keys
-    .map((key) => ({ key, duration: timings[key] ?? fallback }))
+  const durations = files
+    .map((file) => ({ ...file, duration: timings[file.key] ?? fallback }))
     .sort((a, b) => b.duration - a.duration || compareKeys(a.key, b.key));
 
-  const shards = Array.from({ length: count }, () => ({ load: 0, keys: new Array<string>() }));
-  for (const { key, duration } of durations) {
-    let target = shards[0];
+  const empty: ShardLoad = { longestConcurrent: 0, concurrentTotal: 0, exclusiveTotal: 0 };
+  const shards = Array.from({ length: count }, () => ({ keys: new Array<string>(), load: empty }));
+  for (const { key, exclusive, duration } of durations) {
+    let target:
+      | { shard: (typeof shards)[number]; load: ShardLoad; wall: number; before: number }
+      | undefined;
     for (const shard of shards) {
-      if (target === undefined || shard.load < target.load) {
-        target = shard;
+      const load = withFile(shard.load, duration, exclusive);
+      const wall = estimatedWall(load, workers);
+      const before = estimatedWall(shard.load, workers);
+      if (
+        target === undefined ||
+        wall < target.wall ||
+        (wall === target.wall && before < target.before)
+      ) {
+        target = { shard, load, wall, before };
       }
     }
     if (target !== undefined) {
-      target.load += duration;
-      target.keys.push(key);
+      target.shard.load = target.load;
+      target.shard.keys.push(key);
     }
   }
   return shards.map((shard) => shard.keys);
@@ -109,7 +150,15 @@ export class E2eSequencer extends BaseSequencer {
     const byKey = new Map(
       files.map((spec) => [relative(root, spec.moduleId).replaceAll("\\", "/"), spec]),
     );
-    const assigned = packShards([...byKey.keys()], timings, shard.count)[shard.index - 1] ?? [];
+    const shardFiles = [...byKey].map(([key, spec]) => ({
+      key,
+      exclusive: spec.project.name === E2E_EXCLUSIVE_PROJECT,
+    }));
+    const maxWorkers =
+      files.find((spec) => spec.project.name === E2E_PROJECT)?.project.config.maxWorkers ?? 1;
+    // Concurrent files share one Docker daemon and slow each other, so pack against half the slots.
+    const workers = Math.max(1, Math.floor(maxWorkers / 2));
+    const assigned = packShards(shardFiles, timings, shard.count, workers)[shard.index - 1] ?? [];
     return assigned.flatMap((key) => {
       const spec = byKey.get(key);
       return spec === undefined ? [] : [spec];

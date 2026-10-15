@@ -7,6 +7,7 @@ import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { Output } from "../output/output.service.ts";
+import { block } from "../../command-internal/command-permissions/model.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
   explicitBooleanLongFlag,
@@ -1179,6 +1180,22 @@ function attachDownloadWrittenSoFar<E extends object>(
     ? error
     : Object.assign(error, { writtenSoFar: [...downloadedSoFar] });
 }
+
+/** The Management API calls `downloadFunctions` makes: the function body, its metadata and the function list. */
+export const functionsDownload = block("functions-download", [
+  { operationId: "v1-get-a-function-body", kind: "required" },
+  {
+    operationId: "v1-get-a-function",
+    kind: "required",
+    context:
+      "on the server-side path (--use-api, --use-docker=false, or Docker not running), when the downloaded metadata names no entrypoint",
+  },
+  {
+    operationId: "v1-list-all-functions",
+    kind: "required",
+    context: "no function name is given",
+  },
+]);
 
 export const downloadFunctions = Effect.fn("functions.download")(function* <
   ResolveError,

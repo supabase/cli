@@ -3,6 +3,11 @@ import type * as CliCommand from "effect/cli/Command";
 import { Command, Flag } from "effect/cli";
 
 import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { configPullRun } from "../../../command-internal/config-pull-run.ts";
+import { configTarget } from "../../../command-internal/project-target.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { GLOBAL_OUTPUT_FORMATS } from "../../../command-internal/global-flags.ts";
@@ -75,6 +80,14 @@ export const configPullCommand = Command.make("pull", config).pipe(
       description: "Preview the changes without writing the config file",
     },
   ]),
+  withPermissions(
+    compose(
+      configTarget,
+      configPullRun,
+      { operations: [], noApiEffectFlags: ["remote-label", "dry-run", "force"] },
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler(configPullHandler),
   // `stdinLayer`: the apply confirmation reads piped stdin via `promptYesNo`
   // on a non-TTY stdin.

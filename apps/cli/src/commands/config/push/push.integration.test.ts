@@ -38,6 +38,8 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { v2ProjectConfigResponse } from "../../../../tests/helpers/config-fixtures.ts";
 import { mockRuntimeInfo, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { cliConfigProviderLayer } from "../../../shared/config/cli-config-provider.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -48,6 +50,7 @@ import { configPushHandler } from "./push.command.ts";
 const tempRoot = useTempWorkdir("supabase-config-push-int-");
 
 const REF = VALID_REF;
+const API = "https://api.supabase.com";
 
 const workdirPath = Effect.fnUntraced(function* (...segments: ReadonlyArray<string>) {
   const path = yield* Path.Path;
@@ -85,6 +88,7 @@ const workdirFilesLayer = (toml: string, seed: WorkdirSeed = Effect.void) =>
   ).pipe(Layer.provide(BunServices.layer));
 
 const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeJsonText = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const v1TransportFailure = (description: string) =>
   Effect.fail(transportFailure(HttpClientRequest.get(DEFAULT_API_URL), description));
@@ -281,10 +285,14 @@ function setup(opts: {
   readonly projectId?: Option.Option<string>;
   /** Extra workdir files (linked-project state) written alongside `config.toml`. */
   readonly seed?: WorkdirSeed;
+  /** Answers the project picker with `REF` and writes the linked-project cache through the real
+   *  cache layer. */
+  readonly pickerAndRealCache?: boolean;
 }) {
   const out = mockOutput({
     format: opts.format ?? "text",
     promptConfirmResponses: opts.confirm,
+    ...(opts.pickerAndRealCache === true ? { promptSelectResponses: [REF] } : {}),
     promptConfirmFail: opts.promptFail,
     interactive:
       opts.interactive ?? ((opts.format ?? "text") === "text" && (opts.stdinIsTty ?? true)),
@@ -345,7 +353,23 @@ function setup(opts: {
         const p = opts.authPatch ?? { status: 200, body: authWriteResponseFixture() };
         return Effect.succeed(jsonResponse(request, p.status, p.body));
       }
+      if (url.includes("/network-restrictions/apply")) {
+        return Effect.succeed(
+          jsonResponse(request, 200, { entitlement: "allowed", config: {}, status: "applied" }),
+        );
+      }
+      if (url.includes("/ssl-enforcement")) {
+        return Effect.succeed(
+          jsonResponse(request, 200, {
+            currentConfig: { database: true },
+            appliedSuccessfully: true,
+          }),
+        );
+      }
       const pathname = new URL(url).pathname;
+      if (pathname === "/v1/projects") {
+        return Effect.succeed(jsonResponse(request, 200, [PUSH_TEST_PROJECT]));
+      }
       // Live target-detection probe: a bare project ref defaults to a schema-valid, unnamed
       // project, so plain-project scenarios keep working without opting in.
       if (/^\/v1\/projects\/[a-z0-9-]+$/.test(pathname)) {
@@ -372,25 +396,28 @@ function setup(opts: {
         const b = opts.branchById ?? { status: 404, body: {} };
         return Effect.succeed(jsonResponse(request, b.status, b.body));
       }
-      // Anything else (network-restrictions/ssl/webhooks) — succeed with an empty body;
-      // scenarios writing to one of those use `setupService()` instead.
+      // Anything else (webhooks) — succeed with an empty body.
       return Effect.succeed(jsonResponse(request, 200, {}));
     },
   });
   const telemetry = mockTelemetryStateTracked();
   const linkedProjectCache = mockLinkedProjectCacheTracked();
+  const cliSettings = mockCommandSettings({
+    workdir: opts.workdir ?? tempRoot.current,
+    explicitWorkdir: opts.explicitWorkdir ?? false,
+    ...(opts.projectId === undefined ? {} : { projectId: opts.projectId }),
+  });
   const layer = Layer.mergeAll(
     buildTestRuntime({
       out,
       api,
-      cliSettings: mockCommandSettings({
-        workdir: opts.workdir ?? tempRoot.current,
-        explicitWorkdir: opts.explicitWorkdir ?? false,
-        ...(opts.projectId === undefined ? {} : { projectId: opts.projectId }),
-      }),
+      cliSettings,
       runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
       telemetry: telemetry.layer,
-      linkedProjectCache: linkedProjectCache.layer,
+      linkedProjectCache:
+        opts.pickerAndRealCache === true
+          ? realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings })
+          : linkedProjectCache.layer,
       tty: mockTty({
         stdinIsTty: opts.stdinIsTty ?? true,
         stdoutIsTty:
@@ -532,7 +559,7 @@ schemas = ["public", "remote_schema"]
   });
 
   it.effect("fails when listing addons returns 503", () => {
-    const { layer } = setup({
+    const { layer, api } = setup({
       toml: `project_id = "test"\n`,
       yes: true,
       addons: { status: 503, body: {} },
@@ -540,6 +567,9 @@ schemas = ["public", "remote_schema"]
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
+
+      expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(false);
+      assertPermissionDrift({ command: "config push", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1046,6 +1076,8 @@ max_rows = 1000
         changes: [["api", "schemas"]],
       });
       expect(data["remote_only"]).toBe(1);
+
+      assertPermissionDrift({ command: "config push", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1082,6 +1114,8 @@ statement_timeout = "8s"
       );
       expect(put).toBeDefined();
       expect(put?.body).toEqual({ statement_timeout: "8s" });
+
+      assertPermissionDrift({ command: "config push", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1114,6 +1148,8 @@ max_frequency = "10s"
           sessions_timebox: 24,
           mfa_phone_max_frequency: 10,
         });
+
+        assertPermissionDrift({ command: "config push", requests: api.requests });
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1359,6 +1395,7 @@ otp_expiry = 120
       const success = out.messages.find((m) => m.type === "success");
       const data = yield* decodeJsonRecord(success?.data);
       expect(data["remote_only"]).toBe(1);
+      assertPermissionDrift({ command: "config push", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 });
@@ -1712,6 +1749,8 @@ secret = "${DOTENVX_ENCRYPTED_VALUE}"
       );
       expect(update).toBeDefined();
       expect(update?.body).toEqual({ fileSizeLimit: 104857600 });
+
+      assertPermissionDrift({ command: "config push", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1721,35 +1760,102 @@ enabled = true
 allowed_cidrs = ["1.2.3.4/32"]
 allowed_cidrs_v6 = ["::1/128"]
 `;
-    const { layer, apiMock } = setupService({
-      toml,
-      yes: true,
-      v1: { updateNetworkRestrictions: () => Effect.succeed({}) },
-    });
+    const { layer, api } = setup({ toml, yes: true });
     return Effect.gen(function* () {
       yield* configPush({ projectRef: Option.none() });
-      const update = apiMock.requests.find((r) => r.method === "updateNetworkRestrictions");
-      expect(update).toBeDefined();
-      expect(update?.input).toEqual({
-        ref: REF,
+      const apply = api.requests.find(
+        (r) => r.method === "POST" && r.url.includes("/network-restrictions/apply"),
+      );
+      expect(apply?.body).toEqual({
         dbAllowedCidrs: ["1.2.3.4/32"],
         dbAllowedCidrsV6: ["::1/128"],
       });
+      assertPermissionDrift({ command: "config push", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("pushes db.ssl_enforcement only when declared in config", () => {
-    const toml = `${BASE_DISABLED}[db.ssl_enforcement]\nenabled = true\n`;
-    const { layer, apiMock } = setupService({
-      toml,
+    const { layer, api } = setup({
+      toml: `${BASE_DISABLED}[db.ssl_enforcement]\nenabled = true\n`,
       yes: true,
-      v1: { updateSslEnforcementConfig: () => Effect.succeed({}) },
     });
     return Effect.gen(function* () {
       yield* configPush({ projectRef: Option.none() });
-      const update = apiMock.requests.find((r) => r.method === "updateSslEnforcementConfig");
-      expect(update).toBeDefined();
-      expect(update?.input).toEqual({ ref: REF, requestedConfig: { database: true } });
+      const update = api.requests.find(
+        (r) => r.method === "PUT" && r.url.includes("/ssl-enforcement"),
+      );
+      expect(update?.body).toEqual({ requestedConfig: { database: true } });
+      assertPermissionDrift({ command: "config push", requests: api.requests });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("enables database webhooks when experimental.webhooks is enabled (no diff)", () => {
+    const { layer, out, api } = setup({
+      toml: `${BASE_DISABLED}[experimental.webhooks]\nenabled = true\n`,
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* configPush({ projectRef: Option.none() });
+      expect(out.stderrText).toContain("Enabling webhooks for project:");
+      expect(
+        api.requests.some(
+          (r) =>
+            r.method === "POST" && r.url.includes(`/v1/projects/${REF}/database/webhooks/enable`),
+        ),
+      ).toBe(true);
+      assertPermissionDrift({ command: "config push", requests: api.requests });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "pushes to the project chosen in the picker and fills the real linked-project cache",
+    () => {
+      const { layer, out, api } = setup({
+        toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
+        yes: true,
+        projectId: Option.none(),
+        pickerAndRealCache: true,
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = yield* workdirPath("supabase", ".temp", "linked-project.json");
+        expect(yield* fs.exists(cachePath)).toBe(false);
+
+        yield* configPush({ projectRef: Option.none() });
+
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          `GET ${API}/v1/projects`,
+          `GET ${API}/v1/projects/${REF}`,
+          `GET ${API}/v1/projects/${REF}/billing/addons`,
+          `GET ${API}/v2/projects/${REF}/config`,
+          `PATCH ${API}/v1/projects/${REF}/postgrest`,
+          `GET ${API}/v1/projects/${REF}`,
+        ]);
+        expect(out.stderrText).toContain(`Pushing config to project: ${REF}`);
+        expect(yield* decodeJsonText(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: REF,
+        });
+        assertPermissionDrift({ command: "config push", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("a 403 on the target probe still pushes", () => {
+    const { layer, out, api } = setup({
+      toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
+      yes: true,
+      project: { status: 403, body: { message: "forbidden" } },
+    });
+    return Effect.gen(function* () {
+      yield* configPush({ projectRef: Option.none() });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET ${API}/v1/projects/${REF}`,
+        `GET ${API}/v1/projects/${REF}/billing/addons`,
+        `GET ${API}/v2/projects/${REF}/config`,
+        `PATCH ${API}/v1/projects/${REF}/postgrest`,
+      ]);
+      expect(out.stderrText).toContain("could not determine whether this is a branch");
+      assertPermissionDrift({ command: "config push", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1770,20 +1876,6 @@ allowed_cidrs_v6 = ["::1/128"]
         status: "disabled",
         changes: [],
       });
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("enables webhooks when experimental.webhooks is enabled (no diff)", () => {
-    const toml = `${BASE_DISABLED}[experimental.webhooks]\nenabled = true\n`;
-    const { layer, apiMock, out } = setupService({
-      toml,
-      yes: true,
-      v1: { enableDatabaseWebhook: () => Effect.succeed({}) },
-    });
-    return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
-      expect(out.stderrText).toContain("Enabling webhooks for project:");
-      expect(methodsOf(apiMock)).toContain("enableDatabaseWebhook");
     }).pipe(Effect.provide(layer));
   });
 
@@ -3016,7 +3108,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       // `normalizeApiName` folds an empty `name` into `undefined` before it reaches the target
       // object — the same degradation every other scenario in this file relies on via
       // `PUSH_TEST_PROJECT`'s default empty name; this test pins it explicitly.
-      const { layer, out } = setup({
+      const { layer, out, api } = setup({
         toml: BRANCH_PUSH_TOML,
         yes: true,
         project: { status: 200, body: { ...PUSH_TEST_PROJECT, name: "" } },
@@ -3025,6 +3117,8 @@ describe("config push branch/project target detection (CLI-2168)", () => {
         yield* configPush({ projectRef: Option.none() });
         expect(out.stderrText).toContain(`Pushing config to project: ${REF}\n`);
         expect(out.stderrText).not.toContain("project:  (");
+
+        assertPermissionDrift({ command: "config push", requests: api.requests, exact: true });
       }).pipe(Effect.provide(layer));
     },
   );
@@ -3043,6 +3137,8 @@ describe("config push branch/project target detection (CLI-2168)", () => {
         expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
           true,
         );
+
+        assertPermissionDrift({ command: "config push", requests: api.requests });
       }).pipe(Effect.provide(layer));
     },
   );
@@ -3069,6 +3165,8 @@ describe("config push branch/project target detection (CLI-2168)", () => {
         expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
           true,
         );
+
+        assertPermissionDrift({ command: "config push", requests: api.requests });
       }).pipe(Effect.provide(layer));
     },
   );
@@ -3088,6 +3186,8 @@ describe("config push branch/project target detection (CLI-2168)", () => {
         expect(out.stderrText).toContain(`Pushing config to branch: ${PROBE_REF}\n`);
         expect(out.stderrText).not.toContain("Parent project:");
         expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(false);
+
+        assertPermissionDrift({ command: "config push", requests: api.requests });
       }).pipe(Effect.provide(layer));
     },
   );
@@ -3270,6 +3370,8 @@ describe("config push branch/project target detection (CLI-2168)", () => {
         expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
           true,
         );
+
+        assertPermissionDrift({ command: "config push", requests: api.requests });
       }).pipe(Effect.provide(layer));
     },
   );
@@ -3324,6 +3426,8 @@ describe("config push branch/project target detection (CLI-2168)", () => {
         expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
           true,
         );
+
+        assertPermissionDrift({ command: "config push", requests: api.requests });
       }).pipe(Effect.provide(layer));
     },
   );
@@ -3376,6 +3480,12 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
             (r) => r.method === "GET" && new URL(r.url).pathname === `/v1/projects/${BRANCH_REF}`,
           ),
         ).toBe(false);
+
+        assertPermissionDrift({
+          command: "config push",
+          requests: api.requests,
+          activeFlags: { "project-ref": true },
+        });
       }).pipe(Effect.provide(layer));
     },
   );
@@ -3477,6 +3587,12 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
         const branchRequests = api.requests.filter((r) => r.url.includes("/branches"));
         expect(branchRequests).toHaveLength(1);
         expect(branchRequests[0]?.url).toContain(`/v1/branches/${BRANCH_UUID}`);
+
+        assertPermissionDrift({
+          command: "config push",
+          requests: api.requests,
+          activeFlags: { "project-ref": true },
+        });
       }).pipe(Effect.provide(layer));
     },
   );

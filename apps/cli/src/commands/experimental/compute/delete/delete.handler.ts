@@ -69,8 +69,8 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
     const fetching = yield* output.task("Fetching compute...");
     // The lookup supplies the instance tally the confirmation quotes and the
     // "already gone" verdict. A *refusal* is not a prerequisite: the API grants
-    // the read and the delete separately — `edge_functions:read` for `GET`,
-    // `edge_functions:write` for `DELETE` — so a credential holding only the
+    // the read and the delete separately — `workers_read` for `GET`,
+    // `workers_write` for `DELETE` — so a credential holding only the
     // latter would not be able to delete a compute it is entitled to delete. A
     // refused read leaves the compute unknown and the delete goes ahead. A read
     // that cannot reach compute at all — unserved route, unenrolled project, no

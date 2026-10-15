@@ -8,6 +8,7 @@ import { InvalidOutputFormatError } from "../../command-internal/go-output-flag.
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { ErrorActionabilityId } from "../../shared/telemetry/error-actionability.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
 import {
   buildTestRuntime,
   mockCommandPlatformApi,
@@ -83,6 +84,7 @@ describe("whoami integration", () => {
         body: undefined,
         urlParams: "",
       });
+      assertPermissionDrift({ command: "whoami", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -127,7 +129,7 @@ describe("whoami integration", () => {
   });
 
   it.effect("points an unauthorized profile request at re-authenticating", () => {
-    const { layer } = setup({ status: 401, response: { message: "Unauthorized" } });
+    const { layer, api } = setup({ status: 401, response: { message: "Unauthorized" } });
     return Effect.gen(function* () {
       const error = findError(yield* whoami({}).pipe(Effect.exit));
       expect(error).toBeInstanceOf(WhoamiUnexpectedStatusError);
@@ -138,6 +140,7 @@ describe("whoami integration", () => {
           "Authentication failed: your access token is invalid or has expired. Run `supabase login` to re-authenticate.",
         );
       }
+      assertPermissionDrift({ command: "whoami", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 

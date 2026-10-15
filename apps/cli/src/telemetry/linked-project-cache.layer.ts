@@ -16,7 +16,8 @@ export const linkedProjectCache = block("linked-project-cache", [
   {
     operationId: "v1-get-project",
     kind: "best-effort",
-    context: "no cached supabase/.temp/linked-project.json",
+    context:
+      "an access token, no cached supabase/.temp/linked-project.json, and no supabase/.temp/project-ref naming a different project",
   },
 ]);
 

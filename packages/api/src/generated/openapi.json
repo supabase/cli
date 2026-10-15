@@ -14722,24 +14722,17 @@
                                 ]
                               },
                               "custom_headers": {
-                                "anyOf": [
-                                  {
-                                    "type": "object",
-                                    "propertyNames": {
-                                      "type": "string",
-                                      "pattern": "^[a-zA-Z0-9-]+$"
-                                    },
-                                    "additionalProperties": {
-                                      "type": "string"
-                                    }
-                                  },
-                                  {
-                                    "type": "null"
-                                  }
-                                ],
                                 "description": "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
                                 "example": {
                                   "Authorization": "Bearer example_token"
+                                },
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string",
+                                  "pattern": "^[a-zA-Z0-9-]+$"
+                                },
+                                "additionalProperties": {
+                                  "type": "string"
                                 }
                               },
                               "created_by": {
@@ -15504,24 +15497,17 @@
                               ]
                             },
                             "custom_headers": {
-                              "anyOf": [
-                                {
-                                  "type": "object",
-                                  "propertyNames": {
-                                    "type": "string",
-                                    "pattern": "^[a-zA-Z0-9-]+$"
-                                  },
-                                  "additionalProperties": {
-                                    "type": "string"
-                                  }
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ],
                               "description": "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
                               "example": {
                                 "Authorization": "Bearer example_token"
+                              },
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string",
+                                "pattern": "^[a-zA-Z0-9-]+$"
+                              },
+                              "additionalProperties": {
+                                "type": "string"
                               }
                             },
                             "created_by": {
@@ -16200,24 +16186,17 @@
                             ]
                           },
                           "custom_headers": {
-                            "anyOf": [
-                              {
-                                "type": "object",
-                                "propertyNames": {
-                                  "type": "string",
-                                  "pattern": "^[a-zA-Z0-9-]+$"
-                                },
-                                "additionalProperties": {
-                                  "type": "string"
-                                }
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ],
                             "description": "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
                             "example": {
                               "Authorization": "Bearer example_token"
+                            },
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string",
+                              "pattern": "^[a-zA-Z0-9-]+$"
+                            },
+                            "additionalProperties": {
+                              "type": "string"
                             }
                           },
                           "signing_secret": {
@@ -16356,24 +16335,17 @@
                                 ]
                               },
                               "custom_headers": {
-                                "anyOf": [
-                                  {
-                                    "type": "object",
-                                    "propertyNames": {
-                                      "type": "string",
-                                      "pattern": "^[a-zA-Z0-9-]+$"
-                                    },
-                                    "additionalProperties": {
-                                      "type": "string"
-                                    }
-                                  },
-                                  {
-                                    "type": "null"
-                                  }
-                                ],
                                 "description": "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
                                 "example": {
                                   "Authorization": "Bearer example_token"
+                                },
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string",
+                                  "pattern": "^[a-zA-Z0-9-]+$"
+                                },
+                                "additionalProperties": {
+                                  "type": "string"
                                 }
                               },
                               "created_by": {
@@ -17097,24 +17069,17 @@
                               ]
                             },
                             "custom_headers": {
-                              "anyOf": [
-                                {
-                                  "type": "object",
-                                  "propertyNames": {
-                                    "type": "string",
-                                    "pattern": "^[a-zA-Z0-9-]+$"
-                                  },
-                                  "additionalProperties": {
-                                    "type": "string"
-                                  }
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ],
                               "description": "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
                               "example": {
                                 "Authorization": "Bearer example_token"
+                              },
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string",
+                                "pattern": "^[a-zA-Z0-9-]+$"
+                              },
+                              "additionalProperties": {
+                                "type": "string"
                               }
                             },
                             "created_by": {
@@ -17930,24 +17895,17 @@
                               ]
                             },
                             "custom_headers": {
-                              "anyOf": [
-                                {
-                                  "type": "object",
-                                  "propertyNames": {
-                                    "type": "string",
-                                    "pattern": "^[a-zA-Z0-9-]+$"
-                                  },
-                                  "additionalProperties": {
-                                    "type": "string"
-                                  }
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ],
                               "description": "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
                               "example": {
                                 "Authorization": "Bearer example_token"
+                              },
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string",
+                                "pattern": "^[a-zA-Z0-9-]+$"
+                              },
+                              "additionalProperties": {
+                                "type": "string"
                               }
                             },
                             "created_by": {
@@ -18720,24 +18678,17 @@
                             ]
                           },
                           "custom_headers": {
-                            "anyOf": [
-                              {
-                                "type": "object",
-                                "propertyNames": {
-                                  "type": "string",
-                                  "pattern": "^[a-zA-Z0-9-]+$"
-                                },
-                                "additionalProperties": {
-                                  "type": "string"
-                                }
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ],
                             "description": "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
                             "example": {
                               "Authorization": "Bearer example_token"
+                            },
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string",
+                              "pattern": "^[a-zA-Z0-9-]+$"
+                            },
+                            "additionalProperties": {
+                              "type": "string"
                             }
                           },
                           "signing_secret": {
@@ -18884,24 +18835,17 @@
                               ]
                             },
                             "custom_headers": {
-                              "anyOf": [
-                                {
-                                  "type": "object",
-                                  "propertyNames": {
-                                    "type": "string",
-                                    "pattern": "^[a-zA-Z0-9-]+$"
-                                  },
-                                  "additionalProperties": {
-                                    "type": "string"
-                                  }
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ],
                               "description": "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
                               "example": {
                                 "Authorization": "Bearer example_token"
+                              },
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string",
+                                "pattern": "^[a-zA-Z0-9-]+$"
+                              },
+                              "additionalProperties": {
+                                "type": "string"
                               }
                             },
                             "created_by": {
@@ -19703,20 +19647,13 @@
                                 "description": "HTTP status code of the response, `0` if unavailable."
                               },
                               "response_headers": {
-                                "anyOf": [
-                                  {
-                                    "type": "object",
-                                    "propertyNames": {
-                                      "type": "string"
-                                    },
-                                    "additionalProperties": {
-                                      "type": "string"
-                                    }
-                                  },
-                                  {
-                                    "type": "null"
-                                  }
-                                ],
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {
+                                  "type": "string"
+                                },
                                 "description": "HTTP headers of the response, `{}` if unavailable."
                               },
                               "response_body": {
@@ -19744,11 +19681,97 @@
                                   }
                                 ]
                               },
+                              "error_code": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "error_message": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
                               "attempt_timestamp": {
                                 "type": "string",
                                 "format": "date-time",
                                 "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
                                 "description": "Timestamp of the attempt."
+                              },
+                              "event": {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "v1.project.paused",
+                                      "v1.project.created",
+                                      "v1.project.restored",
+                                      "v1.project.transferred",
+                                      "v1.project.removed",
+                                      "v1.project.restarted",
+                                      "v1.project.status.changed",
+                                      "v1.project.backup.started",
+                                      "v1.project.branch.created",
+                                      "v1.project.branch.updated",
+                                      "v1.project.branch.removed",
+                                      "v1.organization.member.invitation.created",
+                                      "v1.organization.member.invitation.canceled",
+                                      "v1.organization.member.added",
+                                      "v1.organization.member.removed",
+                                      "v1.organization.member.role.assigned",
+                                      "v1.organization.member.role.removed",
+                                      "v1.organization.member.role.updated",
+                                      "v1.organization.billing.plan.upgraded",
+                                      "v1.organization.billing.plan.downgraded"
+                                    ],
+                                    "description": "Webhook event type."
+                                  },
+                                  "payload": {
+                                    "type": "object",
+                                    "properties": {
+                                      "organization_slug": {
+                                        "type": "string",
+                                        "pattern": "^[\\w-]+$",
+                                        "description": "Organization slug",
+                                        "example": "tsrqponmlkjihgfedcba"
+                                      },
+                                      "project_ref": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "minLength": 20,
+                                            "maxLength": 20,
+                                            "pattern": "^[a-z]+$",
+                                            "description": "Project ref",
+                                            "example": "abcdefghijklmnopqrst"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "required": ["organization_slug", "project_ref"],
+                                    "description": "Final data sent to the consumer."
+                                  },
+                                  "timestamp": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                                    "description": "Timestamp of event publication."
+                                  }
+                                },
+                                "required": ["type", "payload", "timestamp"]
                               }
                             },
                             "required": [
@@ -19758,7 +19781,10 @@
                               "response_code",
                               "response_headers",
                               "response_body",
-                              "attempt_timestamp"
+                              "error_code",
+                              "error_message",
+                              "attempt_timestamp",
+                              "event"
                             ]
                           }
                         },
@@ -21390,7 +21416,6 @@
                         "type": "object",
                         "properties": {
                           "type": {
-                            "description": "Webhook event type.",
                             "type": "string",
                             "enum": [
                               "v1.project.paused",
@@ -21412,29 +21437,9 @@
                               "v1.organization.member.role.removed",
                               "v1.organization.member.role.updated",
                               "v1.organization.billing.plan.upgraded",
-                              "v1.organization.billing.plan.downgraded",
-                              "project.v1.paused",
-                              "project.v1.created",
-                              "project.v1.restored",
-                              "project.v1.transferred",
-                              "project.v1.removed",
-                              "project.v1.restarted",
-                              "project.v1.status.changed",
-                              "project.v1.backup.started",
-                              "project.v1.branch.created",
-                              "project.v1.branch.updated",
-                              "project.v1.branch.removed",
-                              "organization.v1.member.invitation.created",
-                              "organization.v1.member.invitation.canceled",
-                              "organization.v1.member.added",
-                              "organization.v1.member.removed",
-                              "organization.v1.member.role.assigned",
-                              "organization.v1.member.role.removed",
-                              "organization.v1.member.role.updated",
-                              "organization.v1.billing.plan.upgraded",
-                              "organization.v1.billing.plan.downgraded",
-                              "project.v1.branch.deleted"
-                            ]
+                              "v1.organization.billing.plan.downgraded"
+                            ],
+                            "description": "Webhook event type."
                           }
                         },
                         "required": ["type"]
@@ -21528,20 +21533,13 @@
                               "description": "HTTP status code of the response, `0` if unavailable."
                             },
                             "response_headers": {
-                              "anyOf": [
-                                {
-                                  "type": "object",
-                                  "propertyNames": {
-                                    "type": "string"
-                                  },
-                                  "additionalProperties": {
-                                    "type": "string"
-                                  }
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ],
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {
+                                "type": "string"
+                              },
                               "description": "HTTP headers of the response, `{}` if unavailable."
                             },
                             "response_body": {
@@ -21569,6 +21567,26 @@
                                 }
                               ]
                             },
+                            "error_code": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "error_message": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
                             "attempt_timestamp": {
                               "type": "string",
                               "format": "date-time",
@@ -21579,7 +21597,6 @@
                               "type": "object",
                               "properties": {
                                 "type": {
-                                  "description": "Webhook event type.",
                                   "type": "string",
                                   "enum": [
                                     "v1.project.paused",
@@ -21601,29 +21618,9 @@
                                     "v1.organization.member.role.removed",
                                     "v1.organization.member.role.updated",
                                     "v1.organization.billing.plan.upgraded",
-                                    "v1.organization.billing.plan.downgraded",
-                                    "project.v1.paused",
-                                    "project.v1.created",
-                                    "project.v1.restored",
-                                    "project.v1.transferred",
-                                    "project.v1.removed",
-                                    "project.v1.restarted",
-                                    "project.v1.status.changed",
-                                    "project.v1.backup.started",
-                                    "project.v1.branch.created",
-                                    "project.v1.branch.updated",
-                                    "project.v1.branch.removed",
-                                    "organization.v1.member.invitation.created",
-                                    "organization.v1.member.invitation.canceled",
-                                    "organization.v1.member.added",
-                                    "organization.v1.member.removed",
-                                    "organization.v1.member.role.assigned",
-                                    "organization.v1.member.role.removed",
-                                    "organization.v1.member.role.updated",
-                                    "organization.v1.billing.plan.upgraded",
-                                    "organization.v1.billing.plan.downgraded",
-                                    "project.v1.branch.deleted"
-                                  ]
+                                    "v1.organization.billing.plan.downgraded"
+                                  ],
+                                  "description": "Webhook event type."
                                 },
                                 "payload": {
                                   "type": "object",
@@ -21670,6 +21667,8 @@
                             "response_code",
                             "response_headers",
                             "response_body",
+                            "error_code",
+                            "error_message",
                             "attempt_timestamp",
                             "event"
                           ]
@@ -23189,24 +23188,17 @@
                                 ]
                               },
                               "custom_headers": {
-                                "anyOf": [
-                                  {
-                                    "type": "object",
-                                    "propertyNames": {
-                                      "type": "string",
-                                      "pattern": "^[a-zA-Z0-9-]+$"
-                                    },
-                                    "additionalProperties": {
-                                      "type": "string"
-                                    }
-                                  },
-                                  {
-                                    "type": "null"
-                                  }
-                                ],
                                 "description": "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
                                 "example": {
                                   "Authorization": "Bearer example_token"
+                                },
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string",
+                                  "pattern": "^[a-zA-Z0-9-]+$"
+                                },
+                                "additionalProperties": {
+                                  "type": "string"
                                 }
                               },
                               "created_by": {
@@ -23969,24 +23961,17 @@
                               ]
                             },
                             "custom_headers": {
-                              "anyOf": [
-                                {
-                                  "type": "object",
-                                  "propertyNames": {
-                                    "type": "string",
-                                    "pattern": "^[a-zA-Z0-9-]+$"
-                                  },
-                                  "additionalProperties": {
-                                    "type": "string"
-                                  }
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ],
                               "description": "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
                               "example": {
                                 "Authorization": "Bearer example_token"
+                              },
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string",
+                                "pattern": "^[a-zA-Z0-9-]+$"
+                              },
+                              "additionalProperties": {
+                                "type": "string"
                               }
                             },
                             "created_by": {
@@ -24665,24 +24650,17 @@
                             ]
                           },
                           "custom_headers": {
-                            "anyOf": [
-                              {
-                                "type": "object",
-                                "propertyNames": {
-                                  "type": "string",
-                                  "pattern": "^[a-zA-Z0-9-]+$"
-                                },
-                                "additionalProperties": {
-                                  "type": "string"
-                                }
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ],
                             "description": "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
                             "example": {
                               "Authorization": "Bearer example_token"
+                            },
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string",
+                              "pattern": "^[a-zA-Z0-9-]+$"
+                            },
+                            "additionalProperties": {
+                              "type": "string"
                             }
                           },
                           "signing_secret": {
@@ -24819,24 +24797,17 @@
                                 ]
                               },
                               "custom_headers": {
-                                "anyOf": [
-                                  {
-                                    "type": "object",
-                                    "propertyNames": {
-                                      "type": "string",
-                                      "pattern": "^[a-zA-Z0-9-]+$"
-                                    },
-                                    "additionalProperties": {
-                                      "type": "string"
-                                    }
-                                  },
-                                  {
-                                    "type": "null"
-                                  }
-                                ],
                                 "description": "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
                                 "example": {
                                   "Authorization": "Bearer example_token"
+                                },
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string",
+                                  "pattern": "^[a-zA-Z0-9-]+$"
+                                },
+                                "additionalProperties": {
+                                  "type": "string"
                                 }
                               },
                               "created_by": {
@@ -25558,24 +25529,17 @@
                               ]
                             },
                             "custom_headers": {
-                              "anyOf": [
-                                {
-                                  "type": "object",
-                                  "propertyNames": {
-                                    "type": "string",
-                                    "pattern": "^[a-zA-Z0-9-]+$"
-                                  },
-                                  "additionalProperties": {
-                                    "type": "string"
-                                  }
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ],
                               "description": "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
                               "example": {
                                 "Authorization": "Bearer example_token"
+                              },
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string",
+                                "pattern": "^[a-zA-Z0-9-]+$"
+                              },
+                              "additionalProperties": {
+                                "type": "string"
                               }
                             },
                             "created_by": {
@@ -26389,24 +26353,17 @@
                               ]
                             },
                             "custom_headers": {
-                              "anyOf": [
-                                {
-                                  "type": "object",
-                                  "propertyNames": {
-                                    "type": "string",
-                                    "pattern": "^[a-zA-Z0-9-]+$"
-                                  },
-                                  "additionalProperties": {
-                                    "type": "string"
-                                  }
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ],
                               "description": "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
                               "example": {
                                 "Authorization": "Bearer example_token"
+                              },
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string",
+                                "pattern": "^[a-zA-Z0-9-]+$"
+                              },
+                              "additionalProperties": {
+                                "type": "string"
                               }
                             },
                             "created_by": {
@@ -27179,24 +27136,17 @@
                             ]
                           },
                           "custom_headers": {
-                            "anyOf": [
-                              {
-                                "type": "object",
-                                "propertyNames": {
-                                  "type": "string",
-                                  "pattern": "^[a-zA-Z0-9-]+$"
-                                },
-                                "additionalProperties": {
-                                  "type": "string"
-                                }
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ],
                             "description": "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
                             "example": {
                               "Authorization": "Bearer example_token"
+                            },
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string",
+                              "pattern": "^[a-zA-Z0-9-]+$"
+                            },
+                            "additionalProperties": {
+                              "type": "string"
                             }
                           },
                           "signing_secret": {
@@ -27341,24 +27291,17 @@
                               ]
                             },
                             "custom_headers": {
-                              "anyOf": [
-                                {
-                                  "type": "object",
-                                  "propertyNames": {
-                                    "type": "string",
-                                    "pattern": "^[a-zA-Z0-9-]+$"
-                                  },
-                                  "additionalProperties": {
-                                    "type": "string"
-                                  }
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ],
                               "description": "Additional request headers to pass when performing HTTP request location defined by `url`. Both keys and values must be strings and a valid HTTP headers.",
                               "example": {
                                 "Authorization": "Bearer example_token"
+                              },
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string",
+                                "pattern": "^[a-zA-Z0-9-]+$"
+                              },
+                              "additionalProperties": {
+                                "type": "string"
                               }
                             },
                             "created_by": {
@@ -28158,20 +28101,13 @@
                                 "description": "HTTP status code of the response, `0` if unavailable."
                               },
                               "response_headers": {
-                                "anyOf": [
-                                  {
-                                    "type": "object",
-                                    "propertyNames": {
-                                      "type": "string"
-                                    },
-                                    "additionalProperties": {
-                                      "type": "string"
-                                    }
-                                  },
-                                  {
-                                    "type": "null"
-                                  }
-                                ],
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {
+                                  "type": "string"
+                                },
                                 "description": "HTTP headers of the response, `{}` if unavailable."
                               },
                               "response_body": {
@@ -28199,11 +28135,97 @@
                                   }
                                 ]
                               },
+                              "error_code": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "error_message": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
                               "attempt_timestamp": {
                                 "type": "string",
                                 "format": "date-time",
                                 "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
                                 "description": "Timestamp of the attempt."
+                              },
+                              "event": {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "v1.project.paused",
+                                      "v1.project.created",
+                                      "v1.project.restored",
+                                      "v1.project.transferred",
+                                      "v1.project.removed",
+                                      "v1.project.restarted",
+                                      "v1.project.status.changed",
+                                      "v1.project.backup.started",
+                                      "v1.project.branch.created",
+                                      "v1.project.branch.updated",
+                                      "v1.project.branch.removed",
+                                      "v1.organization.member.invitation.created",
+                                      "v1.organization.member.invitation.canceled",
+                                      "v1.organization.member.added",
+                                      "v1.organization.member.removed",
+                                      "v1.organization.member.role.assigned",
+                                      "v1.organization.member.role.removed",
+                                      "v1.organization.member.role.updated",
+                                      "v1.organization.billing.plan.upgraded",
+                                      "v1.organization.billing.plan.downgraded"
+                                    ],
+                                    "description": "Webhook event type."
+                                  },
+                                  "payload": {
+                                    "type": "object",
+                                    "properties": {
+                                      "organization_slug": {
+                                        "type": "string",
+                                        "pattern": "^[\\w-]+$",
+                                        "description": "Organization slug",
+                                        "example": "tsrqponmlkjihgfedcba"
+                                      },
+                                      "project_ref": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "minLength": 20,
+                                            "maxLength": 20,
+                                            "pattern": "^[a-z]+$",
+                                            "description": "Project ref",
+                                            "example": "abcdefghijklmnopqrst"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "required": ["organization_slug", "project_ref"],
+                                    "description": "Final data sent to the consumer."
+                                  },
+                                  "timestamp": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
+                                    "description": "Timestamp of event publication."
+                                  }
+                                },
+                                "required": ["type", "payload", "timestamp"]
                               }
                             },
                             "required": [
@@ -28213,7 +28235,10 @@
                               "response_code",
                               "response_headers",
                               "response_body",
-                              "attempt_timestamp"
+                              "error_code",
+                              "error_message",
+                              "attempt_timestamp",
+                              "event"
                             ]
                           }
                         },
@@ -29843,7 +29868,6 @@
                         "type": "object",
                         "properties": {
                           "type": {
-                            "description": "Webhook event type.",
                             "type": "string",
                             "enum": [
                               "v1.project.paused",
@@ -29865,29 +29889,9 @@
                               "v1.organization.member.role.removed",
                               "v1.organization.member.role.updated",
                               "v1.organization.billing.plan.upgraded",
-                              "v1.organization.billing.plan.downgraded",
-                              "project.v1.paused",
-                              "project.v1.created",
-                              "project.v1.restored",
-                              "project.v1.transferred",
-                              "project.v1.removed",
-                              "project.v1.restarted",
-                              "project.v1.status.changed",
-                              "project.v1.backup.started",
-                              "project.v1.branch.created",
-                              "project.v1.branch.updated",
-                              "project.v1.branch.removed",
-                              "organization.v1.member.invitation.created",
-                              "organization.v1.member.invitation.canceled",
-                              "organization.v1.member.added",
-                              "organization.v1.member.removed",
-                              "organization.v1.member.role.assigned",
-                              "organization.v1.member.role.removed",
-                              "organization.v1.member.role.updated",
-                              "organization.v1.billing.plan.upgraded",
-                              "organization.v1.billing.plan.downgraded",
-                              "project.v1.branch.deleted"
-                            ]
+                              "v1.organization.billing.plan.downgraded"
+                            ],
+                            "description": "Webhook event type."
                           }
                         },
                         "required": ["type"]
@@ -29979,20 +29983,13 @@
                               "description": "HTTP status code of the response, `0` if unavailable."
                             },
                             "response_headers": {
-                              "anyOf": [
-                                {
-                                  "type": "object",
-                                  "propertyNames": {
-                                    "type": "string"
-                                  },
-                                  "additionalProperties": {
-                                    "type": "string"
-                                  }
-                                },
-                                {
-                                  "type": "null"
-                                }
-                              ],
+                              "type": "object",
+                              "propertyNames": {
+                                "type": "string"
+                              },
+                              "additionalProperties": {
+                                "type": "string"
+                              },
                               "description": "HTTP headers of the response, `{}` if unavailable."
                             },
                             "response_body": {
@@ -30020,6 +30017,26 @@
                                 }
                               ]
                             },
+                            "error_code": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "error_message": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
                             "attempt_timestamp": {
                               "type": "string",
                               "format": "date-time",
@@ -30030,7 +30047,6 @@
                               "type": "object",
                               "properties": {
                                 "type": {
-                                  "description": "Webhook event type.",
                                   "type": "string",
                                   "enum": [
                                     "v1.project.paused",
@@ -30052,29 +30068,9 @@
                                     "v1.organization.member.role.removed",
                                     "v1.organization.member.role.updated",
                                     "v1.organization.billing.plan.upgraded",
-                                    "v1.organization.billing.plan.downgraded",
-                                    "project.v1.paused",
-                                    "project.v1.created",
-                                    "project.v1.restored",
-                                    "project.v1.transferred",
-                                    "project.v1.removed",
-                                    "project.v1.restarted",
-                                    "project.v1.status.changed",
-                                    "project.v1.backup.started",
-                                    "project.v1.branch.created",
-                                    "project.v1.branch.updated",
-                                    "project.v1.branch.removed",
-                                    "organization.v1.member.invitation.created",
-                                    "organization.v1.member.invitation.canceled",
-                                    "organization.v1.member.added",
-                                    "organization.v1.member.removed",
-                                    "organization.v1.member.role.assigned",
-                                    "organization.v1.member.role.removed",
-                                    "organization.v1.member.role.updated",
-                                    "organization.v1.billing.plan.upgraded",
-                                    "organization.v1.billing.plan.downgraded",
-                                    "project.v1.branch.deleted"
-                                  ]
+                                    "v1.organization.billing.plan.downgraded"
+                                  ],
+                                  "description": "Webhook event type."
                                 },
                                 "payload": {
                                   "type": "object",
@@ -30121,6 +30117,8 @@
                             "response_code",
                             "response_headers",
                             "response_body",
+                            "error_code",
+                            "error_message",
                             "attempt_timestamp",
                             "event"
                           ]
