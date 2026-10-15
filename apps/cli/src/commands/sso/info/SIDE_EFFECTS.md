@@ -66,3 +66,4 @@ Single `success` event with the payload as data.
 
 - All three URLs are deterministic functions of the project ref.
 - The `Single sign-on URL (ACS URL)` label is emitted without a trailing space, so the flat ASCII renderer does not double it up against the cell padding.
+- After the project ref resolves, one `Target: project <ref> · <identity>` line is printed on stderr in every output format.

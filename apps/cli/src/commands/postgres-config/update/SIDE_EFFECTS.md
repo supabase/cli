@@ -25,12 +25,13 @@ The initial `GET` is skipped when `--replace-existing-overrides` is set. Otherwi
 
 ## Environment Variables
 
-| Variable                | Purpose                                                  | Required?                                                      |
-| ----------------------- | -------------------------------------------------------- | -------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)     | no (falls back to keyring -> `~/.supabase/access-token`)       |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                  | no (falls back to `~/.supabase/profile` -> `supabase`)         |
-| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset       | no (falls back to `supabase/.temp/project-ref` -> prompt)      |
-| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag | no (pass `--experimental` instead; one of the two is required) |
+| Variable                | Purpose                                                                                               | Required?                                                      |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                  | no (falls back to keyring -> `~/.supabase/access-token`)       |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                               | no (falls back to `~/.supabase/profile` -> `supabase`)         |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset                                                    | no (falls back to `supabase/.temp/project-ref` -> prompt)      |
+| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag                                              | no (pass `--experimental` instead; one of the two is required) |
+| `SUPABASE_YES`          | confirms the hosted mutation without asking; only the shell environment counts, never `supabase/.env` | no (falls back to the interactive prompt)                      |
 
 ## Exit Codes
 
@@ -47,6 +48,8 @@ The initial `GET` is skipped when `--replace-existing-overrides` is set. Otherwi
 | `1`  | PUT transport failure (`PostgresConfigUpdateNetworkError`)                                                                                                                                                                                                                                                                                |
 | `1`  | request serialization failure (`PostgresConfigUpdateSerializeError`)                                                                                                                                                                                                                                                                      |
 | `1`  | invalid JSON response (`PostgresConfigGetUnmarshalError` / `PostgresConfigUpdateUnmarshalError`)                                                                                                                                                                                                                                          |
+| `1`  | declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed                                                                                                                                                                                                                              |
+| `1`  | JSON, stream-json, `-o` or non-interactive run without `--yes` (`HostedMutationConsentRequiredError`) — nothing is changed                                                                                                                                                                                                                |
 
 ## Telemetry Events Fired
 
@@ -108,3 +111,6 @@ One `result` event on success.
   (or `SUPABASE_EXPERIMENTAL`), checked before the login check. A closed gate exits 1
   before project-ref resolution, the API calls, the `linked-project.json` write, the
   `telemetry.json` write, and the `cli_command_executed` event.
+- After the project ref resolves, one `Target: project <ref> · <identity>` line is printed on stderr in every output format.
+- Asks `Update the Postgres config overrides on <target>?` (default No) before the first write, after printing the overrides to set, whether all existing ones are replaced, and whether the restart is skipped. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.
+- The current overrides are fetched (a read) before the confirmation so the plan is known; the `PUT` happens only after it.
