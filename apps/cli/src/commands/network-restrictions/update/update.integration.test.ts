@@ -4,13 +4,14 @@ import {
   type V1UpdateNetworkRestrictionsOutput,
 } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   type MockCommandPlatformApiOpts,
@@ -18,11 +19,18 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import {
   type NetworkRestrictionsUpdateFlags,
   networkRestrictionsUpdateDbAllowCidrFlag,
 } from "./update.command.ts";
 import { networkRestrictionsUpdate } from "./update.handler.ts";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 // Runs the real --db-allow-cidr flag pipeline so these scenarios cover raw CLI values
 // through to the request body.
@@ -149,8 +157,91 @@ describe("network-restrictions update integration", () => {
           "DB Allowed IPv6 CIDRs: &[2001:db8:abcd:0012::0/64]\n" +
           "Restrictions applied successfully: true\n",
       );
+      assertPermissionDrift({
+        command: "network-restrictions update",
+        activeFlags: { append: false },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("rejects the POST /apply request when the declaration is read as --append", () => {
+    const { layer, api } = setup({ postResponse: POST_APPLIED });
+    return Effect.gen(function* () {
+      yield* networkRestrictionsUpdate({ ...baseFlags, dbAllowCidr: ["12.3.4.5/32"] });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `POST https://api.supabase.com/v1/projects/${VALID_REF}/network-restrictions/apply`,
+      ]);
+      expect(() =>
+        assertPermissionDrift({
+          command: "network-restrictions update",
+          activeFlags: { append: true },
+          requests: api.requests,
+        }),
+      ).toThrow(/condition doesn't hold/);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "lists the picker's projects, applies the restrictions and fills the real cache",
+    () => {
+      const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          if (request.url === "https://api.supabase.com/v1/projects") {
+            return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+          }
+          if (request.url === `https://api.supabase.com/v1/projects/${VALID_REF}`) {
+            return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+          }
+          return Effect.succeed(jsonResponse(request, 201, POST_APPLIED));
+        },
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+        yield* networkRestrictionsUpdate({
+          ...baseFlags,
+          dbAllowCidr: ["12.3.4.5/32", "2001:db8:abcd:0012::0/64", "1.2.3.1/24"],
+        });
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/v1/projects",
+          `POST https://api.supabase.com/v1/projects/${VALID_REF}/network-restrictions/apply`,
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(out.stdoutText).toBe(
+          "DB Allowed IPv4 CIDRs: &[12.3.4.5/32 1.2.3.1/24]\n" +
+            "DB Allowed IPv6 CIDRs: &[2001:db8:abcd:0012::0/64]\n" +
+            "Restrictions applied successfully: true\n",
+        );
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({
+          command: "network-restrictions update",
+          activeFlags: { append: false },
+          requests: api.requests,
+          exact: true,
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("sends empty arrays when no --db-allow-cidr is provided", () => {
     const { layer, api } = setup({ postResponse: POST_EMPTY_APPLIED });
@@ -283,6 +374,31 @@ describe("network-restrictions update integration", () => {
           "DB Allowed IPv6 CIDRs: &[2001:db8:abcd:0012::0/64]\n" +
           "Restrictions applied successfully: true\n",
       );
+      assertPermissionDrift({
+        command: "network-restrictions update",
+        activeFlags: { append: true },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects the PATCH request when the declaration is read as replace mode", () => {
+    const { layer, api } = setup({ patchResponse: PATCH_APPLIED });
+    return Effect.gen(function* () {
+      yield* networkRestrictionsUpdate({
+        ...baseFlags,
+        append: true,
+        dbAllowCidr: ["12.3.4.5/32"],
+      });
+      expect(api.requests.map(({ method }) => method)).toEqual(["PATCH"]);
+      expect(() =>
+        assertPermissionDrift({
+          command: "network-restrictions update",
+          activeFlags: { append: false },
+          requests: api.requests,
+        }),
+      ).toThrow(/condition doesn't hold/);
     }).pipe(Effect.provide(layer));
   });
 
@@ -392,6 +508,12 @@ describe("network-restrictions update integration", () => {
       expect(api.requests[0]?.body).toEqual({
         dbAllowedCidrs: ["10.0.0.0/8"],
         dbAllowedCidrsV6: [],
+      });
+      assertPermissionDrift({
+        command: "network-restrictions update",
+        activeFlags: { append: false, "bypass-cidr-checks": true },
+        requests: api.requests,
+        exact: true,
       });
     }).pipe(Effect.provide(layer));
   });
