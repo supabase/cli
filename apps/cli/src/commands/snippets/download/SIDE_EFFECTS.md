@@ -12,18 +12,22 @@
 
 ## Files Written
 
-| Path                                           | Format | When                                             |
-| ---------------------------------------------- | ------ | ------------------------------------------------ |
-| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`) |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves       |
+| Path                                           | Format | When                                                                                                                                                                                     |
+| ---------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`)                                                                                                                                         |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after the project ref resolves — only when no cached file exists, `.temp/project-ref` is absent or names the same ref, a token is available, and the project lookup succeeds |
 
 ## API Routes
 
-| Method | Path                | Auth         | Request body | Response (used fields)                                                                                       |
-| ------ | ------------------- | ------------ | ------------ | ------------------------------------------------------------------------------------------------------------ |
-| `GET`  | `/v1/snippets/{id}` | Bearer token | none         | `{content: {sql, schema_version, favorite?}, id, name, visibility, owner, project, inserted_at, updated_at}` |
+| Method | Path                 | Auth         | Request body | Response (used fields)                                                                                                                                                                        |
+| ------ | -------------------- | ------------ | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/snippets/{id}`  | Bearer token | none         | `{content: {sql, schema_version, favorite?}, id, name, visibility, owner, project, inserted_at, updated_at}`                                                                                  |
+| `GET`  | `/v1/projects`       | Bearer token | none         | project picker — only when no ref comes from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref`, stdin is a TTY and output is interactive                                          |
+| `GET`  | `/v1/projects/{ref}` | Bearer token | none         | linked-project cache fill — best-effort, only when `.temp/linked-project.json` is absent, `.temp/project-ref` is absent or names the same ref, and a token is available; failures are ignored |
 
 Only `content.sql` is rendered in text mode. The full payload is exposed via `--output-format json`.
+
+The snippet request carries no project ref and no query. The ref is resolved only so the cache fill can run, so the command still fails when no project is linked.
 
 ## Environment Variables
 
@@ -45,9 +49,9 @@ Only `content.sql` is rendered in text mode. The full payload is exposed via `--
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties                                                     |
-| ---------------------- | ------------------------------------------ | ---------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` allowed verbatim) |
+| Event                  | When                                       | Notable properties                                                   |
+| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`) |
 
 ## Output
 

@@ -31,7 +31,6 @@ const SAMPLE_FUNCTION: Functions[number] = {
   verify_jwt: true,
   import_map: false,
   entrypoint_path: "functions/hello-world/index.ts",
-  import_map_path: null,
 };
 
 const PIPE_FUNCTION: Functions[number] = {

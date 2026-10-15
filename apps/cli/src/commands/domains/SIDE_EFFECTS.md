@@ -6,36 +6,39 @@ Cloudflare DNS-over-HTTPS CNAME pre-check.
 
 ## Files Read
 
-| Path                                   | Format                    | When                                                              |
-| -------------------------------------- | ------------------------- | ----------------------------------------------------------------- |
-| `~/.supabase/access-token`             | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable        |
-| `<workdir>/supabase/.temp/project-ref` | plain text                | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are unset |
+| Path                                           | Format                    | When                                                                            |
+| ---------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------- |
+| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                      |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are unset               |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | existence check only — `linkedProjectCache` skips its fill when the file exists |
 
 ## Files Written
 
-| Path                                             | Format | When                                               |
-| ------------------------------------------------ | ------ | -------------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (PersistentPostRun), after the ref resolves |
-| `~/.supabase/telemetry.json`                     | JSON   | always (PersistentPostRun), success or failure     |
+| Path                                           | Format | When                                                                                                                                                                                                                           |
+| ---------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | in `Effect.ensuring` after the project ref resolves, on success or failure — only when no cached file exists, `.temp/project-ref` is absent or names the same ref, a token is available, and `GET /v1/projects/{ref}` succeeds |
+| `~/.supabase/telemetry.json`                   | JSON   | always (PersistentPostRun), success or failure                                                                                                                                                                                 |
 
 ## API Routes
 
-| Method   | Path                                            | Auth         | Request body                | Response (used fields)                                                                       |
-| -------- | ----------------------------------------------- | ------------ | --------------------------- | -------------------------------------------------------------------------------------------- |
-| `GET`    | `https://1.1.1.1/dns-query?name=<host>&type=5`  | none         | none                        | `{Answer: [{type, data}]}` — first CNAME answer (`create` only, before the POST)             |
-| `POST`   | `/v1/projects/{ref}/custom-hostname/initialize` | Bearer token | `{custom_hostname: string}` | 201 → `{status, custom_hostname, data: {result: {ssl, custom_origin_server, …}}}` (`create`) |
-| `GET`    | `/v1/projects/{ref}/custom-hostname`            | Bearer token | none                        | 200 → same response shape (`get`)                                                            |
-| `POST`   | `/v1/projects/{ref}/custom-hostname/reverify`   | Bearer token | none                        | 201 → same response shape (`reverify`)                                                       |
-| `POST`   | `/v1/projects/{ref}/custom-hostname/activate`   | Bearer token | none                        | 201 → same response shape (`activate`)                                                       |
-| `DELETE` | `/v1/projects/{ref}/custom-hostname`            | Bearer token | none                        | 200 → empty/void body (`delete`)                                                             |
+| Method   | Path                                            | Auth         | Request body                | Response (used fields)                                                                                                                                                                                       |
+| -------- | ----------------------------------------------- | ------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`    | `/v1/projects`                                  | Bearer token | none                        | project list for the interactive picker — only when no ref comes from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref` and stdin is a TTY with interactive output                               |
+| `GET`    | `https://1.1.1.1/dns-query?name=<host>&type=5`  | none         | none                        | `{Answer: [{type, data}]}` — first CNAME answer (`create` only, before the POST)                                                                                                                             |
+| `POST`   | `/v1/projects/{ref}/custom-hostname/initialize` | Bearer token | `{custom_hostname: string}` | 201 → `{status, custom_hostname, data: {result: {ssl, custom_origin_server, …}}}` (`create`)                                                                                                                 |
+| `GET`    | `/v1/projects/{ref}/custom-hostname`            | Bearer token | none                        | 200 → same response shape (`get`)                                                                                                                                                                            |
+| `POST`   | `/v1/projects/{ref}/custom-hostname/reverify`   | Bearer token | none                        | 201 → same response shape (`reverify`)                                                                                                                                                                       |
+| `POST`   | `/v1/projects/{ref}/custom-hostname/activate`   | Bearer token | none                        | 201 → same response shape (`activate`)                                                                                                                                                                       |
+| `DELETE` | `/v1/projects/{ref}/custom-hostname`            | Bearer token | none                        | 200 → empty/void body (`delete`)                                                                                                                                                                             |
+| `GET`    | `/v1/projects/{ref}`                            | Bearer token | none                        | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available |
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                                |
-| ----------------------- | ---------------------------------------------------- | -------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`)  |
-| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset   | no (falls back to linked-project file)                   |
-| `SUPABASE_PROFILE`      | built-in profile name or path to a YAML profile      | no (defaults to `supabase`; sets API URL + project host) |
+| Variable                | Purpose                                              | Required?                                                                 |
+| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`)                   |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset   | no (falls back to `supabase/.temp/project-ref`, then the picker on a TTY) |
+| `SUPABASE_PROFILE`      | built-in profile name or path to a YAML profile      | no (defaults to `supabase`; sets API URL + project host)                  |
 
 ## Exit Codes
 
@@ -91,7 +94,7 @@ suppressed on stderr. `delete` ignores `-o`.
 
 - `--custom-hostname` is required for `create`.
 - `create` validates the CNAME via Cloudflare DNS-over-HTTPS (`https://1.1.1.1`, 10s timeout) before initializing; on failure it short-circuits before any POST.
-- All subcommands resolve the ref via `--project-ref` → `SUPABASE_PROJECT_ID` env → linked-project file.
+- All subcommands resolve the ref via `--project-ref` → `SUPABASE_PROJECT_ID` env → `supabase/.temp/project-ref` → interactive project picker (only when stdin is a TTY and output is interactive).
 - The project-ref fallback env var is `SUPABASE_PROJECT_ID`.
 - `--include-raw-output` is deprecated: passing it with any value (including `--include-raw-output=false`) prints `Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.` to stderr before the API call, in every output mode, on all five subcommands (including `delete`). stdout is unaffected.
 - **Documented divergences from the old Go CLI (intentional):**

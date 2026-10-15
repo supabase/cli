@@ -8,6 +8,7 @@ import {
   type HttpMethod,
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
@@ -15,10 +16,13 @@ import {
   useTempWorkdir,
   withConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { projectsDelete } from "./delete.handler.ts";
 
 const OTHER_REF = "qrstuvwxyzabcdefghij";
+const API = "https://api.supabase.com";
 
 const DELETED = { id: 1, ref: VALID_REF, name: "alpha" };
 
@@ -151,8 +155,65 @@ describe("projects delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("deletes the project chosen in the picker, then looks it up for the real cache", () => {
+    const out = mockOutput({
+      format: "text",
+      promptSelectResponses: [VALID_REF],
+      promptConfirmResponses: [true],
+    });
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.sync(() => {
+          if (request.method === "GET" && request.url === `${API}/v1/projects`) {
+            return jsonResponse(request, 200, [SAMPLE_PROJECT]);
+          }
+          if (request.method === "GET" && request.url === `${API}/v1/projects/${VALID_REF}`) {
+            return jsonResponse(request, 404, { message: "not found" });
+          }
+          if (request.method === "DELETE" && request.url === `${API}/v1/projects/${VALID_REF}`) {
+            return jsonResponse(request, 200, DELETED);
+          }
+          return jsonResponse(request, 404, { message: "unexpected request" });
+        }),
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        stdin: mockStdin(true),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      Layer.succeed(YesFlag, false),
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+
+      yield* projectsDelete({ ref: Option.none() });
+
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET ${API}/v1/projects`,
+        `DELETE ${API}/v1/projects/${VALID_REF}`,
+        `GET ${API}/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toContain("Deleted project: alpha");
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      assertPermissionDrift({ command: "projects delete", requests: api.requests, exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("fails when no ref is given on a non-TTY", () => {
-    const { layer, cache } = setup({ stdinIsTty: false });
+    const { layer, cache, api } = setup({ stdinIsTty: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -160,6 +221,7 @@ describe("projects delete integration", () => {
         expect(Cause.pretty(exit.cause)).toContain("ProjectsDeleteRefRequiredError");
       }
       expect(cache.cached).toBe(false);
+      expect(api.requests).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -186,6 +248,7 @@ describe("projects delete integration", () => {
         expect(out.stderrText).toContain("Do you want to delete project ");
         expect(out.stderrText).toContain("? This action is irreversible. [y/N] y\n");
         expect(hasMethod(api, "DELETE")).toBe(true);
+        assertPermissionDrift({ command: "projects delete", requests: api.requests, exact: true });
       }).pipe(Effect.provide(layer)),
     );
   });

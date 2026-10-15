@@ -23,6 +23,8 @@
 
 This command does not call a delete endpoint: it fetches the current config, removes the specified keys locally, then sends the remaining object back via `PUT`.
 
+The remaining stored overrides are forwarded unvalidated, so a stored key this CLI version does not know is preserved. The `PUT` is sent once and never retried, since a retried `restart_database` write could restart the database twice, and its response is read as a raw JSON object so every returned key is shown.
+
 ## Environment Variables
 
 | Variable                | Purpose                                                  | Required?                                                      |
@@ -43,9 +45,8 @@ This command does not call a delete endpoint: it fetches the current config, rem
 | `1`  | initial GET non-2xx (`PostgresConfigGetUnexpectedStatusError`)                                                                                                                                                                                                                                                                                                       |
 | `1`  | initial GET transport failure (`PostgresConfigGetNetworkError`)                                                                                                                                                                                                                                                                                                      |
 | `1`  | PUT non-2xx (`PostgresConfigDeleteUnexpectedStatusError`)                                                                                                                                                                                                                                                                                                            |
-| `1`  | PUT transport failure (`PostgresConfigDeleteNetworkError`)                                                                                                                                                                                                                                                                                                           |
-| `1`  | request serialization failure (`PostgresConfigDeleteSerializeError`)                                                                                                                                                                                                                                                                                                 |
-| `1`  | invalid JSON response (`PostgresConfigGetUnmarshalError` / `PostgresConfigDeleteUnmarshalError`)                                                                                                                                                                                                                                                                     |
+| `1`  | PUT transport failure (`PostgresConfigDeleteNetworkError`); the GET retries on 5xx and transport errors first, the PUT does not                                                                                                                                                                                                                                      |
+| `1`  | GET body is not a JSON object (`PostgresConfigGetUnmarshalError`); PUT 2xx body is not a JSON object (`PostgresConfigDeleteUnmarshalError`)                                                                                                                                                                                                                          |
 
 ## Telemetry Events Fired
 

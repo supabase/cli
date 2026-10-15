@@ -1,19 +1,5 @@
 /** Leaf command paths that don't declare their permissions with `withPermissions` yet. */
 export const PENDING_COMMANDS: ReadonlyArray<string> = [
-  "backups list",
-  "backups restore",
-
-  "bootstrap",
-
-  "branches create",
-  "branches delete",
-  "branches disable",
-  "branches get",
-  "branches list",
-  "branches pause",
-  "branches unpause",
-  "branches update",
-
   "completion bash",
   "completion fish",
   "completion powershell",
@@ -26,21 +12,11 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "compute push",
   "compute status",
 
-  "config diff",
-  "config pull",
-  "config push",
-
   "db branch create",
   "db branch delete",
   "db branch list",
   "db branch switch",
   "db remote changes",
-
-  "domains activate",
-  "domains create",
-  "domains delete",
-  "domains get",
-  "domains reverify",
 
   "encryption get-root-key",
   "encryption update-root-key",
@@ -55,18 +31,13 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "functions new",
   "functions serve",
 
-  "gen bearer-jwt",
   "gen keys",
-  "gen signing-key",
-  "gen types",
 
   "init",
 
   "issue bug",
   "issue docs",
   "issue feature",
-
-  "link",
 
   "login",
 
@@ -78,39 +49,14 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "network-restrictions get",
   "network-restrictions update",
 
-  "notebooks pull",
-  "notebooks push",
-
-  "orgs create",
-  "orgs list",
-
   "postgres-config delete",
   "postgres-config get",
   "postgres-config update",
 
-  "projects api-keys",
-  "projects create",
-  "projects delete",
-  "projects list",
-
   "pull",
-
-  "secrets set",
-  "secrets unset",
-
-  "services",
-
-  "snippets download",
 
   "ssl-enforcement get",
   "ssl-enforcement update",
-
-  "sso add",
-  "sso info",
-  "sso list",
-  "sso remove",
-  "sso show",
-  "sso update",
 
   "stack destroy",
   "stack list",
@@ -127,16 +73,9 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
 
   "stop",
 
-  "storage cp",
-  "storage ls",
-  "storage mv",
-  "storage rm",
-
   "telemetry disable",
   "telemetry enable",
   "telemetry status",
-
-  "unlink",
 
   "vanity-subdomains activate",
   "vanity-subdomains check-availability",

@@ -11,15 +11,20 @@ import {
 import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
 import { loginApiLayer, loginProfile } from "./login-api.layer.ts";
 
+const PROFILE = { gotrue_id: "gotrue-user-123", primary_email: "a@b.co", username: "ab" };
+
+function setup(opts: Parameters<typeof mockCommandPlatformApi>[0]) {
+  const api = mockCommandPlatformApi(opts);
+  const layer = loginApiLayer.pipe(
+    Layer.provide(api.httpClientLayer),
+    Layer.provide(mockCommandSettings({ workdir: "/unused-workdir" })),
+  );
+  return { api, layer };
+}
+
 describe("loginApiLayer", () => {
   it.effect("fetches the account identity from GET /v1/profile after login", () => {
-    const api = mockCommandPlatformApi({
-      response: { status: 200, body: { gotrue_id: "gotrue-user-123" } },
-    });
-    const layer = loginApiLayer.pipe(
-      Layer.provide(api.httpClientLayer),
-      Layer.provide(mockCommandSettings({ workdir: "/unused-workdir" })),
-    );
+    const { api, layer } = setup({ response: { status: 200, body: PROFILE } });
     return Effect.gen(function* () {
       const loginApi = yield* LoginApi;
       const gotrueId = yield* loginApi.fetchGotrueId(DEFAULT_API_URL, VALID_TOKEN);
@@ -34,14 +39,19 @@ describe("loginApiLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("sends the profile lookup to the given host with the fresh token", () => {
+    const { api, layer } = setup({ response: { status: 200, body: PROFILE } });
+    return Effect.gen(function* () {
+      const loginApi = yield* LoginApi;
+      yield* loginApi.fetchGotrueId("https://api.fresh.example", "sbp_fresh_token");
+      expect(api.requests).toHaveLength(1);
+      expect(api.requests[0]?.url).toBe("https://api.fresh.example/v1/profile");
+      expect(api.requests[0]?.headers["authorization"]).toBe("Bearer sbp_fresh_token");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("skips the identity stitch when the profile lookup is forbidden", () => {
-    const api = mockCommandPlatformApi({
-      response: { status: 403, body: { message: "Forbidden" } },
-    });
-    const layer = loginApiLayer.pipe(
-      Layer.provide(api.httpClientLayer),
-      Layer.provide(mockCommandSettings({ workdir: "/unused-workdir" })),
-    );
+    const { api, layer } = setup({ response: { status: 403, body: { message: "Forbidden" } } });
     return Effect.gen(function* () {
       const loginApi = yield* LoginApi;
       const gotrueId = yield* loginApi.fetchGotrueId(DEFAULT_API_URL, VALID_TOKEN);

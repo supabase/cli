@@ -37,8 +37,8 @@
 | `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) - checked before ref resolution/API/telemetry |
 | `1`  | project ref unresolved (`ProjectRefNotLinkedError` / `InvalidProjectRefError`)                                                            |
 | `1`  | API non-2xx (`PostgresConfigGetUnexpectedStatusError`)                                                                                    |
-| `1`  | transport failure (`PostgresConfigGetNetworkError`)                                                                                       |
-| `1`  | invalid JSON response (`PostgresConfigGetUnmarshalError`)                                                                                 |
+| `1`  | transport failure (`PostgresConfigGetNetworkError`); the GET retries on 5xx and transport errors first                                    |
+| `1`  | response body is not a JSON object (`PostgresConfigGetUnmarshalError`)                                                                    |
 
 ## Telemetry Events Fired
 

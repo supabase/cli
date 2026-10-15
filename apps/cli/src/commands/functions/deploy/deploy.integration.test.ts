@@ -782,6 +782,41 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
+  it.effect("retries a rate-limited deploy only through the command's own loop", () => {
+    let deployAttempts = 0;
+    const { layer, out, api } = apiDeployHarness((request) => {
+      if (request.method === "GET") return Effect.succeed(jsonResponse(request, 200, []));
+      deployAttempts += 1;
+      if (deployAttempts === 1) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response("{}", { status: 429, headers: { "retry-after": "0" } }),
+          ),
+        );
+      }
+      return Effect.succeed(
+        jsonResponse(request, 201, {
+          id: "function-id",
+          slug: "hello-world",
+          name: "hello-world",
+          status: "ACTIVE",
+          version: 1,
+        }),
+      );
+    });
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+      yield* functionsDeploy(baseFlags);
+
+      expect(api.requests.filter((request) => request.method === "POST")).toHaveLength(2);
+      expect(out.stderrText).toContain("Rate limit exceeded while deploying function hello-world.");
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
   it.effect("reports a malformed functions list with the schema decoder's message", () => {
     const { layer } = apiDeployHarness((request) =>
       Effect.succeed(
@@ -1068,6 +1103,7 @@ describe("functions deploy", () => {
     function setupBulkDeploy(opts: {
       readonly deployStatuses: ReadonlyArray<number>;
       readonly bulkStatuses?: ReadonlyArray<number>;
+      readonly functionStatuses?: Readonly<Record<string, string>>;
     }) {
       const out = mockOutput({ format: "text" });
       let deployCalls = 0;
@@ -1091,7 +1127,7 @@ describe("functions deploy", () => {
                 id: `${slug}-id`,
                 slug,
                 name: slug,
-                status: "ACTIVE",
+                status: opts.functionStatuses?.[slug] ?? "ACTIVE",
                 version: 2,
                 created_at: 1_687_423_025_152,
                 updated_at: 1_687_423_025_152,
@@ -1179,6 +1215,30 @@ describe("functions deploy", () => {
         });
         expect(api.requests.some((request) => request.method === "PUT")).toBe(false);
         expect(out.stdoutText).not.toContain("Deployed Functions on project");
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("fails loudly instead of coercing a function status the API newly reports", () => {
+      const { api, layer } = setupBulkDeploy({
+        deployStatuses: [201, 201],
+        functionStatuses: { "bye-world": "SUSPENDED" },
+      });
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* writeLocalFunction(tempRoot.current, "bye-world");
+
+        const error = yield* functionsDeploy({
+          ...baseFlags,
+          functionNames: ["hello-world", "bye-world"],
+        }).pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          message: "failed to read function bye-world: unexpected status SUSPENDED",
+        });
+        const bulkUpdate = api.requests.find((request) => request.method === "PUT");
+        expect(bulkUpdate?.body).toMatchObject([{ slug: "hello-world", status: "ACTIVE" }]);
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
 

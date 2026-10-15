@@ -2,7 +2,7 @@
 * @supabase/cli
 
 # Files that bots update. Either owner satisfies code-owner review; `supabase-oss` approves only
-# bot-opened PRs, through bot-pr-auto-merge.yml.
+# bot-opened PRs, through bot-pr-auto-merge.yml and sync-repair.yml.
 /.github/workflows/*.yml @supabase/cli @supabase-oss
 /package.json @supabase/cli @supabase-oss
 /apps/*/package.json @supabase/cli @supabase-oss
