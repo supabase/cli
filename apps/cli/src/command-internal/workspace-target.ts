@@ -49,6 +49,9 @@ const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 const isWorkspaceTarget = (value: string): value is WorkspaceTarget =>
   value === "local" || value === "remote";
 
+export const originFromPath = (workdir: string, filePath: string): string =>
+  relativeConfigPath(workdir, filePath).replaceAll("\\", "/");
+
 /**
  * Picks the connection type: explicit selector flag, then a `remote` workspace target (which also
  * lifts `--project-ref` onto the linked project), then `--project-ref` keeping `legacyDefault`,
@@ -147,7 +150,7 @@ const readConfigTarget = Effect.fnUntraced(function* (settings: {
   if (decoded.target === undefined) return undefined;
   return {
     target: decoded.target,
-    origin: relativeConfigPath(settings.workdir, loaded.configPath),
+    origin: originFromPath(settings.workdir, loaded.configPath),
   } satisfies WorkspaceTargetReading;
 });
 

@@ -8,6 +8,7 @@ import { mockCommandSettings, useTempWorkdir } from "../../tests/helpers/command
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { dbTargetSelectionOf } from "./db-target-flags.ts";
 import {
+  originFromPath,
   passwordDroppedByWorkspaceTarget,
   readWorkspaceTarget,
   resolveDbTarget,
@@ -148,6 +149,14 @@ describe("passwordDroppedByWorkspaceTarget", () => {
     });
 
     expect(passwordDroppedByWorkspaceTarget(selected, Option.some("pw"))).toBeUndefined();
+  });
+});
+
+describe("originFromPath", () => {
+  it("shows a workdir-relative path with forward slashes", () => {
+    expect(originFromPath("C:\\work\\app", "C:\\work\\app\\supabase\\config.toml")).toBe(
+      "supabase/config.toml",
+    );
   });
 });
 
