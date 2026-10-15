@@ -26,8 +26,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
 
   "logout",
 
-  "pull",
-
   "stack destroy",
   "stack list",
   "stack logs",
