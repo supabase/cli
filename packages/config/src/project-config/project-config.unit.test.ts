@@ -596,6 +596,7 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
         inspect: { rules: [{ name: "r1" }] },
         webhooks: { enabled: true },
       },
+      local: { services: { auth: { version: "bundled" } } },
     });
 
     const projected = fromConfigDocument(document);

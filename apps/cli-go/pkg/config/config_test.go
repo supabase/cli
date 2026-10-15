@@ -311,6 +311,21 @@ instances = 3
 		assert.NoError(t, config.Load("", fsys))
 	})
 
+	t.Run("accepts the TS-owned local section", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+project_id = "test"
+
+[local.services]
+default = { version = "bundled" }
+auth = { version = "v2.197.0" }
+`)},
+		}
+
+		assert.NoError(t, config.Load("", fsys))
+	})
+
 	for _, tt := range []struct {
 		name       string
 		configData string

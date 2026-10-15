@@ -245,6 +245,8 @@ type (
 		// The json tag is the one that matters: the decoder runs with
 		// dc.TagName = "json". Omitted from toml so Go never emits the section.
 		Compute map[string]any `toml:"-" json:"compute"`
+		// Local is parsed but never read here; [local] is owned by the TS CLI (see Compute).
+		Local map[string]any `toml:"-" json:"local"`
 	}
 
 	config struct {
