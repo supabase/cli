@@ -436,6 +436,18 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live("asks for hosted-mutation consent once for the whole bootstrap", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const s = setup(path, { promptConfirmResponses: [true] });
+      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+      );
+      expect(s.out.promptConfirmCalls).toHaveLength(1);
+      expect(s.createBodies).toHaveLength(1);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("prompts for a workdir when none is configured", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

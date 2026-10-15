@@ -207,6 +207,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       postgresEngine: undefined,
       templateUrl: starter.url.length > 0 ? starter.url : undefined,
       emitStructuredResult: false,
+      consent,
     });
     const projectRef = created.ref;
     yield* Ref.set(createdRef, projectRef.length > 0 ? projectRef : undefined);
