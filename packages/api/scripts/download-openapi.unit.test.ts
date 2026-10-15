@@ -4,7 +4,9 @@ import {
   applyOpenApiOverrides,
   assertMergedOpenApiDocument,
   assertOpenApiDocument,
+  loadOpenApiOverrides,
   mergeOpenApiDocuments,
+  parseOpenApiOverrides,
   resolveOpenApiBaseUrl,
   resolveOpenApiSpecUrl,
   resolveOpenApiSpecUrls,
@@ -322,24 +324,35 @@ describe("download-openapi", () => {
     warnSpy.mockRestore();
   });
 
-  test("applyOpenApiOverrides tolerantly removes JSON pointers that no longer exist", () => {
+  test("applyOpenApiOverrides removes existing JSON pointers", () => {
     const withExistingPath = { paths: { "/v1/foo": { get: {} } } };
     applyOpenApiOverrides(withExistingPath, [{ op: "remove", path: "/paths/~1v1~1foo" }]);
     expect(withExistingPath.paths).toEqual({});
 
-    const withMissingPath = { paths: {} };
-    applyOpenApiOverrides(withMissingPath, [{ op: "remove", path: "/paths/~1v1~1missing" }]);
-    expect(withMissingPath.paths).toEqual({});
-
-    const withMissingIntermediateSegment = { paths: {} };
-    applyOpenApiOverrides(withMissingIntermediateSegment, [
-      { op: "remove", path: "/paths/~1nope/get" },
-    ]);
-    expect(withMissingIntermediateSegment.paths).toEqual({});
-
     const withArray = { paths: {}, components: { schemas: { Foo: { enum: ["a", "b", "c"] } } } };
     applyOpenApiOverrides(withArray, [{ op: "remove", path: "/components/schemas/Foo/enum/1" }]);
     expect(withArray.components.schemas.Foo.enum).toEqual(["a", "c"]);
+  });
+
+  test("fails when a remove override targets a missing pointer", () => {
+    expect(() =>
+      applyOpenApiOverrides({ paths: {} }, [{ op: "remove", path: "/paths/~1v1~1missing" }]),
+    ).toThrow('JSON pointer "/paths/~1v1~1missing" does not exist.');
+    expect(() =>
+      applyOpenApiOverrides({ paths: {} }, [{ op: "remove", path: "/paths/~1nope/get" }]),
+    ).toThrow('JSON pointer "/paths/~1nope" does not exist.');
+  });
+
+  test("fails when a replace override already matches upstream", () => {
+    expect(() =>
+      applyOpenApiOverrides(
+        { paths: {}, components: { schemas: { Body: { required: ["a", "b"] } } } },
+        [
+          { op: "test", path: "/components/schemas/Body/required", value: ["a", "b"] },
+          { op: "replace", path: "/components/schemas/Body/required", value: ["a", "b"] },
+        ],
+      ),
+    ).toThrow("is redundant");
   });
 
   test("rejects a remove override that carries a value", () => {
@@ -348,32 +361,57 @@ describe("download-openapi", () => {
     ).toThrow("OpenAPI remove overrides must not include a value.");
   });
 
-  test("assertMergedOpenApiDocument passes after the webhook-collision remove overrides are applied but fails without them", () => {
-    const buildDocument = () => ({
-      paths: {
-        "/v2/projects/{ref}/webhooks/endpoints": {
-          get: { operationId: "allV2ProjectsByRefWebhooks" },
-        },
-        "/v2/projects/{ref}/webhooks/endpoints/{id}": {
-          get: { operationId: "allV2ProjectsByRefWebhooks" },
-        },
-        "/v2/projects/{ref}": {
-          get: { operationId: "v2-get-a-project" },
-        },
-      },
+  describe("override file structure", () => {
+    const test_ = (path: string, value: unknown = []) => ({ op: "test", path, value });
+    const replace = (path: string, value: unknown = ["x"]) => ({ op: "replace", path, value });
+
+    test("accepts the committed overrides file", async () => {
+      const overrides = await loadOpenApiOverrides();
+
+      expect(overrides.length).toBeGreaterThan(0);
     });
 
-    const overrides = [
-      { op: "remove", path: "/paths/~1v2~1projects~1{ref}~1webhooks~1endpoints" },
-      { op: "remove", path: "/paths/~1v2~1projects~1{ref}~1webhooks~1endpoints~1{id}" },
-    ];
+    test("rejects a replace that is not directly preceded by a test on the same path", () => {
+      expect(() =>
+        parseOpenApiOverrides([{ ...replace("/a"), $comment: "Upstream is wrong." }]),
+      ).toThrow("must be directly preceded by a test on the same path");
+      expect(() =>
+        parseOpenApiOverrides([
+          { ...test_("/a"), $comment: "Upstream is wrong." },
+          { op: "remove", path: "/c", $comment: "Upstream is wrong." },
+          replace("/a"),
+        ]),
+      ).toThrow("must be directly preceded by a test on the same path");
+      expect(() =>
+        parseOpenApiOverrides([{ ...test_("/a"), $comment: "Upstream is wrong." }, replace("/b")]),
+      ).toThrow("must be directly preceded by a test on the same path");
+    });
 
-    expect(() => assertMergedOpenApiDocument(buildDocument())).toThrow(
-      'Duplicate OpenAPI operationId "allV2ProjectsByRefWebhooks"',
-    );
+    test("requires a $comment on every pair and standalone entry", () => {
+      expect(() => parseOpenApiOverrides([test_("/a"), replace("/a")])).toThrow(
+        "test at /a needs a $comment",
+      );
+      expect(() => parseOpenApiOverrides([{ op: "remove", path: "/a" }])).toThrow(
+        "remove at /a needs a $comment",
+      );
+      expect(() =>
+        parseOpenApiOverrides([{ op: "add", path: "/a", value: 1, $comment: " " }]),
+      ).toThrow("add at /a needs a $comment");
+    });
 
-    const patchedDocument = applyOpenApiOverrides(buildDocument(), overrides);
-    expect(Object.keys(patchedDocument.paths)).toEqual(["/v2/projects/{ref}"]);
-    expect(() => assertMergedOpenApiDocument(patchedDocument)).not.toThrow();
+    test("accepts a commented test and replace pair on either entry", () => {
+      expect(
+        parseOpenApiOverrides([
+          test_("/a"),
+          { ...replace("/a"), $comment: "Upstream is wrong." },
+          { ...test_("/b"), $comment: "Upstream is wrong." },
+          replace("/b"),
+        ]),
+      ).toHaveLength(4);
+    });
+
+    test("rejects a file that is not a JSON Patch array", () => {
+      expect(() => parseOpenApiOverrides({})).toThrow("must contain a JSON Patch array");
+    });
   });
 });

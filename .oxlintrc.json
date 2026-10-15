@@ -36,6 +36,16 @@
       }
     },
     {
+      // Management API calls go through the typed `@supabase/api` client so they emit the
+      // `api.operation` span; tests build stub URLs freely.
+      "files": ["apps/cli/src/**"],
+      "excludeFiles": ["**/*.test.ts"],
+      "jsPlugins": ["./tools/oxlint/supabase-plugin.js"],
+      "rules": {
+        "supabase/no-raw-management-api-url": "error"
+      }
+    },
+    {
       // `.github/scripts` is the only `bun:test` consumer; `@types/bun`'s shared `Matchers<T>`
       // types `.rejects.toThrow(...)` as returning `void`, even though it must be awaited at
       // runtime. Removing the `await` would make the assertion racy.

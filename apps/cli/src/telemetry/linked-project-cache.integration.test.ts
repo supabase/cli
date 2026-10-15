@@ -32,9 +32,19 @@ describe("linkedProjectCacheLayer", () => {
               new Response(
                 JSON.stringify({
                   ref: VALID_REF,
+                  id: VALID_REF,
                   name: "proj",
                   organization_id: "org-1",
                   organization_slug: "acme",
+                  region: "us-east-1",
+                  created_at: "2026-01-01T00:00:00Z",
+                  status: "ACTIVE_HEALTHY",
+                  database: {
+                    host: "db.example.com",
+                    version: "15",
+                    postgres_engine: "15",
+                    release_channel: "ga",
+                  },
                 }),
                 {
                   status: 200,

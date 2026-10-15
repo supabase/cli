@@ -3,11 +3,13 @@ import type {
   V1GetABranchOutput,
   V1GetPoolerConfigOutput,
   V1GetProjectApiKeysOutput,
+  V1ListAllBranchesOutput,
+  V1ListAllProjectsOutput,
 } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
@@ -16,6 +18,8 @@ import {
   mockCommandPlatformApi,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import type { BranchesGetFlags } from "./get.command.ts";
 import { branchesGet } from "./get.handler.ts";
 
@@ -23,6 +27,8 @@ type BranchDetail = typeof V1GetABranchConfigOutput.Type;
 type FindResponse = typeof V1GetABranchOutput.Type;
 type Pooler = typeof V1GetPoolerConfigOutput.Type;
 type ApiKeys = typeof V1GetProjectApiKeysOutput.Type;
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 // A UUID keeps `branch_id_or_ref`'s oneOf union unambiguous; a 20-lowercase ref could match
 // either variant.
@@ -89,11 +95,46 @@ const KEYS: ApiKeys = [
   { name: "service_role", api_key: "sr-key" },
 ];
 
+const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org-123",
+  organization_slug: "acme",
+  name: "alpha",
+  region: "us-east-1",
+  created_at: "2026-05-27T01:02:03Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.alpha.supabase.co",
+    version: "15.1",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
+};
+
+const LISTED_BRANCH: (typeof V1ListAllBranchesOutput.Type)[number] = {
+  id: BRANCH_UUID,
+  name: "feat-x",
+  project_ref: BRANCH_REF,
+  parent_project_ref: VALID_REF,
+  is_default: false,
+  persistent: false,
+  status: "MIGRATIONS_PASSED",
+  created_at: "2024-01-01T00:00:00Z",
+  updated_at: "2024-01-01T00:00:00Z",
+  with_data: false,
+};
+
+const API = "https://api.supabase.com";
+const DETAIL_REQUEST = `GET ${API}/v1/branches/${BRANCH_UUID}`;
+const API_KEYS_REQUEST = `GET ${API}/v1/projects/${BRANCH_REF}/api-keys`;
+const POOLER_REQUEST = `GET ${API}/v1/projects/${BRANCH_REF}/config/database/pooler`;
+
 const tempRoot = useTempWorkdir("supabase-branches-get-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table";
   readonly findStatus?: number;
   readonly detailStatus?: number;
   readonly detailBody?: BranchDetail;
@@ -142,6 +183,10 @@ function buildApi(opts: SetupOpts) {
   });
 }
 
+function requested(api: { readonly requests: ReadonlyArray<{ method: string; url: string }> }) {
+  return api.requests.map(({ method, url }) => `${method} ${url}`);
+}
+
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const api = buildApi(opts);
@@ -161,6 +206,52 @@ const baseFlags: BranchesGetFlags = {
 };
 
 describe("branches get integration", () => {
+  it.effect("picks the project and branch on a TTY and fills the linked-project cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF, BRANCH_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.succeed(
+          request.url === `${API}/v1/projects`
+            ? jsonResponse(request, 200, [PROJECT])
+            : request.url === `${API}/v1/projects/${VALID_REF}/branches`
+              ? jsonResponse(request, 200, [LISTED_BRANCH])
+              : request.url === `${API}/v1/branches/${BRANCH_REF}`
+                ? jsonResponse(request, 200, DETAIL)
+                : request.url === `${API}/v1/projects/${VALID_REF}`
+                  ? jsonResponse(request, 200, PROJECT)
+                  : jsonResponse(request, 404, { message: "unrouted" }),
+        ),
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      tty: mockTty({ stdinIsTty: true }),
+      linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* branchesGet(baseFlags);
+      expect(requested(api)).toEqual([
+        `GET ${API}/v1/projects`,
+        `GET ${API}/v1/projects/${VALID_REF}/branches`,
+        `GET ${API}/v1/branches/${BRANCH_REF}`,
+        `GET ${API}/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toContain("db.cccccccccccccccccccc.supabase.co");
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({ command: "branches get", requests: api.requests, exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("fetches branch detail directly when input is a UUID (no lookup)", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
@@ -182,23 +273,48 @@ describe("branches get integration", () => {
         api.requests.some((r) => r.url.includes(`/v1/projects/${VALID_REF}/branches/feat-x`)),
       ).toBe(true);
       expect(api.requests.some((r) => r.url.includes(`/v1/branches/${BRANCH_UUID}`))).toBe(true);
+      assertPermissionDrift({ command: "branches get", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("renders pretty 7-col table with masked ****** for missing credentials", () => {
-    const { layer, out } = setup({ detailBody: DETAIL_MASKED });
+    const { layer, out, api } = setup({ detailBody: DETAIL_MASKED });
     return Effect.gen(function* () {
       yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
       expect(out.stdoutText).toContain("HOST");
       expect(out.stdoutText).toContain("******");
       expect(out.stdoutText).toContain("ACTIVE_HEALTHY");
+      expect(requested(api)).toEqual([DETAIL_REQUEST]);
+      assertPermissionDrift({ command: "branches get", requests: api.requests, exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("skips api keys and pooler config for --output pretty", () => {
+    const { layer, out, api } = setup({ goOutput: "pretty" });
+    return Effect.gen(function* () {
+      yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
+      expect(out.stdoutText).toContain("HOST");
+      expect(requested(api)).toEqual([DETAIL_REQUEST]);
+      assertPermissionDrift({
+        command: "branches get",
+        activeFlags: { output: "pretty" },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("emits standard-env map for --output-format=json", () => {
-    const { layer, out } = setup({ format: "json" });
+    const { layer, out, api } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
+      expect(requested(api)).toEqual([DETAIL_REQUEST, API_KEYS_REQUEST, POOLER_REQUEST]);
+      assertPermissionDrift({
+        command: "branches get",
+        activeFlags: { "output-format": "json" },
+        requests: api.requests,
+        exact: true,
+      });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toHaveProperty("POSTGRES_URL");
@@ -237,9 +353,15 @@ describe("branches get integration", () => {
   it.effect(
     "keeps env-map keys verbatim for --output toml (map payload, exempt from CLI-1975)",
     () => {
-      const { layer, out } = setup({ goOutput: "toml" });
+      const { layer, out, api } = setup({ goOutput: "toml" });
       return Effect.gen(function* () {
         yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
+        assertPermissionDrift({
+          command: "branches get",
+          activeFlags: { output: "toml" },
+          requests: api.requests,
+          exact: true,
+        });
         // Map payloads are exempt from the struct-field PascalCase key remap; keys stay verbatim.
         expect(out.stdoutText).toContain('SUPABASE_URL = "');
         expect(out.stdoutText).toContain('POSTGRES_URL = "');
@@ -248,13 +370,61 @@ describe("branches get integration", () => {
   );
 
   it.effect("emits standard-env map for --output env (env-format encoder)", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+    const { layer, out, api } = setup({ goOutput: "env" });
     return Effect.gen(function* () {
       yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
       expect(out.stdoutText).toContain("SUPABASE_URL=");
       expect(out.stdoutText).toContain("SUPABASE_ANON_KEY=");
+      expect(requested(api)).toEqual([DETAIL_REQUEST, API_KEYS_REQUEST, POOLER_REQUEST]);
+      assertPermissionDrift({
+        command: "branches get",
+        activeFlags: { output: "env" },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("fetches api keys and pooler config and prints JSON for -o table", () => {
+    const { layer, out, api } = setup({ goOutput: "table" });
+    return Effect.gen(function* () {
+      yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
+      expect(requested(api)).toEqual([DETAIL_REQUEST, API_KEYS_REQUEST, POOLER_REQUEST]);
+      expect(yield* decodeJson(out.stdoutText)).toMatchObject({
+        SUPABASE_ANON_KEY: "anon-key",
+        SUPABASE_SERVICE_ROLE_KEY: "sr-key",
+      });
+      assertPermissionDrift({
+        command: "branches get",
+        activeFlags: { output: "table" },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  for (const agent of ["auto", "yes"] as const) {
+    it.effect(
+      `fetches api keys and pooler config when --agent ${agent} yields json output (format simulated)`,
+      () => {
+        const { layer, out, api } = setup({ format: "json" });
+        return Effect.gen(function* () {
+          yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
+          expect(requested(api)).toEqual([DETAIL_REQUEST, API_KEYS_REQUEST, POOLER_REQUEST]);
+          expect(out.messages.find((m) => m.type === "success")?.data).toHaveProperty(
+            "SUPABASE_ANON_KEY",
+            "anon-key",
+          );
+          assertPermissionDrift({
+            command: "branches get",
+            activeFlags: { agent },
+            requests: api.requests,
+            exact: true,
+          });
+        }).pipe(Effect.provide(layer));
+      },
+    );
+  }
 
   it.effect("writes WARNING to stderr when pooler parse fails in text mode", () => {
     const broken: Pooler = [
@@ -315,7 +485,7 @@ describe("branches get integration", () => {
   });
 
   it.effect("fails with BranchesApiKeysUnexpectedStatusError on api-keys 403", () => {
-    const { layer } = setup({ goOutput: "json", apiKeysStatus: 403 });
+    const { layer, api } = setup({ goOutput: "json", apiKeysStatus: 403 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) }),
@@ -324,7 +494,14 @@ describe("branches get integration", () => {
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
         expect(causeText).toContain("BranchesApiKeysUnexpectedStatusError");
+        expect(causeText).toContain("unexpected get api keys status 403");
       }
+      expect(requested(api)).toEqual([DETAIL_REQUEST, API_KEYS_REQUEST]);
+      assertPermissionDrift({
+        command: "branches get",
+        activeFlags: { output: "json" },
+        requests: api.requests,
+      });
     }).pipe(Effect.provide(layer));
   });
 });

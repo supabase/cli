@@ -10,6 +10,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { orgsList } from "./list.handler.ts";
 
 type Organizations = typeof V1ListAllOrganizationsOutput.Type;
@@ -185,6 +186,7 @@ describe("orgs list integration", () => {
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.method).toBe("GET");
       expect(api.requests[0]?.url).toContain("/v1/organizations");
+      assertPermissionDrift({ command: "orgs list", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 

@@ -2,12 +2,14 @@ import { Effect, Layer } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import {
+  STORAGE_PERMISSIONS,
   StorageLinkedFlagDef,
   StorageLocalFlagDef,
   StorageProjectRefFlagDef,
@@ -43,6 +45,7 @@ export const storageRmCommand = Command.make("rm", config).pipe(
       description: "Remove multiple files from storage",
     },
   ]),
+  withPermissions(STORAGE_PERMISSIONS),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // Gate before the mutex check below; see requireExperimental's doc comment for why.

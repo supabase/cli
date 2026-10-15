@@ -1,6 +1,9 @@
 import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose, withContext } from "../../../command-internal/command-permissions/model.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -22,6 +25,15 @@ export const projectsListCommand = Command.make("list", config).pipe(
       description: "Machine-readable JSON output",
     },
   ]),
+  withPermissions(
+    compose(
+      { operations: [{ operationId: "v1-list-all-projects", kind: "required" }] },
+      withContext(
+        linkedProjectCache,
+        "a linked ref from SUPABASE_PROJECT_ID or supabase/.temp/project-ref",
+      ),
+    ),
+  ),
   Command.withHandler((flags) =>
     projectsList(flags).pipe(withCommandTelemetry({ flags, safeFlags: [] }), withJsonErrorHandling),
   ),

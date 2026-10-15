@@ -29,6 +29,7 @@
         "favorite": false,
         "id": "__UUID__",
         "inserted_at": "2000-01-01T00:00:00Z",
+        "description": null,
         "name": "test-snippet",
         "owner": {
           "id": 1,
@@ -51,7 +52,7 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/__PROJECT_REF__",
+      "path": "/v1/projects/replayfixtureprojref",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
@@ -71,15 +72,15 @@
         "x-ratelimit-reset": "45"
       },
       "body": {
-        "id": "__PROJECT_REF__",
-        "ref": "__PROJECT_REF__",
-        "organization_id": "__PROJECT_REF__",
-        "organization_slug": "__PROJECT_REF__",
+        "id": "replayfixtureprojref",
+        "ref": "replayfixtureprojref",
+        "organization_id": "replayfixtureprojref",
+        "organization_slug": "replayfixtureprojref",
         "name": "cli-e2e-test",
         "region": "us-east-1",
         "status": "ACTIVE_HEALTHY",
         "database": {
-          "host": "db.__PROJECT_REF__.supabase.red",
+          "host": "db.replayfixtureprojref.supabase.red",
           "version": "17.6.1.111",
           "postgres_engine": "17",
           "release_channel": "ga"

@@ -3,11 +3,13 @@ import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import {
+  STORAGE_PERMISSIONS,
   StorageLinkedFlagDef,
   StorageLocalFlagDef,
   StorageProjectRefFlagDef,
@@ -39,6 +41,7 @@ export const storageMvCommand = Command.make("mv", config).pipe(
       description: "Recursively move a directory within storage",
     },
   ]),
+  withPermissions(STORAGE_PERMISSIONS),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // Gate before the mutex check below; see requireExperimental's doc comment for why.

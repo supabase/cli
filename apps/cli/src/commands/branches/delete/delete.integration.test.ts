@@ -1,8 +1,10 @@
+import { type V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path, Schema } from "effect";
 
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
+  VALID_REF,
   buildTestRuntime,
   jsonResponse,
   mockCommandSettings,
@@ -11,6 +13,12 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import {
+  assertBlockDrift,
+  assertPermissionDrift,
+} from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
+import { branchPrompt } from "../branches.prompt.ts";
 import type { BranchesDeleteFlags } from "./delete.command.ts";
 import { branchesDelete } from "./delete.handler.ts";
 
@@ -30,7 +38,46 @@ const BRANCH_CONFIG = {
   db_port: 5432,
 };
 
+const BRANCH_REF = "cccccccccccccccccccc";
+const OTHER_BRANCH_REF = "dddddddddddddddddddd";
+const API = "https://api.supabase.com";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org-123",
+  organization_slug: "acme",
+  name: "alpha",
+  region: "us-east-1",
+  created_at: "2026-05-27T01:02:03Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.alpha.supabase.co",
+    version: "15.1",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
+};
+
+const branchListing = (projectRef: string, name: string) => ({
+  id: "33333333-3333-4333-8333-333333333333",
+  name,
+  project_ref: projectRef,
+  parent_project_ref: VALID_REF,
+  is_default: false,
+  persistent: false,
+  status: "MIGRATIONS_PASSED",
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+  with_data: false,
+});
+
 const tempRoot = useTempWorkdir("supabase-branches-delete-int-");
+
+const sequence = (requests: ReadonlyArray<{ method: string; url: string }>) =>
+  requests.map(({ method, url }) => `${method} ${url}`);
 
 interface SetupOpts {
   readonly deleteStatus?: number;
@@ -90,6 +137,11 @@ describe("branches delete integration", () => {
       expect(api.requests.find((r) => r.method === "DELETE")?.url).toContain(
         `/v1/branches/${BRANCH_UUID}`,
       );
+      expect(sequence(api.requests)).toEqual([
+        `GET ${API}/v1/branches/${BRANCH_UUID}`,
+        `DELETE ${API}/v1/branches/${BRANCH_UUID}`,
+      ]);
+      assertPermissionDrift({ command: "branches delete", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -194,6 +246,76 @@ describe("branches delete integration", () => {
         expect(lookup?.url).toContain(`/v1/projects/${PARENT_REF}/branches/my-feature`);
         const del = api.requests.find((r) => r.method === "DELETE");
         expect(del?.url).toContain(`/v1/branches/${RESOLVED_BRANCH_UUID}`);
+        expect(sequence(api.requests)).toEqual([
+          `GET ${API}/v1/projects/${PARENT_REF}/branches/my-feature`,
+          `DELETE ${API}/v1/branches/${RESOLVED_BRANCH_UUID}`,
+        ]);
+        assertPermissionDrift({ command: "branches delete", requests: api.requests });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "deletes the branch chosen from the pickers and fills the real linked-project cache",
+    () => {
+      const out = mockOutput({ format: "text", promptSelectResponses: [VALID_REF, BRANCH_REF] });
+      const api = mockCommandPlatformApi({
+        handler: (request) =>
+          Effect.sync(() => {
+            if (request.method === "GET" && request.url === `${API}/v1/projects`) {
+              return jsonResponse(request, 200, [PROJECT]);
+            }
+            if (request.method === "GET" && request.url === `${API}/v1/projects/${VALID_REF}`) {
+              return jsonResponse(request, 200, PROJECT);
+            }
+            if (
+              request.method === "GET" &&
+              request.url === `${API}/v1/projects/${VALID_REF}/branches`
+            ) {
+              return jsonResponse(request, 200, [
+                branchListing(OTHER_BRANCH_REF, "other"),
+                branchListing(BRANCH_REF, "feat-x"),
+              ]);
+            }
+            if (request.method === "DELETE" && request.url === `${API}/v1/branches/${BRANCH_REF}`) {
+              return jsonResponse(request, 200, { message: "ok" });
+            }
+            return jsonResponse(request, 404, { message: "unexpected request" });
+          }),
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+
+        yield* branchesDelete(baseFlags);
+
+        expect(sequence(api.requests)).toEqual([
+          `GET ${API}/v1/projects`,
+          `GET ${API}/v1/projects/${VALID_REF}/branches`,
+          `DELETE ${API}/v1/branches/${BRANCH_REF}`,
+          `GET ${API}/v1/projects/${VALID_REF}`,
+        ]);
+        expect(out.stderrText).toContain(`Deleted preview branch: ${BRANCH_REF}`);
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "branches delete", requests: api.requests, exact: true });
+        assertBlockDrift(branchPrompt, { requests: api.requests.slice(1, 2) });
       }).pipe(Effect.provide(layer));
     },
   );

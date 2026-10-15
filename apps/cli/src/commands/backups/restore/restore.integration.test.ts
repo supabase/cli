@@ -1,6 +1,6 @@
+import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
-import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -11,7 +11,28 @@ import {
   mockCommandPlatformApi,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { backupsRestore } from "./restore.handler.ts";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org_123",
+  organization_slug: "acme",
+  name: "alpha",
+  region: "us-east-1",
+  created_at: "2026-01-01T00:00:00Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.example.com",
+    version: "15.0",
+    postgres_engine: "supabase-postgres",
+    release_channel: "ga",
+  },
+};
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -49,6 +70,7 @@ describe("backups restore integration", () => {
       });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.body).toEqual({ recovery_time_target_unix: 0 });
+      assertPermissionDrift({ command: "backups restore", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -60,6 +82,12 @@ describe("backups restore integration", () => {
         timestamp: Option.some(1_707_407_047),
       });
       expect(api.requests[0]?.body).toEqual({ recovery_time_target_unix: 1_707_407_047 });
+      assertPermissionDrift({
+        command: "backups restore",
+        activeFlags: { timestamp: true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -137,6 +165,12 @@ describe("backups restore integration", () => {
         timestamp: Option.none(),
       });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${flagRef}/`);
+      assertPermissionDrift({
+        command: "backups restore",
+        activeFlags: { "project-ref": true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -192,64 +226,61 @@ describe("backups restore integration", () => {
     });
   });
 
-  it.effect("prompts via TTY when no ref source matches and stdin is a TTY", () => {
-    const out = mockOutput({
-      format: "text",
-      promptSelectResponses: [VALID_REF],
-    });
-    // Branches on path: the resolver's list call gets a project array, the restore call gets 201.
-    const api = mockCommandPlatformApi({
-      handler: (request) => {
-        if (request.url.includes("/v1/projects") && !request.url.includes("/database/backups")) {
+  it.effect(
+    "prompts via TTY, restores, and fills the linked-project cache through the real layer",
+    () => {
+      const out = mockOutput({
+        format: "text",
+        promptSelectResponses: [VALID_REF],
+      });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          if (request.method === "POST") {
+            return Effect.succeed(jsonResponse(request, 201, null));
+          }
           return Effect.succeed(
-            HttpClientResponse.fromWeb(
+            jsonResponse(
               request,
-              new Response(
-                JSON.stringify([
-                  {
-                    id: VALID_REF,
-                    ref: VALID_REF,
-                    organization_id: "org_123",
-                    organization_slug: "acme",
-                    name: "alpha",
-                    region: "us-east-1",
-                    created_at: "2026-01-01T00:00:00Z",
-                    status: "ACTIVE_HEALTHY",
-                    database: {
-                      host: "db.example.com",
-                      version: "15.0",
-                      postgres_engine: "supabase-postgres",
-                      release_channel: "ga",
-                    },
-                  },
-                ]),
-                { status: 200, headers: { "content-type": "application/json" } },
-              ),
+              200,
+              request.url === "https://api.supabase.com/v1/projects" ? [PROJECT] : PROJECT,
             ),
           );
-        }
-        return Effect.succeed(jsonResponse(request, 201, null));
-      },
-    });
-    const cliSettings = mockCommandSettings({
-      workdir: tempRoot.current,
-      projectId: Option.none(),
-    });
-    const layer = buildTestRuntime({
-      out,
-      api,
-      cliSettings,
-      tty: mockTty({ stdinIsTty: true, stdoutIsTty: true }),
-    });
+        },
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true, stdoutIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      });
 
-    return Effect.gen(function* () {
-      yield* backupsRestore({ projectRef: Option.none(), timestamp: Option.none() }).pipe(
-        Effect.provide(layer),
-      );
-      expect(out.promptSelectCalls).toHaveLength(1);
-      expect(out.stderrText).toContain(`Started PITR restore: ${VALID_REF}\n`);
-    });
-  });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+        yield* backupsRestore({ projectRef: Option.none(), timestamp: Option.none() });
+        expect(out.promptSelectCalls).toHaveLength(1);
+        expect(out.stderrText).toContain(`Started PITR restore: ${VALID_REF}\n`);
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/v1/projects",
+          `POST https://api.supabase.com/v1/projects/${VALID_REF}/database/backups/restore-pitr`,
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "backups restore", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("accepts --timestamp short alias -t in the same way (no separate parse path)", () => {
     const { layer, api } = setup();

@@ -54,7 +54,10 @@ import {
 } from "../../../../tests/helpers/storage.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
-import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 
 interface MockRoute {
   readonly method: string;
@@ -230,12 +233,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
           handler: (request) =>
             Effect.succeed(
               request.method === "GET" && request.url.endsWith(`/v1/projects/${projectRefRef}`)
-                ? jsonResponse(request, 200, {
-                    ref: projectRefRef,
-                    name: "alpha",
-                    organization_id: "org-123",
-                    organization_slug: "acme",
-                  })
+                ? jsonResponse(request, 200, projectResponse(projectRefRef))
                 : request.method === "GET" &&
                     request.url.endsWith(`/v1/projects/${projectRefRef}/api-keys`)
                   ? jsonResponse(request, 200, opts.apiKeys ?? defaultApiKeys)
