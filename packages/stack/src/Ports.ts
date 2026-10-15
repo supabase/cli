@@ -15,6 +15,7 @@ import {
 import * as Net from "node:net";
 import type { StackFailureKind } from "./FailureKind.ts";
 import type * as StackNamespace from "./StackNamespace.ts";
+import type { NamespaceError } from "./namespace/Capabilities.ts";
 import * as Lease from "./namespace/Lease.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import type { Holder } from "./namespace/PortReservations.ts";
@@ -147,6 +148,12 @@ export const nativePortSpan = portBase - nativePortBase;
 /** Co-prime with the span, matching the public scan's stride. */
 const nativePortStride = 257;
 
+/**
+ * In-process lock on native port claims, by state root, stack, and port. A stack has one live
+ * owner, so a same-stack registry row not held here was left by a dead owner.
+ */
+const nativePortsHeld = new Set<string>();
+
 export interface NativePortReservation {
   readonly port: number;
   readonly server: Net.Server;
@@ -189,44 +196,70 @@ const bindNativePort = (
     });
   });
 
+export interface NativePortOptions {
+  /** Ports a prior attempt lost, which the scan skips. */
+  readonly excluded: ReadonlySet<number>;
+  /** Claims a candidate until its scope closes; `false` means another stack holds it. */
+  readonly claim: (port: number) => Effect.Effect<boolean, PortError, Scope.Scope>;
+  /** Parent of each returned reservation's claim, which stays open after the placeholder closes. */
+  readonly claimScope: Scope.Scope;
+  readonly platform?: NodeJS.Platform;
+}
+
 /**
  * Reserves a native backend's private port, hash-seeding the scan from `key` so a reopened
  * instance starts from the same candidate while separate keys spread out (mirrors the public auto
  * scan's hash seed). Probes with {@link probeVacant} before the real bind, since a loopback-only
- * bind can silently coexist with a wildcard listener on macOS, BSD, and Windows. A port a prior
- * attempt in this batch lost is passed in `excluded` so a retry advances instead of repeating it.
- * Never saved: backend ports are private and are not stable across restarts.
+ * bind can silently coexist with a wildcard listener on macOS, BSD, and Windows. Never saved
+ * across restarts; the claim on each port is held in `claimScope`, so no other stack's scan takes
+ * it until that scope closes.
  */
 export const reserveNativePort = Effect.fn("Ports.reserveNativePort")(
   (
     key: string,
-    excluded: ReadonlySet<number>,
-    platform: NodeJS.Platform = process.platform,
+    { excluded, claim, claimScope, platform = process.platform }: NativePortOptions,
   ): Effect.Effect<NativePortReservation, PortError, Scope.Scope> =>
     Effect.acquireRelease(
       Effect.gen(function* () {
         const probe = probeVacant(platform);
         const start = Math.abs(Hash.string(key)) % nativePortSpan;
         let failures = 0;
+        let claimedElsewhere = 0;
         let lastFailure: PortError | undefined;
         for (let attempt = 0; attempt < nativePortSpan && failures < 64; attempt++) {
           const port = nativePortBase + ((start + attempt * nativePortStride) % nativePortSpan);
           if (excluded.has(port)) continue;
-          const probed = yield* Effect.exit(probe(key, "127.0.0.1", port));
-          if (Exit.isFailure(probed)) {
-            const probeError = Cause.findErrorOption(probed.cause);
-            if (Option.isNone(probeError)) return yield* Effect.failCause(probed.cause);
-            failures++;
-            lastFailure = probeError.value;
+          const claimed = yield* Scope.fork(claimScope, "sequential");
+          const claimExit = yield* Effect.exit(claim(port).pipe(Scope.provide(claimed)));
+          if (Exit.isFailure(claimExit)) {
+            yield* Scope.close(claimed, claimExit);
+            return yield* Effect.failCause(claimExit.cause);
+          }
+          if (!claimExit.value) {
+            yield* Scope.close(claimed, claimExit);
+            claimedElsewhere++;
             continue;
           }
-          const result = yield* Effect.exit(bindNativePort(key, port));
-          if (Exit.isSuccess(result)) return result.value;
-          const error = Cause.findErrorOption(result.cause);
-          if (Option.isNone(error)) return yield* Effect.failCause(result.cause);
+          const placed = yield* Effect.exit(
+            probe(key, "127.0.0.1", port).pipe(Effect.andThen(bindNativePort(key, port))),
+          );
+          if (Exit.isSuccess(placed)) {
+            yield* Effect.annotateCurrentSpan({
+              "stack.port.attempts": attempt + 1,
+              "stack.port.claimed_elsewhere": claimedElsewhere,
+            });
+            return placed.value;
+          }
+          yield* Scope.close(claimed, placed);
+          const error = Cause.findErrorOption(placed.cause);
+          if (Option.isNone(error)) return yield* Effect.failCause(placed.cause);
           failures++;
           lastFailure = error.value;
         }
+        yield* Effect.annotateCurrentSpan({
+          "stack.port.failures": failures,
+          "stack.port.claimed_elsewhere": claimedElsewhere,
+        });
         return yield* new PortError({
           key,
           message:
@@ -559,7 +592,63 @@ export const makePorts = (state: StackNamespace.Interface) =>
       yield* portReservations.releaseStack(stateRoot, stackId);
     });
 
-    return { acquire, assigned, release, releaseStack };
+    /** Claims `port` until the ambient scope closes; resolves `false` while another live stack holds it. */
+    const claimNative = Effect.fnUntraced(function* (stackId: string, key: string, port: number) {
+      const name = `native:${key}@${port}`;
+      const held = `${stateRoot}\0${stackId}\0${port}`;
+      const scope = yield* Scope.Scope;
+      return yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          if (nativePortsHeld.has(held)) return false;
+          nativePortsHeld.add(held);
+          return yield* Effect.gen(function* () {
+            const holder = yield* portReservations.reserve(stateRoot, stackId, name, port);
+            if (holder !== undefined) {
+              const ours = holder.stackId === stackId && holder.stateRoot === stateRoot;
+              if (
+                !ours &&
+                !((yield* restore(isGone(holder))) || !(yield* restore(isLeased(holder))))
+              )
+                return false;
+              const reclaimed = yield* portReservations.reclaim(port, holder, {
+                stateRoot,
+                stackId,
+                endpoint: name,
+              });
+              if (!reclaimed) return false;
+            }
+            yield* Scope.addFinalizer(
+              scope,
+              portReservations.release(stateRoot, stackId, name).pipe(
+                Effect.ignore({
+                  log: "Warn",
+                  message: "Native service port claim was not released",
+                }),
+                Effect.ensuring(Effect.sync(() => nativePortsHeld.delete(held))),
+              ),
+            );
+            return true;
+          }).pipe(
+            Effect.onExit((exit) =>
+              Exit.isSuccess(exit) && exit.value
+                ? Effect.void
+                : Effect.sync(() => nativePortsHeld.delete(held)),
+            ),
+          );
+        }),
+      ).pipe(
+        Effect.mapError(
+          (cause: NamespaceError) =>
+            new PortError({
+              key,
+              message: `Unable to claim native service port: ${cause.message}`,
+              cause,
+            }),
+        ),
+      );
+    });
+
+    return { acquire, assigned, release, releaseStack, claimNative };
   });
 
 /** Opens the machine-wide registry for the surrounding scope and builds the ports over it. */
