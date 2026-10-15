@@ -1,6 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path, Predicate } from "effect";
-import { join } from "node:path";
 
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import {
@@ -807,7 +806,7 @@ describeHostedConsent("storage cp", {
   setup: (workdir) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      yield* fs.writeFileString(join(workdir, "readme.md"), "hello world");
+      yield* fs.writeFileString(`${workdir}/readme.md`, "hello world");
     }),
   invoke: ({ workdir }) => {
     const storage = storageConsentServices(workdir, [
@@ -815,7 +814,7 @@ describeHostedConsent("storage cp", {
     ]);
     return {
       run: storageCp({
-        ...cpFlags({ src: join(workdir, "readme.md"), dst: "ss:///private/readme.md" }),
+        ...cpFlags({ src: `${workdir}/readme.md`, dst: "ss:///private/readme.md" }),
         local: false,
         linked: false,
         projectRef: Option.some(VALID_REF),

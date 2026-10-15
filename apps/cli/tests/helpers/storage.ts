@@ -307,7 +307,7 @@ export function buildStorageStackApi(
 }
 
 /** A recording `HttpClient` that answers Storage requests from `routes`, first match first. */
-export function recordingStorageHttp(routes: ReadonlyArray<StorageRoute>) {
+function recordingStorageHttp(routes: ReadonlyArray<StorageRoute>) {
   const requests: Array<RecordedStorageRequest> = [];
   const consumed = new Set<number>();
 
@@ -363,7 +363,7 @@ export function recordingStorageHttp(routes: ReadonlyArray<StorageRoute>) {
 }
 
 /** Storage requests that change state; the object and vector list endpoints are POST reads. */
-export const isStorageWrite = (request: { readonly method: string; readonly url: string }) =>
+const isStorageWrite = (request: { readonly method: string; readonly url: string }) =>
   request.method !== "GET" &&
   !request.url.includes("/storage/v1/object/list/") &&
   !request.url.includes("/storage/v1/vector/ListVectorBuckets");

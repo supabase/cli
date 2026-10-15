@@ -553,17 +553,18 @@ const planHostedWrites = Effect.fnUntraced(function* (
   const declaredVector = Object.keys(config.storage.vector.buckets);
   if (config.storage.vector.enabled && declaredVector.length > 0) {
     const listed = yield* gateway.listVectorBuckets.pipe(
+      Effect.map(Option.some),
       Effect.catch((error) =>
         isVectorBucketsFeatureNotEnabled(error.message) ||
         isLocalVectorBucketsUnavailable(error.message)
-          ? Effect.succeed(undefined)
+          ? Effect.succeed(Option.none<ReadonlyArray<string>>())
           : Effect.fail(error),
       ),
     );
-    if (listed !== undefined) {
-      const present = new Set(listed);
+    if (Option.isSome(listed)) {
+      const present = new Set(listed.value);
       const created = declaredVector.filter((name) => !present.has(name));
-      const pruned = listed.filter((name) => !declaredVector.includes(name));
+      const pruned = listed.value.filter((name) => !declaredVector.includes(name));
       if (created.length > 0) details.push(`Create vector buckets: ${joinNames(created)}`);
       if (pruned.length > 0) {
         details.push(`Delete vector buckets not declared in ${CONFIG_PATH}: ${joinNames(pruned)}`);

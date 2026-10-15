@@ -24,7 +24,10 @@ export class SeedConfigLoadError extends Data.TaggedError("SeedConfigLoadError")
   }
 }
 
-/** Raised when both `--local` and `--linked` are passed. */
+/**
+ * Unused: target conflicts raise `TargetSelectorConflictError`.
+ * @public
+ */
 export class SeedMutuallyExclusiveFlagsError extends Data.TaggedError(
   "SeedMutuallyExclusiveFlagsError",
 )<{
