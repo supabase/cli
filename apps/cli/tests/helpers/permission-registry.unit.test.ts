@@ -159,4 +159,8 @@ describe("declaredPermissions", () => {
     expect(declaredPermissions("stack list")).toEqual({ _tag: "NotFound" });
     expect(declaredPermissions("stack list", { stackBackend: "stack" })._tag).toBe("Declared");
   });
+
+  it("reports a command group, which carries no declaration, as undeclared", () => {
+    expect(declaredPermissions("db branch")).toEqual({ _tag: "Undeclared" });
+  });
 });
