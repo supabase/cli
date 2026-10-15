@@ -42,11 +42,17 @@ export class StdoutClosedError extends Data.TaggedError("StdoutClosedError") {
   }
 }
 
-/** Whether a run ended because stdout closed, rather than through its own success or failure. */
-export const endedByClosedStdout = (cause: Cause.Cause<unknown>): boolean =>
-  cause.reasons.some(
-    (reason) => Cause.isDieReason(reason) && reason.defect instanceof StdoutClosedError,
-  );
+/**
+ * The failures a run still has to report once a closed stdout is set aside, or `undefined` when
+ * the closed stdout, and the interruptions it caused, are all that ended the run.
+ */
+export const failureBesideClosedStdout = <E>(cause: Cause.Cause<E>): Cause.Cause<E> | undefined => {
+  const isClosedStdout = (reason: Cause.Reason<E>) =>
+    Cause.isDieReason(reason) && reason.defect instanceof StdoutClosedError;
+  if (!cause.reasons.some(isClosedStdout)) return cause;
+  const remaining = cause.reasons.filter((reason) => !isClosedStdout(reason));
+  return remaining.every(Cause.isInterruptReason) ? undefined : Cause.fromReasons(remaining);
+};
 
 /** Lets a final message to a closed stdout be dropped, so it cannot replace the outcome it reports. */
 export const ignoreStdoutClosed = <A, E, R>(

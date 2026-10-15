@@ -141,6 +141,7 @@ describe("CLI output to a closed stdout", () => {
       );
       expect(exitCode).toBe(0);
       expect(stderr).not.toContain("Stdio");
+      expect(stderr).not.toContain("StdoutClosedError");
     }),
   );
 
