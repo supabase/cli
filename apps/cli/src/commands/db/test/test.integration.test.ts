@@ -1,7 +1,7 @@
 /**
  * `db test` is a hidden alias that reuses `test db`'s flag config and handler verbatim (see
  * `test.command.ts`). The core pgTAP behavior is already covered by
- * `../../../shared/test-db.integration.test.ts`, so this file only covers alias-specific
+ * `../../../command-internal/test-db.integration.test.ts`, so this file only covers alias-specific
  * behavior: end-to-end delegation, telemetry recording `"db test"` (not `"test db"`) as the
  * invoked path, and the non-text `onRunFailure` branch.
  */
@@ -42,6 +42,7 @@ import {
   type StubbedRequest,
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { commandTargetLayer } from "../../../shared/output/command-target.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -62,7 +63,13 @@ import {
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { CurrentAnalyticsContext } from "../../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
+import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import type {
+  DbConnectionInput,
+  ResolvedDbConnection,
+} from "../../../command-internal/db-config.types.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import {
   DbConnection,
   type DbSession,
@@ -76,6 +83,7 @@ import {
   runTestDbCommand,
   type TestDbFlags,
 } from "../../../command-internal/test-db.command-handler.ts";
+import { testDb } from "../../../command-internal/test-db.handler.ts";
 import { dbCommand } from "../db.command.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 
@@ -105,13 +113,33 @@ function mockContextualAnalytics() {
   return { layer, captured };
 }
 
-function mockResolver() {
+function mockResolver(conn: PgConnInput = LOCAL_CONN) {
   return Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.succeed({ conn: LOCAL_CONN, isLocal: true }),
-    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
+    resolve: () => Effect.die("resolve is not used by this test"),
+    resolveConnection: (input: DbConnectionInput) =>
+      Effect.succeed({
+        conn,
+        isLocal: input.target.kind === "local",
+        ref: input.target.kind === "linked" ? Option.some(input.target.ref) : Option.none(),
+        target: input.target,
+      } satisfies ResolvedDbConnection),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 }
+
+const projectRefLayer = Layer.succeed(ProjectRefResolver, {
+  resolve: () => Effect.die("resolve is not used by this test"),
+  resolveForLink: () => Effect.die("resolveForLink is not used by this test"),
+  resolveRef: (flagValue: Option.Option<string>) =>
+    Effect.succeed({
+      ref: Option.getOrElse(flagValue, () => REF),
+      source: "flag" as const,
+      matchesLinkedRef: false,
+    }),
+  resolveOptional: () => Effect.die("resolveOptional is not used by this test"),
+  loadProjectRef: () => Effect.die("loadProjectRef is not used by this test"),
+  promptProjectRef: () => Effect.die("promptProjectRef is not used by this test"),
+});
 
 function mockDbConnection() {
   const execCalls: string[] = [];
@@ -181,11 +209,11 @@ interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   exitCode?: number;
   stdout?: ReadonlyArray<string>;
-  /** The command-line arguments the handler reads its database target from. */
-  args?: ReadonlyArray<string>;
   /** Runs the real `DbConfigResolver` against the temp `workdir`; the test serves its Management API calls. */
   realDbConfig?: boolean;
   workdir?: string;
+  /** `--yes`; on by default so hosted runs reach pg_prove. */
+  yes?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -222,7 +250,12 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(DebugFlag, false),
     Layer.succeed(NetworkIdFlag, Option.none()),
     Layer.succeed(DnsResolverFlag, "native"),
-    Layer.succeed(CliArgs, { args: opts.args ?? [] }),
+    Layer.succeed(CliArgs, { args: [] }),
+    projectRefLayer,
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
+    Layer.succeed(YesFlag, opts.yes ?? true),
+    Layer.succeed(OutputFlag, Option.none()),
+    mockTty(),
     Stdio.layerTest({ args: Effect.succeed(args) }),
     commandRuntimeLayer(["db", "test"]).pipe(Layer.provide(BunServices.layer)),
     BunServices.layer,
@@ -230,12 +263,13 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, analytics, processControl, connection, docker };
 }
 
-const flags = (): TestDbFlags => ({
+const flags = (over: Partial<TestDbFlags> = {}): TestDbFlags => ({
   paths: [],
   dbUrl: Option.none(),
   linked: false,
-  local: true,
+  local: false,
   projectRef: Option.none(),
+  ...over,
 });
 
 describe("db test (alias) integration", () => {
@@ -254,20 +288,11 @@ describe("db test (alias) integration", () => {
   });
 
   it.effect("mints a login role through the real DB config resolver for --linked", () => {
-    const { layer, docker } = setup({
-      args: ["db", "test", "--linked", "--project-ref", REF],
-      realDbConfig: true,
-      workdir: tempRoot.current,
-    });
+    const { layer, docker } = setup({ realDbConfig: true, workdir: tempRoot.current });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
       yield* stubManagementApi(requests, serveLinkedDatabase(REF));
-      yield* runTestDbCommand({
-        ...flags(),
-        linked: true,
-        local: false,
-        projectRef: Option.some(REF),
-      });
+      yield* runTestDbCommand(flags({ linked: true, projectRef: Option.some(REF) }));
       expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
         `GET /v1/projects/${REF}/config/database/pooler`,
         `POST /v1/projects/${REF}/cli/login-role`,
@@ -303,15 +328,11 @@ describe("db test (alias) integration", () => {
   });
 
   it.effect("makes no Management API request for --local through the real resolver", () => {
-    const { layer, docker } = setup({
-      args: ["db", "test", "--local"],
-      realDbConfig: true,
-      workdir: tempRoot.current,
-    });
+    const { layer, docker } = setup({ realDbConfig: true, workdir: tempRoot.current });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
       yield* stubManagementApi(requests, () => undefined);
-      yield* runTestDbCommand(flags());
+      yield* runTestDbCommand(flags({ local: true }));
       expect(docker.lastOpts?.cmd[0]).toBe("pg_prove");
       expect(requests).toEqual([]);
       assertPermissionDrift({
@@ -434,4 +455,33 @@ describe("db test (alias) integration", () => {
       expect(out.stdoutText).toBe("Files=0, Tests=0,  0 wallclock secs\nResult: NOTESTS\n");
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("db test", {
+  invoke: () => {
+    const connection = mockDbConnection();
+    return {
+      run: testDb(flags({ linked: true, projectRef: Option.some(REF) })).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            mockResolver({ ...LOCAL_CONN, host: `db.${REF}.supabase.co` }),
+            connection.layer,
+            mockDockerRun().layer,
+            Layer.succeed(BundledPostgresClient, {
+              run: () => Effect.die("bundled postgres client unused"),
+            }),
+            unusedStackServices,
+            cliConfigValuesTestLayer,
+            mockTelemetryStateTracked().layer,
+            runtimeInfoLayer,
+            Layer.succeed(DebugFlag, false),
+            Layer.succeed(NetworkIdFlag, Option.none()),
+            Layer.succeed(DnsResolverFlag, "native"),
+          ),
+        ),
+        Effect.scoped,
+      ),
+      mutations: () => connection.execCalls.length,
+    };
+  },
 });
