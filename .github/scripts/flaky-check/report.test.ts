@@ -149,6 +149,40 @@ describe("aggregate", () => {
     });
   });
 
+  test("a file whose tests were all skipped does not count as a passing setup", () => {
+    const [hookFile] = clean.testResults;
+    const failingHook: JsonTestResults = {
+      ...iteration2,
+      testResults: iteration2.testResults.filter((file) => file.name.endsWith("hook.unit.test.ts")),
+    };
+    const skippedHook: JsonTestResults = {
+      ...clean,
+      testResults: [
+        {
+          ...hookFile!,
+          assertionResults: hookFile!.assertionResults.map((a) => ({ ...a, status: "skipped" })),
+        },
+        { ...hookFile!, name: "/repo/other.unit.test.ts" },
+      ],
+    };
+
+    const report = summary(
+      [
+        run("unit", 1, { [`${API}.1.json`]: failingHook }, { exitCode: 1 }),
+        run("unit", 2, { [`${API}.1.json`]: skippedHook }),
+      ],
+      ["flaky-unit-run1", "flaky-unit-run2"],
+    );
+
+    expect(report).toEqual({
+      flaky: [],
+      failing: [
+        ["hook.unit.test.ts", "(file setup)", "1/1", "failed outside any test (hook or setup)"],
+      ],
+      runProblems: [],
+    });
+  });
+
   test("reports runs that lost an expected report, crashed, ran nothing in some execution, or never uploaded", () => {
     const report = aggregate(
       [

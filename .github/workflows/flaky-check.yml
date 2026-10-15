@@ -30,7 +30,7 @@ on:
       filter:
         description: >-
           Space-separated vitest file filters for unit, integration, and focused. Focused
-          repeats these instead of the tests affected by changes when set.
+          repeats these instead of the tests affected by changes since develop when set.
         type: string
         default: ""
 
@@ -142,6 +142,7 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           sticky-disks: "true"
+          go-cache: ${{ matrix.suite == 'e2e' }}
           docker-images: ${{ matrix.suite != 'unit' && (matrix.suite != 'stack-e2e' || matrix.runtime == 'docker' || matrix.scenario == 'lifecycle' && matrix.runtime == 'native') }}
           native-artifacts: ${{ matrix.runtime == 'native' }}
 

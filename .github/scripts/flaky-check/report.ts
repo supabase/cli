@@ -91,7 +91,8 @@ export function parseVitestJson(results: JsonTestResults, root: string): TestCas
       file,
       titles: [FILE_LEVEL_TITLE],
       failed: fileFailed,
-      skipped: false,
+      // Hooks do not run in a file whose tests were all skipped, so its setup was not exercised.
+      skipped: !fileFailed && tests.length > 0 && tests.every((test) => test.skipped),
       fileLevel: true,
       ...(fileFailed
         ? { message: firstLine(fileResult.message) || "failed outside any test (hook or setup)" }
