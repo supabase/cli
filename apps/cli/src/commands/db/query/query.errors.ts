@@ -50,7 +50,7 @@ export class DbQueryLoginRequiredError extends Data.TaggedError("DbQueryLoginReq
   }
 }
 
-/** `--read-only` was combined with SQL that ends the transaction or changes its read-only mode. */
+/** `--read-only` was combined with SQL that is not a plain read statement. */
 export class DbQueryReadOnlyStatementError extends Data.TaggedError(
   "DbQueryReadOnlyStatementError",
 )<{

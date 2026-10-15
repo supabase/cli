@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   findDropStatements,
   splitAndTrim,
+  splitAndTrimChecked,
   splitSql,
   splitSqlTokens,
   trimLeadingSqlComments,
@@ -148,6 +149,35 @@ describe("splitAndTrim", () => {
     ]);
   });
 
+  it.each([
+    ["a closing */ directly followed by *", "/* /* */* x */ COMMIT; DELETE FROM t; SELECT 1"],
+    ["a closing */ directly followed by /*", "/* /* *//* */ */ COMMIT; DELETE FROM t; SELECT 1"],
+    ["a doubled star before the closing slash", "/* /* **/ */ COMMIT; DELETE FROM t; SELECT 1"],
+  ])("closes a nested block comment with %s", (_name, sql) => {
+    const statements = splitAndTrim(sql);
+    expect(statements).toHaveLength(3);
+    expect(statements.slice(1)).toEqual(["DELETE FROM t", "SELECT 1"]);
+    expect(statements[0]!.endsWith("COMMIT")).toBe(true);
+  });
+
+  it("does not let /*/ close the comment it opens", () => {
+    expect(splitAndTrim("SELECT 1 /*/ ; */ ; SELECT 2")).toEqual(["SELECT 1 /*/ ; */", "SELECT 2"]);
+  });
+
+  it("reads /*/ inside a comment as a nested opener only", () => {
+    expect(splitAndTrim("/* a /*/ b */ ; */ SELECT 1; SELECT 2")).toEqual([
+      "/* a /*/ b */ ; */ SELECT 1",
+      "SELECT 2",
+    ]);
+  });
+
+  it("closes a comment written as /**/ and /***/", () => {
+    expect(splitAndTrim("SELECT /**/ 1; SELECT /***/ 2")).toEqual([
+      "SELECT /**/ 1",
+      "SELECT /***/ 2",
+    ]);
+  });
+
   it("does not split inside a BEGIN ATOMIC body", () => {
     const sql =
       "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; SELECT 2; END; SELECT 3;";
@@ -253,9 +283,9 @@ describe("splitAndTrim", () => {
     ]);
   });
 
-  it("does not close a BEGIN ATOMIC body at an END after an overlapping block comment", () => {
+  it("does not close a BEGIN ATOMIC body at an END after a block comment nesting /*/", () => {
     const body =
-      "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; /* a /*/ b */ SELECT 2 END; SELECT 3; END";
+      "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; /* a /*/ b */ */ SELECT 2 END; SELECT 3; END";
     expect(splitAndTrim(`${body}; SELECT 4;`)).toEqual([body, "SELECT 4"]);
   });
 
@@ -265,6 +295,44 @@ describe("splitAndTrim", () => {
   ])("splits a 1 MB %s without quadratic slowdown", (_, open, close) => {
     const statement = `DO ${open}\n${"SELECT 1;\n".repeat(100_000)}${close}`;
     expect(splitAndTrim(`${statement}; SELECT 2;`)).toEqual([statement, "SELECT 2"]);
+  });
+});
+
+describe("splitAndTrimChecked", () => {
+  it("returns the statements splitAndTrim returns", () => {
+    const sql = "SELECT 1; /* a */ SELECT 'b;';\nSELECT $$c; d$$";
+    expect(splitAndTrimChecked(sql).statements).toEqual(splitAndTrim(sql));
+  });
+
+  it.each([
+    ["an open block comment", "SELECT 1 /* a"],
+    ["an open nested block comment", "SELECT 1 /* a /* b */"],
+    ["an open string", "SELECT 'a"],
+    ["a string ending in a doubled quote", "SELECT 'a''"],
+    ["an open quoted identifier", 'SELECT "a'],
+    ["an open escape string", String.raw`SELECT E'a\'`],
+    ["an open dollar quote", "SELECT $$a"],
+    ["an open tagged dollar quote", "SELECT $t$a$$"],
+    ["an open string inside parentheses", "SELECT ('a"],
+    ["an open comment after a statement", "SELECT 1; /*"],
+  ])("flags %s as unterminated", (_name, sql) => {
+    expect(splitAndTrimChecked(sql).unterminated).toBe(true);
+  });
+
+  it.each([
+    ["a plain statement", "SELECT 1"],
+    ["a trailing line comment", "SELECT 1 -- a"],
+    ["a closed block comment", "SELECT 1 /* a */"],
+    ["a closed nested block comment", "SELECT 1 /* a /* b */ */"],
+    ["a closed string", "SELECT 'a'"],
+    ["a string with a doubled quote", "SELECT 'a''b'"],
+    ["a closed quoted identifier", 'SELECT "a"'],
+    ["a closed escape string", String.raw`SELECT E'a\''`],
+    ["a closed dollar quote", "SELECT $$a;b$$"],
+    ["a closed string inside parentheses", "SELECT ('a')"],
+    ["blank input", "  \n"],
+  ])("does not flag %s", (_name, sql) => {
+    expect(splitAndTrimChecked(sql).unterminated).toBe(false);
   });
 });
 
@@ -295,6 +363,9 @@ describe("trimLeadingSqlComments", () => {
     ["a carriage-return line comment", "-- a\rSELECT 1"],
     ["a block comment", "/* a */SELECT 1"],
     ["a nested block comment", "/* a /* b */ c */ SELECT 1"],
+    ["a nested comment closed by */ then *", "/* /* */* x */ SELECT 1"],
+    ["a nested comment closed by */ then /*", "/* /* *//* */ */ SELECT 1"],
+    ["a comment nesting /*/", "/* a /*/ b */ */ SELECT 1"],
     ["stacked comments and blanks", "\uFEFF-- a\n /* b */ \n-- c\nSELECT 1"],
   ])("strips %s", (_name, sql) => {
     expect(trimLeadingSqlComments(sql)).toBe("SELECT 1");
@@ -307,6 +378,8 @@ describe("trimLeadingSqlComments", () => {
   it.each([
     ["a line comment without a newline", "-- a"],
     ["an unterminated block comment", "/* a SELECT 1"],
+    ["a comment opened by /*/ and closed later", "/*/ SELECT 1 */"],
+    ["a nested comment closed only once", "/* /* */* x SELECT 1"],
     ["only whitespace", " \n"],
   ])("returns empty for %s", (_name, sql) => {
     expect(trimLeadingSqlComments(sql)).toBe("");

@@ -31,7 +31,7 @@ import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { AiTool } from "../../../shared/telemetry/ai-tool.service.ts";
 import type { DbQueryFlags } from "./query.command.ts";
 import { RLS_CHECK_SQL, buildRlsAdvisory } from "./query.advisory.ts";
-import { findReadOnlyViolation } from "./query.read-only.ts";
+import { findReadOnlyViolation, READ_ONLY_STATEMENT_KEYWORDS } from "./query.read-only.ts";
 import {
   DbQueryExecError,
   DbQueryLoginRequiredError,
@@ -80,12 +80,17 @@ const isRowObject = (element: unknown): element is { readonly [key: string]: unk
 const toExecError = (cause: { readonly message: string }) =>
   new DbQueryExecError({ message: cause.message });
 
+const READ_ONLY_LOCK_TIMEOUT = "5s";
+
 // `queryRaw` runs every statement on one dedicated connection, so BEGIN/ROLLBACK issued through
-// it bracket the user's statement.
+// it bracket the user's statement. The lock timeout keeps a read from queuing behind heavy locks.
 const inReadOnlyTransaction = <A, E, R>(session: DbSession, body: Effect.Effect<A, E, R>) =>
   Effect.acquireUseRelease(
     session.queryRaw("BEGIN READ ONLY").pipe(Effect.mapError(toExecError)),
-    () => body,
+    () =>
+      session
+        .queryRaw(`SET LOCAL lock_timeout = '${READ_ONLY_LOCK_TIMEOUT}'`)
+        .pipe(Effect.mapError(toExecError), Effect.andThen(body)),
     () => session.queryRaw("ROLLBACK").pipe(Effect.ignore),
   );
 
@@ -354,13 +359,13 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
       "query.read_only": flags.readOnly,
     });
 
-    // `--read-only` skips consent only because the statement cannot write, so SQL that ends the
-    // transaction or flips its read-only mode is refused before anything connects or prompts.
+    // `--read-only` skips consent only because the statement cannot write, so anything but a read
+    // statement is refused before anything connects or prompts.
     if (flags.readOnly) {
       const violation = findReadOnlyViolation(sql);
       if (violation !== undefined) {
         return yield* new DbQueryReadOnlyStatementError({
-          message: `--read-only does not allow transaction control or read-only setting changes (found: ${violation})`,
+          message: `--read-only only allows ${READ_ONLY_STATEMENT_KEYWORDS.join(", ")} statements (found: ${violation})`,
           suggestion:
             "Drop --read-only to run this statement; a hosted database then asks you to confirm the write.",
         });

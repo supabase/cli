@@ -1,67 +1,103 @@
-import { splitAndTrim, trimLeadingSqlComments } from "../../../command-internal/sql-split.ts";
+import {
+  splitAndTrimChecked,
+  trimLeadingSqlComments,
+} from "../../../command-internal/sql-split.ts";
 
-const TRANSACTION_CONTROL = new Set(["BEGIN", "COMMIT", "END", "ABORT", "ROLLBACK"]);
-const READ_ONLY_SETTINGS = new Set(["default_transaction_read_only", "transaction_read_only"]);
+export const READ_ONLY_STATEMENT_KEYWORDS = [
+  "SELECT",
+  "WITH",
+  "VALUES",
+  "TABLE",
+  "SHOW",
+  "EXPLAIN",
+] as const;
 
-// A quoted identifier (optionally `U&"…"`) or an unquoted one; PostgreSQL treats every code point
-// at or above 0x80 as an identifier character.
-const IDENTIFIER =
-  /^(?:[uU]&)?"(?:[^"]|"")*"|^[A-Za-z_\u{80}-\u{10FFFF}][A-Za-z0-9_$\u{80}-\u{10FFFF}]*/u;
+const READ_STATEMENTS: ReadonlySet<string> = new Set(READ_ONLY_STATEMENT_KEYWORDS);
 
-interface Word {
-  readonly text: string;
-  readonly rest: string;
-}
+// Reported violations use these fixed labels instead of echoing the statement.
+const REFUSED_STATEMENTS: ReadonlySet<string> = new Set([
+  "ABORT",
+  "ALTER",
+  "ANALYZE",
+  "BEGIN",
+  "CALL",
+  "CHECKPOINT",
+  "CLOSE",
+  "CLUSTER",
+  "COMMENT",
+  "COMMIT",
+  "COPY",
+  "CREATE",
+  "DEALLOCATE",
+  "DECLARE",
+  "DELETE",
+  "DISCARD",
+  "DO",
+  "DROP",
+  "END",
+  "EXECUTE",
+  "FETCH",
+  "GRANT",
+  "IMPORT",
+  "INSERT",
+  "LISTEN",
+  "LOAD",
+  "LOCK",
+  "MERGE",
+  "MOVE",
+  "NOTIFY",
+  "PREPARE",
+  "REASSIGN",
+  "REFRESH",
+  "REINDEX",
+  "RELEASE",
+  "RESET",
+  "REVOKE",
+  "ROLLBACK",
+  "SAVEPOINT",
+  "SECURITY",
+  "SET",
+  "START",
+  "TRUNCATE",
+  "UNLISTEN",
+  "UPDATE",
+  "VACUUM",
+]);
 
-const nextWord = (sql: string): Word | undefined => {
-  const trimmed = trimLeadingSqlComments(sql);
-  const text = IDENTIFIER.exec(trimmed)?.[0];
-  return text === undefined ? undefined : { text, rest: trimmed.slice(text.length) };
-};
+const UNRECOGNISED_STATEMENT = "an unrecognised statement";
+const UNTERMINATED_INPUT = "an unterminated comment, quote or dollar quote";
 
-// `U&"…"` names can't be decoded cheaply, so every one counts as a possible read-only setting.
-const readOnlySettingLabel = (word: Word): string | undefined => {
-  if (/^u&/iu.test(word.text)) return 'U&"..."';
-  const name = word.text.replace(/^"|"$/gu, "").toLowerCase();
-  return READ_ONLY_SETTINGS.has(name) ? name : undefined;
-};
+// PostgreSQL treats every code point at or above 0x80 as an identifier character.
+const LEADING_WORD = /^[A-Za-z0-9_$\u{80}-\u{10FFFF}]+/u;
+
+// The splitter reads a `BEGIN ATOMIC` body as one statement, so `WITH begin AS (SELECT 1) SELECT *
+// FROM begin atomic; COMMIT; DELETE FROM t; END` hides its second and third statements from it.
+const BEGIN_ATOMIC = /begin\s+atomic/iu;
 
 const statementViolation = (statement: string): string | undefined => {
-  const first = nextWord(statement);
-  if (first === undefined) return undefined;
-  const keyword = first.text.toUpperCase();
-  if (TRANSACTION_CONTROL.has(keyword)) return keyword;
-  if (keyword === "START" || keyword === "PREPARE") {
-    return nextWord(first.rest)?.text.toUpperCase() === "TRANSACTION"
-      ? `${keyword} TRANSACTION`
-      : undefined;
-  }
-  if (keyword !== "SET" && keyword !== "RESET") return undefined;
-
-  let subject = nextWord(first.rest);
-  const scope = subject?.text.toUpperCase();
-  if (subject !== undefined && keyword === "SET" && (scope === "SESSION" || scope === "LOCAL")) {
-    subject = nextWord(subject.rest);
-    if (scope === "SESSION" && subject?.text.toUpperCase() === "CHARACTERISTICS") {
-      return "SET SESSION CHARACTERISTICS";
-    }
-  }
-  if (subject === undefined) return undefined;
-  const subjectKeyword = subject.text.toUpperCase();
-  if (keyword === "SET" && subjectKeyword === "TRANSACTION") return "SET TRANSACTION";
-  if (keyword === "RESET" && subjectKeyword === "ALL") return "RESET ALL";
-  const setting = readOnlySettingLabel(subject);
-  return setting === undefined ? undefined : `${keyword} ${setting}`;
+  const text = trimLeadingSqlComments(statement);
+  if (text === "") return undefined;
+  // Only a parenthesised SELECT or VALUES can start with `(`.
+  if (text.startsWith("(")) return undefined;
+  const word = LEADING_WORD.exec(text)?.[0];
+  // ASCII only: `ſelect` upper-cases to `SELECT` in JS but is a plain identifier to PostgreSQL.
+  const keyword = word !== undefined && /^[A-Za-z]+$/u.test(word) ? word.toUpperCase() : undefined;
+  if (keyword === undefined) return UNRECOGNISED_STATEMENT;
+  if (READ_STATEMENTS.has(keyword)) return undefined;
+  return REFUSED_STATEMENTS.has(keyword) ? keyword : UNRECOGNISED_STATEMENT;
 };
 
 /**
- * The first statement `--read-only` refuses, named by a fixed label (never the SQL): transaction
- * control, or a change to the transaction's or session's read-only characteristics.
+ * The first reason `--read-only` refuses `sql`, as a fixed label (never the SQL): a statement
+ * that does not start with one of {@link READ_ONLY_STATEMENT_KEYWORDS}, or input the splitter
+ * cannot read to the end.
  */
 export const findReadOnlyViolation = (sql: string): string | undefined => {
-  for (const statement of splitAndTrim(sql)) {
+  const { statements, unterminated } = splitAndTrimChecked(sql);
+  for (const statement of statements) {
     const violation = statementViolation(statement);
     if (violation !== undefined) return violation;
   }
-  return undefined;
+  if (BEGIN_ATOMIC.test(sql)) return "BEGIN ATOMIC";
+  return unterminated ? UNTERMINATED_INPUT : undefined;
 };
