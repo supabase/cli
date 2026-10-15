@@ -28,10 +28,10 @@ and the command handler does not run. See the [Compute command guide](../../../.
 
 ## Files Written
 
-| Path                                            | Format | When                                                            |
-| ----------------------------------------------- | ------ | --------------------------------------------------------------- |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | always — flushed on success and on failure                      |
-| `<workdir>/supabase/.temp/linked-project.json`  | JSON   | after the project ref resolves, when the cache does not hold it |
+| Path                                            | Format | When                                                                                                                                                                                                                              |
+| ----------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | always — flushed on success and on failure                                                                                                                                                                                        |
+| `<workdir>/supabase/.temp/linked-project.json`  | JSON   | post-run, once the project ref has resolved (success or failure), only when no such file exists, `<workdir>/supabase/.temp/project-ref` doesn't name another ref, an access token exists and `GET /v1/projects/{ref}` returns 200 |
 
 The compute's directory and its `[compute.<name>]` entry are deliberately left
 on disk; only the remote compute is deleted.
@@ -46,11 +46,12 @@ rather than deleting unasked.
 
 ## API Routes
 
-| Method   | Path                                | Auth         | Request body | Response (used fields)                                                                                                                                                                                                                                             |
-| -------- | ----------------------------------- | ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET`    | `/v2/projects/{ref}/compute/{name}` | Bearer token | none         | `instances.live` when present, else `spec.instances` (for the confirmation). A `403` is tolerated: the compute is treated as unknown and the `DELETE` still runs, since the two endpoints are granted separately (`edge_functions:read` vs `edge_functions:write`) |
-| `DELETE` | `/v2/projects/{ref}/compute/{name}` | Bearer token | none         | status only                                                                                                                                                                                                                                                        |
-| `GET`    | `/v1/projects`                      | Bearer token | none         | `id`, `name`, `organization_slug`, `region` — only when no ref resolved and the session is interactive, to populate the project picker                                                                                                                             |
+| Method   | Path                                | Auth         | Request body | Response (used fields)                                                                                                                                                                                                                                                                          |
+| -------- | ----------------------------------- | ------------ | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/v2/projects/{ref}/compute/{name}` | Bearer token | none         | `instances.live` when present, else `spec.instances` (for the confirmation). A `403` is tolerated: the compute is treated as unknown and the `DELETE` still runs, since the two endpoints are granted separately (`edge_functions:read` vs `edge_functions:write`)                              |
+| `DELETE` | `/v2/projects/{ref}/compute/{name}` | Bearer token | none         | status only. Not sent when the `GET` shows nothing deployed under that name                                                                                                                                                                                                                     |
+| `GET`    | `/v1/projects`                      | Bearer token | none         | `id`, `name`, `organization_slug`, `region` — only when no ref resolved and the session is interactive, to populate the project picker                                                                                                                                                          |
+| `GET`    | `/v1/projects/{ref}`                | Bearer token | none         | `ref`, `name`, `organization_id`, `organization_slug` — linked-project cache miss only (best-effort, post-run): written only when `<workdir>/supabase/.temp/linked-project.json` doesn't exist, `.temp/project-ref` doesn't name another ref, an access token exists and the lookup returns 200 |
 
 ## Exit Codes
 

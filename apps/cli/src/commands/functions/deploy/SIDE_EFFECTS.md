@@ -37,14 +37,16 @@ Docker bundling may pull or run the configured edge-runtime image and uses the
 
 ## API Routes
 
-| Method   | Path                                  | Auth         | Request body            | Response (used fields) |
-| -------- | ------------------------------------- | ------------ | ----------------------- | ---------------------- |
-| `GET`    | `/v1/projects/{ref}/functions`        | Bearer token | none                    | `[{ slug, ... }]`      |
-| `POST`   | `/v1/projects/{ref}/functions/deploy` | Bearer token | multipart source upload | `{ id, slug, ... }`    |
-| `POST`   | `/v1/projects/{ref}/functions`        | Bearer token | bundled function body   | `{ id, slug, ... }`    |
-| `PATCH`  | `/v1/projects/{ref}/functions/{slug}` | Bearer token | bundled function body   | `{ id, slug, ... }`    |
-| `PUT`    | `/v1/projects/{ref}/functions`        | Bearer token | bulk update payload     | `{ functions: [...] }` |
-| `DELETE` | `/v1/projects/{ref}/functions/{slug}` | Bearer token | none                    | ignored on `200/404`   |
+| Method   | Path                                  | Auth         | Request body            | Response (used fields)                                                                                                                                                                                                                                                                      |
+| -------- | ------------------------------------- | ------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/v1/projects/{ref}/functions`        | Bearer token | none                    | `[{ slug, ... }]`                                                                                                                                                                                                                                                                           |
+| `POST`   | `/v1/projects/{ref}/functions/deploy` | Bearer token | multipart source upload | `{ id, slug, ... }`                                                                                                                                                                                                                                                                         |
+| `POST`   | `/v1/projects/{ref}/functions`        | Bearer token | bundled function body   | `{ id, slug, ... }`                                                                                                                                                                                                                                                                         |
+| `PATCH`  | `/v1/projects/{ref}/functions/{slug}` | Bearer token | bundled function body   | `{ id, slug, ... }`                                                                                                                                                                                                                                                                         |
+| `PUT`    | `/v1/projects/{ref}/functions`        | Bearer token | bulk update payload     | none (only status `200` is checked)                                                                                                                                                                                                                                                         |
+| `DELETE` | `/v1/projects/{ref}/functions/{slug}` | Bearer token | none                    | ignored on `200/404`                                                                                                                                                                                                                                                                        |
+| `GET`    | `/v1/projects`                        | Bearer token | none                    | `[{id, name, organization_slug, region}]` — project picker: no project ref from `--project-ref`, `SUPABASE_PROJECT_ID` or `supabase/.temp/project-ref`, with stdin and stdout TTYs and a non-JSON output format                                                                             |
+| `GET`    | `/v1/projects/{ref}`                  | Bearer token | none                    | `{ref, name, organization_id, organization_slug}` — linked-project cache miss only (best-effort, post-run): written only when `<workdir>/supabase/.temp/linked-project.json` doesn't exist, `.temp/project-ref` doesn't name another ref, an access token exists and the lookup returns 200 |
 
 ## Environment Variables
 

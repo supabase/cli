@@ -12,16 +12,16 @@
 
 ## Files Written
 
-| Path                                            | Format | When                                                                    |
-| ----------------------------------------------- | ------ | ----------------------------------------------------------------------- |
-| `<workdir>/supabase/.temp/linked-project.json`  | JSON   | after resolving a project ref, cached on both success and failure paths |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | after command completion, flushed on both success and failure paths     |
+| Path                                            | Format | When                                                                                                                                                                                                                            |
+| ----------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.temp/linked-project.json`  | JSON   | post-run, once a project ref has resolved (success or failure), only when no such file exists, `<workdir>/supabase/.temp/project-ref` doesn't name another ref, an access token exists and `GET /v1/projects/{ref}` returns 200 |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | after command completion, flushed on both success and failure paths                                                                                                                                                             |
 
 ## API Routes
 
 | Method   | Path                                  | Auth         | Request body | Response (used fields)                                |
 | -------- | ------------------------------------- | ------------ | ------------ | ----------------------------------------------------- |
-| `DELETE` | `/v1/projects/{ref}/functions/{slug}` | Bearer token | none         | none                                                  |
+| `DELETE` | `/v1/projects/{ref}/functions/{slug}` | Bearer token | none         | none (a `404` fails with `FunctionNotFoundError`)     |
 | `GET`    | `/v1/projects`                        | Bearer token | none         | project picker options when no ref is supplied in TTY |
 | `GET`    | `/v1/projects/{ref}`                  | Bearer token | none         | linked project metadata used by the post-run cache    |
 
@@ -71,4 +71,4 @@ Prints a structured success result with the function slug and project ref.
 - Does NOT remove the function from the local filesystem.
 - Requires a linked project (`--project-ref` or linked project config).
 - Runs natively in TypeScript through the Management API.
-- Refreshes the linked-project telemetry cache and flushes telemetry state after resolving a project ref.
+- Telemetry state is flushed on success and failure. The linked-project cache is filled post-run only under the conditions listed in Files Written.
