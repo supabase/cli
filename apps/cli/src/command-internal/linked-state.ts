@@ -3,10 +3,9 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
 import { findBranchName } from "./branch-target.ts";
-import { type CachedLinkedProject, parseCachedLinkedProject } from "./parent-project-ref.ts";
+import { readLinkedProjectCache } from "./parent-project-ref.ts";
 import { formatNamedRef, sanitizeInlineName } from "./http-errors.ts";
-import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
-import { readLegacyProjectRef } from "./legacy-project-state.layer.ts";
+import { readLinkedProjectRef } from "./project-link.ts";
 
 /**
  * Discriminated linked-state result.
@@ -52,7 +51,7 @@ const resolveSoftLinkedRef = Effect.fnUntraced(function* () {
   ) {
     return { ref: cliSettings.projectId, source: "env" as const };
   }
-  const fileRef = yield* readLegacyProjectRef(fs, path, cliSettings.workdir).pipe(
+  const fileRef = yield* readLinkedProjectRef(fs, path, cliSettings.workdir).pipe(
     Effect.orElseSucceed(() => Option.none<string>()),
   );
   return {
@@ -89,11 +88,7 @@ export const resolveLinkedState = Effect.fn("LinkedState.resolve")(function* () 
     "project.ref": linkedRef.value,
   });
 
-  const paths = legacyProjectStatePaths(path, cliSettings.workdir);
-  const cached = yield* fs.readFileString(paths.linkedProjectCache).pipe(
-    Effect.map(parseCachedLinkedProject),
-    Effect.orElseSucceed(() => Option.none<CachedLinkedProject>()),
-  );
+  const cached = yield* readLinkedProjectCache(fs, path, cliSettings.workdir);
 
   if (Option.isSome(cached)) {
     const cacheFields = {

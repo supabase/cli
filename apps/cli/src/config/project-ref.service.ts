@@ -2,7 +2,7 @@ import type { Effect, Option } from "effect";
 import { Context } from "effect";
 
 import { BRANCH_PROJECT_REF_PATTERN } from "../command-internal/ref-patterns.ts";
-import type { ProjectRefReadError } from "../command-internal/legacy-project-state.service.ts";
+import type { LinkedProjectRefReadError } from "../command-internal/project-link.ts";
 import type {
   InvalidProjectRefError,
   ProjectRefNotLinkedError,
@@ -14,7 +14,7 @@ interface ProjectRefResolverShape {
     flagValue: Option.Option<string>,
   ) => Effect.Effect<
     string,
-    ProjectRefNotLinkedError | InvalidProjectRefError | ProjectRefReadError,
+    ProjectRefNotLinkedError | InvalidProjectRefError | LinkedProjectRefReadError,
     never
   >;
   /**
@@ -49,7 +49,7 @@ interface ProjectRefResolverShape {
     flagValue: Option.Option<string>,
   ) => Effect.Effect<
     string,
-    ProjectRefNotLinkedError | InvalidProjectRefError | ProjectRefReadError,
+    ProjectRefNotLinkedError | InvalidProjectRefError | LinkedProjectRefReadError,
     never
   >;
   /**

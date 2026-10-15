@@ -62,6 +62,8 @@ import { DbConnectError } from "./db-connection.errors.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
 import { StackApi } from "./stack-api.ts";
 import { stackBackendLayer } from "./stack-backend.ts";
+import { writeProjectLink } from "./project-link.ts";
+import { projectStateModeLayer, type ProjectStateMode } from "./project-state-mode.ts";
 import { selection } from "../../tests/helpers/pins.ts";
 
 // `--local` / `--db-url` never touch the Management API stack, so the resolver
@@ -86,6 +88,7 @@ function buildResolver(
     readonly debugLogger?: Layer.Layer<DebugLogger>;
     readonly configEnv?: Record<string, string | undefined>;
     readonly stackApi?: Layer.Layer<StackApi>;
+    readonly projectStateMode?: ProjectStateMode;
   } = {},
 ) {
   const deps = Layer.mergeAll(
@@ -146,7 +149,12 @@ const resolve = (
     const resolver = yield* DbConfigResolver;
     return yield* resolver.resolve(flags);
   }).pipe(
-    Effect.provide(buildResolver(workdir, opts)),
+    Effect.provide(
+      Layer.merge(
+        buildResolver(workdir, opts),
+        projectStateModeLayer(opts?.projectStateMode ?? "legacy"),
+      ),
+    ),
     Effect.provideService(
       ConfigProvider.ConfigProvider,
       ConfigProvider.fromEnvRecord(opts?.configEnv ?? {}, { preserveEmptyStrings: true }),
@@ -162,7 +170,12 @@ const resolvePoolerFallback = (
     const resolver = yield* DbConfigResolver;
     return yield* resolver.resolvePoolerFallback(flags);
   }).pipe(
-    Effect.provide(buildResolver(workdir, opts)),
+    Effect.provide(
+      Layer.merge(
+        buildResolver(workdir, opts),
+        projectStateModeLayer(opts?.projectStateMode ?? "legacy"),
+      ),
+    ),
     Effect.provideService(
       ConfigProvider.ConfigProvider,
       ConfigProvider.fromEnvRecord(opts?.configEnv ?? {}, { preserveEmptyStrings: true }),
@@ -1914,4 +1927,35 @@ describe("dbConfigResolver (container pooler fallback)", () => {
       assertFallbackDrift(requests, { local: true });
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
+});
+
+describe("dbConfigResolver (stack-mode link document)", () => {
+  it.effect(
+    "the pooler fallback reuses the pooler URL saved in .link.json without any API call",
+    () => {
+      const ref = "stackmodelinkedrefab";
+      return Effect.gen(function* () {
+        const dir = yield* withWorkdir();
+        yield* writeProjectLink(dir, {
+          project: { ref },
+          active_branch: {
+            ref,
+            pooler_url: `postgres://postgres.${ref}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+          },
+          fetchedAt: "2026-01-01T00:00:00.000Z",
+        });
+
+        const pooler = yield* resolvePoolerFallback(dir, linkedFlags, {
+          projectStateMode: "stack",
+          configEnv: { SUPABASE_DB_PASSWORD: "linked-password" },
+        });
+
+        expect(Option.getOrUndefined(pooler)).toMatchObject({
+          host: "aws-0-us-east-1.pooler.supabase.com",
+          user: `postgres.${ref}`,
+          password: "linked-password",
+        });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    },
+  );
 });

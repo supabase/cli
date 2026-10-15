@@ -150,6 +150,36 @@ project-ref link). The `Resolved branch "<name>"...` line above still goes out v
 in these modes (stderr in `json`; a structured `log` event in `stream-json`) rather than
 `output.raw`. Warnings still go to stderr.
 
+## Stack mode
+
+When stack project-state mode is active (`SUPABASE_EXPERIMENTAL_STACK=1`, or `[experimental] stack`
+in `config.toml` with the variable unset), the link target is one gitignored document,
+`<workdir>/supabase/.link.json`, and nothing is written under `supabase/.temp/`:
+
+```json
+{
+  "project": { "ref": "…", "name": "…", "organization_id": "…", "organization_slug": "…" },
+  "active_branch": { "ref": "…", "name": "…", "is_default": false, "pooler_url": "…" },
+  "fetchedAt": "<ISO-8601 timestamp>"
+}
+```
+
+- `project` is the parent project; `active_branch.ref` is the ref commands act on, which is the
+  project's own ref unless a branch was linked (`name` and `is_default` appear only for a branch
+  resolved by name). When the ref is a branch project that `getProject` does not return, the
+  parent comes from the branch resolution, else from the previous document's project when that
+  project still lists the ref as a branch, else the ref itself.
+- `pooler_url` uses the same normalization as `.temp/pooler-url`; it is omitted with
+  `--skip-pooler` or when the project reports no primary pooler.
+- The document is written atomically after `supabase/.gitignore` gains `.link.json`,
+  `..link.json.*.tmp` (the staged write), and `.supabase.lock.lease`. Service versions, the Postgres version, and `linked-project.json` are not
+  written, and the tenant service probes are skipped.
+- A document that does not decode fails reads with `ProjectLinkMalformedError`, which suggests
+  running `supabase link` again; a read or write failure other than absence is
+  `ProjectLinkIoError`.
+- The organization and project `groupIdentify` calls fire from `link` itself, since the post-run
+  linked-project cache fill is a no-op in this mode.
+
 ## Known divergence
 
 - The cosmetic `WARNING: Local database version differs from the linked project.` message is

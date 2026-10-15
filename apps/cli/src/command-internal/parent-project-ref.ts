@@ -3,7 +3,8 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { ProjectRefResolver, PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
 import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
-import { readLegacyProjectRef } from "./legacy-project-state.layer.ts";
+import { type ProjectLink, readLinkedProjectRef, readProjectLinkFile } from "./project-link.ts";
+import { softProjectStateMode } from "./project-state-mode.ts";
 
 export type ParentRefResolution =
   | { readonly kind: "resolved"; readonly ref: string }
@@ -59,9 +60,33 @@ export function parseCachedLinkedProject(content: string): Option.Option<CachedL
   return Option.none();
 }
 
-function parseCachedParentRef(content: string): Option.Option<string> {
-  return Option.map(parseCachedLinkedProject(content), (project) => project.ref);
-}
+/**
+ * The linked parent project's record: `.temp/linked-project.json`, or in stack mode the link
+ * document's `project`. A missing, unreadable, or malformed source reads as `None`.
+ */
+export const readLinkedProjectCache = Effect.fn("ParentProjectRef.readLinkedCache")(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+): Effect.fn.Return<Option.Option<CachedLinkedProject>> {
+  if ((yield* softProjectStateMode) === "legacy") {
+    return yield* fs.readFileString(legacyProjectStatePaths(path, workdir).linkedProjectCache).pipe(
+      Effect.map(parseCachedLinkedProject),
+      Effect.orElseSucceed(() => Option.none<CachedLinkedProject>()),
+    );
+  }
+  const link = yield* readProjectLinkFile(fs, path, workdir).pipe(
+    Effect.orElseSucceed(() => Option.none<ProjectLink>()),
+  );
+  return Option.map(link, ({ project }) => ({
+    ref: project.ref,
+    ...(project.name === undefined ? {} : { name: project.name }),
+    ...(project.organization_slug === undefined
+      ? {}
+      : { organizationSlug: project.organization_slug }),
+    ...(project.organization_id === undefined ? {} : { organizationId: project.organization_id }),
+  }));
+});
 
 function classifyParentCandidates(
   candidates: ReadonlyArray<Option.Option<string>>,
@@ -91,17 +116,16 @@ export const resolveLinkedParentRef = Effect.fnUntraced(function* () {
   const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const paths = legacyProjectStatePaths(path, cliSettings.workdir);
 
-  const fileRef = yield* readLegacyProjectRef(fs, path, cliSettings.workdir).pipe(
+  const fileRef = yield* readLinkedProjectRef(fs, path, cliSettings.workdir).pipe(
     Effect.orElseSucceed(() => Option.none<string>()),
   );
   // The cache alone isn't proof a link completed — `link` writes it on both success and
   // failure — so only read it as parent recovery when the temp file confirms a link happened.
   const cachedRef = Option.isSome(fileRef)
-    ? yield* fs.readFileString(paths.linkedProjectCache).pipe(
-        Effect.map(parseCachedParentRef),
-        Effect.orElseSucceed(() => Option.none<string>()),
+    ? Option.map(
+        yield* readLinkedProjectCache(fs, path, cliSettings.workdir),
+        (cached) => cached.ref,
       )
     : Option.none<string>();
 

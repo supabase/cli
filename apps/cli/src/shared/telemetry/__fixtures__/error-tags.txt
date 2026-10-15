@@ -418,6 +418,8 @@ PostgresConfigUpdateUnmarshalError
 ProfileLoadError
 ProfileSaveError
 ProjectConfigParseError
+ProjectLinkIoError
+ProjectLinkMalformedError
 ProjectNotLinkedError
 ProjectPausedError
 ProjectRefNotLinkedError

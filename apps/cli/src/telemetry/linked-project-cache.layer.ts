@@ -6,9 +6,10 @@ import { CommandCredentials } from "../auth/command-credentials.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
-import { GroupOrganization, GroupProject } from "../shared/telemetry/event-catalog.ts";
+import { identifyProjectGroups } from "../shared/telemetry/identify-project-groups.ts";
 import { legacyProjectStatePaths } from "../command-internal/legacy-project-state.paths.ts";
-import { readLegacyProjectRef } from "../command-internal/legacy-project-state.layer.ts";
+import { readLinkedProjectRef } from "../command-internal/project-link.ts";
+import { currentProjectStateMode } from "../command-internal/project-state-mode.ts";
 import { LinkedProjectCache } from "./linked-project-cache.service.ts";
 import { block } from "../command-internal/command-permissions/model.ts";
 
@@ -23,7 +24,7 @@ export const linkedProjectCache = block("linked-project-cache", [
 ]);
 
 /**
- * Writes `<workdir>/supabase/.temp/linked-project.json` after a `--project-ref` has been
+ * Writes `<workdir>/supabase/.temp/linked-project.json` (legacy mode only) after a `--project-ref` has been
  * resolved. No write if the cache already exists (`supabase link` is authoritative), and any
  * API/filesystem/parse error is swallowed.
  *
@@ -57,6 +58,8 @@ export const linkedProjectCacheLayer = Layer.effect(
         accessToken?: Option.Option<Redacted.Redacted<string>>,
       ) =>
         Effect.gen(function* () {
+          // Stack mode keeps the parent project in `supabase/.link.json`, written by `link`.
+          if ((yield* currentProjectStateMode) === "stack") return;
           const resolvedWorkdir = workdir ?? cliSettings.workdir;
           const cachePath = legacyProjectStatePaths(path, resolvedWorkdir).linkedProjectCache;
           const exists = yield* fs.exists(cachePath).pipe(Effect.orElseSucceed(() => false));
@@ -74,7 +77,7 @@ export const linkedProjectCacheLayer = Layer.effect(
           // absent entirely falls through to the write below — the read side
           // (`resolveLinkedParentRef`) already refuses to trust a cache with no `project-ref`
           // file at all, so there is nothing to protect there yet.
-          const fileRef = yield* readLegacyProjectRef(fs, path, resolvedWorkdir).pipe(
+          const fileRef = yield* readLinkedProjectRef(fs, path, resolvedWorkdir).pipe(
             Effect.orElseSucceed(() => Option.none<string>()),
           );
           if (Option.isSome(fileRef) && fileRef.value !== ref) return;
@@ -116,20 +119,7 @@ export const linkedProjectCacheLayer = Layer.effect(
           yield* fs.makeDirectory(path.dirname(cachePath), { recursive: true });
           yield* fs.writeFileString(cachePath, JSON.stringify(linked));
 
-          // On the same cache miss, also publish the org/project group metadata via
-          // `groupIdentify` (same payload shape as the link handler) before the post-run
-          // `cli_command_executed` capture. Best-effort, wrapped in `Effect.ignore` below.
-          if (linked.organization_id.length > 0) {
-            yield* analytics.groupIdentify(GroupOrganization, linked.organization_id, {
-              organization_slug: linked.organization_slug,
-            });
-          }
-          if (linked.ref.length > 0) {
-            yield* analytics.groupIdentify(GroupProject, linked.ref, {
-              name: linked.name,
-              organization_slug: linked.organization_slug,
-            });
-          }
+          yield* identifyProjectGroups(analytics, linked);
         }).pipe(Effect.withSpan("LinkedProjectCache.cache"), Effect.ignore),
     });
   }),

@@ -16,6 +16,8 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
+import { writeProjectLink } from "../../command-internal/project-link.ts";
+import { projectStateModeLayer } from "../../command-internal/project-state-mode.ts";
 import { unlink } from "./unlink.handler.ts";
 
 const tempRoot = useTempWorkdir("supabase-unlink-int-");
@@ -29,6 +31,7 @@ interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   deleteFails?: boolean;
   removeFails?: boolean;
+  stack?: boolean;
 }
 
 // Wraps the real state service but forces `removeAll` to fail, so the temp-dir-removal
@@ -86,6 +89,7 @@ function setup(opts: SetupOpts = {}) {
     }),
     credentials.layer,
     ...(opts.removeFails === true ? [failingRemoveStateLayer] : []),
+    ...(opts.stack === true ? [projectStateModeLayer("stack")] : []),
   );
   return { layer, out, telemetry, credentials, workdir: tempRoot.current };
 }
@@ -206,5 +210,65 @@ describe("unlink integration", () => {
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ project_ref: VALID_REF });
     }).pipe(Effect.provide(layer));
+  });
+
+  describe("in stack mode", () => {
+    const seedLinkDocument = (workdir: string, ref: string) =>
+      writeProjectLink(workdir, {
+        project: { ref: VALID_REF },
+        active_branch: { ref },
+        fetchedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+    const linkDocumentExists = (workdir: string) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        return yield* fs.exists(path.join(workdir, "supabase", ".link.json"));
+      });
+
+    it.effect("removes the link document and the credential of the active branch", () => {
+      const { layer, out, credentials, workdir } = setup({ stack: true });
+      return Effect.gen(function* () {
+        yield* seedLinkDocument(workdir, "branchprojectrefabcd");
+        yield* unlink();
+        expect(yield* linkDocumentExists(workdir)).toBe(false);
+        expect(credentials.deletedRefs).toEqual(["branchprojectrefabcd"]);
+        expect(out.stdoutText).toContain("Finished supabase unlink.");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("leaves the legacy temp dir alone", () => {
+      const { layer, workdir } = setup({ stack: true });
+      return Effect.gen(function* () {
+        yield* seedLinkDocument(workdir, VALID_REF);
+        yield* seedProjectRef(workdir, VALID_REF);
+        yield* unlink();
+        expect(yield* tempDirExists(workdir)).toBe(true);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("fails with ProjectRefNotLinkedError when only legacy state exists", () => {
+      const { layer, workdir } = setup({ stack: true });
+      return Effect.gen(function* () {
+        yield* seedProjectRef(workdir, VALID_REF);
+        const error = yield* unlink().pipe(Effect.flip);
+        expect(error._tag).toBe("ProjectRefNotLinkedError");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("removes a malformed link document and leaves credentials alone", () => {
+      const { layer, credentials, out, workdir } = setup({ stack: true });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(workdir, "supabase", ".link.json"), "{not json");
+        yield* unlink();
+        expect(yield* linkDocumentExists(workdir)).toBe(false);
+        expect(credentials.deletedRefs).toEqual([]);
+        expect(out.stdoutText).toContain("Finished supabase unlink.");
+      }).pipe(Effect.provide(layer));
+    });
   });
 });

@@ -13,6 +13,8 @@ import {
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { LegacyProjectState } from "../../../command-internal/legacy-project-state.service.ts";
+import { currentProjectStateMode } from "../../../command-internal/project-state-mode.ts";
+import { readProjectLink, removeProjectLink } from "../../../command-internal/project-link.ts";
 import { resolveYes } from "../../../command-internal/global-flags.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
@@ -66,6 +68,8 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
       return yield* new InvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE });
     }
 
+    const stackState = (yield* currentProjectStateMode) === "stack";
+
     const title = `Do you want to delete project ${aqua(ref)}? This action is irreversible.`;
     // `promptYesNo` echoes `<title> [y/N] <answer>` to stderr even on a non-TTY: it scans one
     // piped line (100ms timeout) so `echo y | supabase projects delete <ref>` confirms;
@@ -103,15 +107,27 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
     // No per-ref keyring credential delete: the access token is stored under the profile
     // name, not the ref, so there is nothing to remove here.
 
-    // Best-effort: removes `supabase/.temp` only when the linked ref matches the deleted
-    // project.
+    // Best-effort: removes `supabase/.temp` (`supabase/.link.json` in stack mode) only when the
+    // linked ref matches the deleted project.
     // Compare trimmed content so a corrupt/multi-ref file can't trigger an unintended removal.
-    const matches = yield* legacyState.read(cliSettings.workdir, "projectRef").pipe(
-      Effect.map((content) => content.trim() === ref),
-      Effect.orElseSucceed(() => false),
-    );
-    if (matches) {
-      yield* legacyState.removeAll(cliSettings.workdir).pipe(Effect.ignore);
+    if (stackState) {
+      const link = yield* readProjectLink(cliSettings.workdir).pipe(
+        Effect.map(
+          Option.filter((value) => value.project.ref === ref || value.active_branch.ref === ref),
+        ),
+        Effect.orElseSucceed(() => Option.none()),
+      );
+      if (Option.isSome(link)) {
+        yield* removeProjectLink(cliSettings.workdir).pipe(Effect.ignore);
+      }
+    } else {
+      const matches = yield* legacyState.read(cliSettings.workdir, "projectRef").pipe(
+        Effect.map((content) => content.trim() === ref),
+        Effect.orElseSucceed(() => false),
+      );
+      if (matches) {
+        yield* legacyState.removeAll(cliSettings.workdir).pipe(Effect.ignore);
+      }
     }
 
     if (output.format === "json" || output.format === "stream-json") {

@@ -41,6 +41,11 @@ import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { runtimeInfoLayer } from "../../shared/runtime/runtime-info.layer.ts";
 import { AccessTokenRequiredError } from "../../auth/errors.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
+import { writeProjectLink } from "../../command-internal/project-link.ts";
+import {
+  projectStateModeLayer,
+  type ProjectStateMode,
+} from "../../command-internal/project-state-mode.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { machineErrorContextLayer } from "../../shared/output/machine-error-context.layer.ts";
 import { jsonOutputLayer, streamJsonOutputLayer } from "../../shared/output/output.layer.ts";
@@ -325,6 +330,8 @@ interface SetupOpts {
   readonly apiFactoryLayer?: Layer.Layer<CommandPlatformApiFactory>;
   /** `SUPABASE_PROJECT_ID` for the linked-state chain — defaults to unset. */
   readonly projectId?: Option.Option<string>;
+  /** Where the link state lives; defaults to the legacy `supabase/.temp` files. */
+  readonly projectStateMode?: ProjectStateMode;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -360,6 +367,7 @@ function setup(opts: SetupOpts = {}) {
     cliSettings,
     telemetry.layer,
     child.layer,
+    projectStateModeLayer(opts.projectStateMode ?? "legacy"),
     Layer.succeed(OutputFlag, opts.goOutput ?? Option.none()),
     ...(apiMock === undefined ? [] : [apiMock.layer]),
     ...(apiFactoryMock === undefined ? [] : [apiFactoryMock.layer]),
@@ -1242,6 +1250,36 @@ content_path = "./supabase/templates/password_changed_notification.html"
           yield* writeConfig();
           yield* writeProjectRefFile(workdir, LINKED_PLAIN_REF);
           yield* writeLinkedProjectCacheFile(workdir, LINKED_PLAIN_REF, { name: "My Project" });
+          yield* status(flags());
+          expect(
+            out.stdoutText.startsWith(
+              `Linked Project:\n  Org: acme (org_1)\n  Project: My Project (${LINKED_PLAIN_REF})\n`,
+            ),
+          ).toBe(true);
+          expect(apiMock?.requests).toEqual([]);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.effect(
+      "stack mode: prints the Linked Project block from .link.json with zero Management API calls",
+      () => {
+        const { layer, out, workdir, apiMock } = setup({
+          branches: { ok: [] },
+          projectStateMode: "stack",
+        });
+        return Effect.gen(function* () {
+          yield* writeConfig();
+          yield* writeProjectLink(workdir, {
+            project: {
+              ref: LINKED_PLAIN_REF,
+              name: "My Project",
+              organization_id: "org_1",
+              organization_slug: "acme",
+            },
+            active_branch: { ref: LINKED_PLAIN_REF },
+            fetchedAt: "2026-01-01T00:00:00.000Z",
+          });
           yield* status(flags());
           expect(
             out.stdoutText.startsWith(

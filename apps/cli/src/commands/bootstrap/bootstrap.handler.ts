@@ -1,9 +1,11 @@
-import { Effect, FileSystem, Option, Path, Redacted, Ref, Schedule } from "effect";
+import { DateTime, Effect, Exit, FileSystem, Option, Path, Redacted, Ref, Schedule } from "effect";
 import type * as HttpClientError from "effect/http/HttpClientError";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
+import { Analytics } from "../../shared/telemetry/analytics.service.ts";
+import { identifyProjectGroups } from "../../shared/telemetry/identify-project-groups.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import {
   DnsResolverFlag,
@@ -32,7 +34,13 @@ import {
   warnDeprecatedOrioleDBVersionEnv,
 } from "../../command-internal/db-config.toml-read.ts";
 import { dbPushCore } from "../../command-internal/db-push-core.ts";
-import { linkServicesCore } from "../../command-internal/link-services-core.ts";
+import { fetchPoolerUrl, linkServicesCore } from "../../command-internal/link-services-core.ts";
+import {
+  type ProjectStateMode,
+  ProjectStateModeContext,
+  projectStateMode,
+} from "../../command-internal/project-state-mode.ts";
+import { writeProjectLink } from "../../command-internal/project-link.ts";
 import { projectCreateCore } from "../../command-internal/project-create-core.ts";
 import { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
 import { extractServiceKeys } from "../../command-internal/tenant-keys.ts";
@@ -81,6 +89,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
   const templateService = yield* TemplateService;
   const api = yield* CommandPlatformApi;
   const linkedProjectCache = yield* LinkedProjectCache;
+  const analytics = yield* Analytics;
   const telemetryState = yield* TelemetryState;
   const workdirFlag = yield* WorkdirFlag;
   const dnsResolver = yield* DnsResolverFlag;
@@ -97,6 +106,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
   // Hoisted so the linked-project-cache finalizer writes beside the other `supabase/.temp/`
   // files instead of `cliSettings.workdir`.
   const resolvedWorkdir = yield* Ref.make<string | undefined>(undefined);
+  const linkModeRef = yield* Ref.make<ProjectStateMode | undefined>(undefined);
 
   yield* Effect.gen(function* () {
     // Reads the prefixed `SUPABASE_WORKDIR` only (never plain `WORKDIR`).
@@ -190,174 +200,212 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       }).pipe(Effect.withSpan("bootstrap.initProject"));
     }
 
-    yield* ensureLogin({ openBrowser: tty.stdinIsTty });
-
-    const seededPassword = Option.isSome(flags.password)
-      ? flags.password.value
-      : Option.isSome(cliSettings.dbPassword)
-        ? Redacted.value(cliSettings.dbPassword.value)
-        : "";
-    const created = yield* projectCreateCore({
-      name: path.basename(workdir),
-      orgId: "",
-      dbPassword: seededPassword,
-      region: undefined,
-      size: undefined,
-      highAvailability: undefined,
-      releaseChannel: undefined,
-      postgresEngine: undefined,
-      templateUrl: starter.url.length > 0 ? starter.url : undefined,
-      emitStructuredResult: false,
+    // The new project directory's own config can opt into stack mode, so the link target is
+    // written and read per that directory rather than the directory bootstrap started in.
+    const linkMode = yield* projectStateMode({
+      cwd: workdir,
+      env: yield* experimentalFeatureEnv("stack"),
     });
-    const projectRef = created.ref;
-    yield* Ref.set(createdRef, projectRef.length > 0 ? projectRef : undefined);
-    yield* Effect.annotateCurrentSpan("project.ref", projectRef);
+    yield* Ref.set(linkModeRef, linkMode);
 
-    // A fresh notifier per retry block keeps this step's "Retry (n/8)" counter independent of
-    // the health-poll and push retries below.
-    const apiKeysNotify = yield* bootstrapRetryNotify;
-    const keys = yield* Effect.gen(function* () {
-      if (isText) yield* output.raw("Linking project...\n", "stderr");
-      return yield* getProjectApiKeys(projectRef);
-    }).pipe(apiKeysNotify, Effect.retry(retry), Effect.withSpan("bootstrap.fetchApiKeys"));
-    const { anon } = extractServiceKeys(keys);
-
-    // Config load must run before link/health/`.env` steps: a malformed config.toml aborts here
-    // rather than after side effects start.
-    const { pushYes, toml } = yield* Effect.gen(function* () {
-      const projectEnv = yield* loadProjectEnv(fs, path, workdir);
-      return {
-        pushYes: yield* resolveYesWithProjectEnv(projectEnv),
-        toml: yield* checkDbToml(fs, path, workdir, projectRef),
-      };
-    }).pipe(Effect.withSpan("bootstrap.loadConfig"));
-    if (toml.appliedRemote !== undefined) {
-      yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
-    }
-    yield* warnDeprecatedOrioleDBVersionEnv(toml.envLookup);
-
-    yield* linkServicesCore({
-      ref: projectRef,
-      serviceKey: anon,
-      skipPooler: false,
-      workdir,
-    });
-    yield* legacyState.write(workdir, "projectRef", projectRef);
-
-    const healthNotify = yield* bootstrapRetryNotify;
     yield* Effect.gen(function* () {
-      if (isText) yield* output.raw("Checking project health...\n", "stderr");
-      const services = yield* api.v1.getServicesHealth({ ref: projectRef, services: ["db"] }).pipe(
-        Effect.catchTags({
-          HttpClientError: mapHealthHttpError,
-          SchemaError: (cause) =>
-            Effect.fail(
-              new BootstrapHealthError({ message: `Error status 0: ${cause}`, decode: true }),
-            ),
-          HttpBodyError: healthTransportError,
-          SupabaseApiInputError: healthTransportError,
-        }),
+      yield* ensureLogin({ openBrowser: tty.stdinIsTty });
+
+      const seededPassword = Option.isSome(flags.password)
+        ? flags.password.value
+        : Option.isSome(cliSettings.dbPassword)
+          ? Redacted.value(cliSettings.dbPassword.value)
+          : "";
+      const created = yield* projectCreateCore({
+        name: path.basename(workdir),
+        orgId: "",
+        dbPassword: seededPassword,
+        region: undefined,
+        size: undefined,
+        highAvailability: undefined,
+        releaseChannel: undefined,
+        postgresEngine: undefined,
+        templateUrl: starter.url.length > 0 ? starter.url : undefined,
+        emitStructuredResult: false,
+      });
+      const projectRef = created.ref;
+      yield* Ref.set(createdRef, projectRef.length > 0 ? projectRef : undefined);
+      yield* Effect.annotateCurrentSpan("project.ref", projectRef);
+
+      // A fresh notifier per retry block keeps this step's "Retry (n/8)" counter independent of
+      // the health-poll and push retries below.
+      const apiKeysNotify = yield* bootstrapRetryNotify;
+      const keys = yield* Effect.gen(function* () {
+        if (isText) yield* output.raw("Linking project...\n", "stderr");
+        return yield* getProjectApiKeys(projectRef);
+      }).pipe(apiKeysNotify, Effect.retry(retry), Effect.withSpan("bootstrap.fetchApiKeys"));
+      const { anon } = extractServiceKeys(keys);
+
+      // Config load must run before link/health/`.env` steps: a malformed config.toml aborts here
+      // rather than after side effects start.
+      const { pushYes, toml } = yield* Effect.gen(function* () {
+        const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+        return {
+          pushYes: yield* resolveYesWithProjectEnv(projectEnv),
+          toml: yield* checkDbToml(fs, path, workdir, projectRef),
+        };
+      }).pipe(Effect.withSpan("bootstrap.loadConfig"));
+      if (toml.appliedRemote !== undefined) {
+        yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
+      }
+      yield* warnDeprecatedOrioleDBVersionEnv(toml.envLookup);
+
+      if (linkMode === "stack") {
+        const poolerUrl = yield* fetchPoolerUrl(api, projectRef).pipe(
+          Effect.option,
+          Effect.map(Option.flatten),
+        );
+        yield* writeProjectLink(workdir, {
+          project: {
+            ref: projectRef,
+            name: created.name,
+            organization_id: created.organizationId,
+            organization_slug: created.organizationSlug,
+          },
+          active_branch: {
+            ref: projectRef,
+            ...(Option.isSome(poolerUrl) ? { pooler_url: poolerUrl.value } : {}),
+          },
+          fetchedAt: DateTime.formatIso(yield* DateTime.now),
+        });
+        yield* identifyProjectGroups(analytics, {
+          ref: projectRef,
+          name: created.name,
+          organization_id: created.organizationId,
+          organization_slug: created.organizationSlug,
+        });
+      } else {
+        yield* linkServicesCore({
+          ref: projectRef,
+          serviceKey: anon,
+          skipPooler: false,
+          workdir,
+        });
+        yield* legacyState.write(workdir, "projectRef", projectRef);
+      }
+
+      const healthNotify = yield* bootstrapRetryNotify;
+      yield* Effect.gen(function* () {
+        if (isText) yield* output.raw("Checking project health...\n", "stderr");
+        const services = yield* api.v1
+          .getServicesHealth({ ref: projectRef, services: ["db"] })
+          .pipe(
+            Effect.catchTags({
+              HttpClientError: mapHealthHttpError,
+              SchemaError: (cause) =>
+                Effect.fail(
+                  new BootstrapHealthError({ message: `Error status 0: ${cause}`, decode: true }),
+                ),
+              HttpBodyError: healthTransportError,
+              SupabaseApiInputError: healthTransportError,
+            }),
+          );
+        for (const service of services) {
+          if (!service.healthy) {
+            return yield* new BootstrapHealthError({
+              message: `Service not healthy: ${service.name} (${service.status})`,
+            });
+          }
+        }
+      }).pipe(
+        Effect.withTracerEnabled(false),
+        healthNotify,
+        Effect.retry(retry),
+        Effect.withSpan("bootstrap.waitHealthy"),
       );
-      for (const service of services) {
-        if (!service.healthy) {
-          return yield* new BootstrapHealthError({
-            message: `Service not healthy: ${service.name} (${service.status})`,
+
+      // Uses a naive direct-host db config with no IPv6/pooler fallback, since `.env` is written
+      // for reference only and, unlike the push connection below, is never used to actually connect.
+      const dbConfig = deriveDbConfig(projectRef, created.dbPassword, cliSettings.projectHost);
+      const supabaseUrl = `https://${projectRef}.${cliSettings.projectHost}`;
+      const envFilePath = path.join(workdir, ".env");
+      const envFileWritten = yield* Effect.gen(function* () {
+        const examplePath = path.join(workdir, ".env.example");
+        const hasExample = yield* fs.exists(examplePath);
+        let example: Record<string, string> | undefined;
+        if (hasExample) {
+          const content = yield* fs.readFileString(examplePath);
+          example = yield* Effect.try({
+            try: () => parseDotEnv(content),
+            catch: (cause) =>
+              new BootstrapDotEnvParseError({
+                message: cause instanceof Error ? cause.message : String(cause),
+              }),
           });
         }
-      }
-    }).pipe(
-      Effect.withTracerEnabled(false),
-      healthNotify,
-      Effect.retry(retry),
-      Effect.withSpan("bootstrap.waitHealthy"),
-    );
+        const env = buildDotEnv(keys, dbConfig, supabaseUrl, example);
+        yield* fs.writeFileString(envFilePath, marshalDotEnv(env));
+      }).pipe(
+        Effect.as(true),
+        Effect.catch((cause) =>
+          output
+            .raw(`Failed to create .env file: ${cause.message}\n`, "stderr")
+            .pipe(Effect.as(false)),
+        ),
+        Effect.withSpan("bootstrap.writeDotEnv"),
+      );
 
-    // Uses a naive direct-host db config with no IPv6/pooler fallback, since `.env` is written
-    // for reference only and, unlike the push connection below, is never used to actually connect.
-    const dbConfig = deriveDbConfig(projectRef, created.dbPassword, cliSettings.projectHost);
-    const supabaseUrl = `https://${projectRef}.${cliSettings.projectHost}`;
-    const envFilePath = path.join(workdir, ".env");
-    const envFileWritten = yield* Effect.gen(function* () {
-      const examplePath = path.join(workdir, ".env.example");
-      const hasExample = yield* fs.exists(examplePath);
-      let example: Record<string, string> | undefined;
-      if (hasExample) {
-        const content = yield* fs.readFileString(examplePath);
-        example = yield* Effect.try({
-          try: () => parseDotEnv(content),
-          catch: (cause) =>
-            new BootstrapDotEnvParseError({
-              message: cause instanceof Error ? cause.message : String(cause),
-            }),
+      // `resolveLinkedConn` doesn't attach a suggestionContext like the full resolver does; build
+      // one manually so a connect failure inside the push below still gets the established hint.
+      const suggestionContext: ConnectSuggestionContext = {
+        dashboardUrl: cliSettings.dashboardUrl,
+        profileName: cliSettings.profile,
+      };
+      // Falls back to the naive `dbConfig` on `DbConfigIpv6Error` instead of aborting, since a
+      // freshly created project's pooler metadata may still be propagating.
+      const resolvedConn = yield* resolveLinkedConn(
+        projectRef,
+        workdir,
+        cliSettings.projectHost,
+        cliSettings.poolerHost,
+        dnsResolver,
+        Option.some(created.dbPassword),
+      ).pipe(
+        Effect.catchTag("DbConfigIpv6Error", (error) =>
+          output.raw(`${error.message}\n`, "stderr").pipe(Effect.as(dbConfig)),
+        ),
+      );
+      const conn = { ...resolvedConn, suggestionContext };
+      // Passes workdir/projectRef/toml through directly rather than calling the full `dbPush`
+      // command, since its CommandSettings-based resolvers would be stale after this handler's
+      // own chdir above.
+      const pushNotify = yield* bootstrapRetryNotify;
+      yield* dbPushCore({
+        workdir,
+        projectRef,
+        conn,
+        isLocal: false,
+        repairSuggestsLocalFlag: false,
+        dryRun: false,
+        includeAll: false,
+        includeRoles: true,
+        includeSeed: true,
+        includeVault: true,
+        dnsResolver,
+        toml,
+        yes: pushYes,
+        emitStructuredResult: false,
+      }).pipe(pushNotify, Effect.retry(retry), Effect.withSpan("bootstrap.pushMigrations"));
+
+      if (isText) {
+        const suggestion = suggestAppStart(path, runtimeInfo.cwd, workdir, starter.start, aqua);
+        yield* emitSuccessTrailer(`${suggestion}\n`);
+      } else {
+        yield* output.success("", {
+          workdir,
+          project_ref: projectRef,
+          template: starter.name,
+          start_command: starter.start,
+          env_file: envFileWritten ? envFilePath : null,
         });
       }
-      const env = buildDotEnv(keys, dbConfig, supabaseUrl, example);
-      yield* fs.writeFileString(envFilePath, marshalDotEnv(env));
-    }).pipe(
-      Effect.as(true),
-      Effect.catch((cause) =>
-        output
-          .raw(`Failed to create .env file: ${cause.message}\n`, "stderr")
-          .pipe(Effect.as(false)),
-      ),
-      Effect.withSpan("bootstrap.writeDotEnv"),
-    );
-
-    // `resolveLinkedConn` doesn't attach a suggestionContext like the full resolver does; build
-    // one manually so a connect failure inside the push below still gets the established hint.
-    const suggestionContext: ConnectSuggestionContext = {
-      dashboardUrl: cliSettings.dashboardUrl,
-      profileName: cliSettings.profile,
-    };
-    // Falls back to the naive `dbConfig` on `DbConfigIpv6Error` instead of aborting, since a
-    // freshly created project's pooler metadata may still be propagating.
-    const resolvedConn = yield* resolveLinkedConn(
-      projectRef,
-      workdir,
-      cliSettings.projectHost,
-      cliSettings.poolerHost,
-      dnsResolver,
-      Option.some(created.dbPassword),
-    ).pipe(
-      Effect.catchTag("DbConfigIpv6Error", (error) =>
-        output.raw(`${error.message}\n`, "stderr").pipe(Effect.as(dbConfig)),
-      ),
-    );
-    const conn = { ...resolvedConn, suggestionContext };
-    // Passes workdir/projectRef/toml through directly rather than calling the full `dbPush`
-    // command, since its CommandSettings-based resolvers would be stale after this handler's
-    // own chdir above.
-    const pushNotify = yield* bootstrapRetryNotify;
-    yield* dbPushCore({
-      workdir,
-      projectRef,
-      conn,
-      isLocal: false,
-      repairSuggestsLocalFlag: false,
-      dryRun: false,
-      includeAll: false,
-      includeRoles: true,
-      includeSeed: true,
-      includeVault: true,
-      dnsResolver,
-      toml,
-      yes: pushYes,
-      emitStructuredResult: false,
-    }).pipe(pushNotify, Effect.retry(retry), Effect.withSpan("bootstrap.pushMigrations"));
-
-    if (isText) {
-      const suggestion = suggestAppStart(path, runtimeInfo.cwd, workdir, starter.start, aqua);
-      yield* emitSuccessTrailer(`${suggestion}\n`);
-    } else {
-      yield* output.success("", {
-        workdir,
-        project_ref: projectRef,
-        template: starter.name,
-        start_command: starter.start,
-        env_file: envFileWritten ? envFilePath : null,
-      });
-    }
-    yield* setSuccessWorkingDirectory(workdir);
+      yield* setSuccessWorkingDirectory(workdir);
+    }).pipe(Effect.provideService(ProjectStateModeContext, { mode: Exit.succeed(linkMode) }));
   }).pipe(
     Effect.ensuring(
       Effect.sync(() => {
@@ -370,9 +418,13 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     ),
     Effect.ensuring(
       Effect.flatMap(
-        Effect.all([Ref.get(createdRef), Ref.get(resolvedWorkdir)]),
-        ([ref, workdir]) =>
-          ref === undefined ? Effect.void : linkedProjectCache.cache(ref, workdir),
+        Effect.all([Ref.get(createdRef), Ref.get(resolvedWorkdir), Ref.get(linkModeRef)]),
+        ([ref, workdir, mode]) =>
+          ref === undefined || mode === undefined
+            ? Effect.void
+            : linkedProjectCache
+                .cache(ref, workdir)
+                .pipe(Effect.provideService(ProjectStateModeContext, { mode: Exit.succeed(mode) })),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

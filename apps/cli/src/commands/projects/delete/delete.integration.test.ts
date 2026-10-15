@@ -19,6 +19,8 @@ import {
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { writeProjectLink } from "../../../command-internal/project-link.ts";
+import { projectStateModeLayer } from "../../../command-internal/project-state-mode.ts";
 import { projectsDelete } from "./delete.handler.ts";
 
 const OTHER_REF = "qrstuvwxyzabcdefghij";
@@ -55,6 +57,7 @@ interface SetupOpts {
   readonly network?: "fail";
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
   readonly promptSelectResponses?: ReadonlyArray<string>;
+  readonly stack?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -88,6 +91,7 @@ function setup(opts: SetupOpts = {}) {
       linkedProjectCache: cache.layer,
     }),
     Layer.succeed(YesFlag, opts.yes ?? false),
+    ...(opts.stack === true ? [projectStateModeLayer("stack")] : []),
   );
   return { layer, out, api, telemetry, cache };
 }
@@ -328,6 +332,48 @@ describe("projects delete integration", () => {
       );
       expect(refFileExists).toBe(true);
     }).pipe(Effect.provide(layer));
+  });
+
+  describe("in stack mode", () => {
+    const writeLinkDocument = (projectRef: string, activeRef = "branchprojectrefabcd") =>
+      writeProjectLink(tempRoot.current, {
+        project: { ref: projectRef },
+        active_branch: { ref: activeRef },
+        fetchedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+    const linkDocumentExists = Effect.fnUntraced(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      return yield* fs.exists(path.join(tempRoot.current, "supabase", ".link.json"));
+    });
+
+    it.effect("removes the link document when the deleted ref is the linked project", () => {
+      const { layer } = setup({ yes: true, stack: true });
+      return Effect.gen(function* () {
+        yield* writeLinkDocument(VALID_REF);
+        yield* projectsDelete({ ref: Option.some(VALID_REF) });
+        expect(yield* linkDocumentExists()).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("removes the link document when the deleted ref is the linked branch", () => {
+      const { layer } = setup({ yes: true, stack: true });
+      return Effect.gen(function* () {
+        yield* writeLinkDocument(OTHER_REF, VALID_REF);
+        yield* projectsDelete({ ref: Option.some(VALID_REF) });
+        expect(yield* linkDocumentExists()).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("keeps the link document when another project is deleted", () => {
+      const { layer } = setup({ yes: true, stack: true });
+      return Effect.gen(function* () {
+        yield* writeLinkDocument(OTHER_REF);
+        yield* projectsDelete({ ref: Option.some(VALID_REF) });
+        expect(yield* linkDocumentExists()).toBe(true);
+      }).pipe(Effect.provide(layer));
+    });
   });
 
   it.effect("maps HTTP 404 to project-does-not-exist", () => {

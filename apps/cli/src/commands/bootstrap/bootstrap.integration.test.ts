@@ -45,6 +45,12 @@ import {
   OutputFlag,
 } from "../../command-internal/global-flags.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { readProjectLink } from "../../command-internal/project-link.ts";
+import {
+  type ProjectStateMode,
+  softProjectStateMode,
+} from "../../command-internal/project-state-mode.ts";
+import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { DbConnectError } from "../../command-internal/db-connection.errors.ts";
 import { DbConnection, type PgConnInput } from "../../command-internal/db-connection.service.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
@@ -322,6 +328,66 @@ describe("bootstrap integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live(
+    "links through supabase/.link.json instead of .temp when SUPABASE_EXPERIMENTAL_STACK=1",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const s = setup(path, { env: { SUPABASE_EXPERIMENTAL_STACK: "1" } });
+        const cacheModes: Array<ProjectStateMode> = [];
+        const modeRecordingCache = Layer.succeed(LinkedProjectCache, {
+          cache: () => softProjectStateMode.pipe(Effect.map((mode) => void cacheModes.push(mode))),
+        });
+        yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+          Effect.provide(Layer.merge(s.layer, modeRecordingCache)),
+        );
+        expect(cacheModes).toEqual(["stack"]);
+        const link = yield* readProjectLink(s.workdir);
+        expect(Option.getOrThrow(link)).toMatchObject({
+          project: {
+            ref: VALID_REF,
+            name: CREATED.name,
+            organization_id: CREATED.organization_id,
+            organization_slug: CREATED.organization_slug,
+          },
+          active_branch: {
+            ref: VALID_REF,
+            pooler_url: expect.stringContaining("pooler.supabase.com"),
+          },
+        });
+        expect(yield* fs.exists(path.join(s.workdir, "supabase", ".temp"))).toBe(false);
+        expect(s.analytics.groupIdentified).toEqual([
+          {
+            groupType: "organization",
+            groupKey: CREATED.organization_id,
+            properties: { organization_slug: CREATED.organization_slug },
+          },
+          {
+            groupType: "project",
+            groupKey: VALID_REF,
+            properties: { name: CREATED.name, organization_slug: CREATED.organization_slug },
+          },
+        ]);
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("a downloaded template fails closed on an invalid SUPABASE_EXPERIMENTAL_STACK", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const s = setup(path, {
+        env: { SUPABASE_EXPERIMENTAL_STACK: "yes" },
+        samples: [NEXTJS_TEMPLATE],
+      });
+      const error = yield* bootstrap(flags({ template: Option.some("nextjs") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+        Effect.flip,
+      );
+      expect(error._tag).toBe("ExperimentalFeatureFlagError");
+      expect(s.createBodies).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect(
     "scratch scaffolding fails closed on an invalid SUPABASE_EXPERIMENTAL_STACK before writing config",
     () =>
@@ -358,20 +424,6 @@ describe("bootstrap integration", () => {
       expect(s.downloads[0]).toEqual({ url: NEXTJS_TEMPLATE.url, targetDir: s.workdir });
       expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(false);
       expect(s.out.stdoutText).toContain(`Downloading: ${NEXTJS_TEMPLATE.url}`);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.live("ignores SUPABASE_EXPERIMENTAL_STACK on a downloaded template", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const s = setup(path, {
-        samples: [NEXTJS_TEMPLATE],
-        env: { SUPABASE_EXPERIMENTAL_STACK: "yes" },
-      });
-      yield* bootstrap(flags({ template: Option.some("NextJS") }), FAST_BACKOFF).pipe(
-        Effect.provide(s.layer),
-      );
-      expect(s.downloads).toHaveLength(1);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

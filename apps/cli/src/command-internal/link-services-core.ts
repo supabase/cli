@@ -102,6 +102,27 @@ const linkStorageMigration = (
     Effect.ignore,
   );
 
+/**
+ * The session-mode connection string for a pooler config: drops the `[YOUR-PASSWORD]`
+ * placeholder and forces port 5432 unless the pooler already reports session mode.
+ */
+const normalizePoolerUrl = (connectionString: string, poolMode: string): string => {
+  const withoutPassword = connectionString.replaceAll(":[YOUR-PASSWORD]", "");
+  return poolMode === "session" ? withoutPassword : withoutPassword.replaceAll(":6543/", ":5432/");
+};
+
+/** The normalized primary pooler URL for `ref`, `None` when the project reports no primary. */
+export const fetchPoolerUrl = Effect.fn("link.fetchPoolerUrl")(function* (
+  api: ApiClient,
+  ref: string,
+) {
+  const configs = yield* api.v1.getPoolerConfig({ ref });
+  const primary = configs.find((c) => c.database_type === "PRIMARY");
+  return primary === undefined
+    ? Option.none<string>()
+    : Option.some(normalizePoolerUrl(primary.connection_string, primary.pool_mode));
+});
+
 const linkPooler = (opts: {
   api: ApiClient;
   ref: string;
@@ -115,14 +136,6 @@ const linkPooler = (opts: {
       yield* opts.state.remove(opts.workdir, "poolerUrl").pipe(Effect.ignore);
       return;
     }
-    const configs = yield* opts.api.v1.getPoolerConfig({ ref: opts.ref });
-    const primary = configs.find((c) => c.database_type === "PRIMARY");
-    if (primary === undefined) return;
-    // Strip the [YOUR-PASSWORD] placeholder; force session mode 5432 unless the
-    // pooler already reports session mode.
-    let connectionString = primary.connection_string.replaceAll(":[YOUR-PASSWORD]", "");
-    if (primary.pool_mode !== "session") {
-      connectionString = connectionString.replaceAll(":6543/", ":5432/");
-    }
-    yield* opts.state.write(opts.workdir, "poolerUrl", connectionString);
+    const url = yield* fetchPoolerUrl(opts.api, opts.ref);
+    if (Option.isSome(url)) yield* opts.state.write(opts.workdir, "poolerUrl", url.value);
   }).pipe(Effect.ignore);

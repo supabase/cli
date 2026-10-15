@@ -25,7 +25,7 @@ import {
 import { makeDir } from "../../../../../command-internal/make-dir.ts";
 import { applyMigrationFile } from "../../../../../command-internal/migration-apply.ts";
 import { ENABLE_LOCAL_WEBHOOKS_SUGGESTION } from "../../../../../command-internal/pg-net-guidance.ts";
-import { readLegacyProjectRef } from "../../../../../command-internal/legacy-project-state.layer.ts";
+import { readLinkedProjectRef } from "../../../../../command-internal/project-link.ts";
 import { LinkedProjectCache } from "../../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
 import { listLocalMigrations } from "../../../../../command-internal/migration-list.ts";
@@ -215,7 +215,7 @@ const runDbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(funct
         // correctly does not fire.
         linkedRef = Option.isSome(cliSettings.projectId)
           ? cliSettings.projectId
-          : yield* readLegacyProjectRef(fs, path, cliSettings.workdir).pipe(
+          : yield* readLinkedProjectRef(fs, path, cliSettings.workdir).pipe(
               Effect.orElseSucceed(() => Option.none<string>()),
             );
         if (Option.isSome(linkedRef)) {

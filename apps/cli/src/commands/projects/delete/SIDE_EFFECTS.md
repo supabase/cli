@@ -86,6 +86,13 @@ On failure, an `error` event is emitted instead:
 {"type":"error","code":"ApiError","message":"…"}
 ```
 
+## Stack mode
+
+In stack project-state mode the best-effort cleanup reads `supabase/.link.json` and removes it
+only when its `project.ref` or `active_branch.ref` equals the deleted ref; `supabase/.temp/` is
+not consulted. The mode is resolved before the DELETE call, so an invalid
+`SUPABASE_EXPERIMENTAL_STACK` fails before the project is deleted.
+
 ## Notes
 
 - In interactive mode (when stdin is a TTY and no ref is provided), the CLI prompts the

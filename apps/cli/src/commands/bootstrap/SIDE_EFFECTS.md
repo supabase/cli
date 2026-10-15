@@ -124,6 +124,17 @@ suppressed; a single structured result is emitted for the whole command:
 }
 ```
 
+## Stack mode
+
+When the new project directory resolves to stack project-state mode (`SUPABASE_EXPERIMENTAL_STACK`
+or its `config.toml`), bootstrap writes `supabase/.link.json` (project ref, name and organization from the create
+response, active branch ref, normalized pooler URL when available) instead of the `supabase/.temp/`
+link files, and the push connection reads the pooler URL from that document. The organization and
+project `groupIdentify` calls fire from bootstrap, since the linked-project cache fill is a no-op
+in this mode. The mode comes from the new project directory and applies to every post-scaffold
+step, including the cache finalizer; an invalid `SUPABASE_EXPERIMENTAL_STACK` fails bootstrap
+before any project is created. See `link`'s `SIDE_EFFECTS.md` for the format.
+
 ## Notes
 
 - **Native migration push, sharing `db push`'s own core (CLI-1953).** The push step calls

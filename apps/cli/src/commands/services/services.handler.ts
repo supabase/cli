@@ -15,6 +15,8 @@ import {
 import { resolveDbImage } from "../../command-internal/db-image.ts";
 import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
 import { readServiceVersionOverrides } from "../../command-internal/service-version-overrides.ts";
+import { currentProjectStateMode } from "../../command-internal/project-state-mode.ts";
+import { readLinkedProjectRef } from "../../command-internal/project-link.ts";
 import { currentStackBackend } from "../../command-internal/stack-backend.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
@@ -70,6 +72,16 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
   const linkedProjectRef = yield* Effect.gen(function* () {
     if (Option.isSome(cliSettings.projectId)) {
       return cliSettings.projectId;
+    }
+
+    if ((yield* currentProjectStateMode) === "stack") {
+      return yield* readLinkedProjectRef(fs, path, cliSettings.workdir).pipe(
+        Effect.catch((cause) =>
+          output
+            .raw(`failed to load project ref: ${cause.message}\n`, "stderr")
+            .pipe(Effect.as(Option.none<string>())),
+        ),
+      );
     }
 
     const exists = yield* legacyState

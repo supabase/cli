@@ -1,4 +1,4 @@
-import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
+import { readLinkedPoolerUrl } from "./project-link.ts";
 import { normalizeDeprecatedOrioleDBVersion } from "@supabase/config/internal";
 import { Config, Effect, Match, type FileSystem, Option, type Path } from "effect";
 import * as SmolToml from "smol-toml";
@@ -1259,11 +1259,11 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // comment for why this is typed narrower than the `ReadonlySet<string>` it wraps.
   const remoteWins = makeRemoteWins(remoteOverrideKeys);
 
-  // Read the linked pooler URL from `.temp/pooler-url` and treat it as configured only
-  // when the file exists and is non-empty.
-  const poolerConnectionString = yield* fs
-    .readFileString(legacyProjectStatePaths(path, workdir).poolerUrl)
-    .pipe(Effect.map(nonEmptyString), Effect.orElseSucceed(Option.none<string>));
+  // Read the linked pooler URL from `.temp/pooler-url` (the link document in stack mode) and
+  // treat it as configured only when present and non-empty.
+  const poolerConnectionString = yield* readLinkedPoolerUrl(fs, path, workdir).pipe(
+    Effect.map(Option.flatMap(nonEmptyString)),
+  );
 
   // `SUPABASE_PROJECT_ID` overrides the top-level `project_id` used to name the local
   // stack's Docker resources, unless a matched `[remotes.<ref>]` block already set

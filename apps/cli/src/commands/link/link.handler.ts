@@ -1,5 +1,5 @@
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
-import { Duration, Effect, Option, Ref, Schema } from "effect";
+import { DateTime, Duration, Effect, Option, Ref, Schema } from "effect";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
@@ -9,10 +9,9 @@ import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { withAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
+import { identifyProjectGroups } from "../../shared/telemetry/identify-project-groups.ts";
 import {
   EventProjectLinked,
-  GroupOrganization,
-  GroupProject,
   PropLinkedVia,
   PropParentProjectRef,
 } from "../../shared/telemetry/event-catalog.ts";
@@ -28,7 +27,13 @@ import {
 import { dashboardUrl } from "../../command-internal/profile.ts";
 import { mapTenantApiKeysError } from "../../command-internal/get-tenant-api-keys.ts";
 import { sanitizeInlineName, mapHttpError } from "../../command-internal/http-errors.ts";
-import { linkServicesCore } from "../../command-internal/link-services-core.ts";
+import { fetchPoolerUrl, linkServicesCore } from "../../command-internal/link-services-core.ts";
+import { currentProjectStateMode } from "../../command-internal/project-state-mode.ts";
+import {
+  type ProjectLink,
+  readProjectLink,
+  writeProjectLink,
+} from "../../command-internal/project-link.ts";
 import { extractServiceKeys } from "../../command-internal/tenant-keys.ts";
 import { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
 import {
@@ -56,6 +61,7 @@ type LinkBranch = LinkBranches[number];
 interface LinkBranchResolution {
   readonly projectRef: string;
   readonly branchName: string;
+  readonly isDefault: boolean;
   readonly parentRef: string;
 }
 
@@ -193,7 +199,51 @@ const resolveLinkBranchRef = Effect.fn("link.resolveBranch")(function* (value: s
   const line = `Resolved branch "${sanitizeInlineName(found.name)}" of project ${parentRef} to project ref ${found.project_ref}.`;
   yield* output.format === "text" ? output.raw(`${line}\n`, "stderr") : output.info(line);
 
-  return { projectRef: found.project_ref, branchName: found.name, parentRef };
+  return {
+    projectRef: found.project_ref,
+    branchName: found.name,
+    isDefault: found.is_default,
+    parentRef,
+  };
+});
+
+/**
+ * The parent project recorded in a stack-mode link written for a branch-project ref (the 404
+ * arm). A resolved branch names its parent, keeping an agreeing document's richer metadata; a
+ * raw ref keeps a divergent document's project only when that project still lists `ref` as a
+ * branch, and otherwise has no known parent, so the project is the ref itself.
+ */
+const resolveStackLinkParent = Effect.fn("link.resolveStackParent")(function* (input: {
+  readonly ref: string;
+  readonly workdir: string;
+  readonly branchResolution: Option.Option<LinkBranchResolution>;
+}) {
+  const output = yield* Output;
+  const api = yield* CommandPlatformApi;
+  const existing = (yield* readProjectLink(input.workdir).pipe(Effect.option)).pipe(Option.flatten);
+  const existingProject = Option.map(existing, (link) => link.project);
+
+  if (Option.isSome(input.branchResolution)) {
+    const parentRef = input.branchResolution.value.parentRef;
+    return Option.isSome(existingProject) && existingProject.value.ref === parentRef
+      ? existingProject.value
+      : { ref: parentRef };
+  }
+  if (Option.isNone(existingProject) || existingProject.value.ref === input.ref) {
+    return { ref: input.ref };
+  }
+  if (!PROJECT_REF_PATTERN.test(existingProject.value.ref)) return { ref: input.ref };
+
+  const correlating =
+    output.format === "text" ? yield* output.task("Checking branch parent...") : undefined;
+  const verified = yield* api.v1.listAllBranches({ ref: existingProject.value.ref }).pipe(
+    Effect.timeout(LINK_CACHE_CORRELATION_TIMEOUT),
+    Effect.map((branches) => branches.some((branch) => branch.project_ref === input.ref)),
+    Effect.orElseSucceed(() => false),
+    Effect.ensuring(correlating?.clear ?? Effect.void),
+    Effect.tap((result) => Effect.annotateCurrentSpan("link.parent_verified", result)),
+  );
+  return verified ? existingProject.value : { ref: input.ref };
 });
 
 export const link = Effect.fn("link")(function* (flags: LinkFlags) {
@@ -205,6 +255,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
   const telemetryState = yield* TelemetryState;
   const analytics = yield* Analytics;
   const legacyState = yield* LegacyProjectState;
+  const stackState = (yield* currentProjectStateMode) === "stack";
 
   // Captured once ref/branch resolution succeeds; `undefined` means no ref was ever resolved,
   // so the post-run cache fill below stays a no-op.
@@ -274,7 +325,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       }
       // Updates the postgres image version to match the remote project.
       const version = project.value.database.version;
-      if (version.length > 0) {
+      if (!stackState && version.length > 0) {
         yield* legacyState.write(workdir, "postgresVersion", version);
       }
     }
@@ -288,45 +339,68 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       return yield* new LinkMissingKeyError({ message: "Anon key not found." });
     }
 
-    // 3. Link services — best-effort, using the service-role key for tenant probes.
-    yield* linkServicesCore({
-      ref,
-      serviceKey: serviceRole,
-      skipPooler: flags.skipPooler,
-      workdir,
-    });
+    // 3. Link services — best-effort, using the service-role key for tenant probes. Stack mode
+    // keeps only the pooler URL; versions come from the service lock.
+    const poolerUrl = stackState
+      ? flags.skipPooler
+        ? Option.none<string>()
+        : yield* fetchPoolerUrl(api, ref).pipe(Effect.option, Effect.map(Option.flatten))
+      : yield* linkServicesCore({
+          ref,
+          serviceKey: serviceRole,
+          skipPooler: flags.skipPooler,
+          workdir,
+        }).pipe(Effect.as(Option.none<string>()));
 
-    // 4. Save project ref (mandatory — a write failure fails the command).
-    yield* legacyState.write(workdir, "projectRef", ref);
+    // 4. Save the link (mandatory — a write failure fails the command).
+    if (stackState) {
+      const parent = Option.isSome(project)
+        ? {
+            ref: project.value.ref,
+            name: project.value.name,
+            organization_id: project.value.organization_id,
+            organization_slug: project.value.organization_slug,
+          }
+        : yield* resolveStackLinkParent({ ref, workdir, branchResolution });
+      const link: ProjectLink = {
+        project: parent,
+        active_branch: {
+          ref,
+          ...(Option.isSome(branchResolution)
+            ? {
+                name: branchResolution.value.branchName,
+                is_default: branchResolution.value.isDefault,
+              }
+            : {}),
+          ...(Option.isSome(poolerUrl) ? { pooler_url: poolerUrl.value } : {}),
+        },
+        fetchedAt: DateTime.formatIso(yield* DateTime.now),
+      };
+      yield* writeProjectLink(workdir, link);
+    } else {
+      yield* legacyState.write(workdir, "projectRef", ref);
+    }
 
     // 5. Telemetry + linked-project cache (only for resolvable projects, not the 404 branch path).
     if (Option.isSome(project)) {
       const p = project.value;
       // Best-effort: if the rewrite fails while a stale cache for a different project
       // survives, delete it rather than leave the parent chain trusting the old project.
-      yield* encodeLinkedProjectCache({
-        ref: p.ref,
-        name: p.name,
-        organization_id: p.organization_id,
-        organization_slug: p.organization_slug,
-      }).pipe(
-        Effect.flatMap((content) => legacyState.write(workdir, "linkedProjectCache", content)),
-        Effect.catch(() => legacyState.remove(workdir, "linkedProjectCache")),
-        Effect.ignore,
-      );
+      if (!stackState) {
+        yield* encodeLinkedProjectCache({
+          ref: p.ref,
+          name: p.name,
+          organization_id: p.organization_id,
+          organization_slug: p.organization_slug,
+        }).pipe(
+          Effect.flatMap((content) => legacyState.write(workdir, "linkedProjectCache", content)),
+          Effect.catch(() => legacyState.remove(workdir, "linkedProjectCache")),
+          Effect.ignore,
+        );
+      }
 
       const groups = { organization: p.organization_id, project: p.ref } as const;
-      if (p.organization_id.length > 0) {
-        yield* analytics.groupIdentify(GroupOrganization, p.organization_id, {
-          organization_slug: p.organization_slug,
-        });
-      }
-      if (p.ref.length > 0) {
-        yield* analytics.groupIdentify(GroupProject, p.ref, {
-          name: p.name,
-          organization_slug: p.organization_slug,
-        });
-      }
+      yield* identifyProjectGroups(analytics, p);
       // A default branch's `project_ref` is the parent's own ref, so `link main` still hits
       // this 200 arm (never the 404 arm below); check `branchResolution` here too or a
       // default-branch link loses `linked_via`.
@@ -345,10 +419,12 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       // below) also GETs `ref` and 404s on a branch — so without persisting parent evidence
       // here, `resolveLinkedParentRef`'s chain can lose it or go stale. Both branches below
       // are best-effort and never affect `link`'s own outcome.
-      const cachedParent = yield* legacyState.read(workdir, "linkedProjectCache").pipe(
-        Effect.map(parseCachedLinkedProject),
-        Effect.orElseSucceed(() => Option.none<CachedLinkedProject>()),
-      );
+      const cachedParent = stackState
+        ? Option.none<CachedLinkedProject>()
+        : yield* legacyState.read(workdir, "linkedProjectCache").pipe(
+            Effect.map(parseCachedLinkedProject),
+            Effect.orElseSucceed(() => Option.none<CachedLinkedProject>()),
+          );
 
       if (Option.isSome(branchResolution)) {
         // (a) The branch's parent is known here, so persist it durably even when the
@@ -356,7 +432,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
         // it may be richer (name/org) than the ref-only record below, e.g. from a real
         // `link <parent-ref>` run.
         const parentRef = branchResolution.value.parentRef;
-        if (Option.isNone(cachedParent) || cachedParent.value.ref !== parentRef) {
+        if (!stackState && (Option.isNone(cachedParent) || cachedParent.value.ref !== parentRef)) {
           // If the replacement write fails, delete the stale cache instead of leaving a
           // wrong parent trusted — no parent info beats wrong parent info.
           yield* encodeLinkedParentCache({ ref: parentRef }).pipe(

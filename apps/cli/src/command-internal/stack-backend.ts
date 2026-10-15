@@ -1,6 +1,16 @@
-import { Context, Data, Effect, FileSystem, Layer, Option, Path } from "effect";
+import {
+  Context,
+  Data,
+  Effect,
+  type Exit,
+  type FileSystem,
+  Layer,
+  Option,
+  type Path,
+} from "effect";
 import { extractCommandPath, hasRootVersionFlag } from "../shared/cli/run.ts";
-import { projectStateMode } from "./project-state-mode.ts";
+import type { ExperimentalFeatureFlagError } from "./experimental-feature.ts";
+import { projectStateMode, type ProjectStateMode } from "./project-state-mode.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -56,20 +66,32 @@ export const currentStackBackend: Effect.Effect<{ readonly kind: StackBackend },
     Effect.map((value) => Option.getOrElse(value, () => ({ kind: "legacy" as const }))),
   );
 
-/** Resolves the backend, or `undefined` for commands that `experimental.stack` does not route. */
-export const resolveStackBackend = (input: {
-  readonly args: ReadonlyArray<string>;
-  readonly cwd: string;
-  readonly env: Readonly<Record<string, string | undefined>>;
-}): Effect.Effect<StackBackend | undefined, StackRoutingError, FileSystem.FileSystem | Path.Path> =>
-  Effect.gen(function* () {
+/**
+ * Resolves the project state mode and, for the commands `experimental.stack` routes, the backend.
+ * Routed commands fail on an invalid `SUPABASE_EXPERIMENTAL_STACK`; for the others the failure
+ * stays in `projectState` for the readers that need it. Both are `undefined` for `--version`.
+ */
+export const resolveProjectStateSelection = Effect.fn("ProjectState.resolveSelection")(
+  function* (input: {
+    readonly args: ReadonlyArray<string>;
+    readonly cwd: string;
+    readonly env: Readonly<Record<string, string | undefined>>;
+  }): Effect.fn.Return<
+    {
+      readonly projectState: Exit.Exit<ProjectStateMode, ExperimentalFeatureFlagError> | undefined;
+      readonly stackBackend: StackBackend | undefined;
+    },
+    StackRoutingError,
+    FileSystem.FileSystem | Path.Path
+  > {
     // Completion passes the final token as the cursor word, so it is not part of
     // the resolved command path.
     const routingArgs =
       input.args[0] === "__complete" || input.args[0] === "__completeNoDesc"
         ? input.args.slice(0, -1)
         : input.args;
-    if (hasRootVersionFlag(routingArgs)) return undefined;
+    if (hasRootVersionFlag(routingArgs))
+      return { projectState: undefined, stackBackend: undefined };
 
     const commandPath = extractCommandPath(routingArgs);
     const completePath =
@@ -78,15 +100,20 @@ export const resolveStackBackend = (input: {
         : commandPath;
     const routedPath = completePath[0] === "help" ? completePath.slice(1) : completePath;
     const command = routedPath[0];
-    if (
-      command !== undefined &&
-      command !== "stack" &&
-      !STACK_BACKEND_COMMANDS.has(command) &&
-      !isFunctionsServePath(routedPath)
-    )
-      return undefined;
+    const routed =
+      command === undefined ||
+      command === "stack" ||
+      STACK_BACKEND_COMMANDS.has(command) ||
+      isFunctionsServePath(routedPath);
 
-    return yield* projectStateMode({ ...input, args: routingArgs }).pipe(
-      Effect.mapError((error) => new StackRoutingError({ message: error.message, cause: error })),
-    );
-  });
+    const projectState = yield* Effect.exit(projectStateMode({ ...input, args: routingArgs }));
+    const stackBackend = routed
+      ? yield* projectState.pipe(
+          Effect.mapError(
+            (error) => new StackRoutingError({ message: error.message, cause: error }),
+          ),
+        )
+      : undefined;
+    return { projectState, stackBackend };
+  },
+);
