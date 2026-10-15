@@ -19,8 +19,8 @@ const MAX_BODY_LEN = 1024;
 
 /**
  * Truncates and sanitizes a response body for inclusion in an error message.
- * Shared by handlers that bypass the typed client (e.g. `sso add`/`sso update`
- * raw-HTTP POST/PUT) and `mapHttpError`, so both apply the same defense-in-depth.
+ * Shared by handlers that read raw response bodies (`executeRaw` callers) and
+ * `mapHttpError`, so both apply the same defense-in-depth.
  */
 export function sanitizeErrorBody(input: string): string {
   const capped = input.length > MAX_BODY_LEN ? input.slice(0, MAX_BODY_LEN) : input;

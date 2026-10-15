@@ -22,10 +22,11 @@
 
 ## Environment Variables
 
-| Variable                 | Purpose                                                                           | Required?                                               |
-| ------------------------ | --------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN`  | auth token for `--linked` mode                                                    | no (falls back to keyring → `~/.supabase/access-token`) |
-| `DOTENV_PRIVATE_KEY[_*]` | dotenvx private key(s) to decrypt `encrypted:` `[db.vault]` secrets before upsert | no (required only if a `[db.vault]` value is encrypted) |
+| Variable                                 | Purpose                                                                                                                                                                                                                                    | Required?                                               |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`                  | auth token for `--linked` mode                                                                                                                                                                                                             | no (falls back to keyring → `~/.supabase/access-token`) |
+| `DOTENV_PRIVATE_KEY[_*]`                 | dotenvx private key(s) to decrypt `encrypted:` `[db.vault]` secrets before upsert                                                                                                                                                          | no (required only if a `[db.vault]` value is encrypted) |
+| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.` | no                                                      |
 
 ## Exit Codes
 

@@ -50,33 +50,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
 
   "init",
 
-  "inspect db bloat",
-  "inspect db blocking",
-  "inspect db cache-hit",
-  "inspect db calls",
-  "inspect db db-stats",
-  "inspect db index-sizes",
-  "inspect db index-stats",
-  "inspect db index-usage",
-  "inspect db locks",
-  "inspect db long-running-queries",
-  "inspect db outliers",
-  "inspect db replication-slots",
-  "inspect db role-configs",
-  "inspect db role-connections",
-  "inspect db role-stats",
-  "inspect db seq-scans",
-  "inspect db table-index-sizes",
-  "inspect db table-record-counts",
-  "inspect db table-sizes",
-  "inspect db table-stats",
-  "inspect db total-index-size",
-  "inspect db total-table-sizes",
-  "inspect db traffic-profile",
-  "inspect db unused-indexes",
-  "inspect db vacuum-stats",
-  "inspect report",
-
   "issue bug",
   "issue docs",
   "issue feature",
@@ -86,14 +59,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "login",
 
   "logout",
-
-  "migration down",
-  "migration fetch",
-  "migration list",
-  "migration new",
-  "migration repair",
-  "migration squash",
-  "migration up",
 
   "network-bans get",
   "network-bans remove",
@@ -158,9 +123,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "telemetry disable",
   "telemetry enable",
   "telemetry status",
-
-  "test db",
-  "test new",
 
   "unlink",
 

@@ -306,6 +306,7 @@ describe("owner persisted logs", () => {
         });
         yield* owner.rpc.startService({ id: mail.id });
         yield* owner.rpc.readyService({ id: mail.id });
+        yield* firstOutput(owner.rpc.readLogs({ id: mail.id, follow: true }));
         const history = Array.from(
           yield* owner.rpc.readLogs({ id: mail.id, follow: false }).pipe(Stream.runCollect),
         );

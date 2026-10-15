@@ -310,9 +310,8 @@ describe("branches update integration", () => {
       const analytics = mockAnalytics();
       const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
 
-      // suggestUpgrade bypasses the typed API client (so cli-e2e replay fixtures with
-      // `__PROJECT_REF__` placeholders don't trip strict schema decode), so all three URLs
-      // route through the same mockCommandPlatformApi handler the production HttpClient uses.
+      // The gate's follow-up project and entitlements GETs share the PATCH's
+      // mockCommandPlatformApi handler.
       const apiMock = mockCommandPlatformApi({
         handler: (request) =>
           Effect.sync(() => {

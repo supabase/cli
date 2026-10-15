@@ -7,7 +7,10 @@ import {
 } from "../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
-import { readDbToml } from "../../command-internal/db-config.toml-read.ts";
+import {
+  readDbToml,
+  warnDeprecatedOrioleDBVersionEnv,
+} from "../../command-internal/db-config.toml-read.ts";
 import { resolveDbImage } from "../../command-internal/db-image.ts";
 import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
 import { readServiceVersionOverrides } from "../../command-internal/service-version-overrides.ts";
@@ -146,6 +149,7 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
           output.raw(`${error.message}\n`, "stderr").pipe(Effect.as(null)),
         ),
       );
+      if (tomlValues !== null) yield* warnDeprecatedOrioleDBVersionEnv(tomlValues.envLookup);
       const serviceVersions =
         tomlValues === null
           ? {}

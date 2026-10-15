@@ -1,10 +1,19 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { vi } from "vitest";
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
+);
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
   VALID_REF,
+  VALID_TOKEN,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
@@ -12,6 +21,17 @@ import {
   sequentialExecBatch,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
@@ -31,6 +51,8 @@ const LIST_SQL = "SELECT version FROM supabase_migrations.schema_migrations ORDE
 const READ_VAULT = "SELECT id, name FROM vault.secrets WHERE name = ANY($1)";
 
 interface SetupOpts {
+  /** Runs the real `DbConfigResolver` and linked-project cache against `workdir`. */
+  readonly realLayers?: boolean;
   readonly format?: OutputFormat;
   readonly args?: ReadonlyArray<string>;
   readonly remote?: ReadonlyArray<string>;
@@ -108,11 +130,23 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     promptProjectRef: () => Effect.succeed(VALID_REF),
   });
 
+  const http = recordingProjectHttpClient(VALID_REF);
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
-    cache.layer,
-    resolver,
+    opts.realLayers === true
+      ? realLinkedProjectCache({
+          httpClient: http.layer,
+          cliSettings: mockCommandSettings({ workdir }),
+        })
+      : cache.layer,
+    opts.realLayers === true
+      ? realDbConfigResolver({
+          workdir,
+          dbConnection: connection,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : resolver,
     connection,
     projectRef,
     mockCommandSettings({ workdir }),
@@ -120,7 +154,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     BunServices.layer,
   );
-  return { layer, out, telemetry, execs, queries, cache };
+  return { layer, http, out, telemetry, execs, queries, cache };
 }
 
 const flags = (over: Partial<MigrationUpFlags> = {}): MigrationUpFlags => ({
@@ -310,6 +344,25 @@ describe("migration up", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect(
+    "warns once on stderr that SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is removed in v3",
+    () => {
+      const { layer, out } = setup(tmp.current);
+      return Effect.gen(function* () {
+        yield* writeProjectFile(
+          tmp.current,
+          ".env",
+          "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION=17.11.0.002\n",
+        );
+        yield* migrationUp(flags());
+        const warning =
+          "WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.";
+        expect(out.stderrText.split("\n").filter((line) => line === warning)).toHaveLength(1);
+        expect(out.stdoutText).not.toContain(warning);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("surfaces an apply failure", () => {
     const { layer } = setup(tmp.current, { remote: [], failApply: true });
     return Effect.gen(function* () {
@@ -317,5 +370,108 @@ describe("migration up", () => {
       const error = yield* migrationUp(flags()).pipe(Effect.flip);
       expect(error).toBeInstanceOf(MigrationApplyError);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("mints a login role and fills the cache through the real resolver and cache", () => {
+    const ctx = setup(tmp.current, {
+      args: ["migration", "up", "--linked", "--project-ref", VALID_REF],
+      realLayers: true,
+      remote: [],
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* seed(tmp.current, "20240101000000_a.sql");
+      yield* migrationUp(flags({ linked: true, local: false, projectRef: Option.some(VALID_REF) }));
+      expect(insertedVersions(ctx.queries)).toEqual(["20240101000000"]);
+      expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+        `POST /v1/projects/${VALID_REF}/cli/login-role`,
+      ]);
+      expect(ctx.http.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "migration up",
+        activeFlags: { linked: true, "project-ref": VALID_REF },
+        requests: [...asRecordedRequests(requests), ...ctx.http.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ctx.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("--linked=false still reaches the linked database through the real resolver", () => {
+    const ctx = setup(tmp.current, {
+      args: ["migration", "up", "--linked=false", "--project-ref", VALID_REF],
+      realLayers: true,
+      remote: [],
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* migrationUp(flags({ linked: false, projectRef: Option.some(VALID_REF) }));
+      expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+        `POST /v1/projects/${VALID_REF}/cli/login-role`,
+      ]);
+      expect(ctx.http.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "migration up",
+        activeFlags: { linked: false, "project-ref": VALID_REF },
+        requests: [...asRecordedRequests(requests), ...ctx.http.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ctx.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("defaults to the local target and makes no Management API request", () => {
+    const ctx = setup(tmp.current, {
+      args: ["migration", "up"],
+      realLayers: true,
+      remote: [],
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, () => undefined);
+      yield* seed(tmp.current, "20240101000000_a.sql");
+      yield* migrationUp(flags());
+      expect(insertedVersions(ctx.queries)).toEqual(["20240101000000"]);
+      expect(requests).toEqual([]);
+      expect(ctx.http.calls).toEqual([]);
+      assertPermissionDrift({
+        command: "migration up",
+        requests: [],
+        exact: true,
+      });
+      expect(() =>
+        assertPermissionDrift({
+          command: "migration up",
+          requests: [
+            {
+              method: "POST",
+              url: `https://api.supabase.com/v1/projects/${VALID_REF}/cli/login-role`,
+            },
+          ],
+        }),
+      ).toThrow(/condition doesn't hold/);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ctx.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
   });
 });

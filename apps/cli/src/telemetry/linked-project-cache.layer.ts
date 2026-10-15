@@ -1,6 +1,6 @@
-import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
+import { makeApiClient } from "@supabase/api/effect";
+import { Effect, FileSystem, Layer, Option, Path, type Redacted } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import { CommandCredentials } from "../auth/command-credentials.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
@@ -21,23 +21,13 @@ export const linkedProjectCache = block("linked-project-cache", [
   },
 ]);
 
-function readString(obj: unknown, key: string): string {
-  if (typeof obj === "object" && obj !== null && key in obj) {
-    const value = (obj as Record<string, unknown>)[key];
-    return typeof value === "string" ? value : "";
-  }
-  return "";
-}
-
 /**
  * Writes `<workdir>/supabase/.temp/linked-project.json` after a `--project-ref` has been
  * resolved. No write if the cache already exists (`supabase link` is authoritative), and any
  * API/filesystem/parse error is swallowed.
  *
- * Bypasses `CommandPlatformApi`'s strict schema decode by calling the API directly with
- * `HttpClient`. The generated `V1ProjectWithDatabaseResponse` schema enforces a 20-char
- * project-ref length that the cli-e2e replay fixtures (which store `__PROJECT_REF__`
- * placeholders) cannot satisfy; the cache only needs four string fields and doesn't validate them.
+ * Builds its own typed client per fill rather than consuming `CommandPlatformApi`, which
+ * requires a stored token at construction; this layer skips quietly when there is none.
  *
  * Also skips the write when `<workdir>/supabase/.temp/project-ref` exists, is non-empty, and
  * names a different ref than `ref` — see the inline comment at the check itself for the failure
@@ -97,27 +87,29 @@ export const linkedProjectCacheLayer = Layer.effect(
               ? cliSettings.accessToken
               : yield* credentials.getAccessToken);
           if (Option.isNone(tokenOpt)) return;
-          const token = Redacted.value(tokenOpt.value);
 
-          const request = HttpClientRequest.get(
-            `${apiUrl ?? cliSettings.apiUrl}/v1/projects/${ref}`,
-          ).pipe(
-            HttpClientRequest.setHeader("Authorization", `Bearer ${token}`),
-            HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
-          );
-          const response = yield* httpClient.execute(request);
-          // Stitch identity from the response before the status gate, regardless of status.
-          yield* stitch(response);
-          yield* Effect.annotateCurrentSpan({ "http.response.status_code": response.status });
-          if (response.status !== 200) return;
-
-          const body = yield* response.json;
+          const api = yield* makeApiClient(
+            {
+              baseUrl: apiUrl ?? cliSettings.apiUrl,
+              accessToken: tokenOpt.value,
+              userAgent: cliSettings.userAgent,
+            },
+            {
+              transformClient: (client) =>
+                Effect.succeed(
+                  HttpClient.transform(client, (requestEffect) =>
+                    requestEffect.pipe(Effect.tap(stitch)),
+                  ),
+                ),
+            },
+          ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+          const project = yield* api.v1.getProject({ ref }, { retry: { maxRetries: 0 } });
 
           const linked = {
-            ref: readString(body, "ref"),
-            name: readString(body, "name"),
-            organization_id: readString(body, "organization_id"),
-            organization_slug: readString(body, "organization_slug"),
+            ref: project.ref,
+            name: project.name,
+            organization_id: project.organization_id,
+            organization_slug: project.organization_slug,
           };
 
           yield* fs.makeDirectory(path.dirname(cachePath), { recursive: true });

@@ -176,6 +176,24 @@ export const provideEnv = (env: Record<string, string | undefined>) =>
     ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true }),
   );
 
+/** A project as `GET /v1/projects/{ref}` returns it, with every field the typed client's decoder requires. */
+export const projectResponse = (ref: string) => ({
+  id: ref,
+  ref,
+  name: "alpha",
+  organization_id: "org-123",
+  organization_slug: "acme",
+  region: "us-east-1",
+  created_at: "2026-05-27T01:02:03Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.alpha.supabase.co",
+    version: "15.1",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
+});
+
 /**
  * An `HttpClient` that records each request and answers the project lookup for `ref`, which is
  * what the real linked-project cache fetches.
@@ -191,12 +209,7 @@ export function recordingProjectHttpClient(ref: string) {
         HttpClientResponse.fromWeb(
           request,
           found
-            ? Response.json({
-                ref,
-                name: "alpha",
-                organization_id: "org-123",
-                organization_slug: "acme",
-              })
+            ? Response.json(projectResponse(ref))
             : Response.json({ message: "unexpected request" }, { status: 404 }),
         ),
       );

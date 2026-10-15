@@ -15,7 +15,6 @@ import {
   renderInfoMarkdown,
   renderListProviders,
   renderSingleProvider,
-  toSsoProviderView,
   validateUuid,
 } from "./sso.format.ts";
 
@@ -241,20 +240,5 @@ describe("formatSsoMetadataXml (xmlfmt parity port)", () => {
       "    </IDPSSODescriptor>\n" +
       "  </EntityDescriptor>";
     expect(formatSsoMetadataXml(saml, "  ", "  ")).toBe(expected);
-  });
-});
-
-describe("toSsoProviderView coercion", () => {
-  it("returns an empty view for non-object inputs", () => {
-    expect(toSsoProviderView(null).id).toBe("");
-    expect(toSsoProviderView("string").id).toBe("");
-  });
-
-  it("preserves arbitrary attribute_mapping data (incl. user keys)", () => {
-    const view = toSsoProviderView({
-      id: "abc",
-      saml: { attribute_mapping: { keys: { a: { default: 3 } } } },
-    });
-    expect(view.saml?.attribute_mapping).toEqual({ keys: { a: { default: 3 } } });
   });
 });

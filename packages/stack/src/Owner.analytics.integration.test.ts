@@ -348,7 +348,7 @@ it.live(
         const storedIds = (ids: ReadonlyArray<string>) =>
           Effect.gen(function* () {
             const table = yield* eventsTable(internalDatabaseUrl, source);
-            if (table === undefined) return [];
+            if (table === undefined) return undefined;
             const rows = yield* query<{ readonly id: string }>(
               internalDatabaseUrl,
               `SELECT id::text AS id FROM ${table} WHERE id IN (${ids.map((id) => `'${id}'`).join(", ")})`,
@@ -359,10 +359,10 @@ it.live(
         const awaitStored = (label: string, id: string, attempts: number) =>
           storedIds([id]).pipe(
             Effect.filterOrFail(
-              (rows) => rows.length > 0,
-              () =>
+              (rows) => rows !== undefined && rows.length > 0,
+              (rows) =>
                 new NotStoredError({
-                  message: `the ${label} event ${id} was not stored after ${attempts + 1} polls`,
+                  message: `the ${label} event ${id} was not stored after ${attempts + 1} polls: ${rows === undefined ? "no events table" : "no row"}`,
                 }),
             ),
             Effect.retry({ schedule: Schedule.spaced("500 millis"), times: attempts }),

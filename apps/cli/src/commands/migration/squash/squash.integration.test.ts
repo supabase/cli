@@ -5,11 +5,20 @@ import { Config, ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path }
 import { PlatformError, SystemError } from "effect/PlatformError";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { vi } from "vitest";
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
+);
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
   FAKE_SHADOW_CONTAINER_ID,
   VALID_REF,
+  VALID_TOKEN,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockShadowContainerCliSpawner,
@@ -26,6 +35,17 @@ import {
   mockStdin,
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
@@ -210,6 +230,8 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
 );
 
 interface SetupOpts {
+  /** Runs the real `DbConfigResolver` and linked-project cache against `workdir`. */
+  readonly realLayers?: boolean;
   readonly format?: OutputFormat;
   readonly isTTY?: boolean;
   readonly pipedInput?: string;
@@ -345,6 +367,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     http: () => Effect.void,
   });
 
+  const http = recordingProjectHttpClient(VALID_REF);
   const baseLayer = Layer.mergeAll(
     unusedStackServices,
     // Listed first so every fake service layer below overrides it; Layer.mergeAll is
@@ -352,8 +375,19 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     BunServices.layer,
     out.layer,
     telemetry.layer,
-    cache.layer,
-    resolver,
+    opts.realLayers === true
+      ? realLinkedProjectCache({
+          httpClient: http.layer,
+          cliSettings: mockCommandSettings({ workdir }),
+        })
+      : cache.layer,
+    opts.realLayers === true
+      ? realDbConfigResolver({
+          workdir,
+          dbConnection: connection,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : resolver,
     connection,
     projectRef,
     spawner.layer,
@@ -389,6 +423,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   return {
     layer,
+    http,
     out,
     telemetry,
     cache,
@@ -1379,6 +1414,110 @@ describe("migration squash", () => {
         }).pipe(Effect.provide(s.layer));
       },
     );
+    it.effect("mints a login role and fills the cache through the real resolver and cache", () => {
+      const s = setupRemote({
+        args: ["migration", "squash", "--linked", "--project-ref", VALID_REF],
+        confirm: true,
+        realLayers: true,
+      });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+        yield* seedMigration(tmp.current, "0_init.sql");
+        yield* migrationSquash(
+          flags({ linked: true, local: false, projectRef: Option.some(VALID_REF) }),
+        );
+        expect(s.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations"))).toBe(true);
+        expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+          `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+          `POST /v1/projects/${VALID_REF}/cli/login-role`,
+        ]);
+        expect(s.http.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+        assertPermissionDrift({
+          command: "migration squash",
+          activeFlags: { linked: true, "project-ref": VALID_REF },
+          requests: [...asRecordedRequests(requests), ...s.http.calls],
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(s.layer),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    });
+
+    it.effect("fetches the pooler config but mints no login role when --password is given", () => {
+      const s = setupRemote({
+        args: ["migration", "squash", "--linked", "--password", "pw", "--project-ref", VALID_REF],
+        confirm: true,
+        realLayers: true,
+      });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+        yield* seedMigration(tmp.current, "0_init.sql");
+        yield* migrationSquash(
+          flags({
+            linked: true,
+            local: false,
+            password: Option.some("pw"),
+            projectRef: Option.some(VALID_REF),
+          }),
+        );
+        expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+          `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+        ]);
+        assertPermissionDrift({
+          command: "migration squash",
+          activeFlags: { linked: true, password: true, "project-ref": VALID_REF },
+          requests: [...asRecordedRequests(requests), ...s.http.calls],
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(s.layer),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    });
+  });
+
+  describe("real resolver on the local target", () => {
+    it.effect("defaults to the local target and makes no Management API request", () => {
+      const s = setup(tmp.current, { args: ["migration", "squash"], realLayers: true });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        yield* stubManagementApi(requests, () => undefined);
+        yield* seedMigration(tmp.current, "0_init.sql");
+        yield* migrationSquash(flags());
+        expect(stdout(s.out)).toContain("Finished supabase migration squash.");
+        expect(requests).toEqual([]);
+        expect(s.http.calls).toEqual([]);
+        assertPermissionDrift({
+          command: "migration squash",
+          requests: [],
+          exact: true,
+        });
+        expect(() =>
+          assertPermissionDrift({
+            command: "migration squash",
+            requests: [
+              {
+                method: "POST",
+                url: `https://api.supabase.com/v1/projects/${VALID_REF}/cli/login-role`,
+              },
+            ],
+          }),
+        ).toThrow(/condition doesn't hold/);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(s.layer),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    });
   });
 
   describe("output formats", () => {

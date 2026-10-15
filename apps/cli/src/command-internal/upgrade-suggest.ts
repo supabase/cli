@@ -2,13 +2,11 @@ import { styleText } from "node:util";
 
 import type { SupabaseApiError } from "@supabase/api/effect";
 import { Effect, Option, type Redacted } from "effect";
-import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { resolveAccessToken } from "./resolve-token.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import {
   EventUpgradeSuggested,
@@ -92,10 +90,7 @@ export const gateMapError =
  * Suggests an upgrade when a request fails with a plan-gate error. Never
  * fails the caller.
  *
- * The fallback bypasses the typed API client, whose strict response schemas
- * reject the cli-e2e replay fixtures' placeholder refs (same workaround as
- * `linked-project-cache.layer.ts`). Returns whether the feature was
- * confirmed plan-gated.
+ * Returns whether the feature was confirmed plan-gated.
  */
 export const suggestUpgrade = Effect.fn("UpgradeSuggest.check")(function* (opts: {
   readonly projectRef: string;
@@ -118,8 +113,8 @@ export const suggestUpgrade = Effect.fn("UpgradeSuggest.check")(function* (opts:
    * Overrides the bearer token of the fallback GETs, complementing `apiUrl`:
    * a caller passing a reconciled `apiUrl` must also pass that profile's
    * token, or the stale profile's token would reach the reconciled host.
-   * `Some` uses that token, `None` sends unauthenticated, `undefined`
-   * resolves from the service.
+   * `Some` uses that token, `None` skips the fallback (the client cannot send
+   * an unauthenticated request), `undefined` uses the client's own token.
    */
   readonly accessToken?: Option.Option<Redacted.Redacted<string>>;
   /** Set false for call sites that must not fire `EventUpgradeSuggested` (vanity check-availability). */
@@ -132,7 +127,6 @@ export const suggestUpgrade = Effect.fn("UpgradeSuggest.check")(function* (opts:
   const output = yield* Output;
   const analytics = yield* Analytics;
   const cliSettings = yield* CommandSettings;
-  const httpClient = yield* HttpClient.HttpClient;
   yield* Effect.annotateCurrentSpan("upgrade.gated", false);
 
   let gate:
@@ -156,60 +150,36 @@ export const suggestUpgrade = Effect.fn("UpgradeSuggest.check")(function* (opts:
       return false;
     }
 
-    const tokenOpt =
-      opts.accessToken ??
-      (yield* resolveAccessToken.pipe(
-        Effect.catchTag("PlatformError", () => Effect.succeed(Option.none())),
-      ));
-    const authHeader: (
-      req: HttpClientRequest.HttpClientRequest,
-    ) => HttpClientRequest.HttpClientRequest = Option.isSome(tokenOpt)
-      ? HttpClientRequest.bearerToken(tokenOpt.value)
-      : (req) => req;
+    if (opts.accessToken !== undefined && Option.isNone(opts.accessToken)) {
+      return false;
+    }
 
-    const apiUrl = opts.apiUrl ?? cliSettings.apiUrl;
-    const projectReq = HttpClientRequest.get(`${apiUrl}/v1/projects/${opts.projectRef}`).pipe(
-      authHeader,
-      HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
-    );
-    const projectResp = yield* httpClient.execute(projectReq).pipe(Effect.option);
-    if (projectResp._tag === "None" || projectResp.value.status !== 200) {
+    const api = yield* CommandPlatformApi;
+    const requestOptions = {
+      baseUrl: opts.apiUrl,
+      accessToken: opts.accessToken === undefined ? undefined : opts.accessToken.value,
+    };
+    const project = yield* api.v1
+      .getProject({ ref: opts.projectRef }, requestOptions)
+      .pipe(Effect.option);
+    if (Option.isNone(project)) {
       return false;
     }
-    const projectBody = yield* projectResp.value.json.pipe(Effect.option);
-    if (projectBody._tag === "None") {
-      return false;
-    }
-    const orgSlug = readString(projectBody.value, "organization_slug");
+    const orgSlug = project.value.organization_slug;
     if (orgSlug.length === 0) {
       return false;
     }
 
-    const entReq = HttpClientRequest.get(`${apiUrl}/v1/organizations/${orgSlug}/entitlements`).pipe(
-      authHeader,
-      HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
-    );
-    const entResp = yield* httpClient.execute(entReq).pipe(Effect.option);
-    if (entResp._tag === "None" || entResp.value.status !== 200) {
-      return false;
-    }
-    const entBody = yield* entResp.value.json.pipe(Effect.option);
-    if (entBody._tag === "None") {
-      return false;
-    }
-    const entitlements = (entBody.value as { entitlements?: unknown }).entitlements;
-    if (!Array.isArray(entitlements)) {
+    const entitlements = yield* api.v1
+      .getOrganizationEntitlements({ slug: orgSlug }, requestOptions)
+      .pipe(Effect.option);
+    if (Option.isNone(entitlements)) {
       return false;
     }
 
-    const gated = entitlements.some((entry: unknown) => {
-      if (typeof entry !== "object" || entry === null) return false;
-      const feature = (entry as { feature?: unknown }).feature;
-      if (typeof feature !== "object" || feature === null) return false;
-      const key = (feature as { key?: unknown }).key;
-      const hasAccess = (entry as { hasAccess?: unknown }).hasAccess;
-      return key === opts.featureKey && hasAccess === false;
-    });
+    const gated = entitlements.value.entitlements.some(
+      (entry) => entry.feature.key === opts.featureKey && entry.hasAccess === false,
+    );
     if (!gated) {
       return false;
     }

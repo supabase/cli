@@ -14,7 +14,7 @@
     "db_pass": "password123",
     "desired_instance_size": "micro",
     "name": "my-project",
-    "organization_slug": "__PROJECT_REF__",
+    "organization_slug": "replayfixtureprojref",
     "region": "us-east-1"
   }
 }

@@ -61,9 +61,7 @@ function sortKeysDeep(value: unknown): unknown {
  * Serializes an outbound API request body with sorted keys, Go string escaping, no indentation,
  * and no trailing newline, matching `json.Marshal`'s struct output.
  *
- * Used on the raw-HTTP code path (`sso add`/`sso update`) whose request bodies the cli-e2e replay
- * server compares by string equality against recorded bodies, so key order and escaping must
- * match exactly. {@link encodeGoJson} is the parallel for human-facing `--output json`.
+ * {@link encodeGoJson} is the parallel for human-facing `--output json`.
  */
 export function encodeGoStructJsonBody(value: unknown): string {
   return encodeGoJsonCompact(sortKeysDeep(value));

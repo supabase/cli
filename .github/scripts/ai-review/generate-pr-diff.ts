@@ -7,6 +7,8 @@ export interface GeneratePrDiffOptions {
   prNumber: number;
   baseRef: string;
   outputPath: string;
+  /** Commit to diff instead of the PR's current head, so a push during the review is not reviewed unseen. */
+  headSha?: string;
 }
 
 function runGit(repositoryPath: string, args: string[]): void {
@@ -22,19 +24,22 @@ function runGit(repositoryPath: string, args: string[]): void {
   }
 }
 
-function validateInputs(prNumber: number, baseRef: string): void {
+function validateInputs(prNumber: number, baseRef: string, headSha?: string): void {
   if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
     throw new Error(`Invalid PR number: ${prNumber}`);
   }
   if (baseRef.length === 0) {
     throw new Error("Base ref must not be empty");
   }
+  if (headSha !== undefined && !/^[0-9a-f]{40}$/.test(headSha)) {
+    throw new Error(`Invalid head SHA: ${headSha}`);
+  }
 }
 
 export function generatePrDiff(options: GeneratePrDiffOptions): void {
   const repositoryPath = resolve(options.repositoryPath);
   const outputPath = resolve(options.outputPath);
-  validateInputs(options.prNumber, options.baseRef);
+  validateInputs(options.prNumber, options.baseRef, options.headSha);
   runGit(repositoryPath, ["check-ref-format", `refs/heads/${options.baseRef}`]);
 
   const baseRef = "refs/ai-review/base";
@@ -45,7 +50,7 @@ export function generatePrDiff(options: GeneratePrDiffOptions): void {
     "--no-tags",
     "origin",
     `+refs/heads/${options.baseRef}:${baseRef}`,
-    `+refs/pull/${options.prNumber}/head:${headRef}`,
+    `+${options.headSha ?? `refs/pull/${options.prNumber}/head`}:${headRef}`,
   ]);
 
   mkdirSync(dirname(outputPath), { recursive: true });
@@ -78,14 +83,15 @@ export function generatePrDiff(options: GeneratePrDiffOptions): void {
 }
 
 function parseArguments(args: string[]): GeneratePrDiffOptions {
-  if (args.length !== 2) {
-    throw new Error("Usage: generate-pr-diff.ts <pr-number> <base-ref>");
+  if (args.length < 2 || args.length > 3) {
+    throw new Error("Usage: generate-pr-diff.ts <pr-number> <base-ref> [head-sha]");
   }
   return {
     repositoryPath: process.cwd(),
     prNumber: Number(args[0]),
     baseRef: args[1] ?? "",
     outputPath: "/tmp/ai-review/pr.diff",
+    headSha: args[2] || undefined,
   };
 }
 

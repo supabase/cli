@@ -7,7 +7,11 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import { checkDbToml, loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
+import {
+  checkDbToml,
+  loadProjectEnv,
+  warnDeprecatedOrioleDBVersionEnv,
+} from "../../../command-internal/db-config.toml-read.ts";
 import { dbPushCore } from "../../../command-internal/db-push-core.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
@@ -85,6 +89,7 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
+    yield* warnDeprecatedOrioleDBVersionEnv(toml.envLookup);
 
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,

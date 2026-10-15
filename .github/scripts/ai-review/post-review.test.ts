@@ -10,6 +10,7 @@ import {
   type MarkedEntry,
   type MergedFinding,
   type MergedReview,
+  parseAiReviewState,
   parseDiffAnchors,
   partitionFindings,
   postConsolidatedReview,
@@ -535,6 +536,8 @@ describe("renderReviewBody", () => {
     trigger: "auto",
     runUrl: "https://example.com/run/9",
     modelsFooter: "`claude-fable-5` + `gpt-5.6-sol`",
+    headSha: "a".repeat(40),
+    reviewsComplete: true,
   };
 
   test("shows 'No issues found.' when nothing was posted", () => {
@@ -672,6 +675,8 @@ describe("buildReviewPayload", () => {
     trigger: "manual",
     runUrl: "https://example.com/run/1",
     modelsFooter: "`claude-fable-5` + `gpt-5.6-sol`",
+    headSha: "a".repeat(40),
+    reviewsComplete: true,
   };
 
   test("event is always COMMENT", () => {
@@ -684,6 +689,29 @@ describe("buildReviewPayload", () => {
     const review = makeMergedReview({ findings: [] });
     const payload = buildReviewPayload(review, anchors, footer);
     expect(payload.body).toContain(AI_REVIEW_MARKER);
+  });
+
+  test("posts on the reviewed head and records every unrefuted finding, inline or not", () => {
+    const review = makeMergedReview({
+      findings: [
+        makeFinding({ id: "inline", file: "file.ts", line: 10 }),
+        makeFinding({ id: "outside", file: "file.ts", line: 99, claim: "x".repeat(70_000) }),
+        makeFinding({ id: "refuted", adjudication: { verdict: "refuted", reason: "No." } }),
+        makeFinding({ id: "advisory", category: "next-impact" }),
+      ],
+    });
+    const payload = buildReviewPayload(review, anchors, { ...footer, reviewsComplete: false });
+
+    expect(payload.commit_id).toBe(footer.headSha);
+    expect(payload.comments).toHaveLength(1);
+    expect(payload.body).toContain("truncated");
+    expect(payload.body).not.toContain(footer.modelsFooter);
+    expect(payload.body).toContain(AI_REVIEW_MARKER);
+    expect(parseAiReviewState(payload.body)).toEqual({
+      head: "a".repeat(40),
+      complete: false,
+      findings: 3,
+    });
   });
 
   test("the injected models footer appears in the body verbatim", () => {
@@ -832,6 +860,8 @@ describe("next-impact findings", () => {
     trigger: "auto",
     runUrl: "https://example.com/run/2",
     modelsFooter: "`claude-fable-5` + `gpt-5.6-sol`",
+    headSha: "a".repeat(40),
+    reviewsComplete: true,
   };
   const anchors = parseDiffAnchors(SINGLE_HUNK_DIFF);
 
@@ -883,6 +913,8 @@ describe("foldInlineCommentsIntoBody", () => {
     trigger: "manual",
     runUrl: "https://example.com/run/1",
     modelsFooter: "`claude-fable-5` + `gpt-5.6-sol`",
+    headSha: "a".repeat(40),
+    reviewsComplete: true,
   };
 
   test("returns the same payload unchanged when there are no inline comments", () => {
@@ -1047,6 +1079,8 @@ describe("post flow via injected ReviewIo", () => {
     trigger: "manual",
     runUrl: "https://example.com/run/1",
     modelsFooter: "`claude-fable-5` + `gpt-5.6-sol`",
+    headSha: "a".repeat(40),
+    reviewsComplete: true,
   };
 
   function makeReviewIo(
@@ -1208,17 +1242,28 @@ describe("post flow via injected ReviewIo", () => {
     expect(postedReviews[1]?.body).toContain("Inline comments (GitHub rejected");
   });
 
-  test("never retries with the fold when there were no inline comments to fold", async () => {
+  test("retries a rejected pinned review on the current head, still naming the reviewed commit", async () => {
     const finding = makeFinding({ file: "file.ts", line: 999 }); // not anchorable -> body-only
     const review = makeMergedReview({ findings: [finding] });
-    const { io, postedReviews } = makeReviewIo({
-      postReviewStatuses: [422],
-    });
+    const { io, postedReviews } = makeReviewIo({ postReviewStatuses: [422, 200] });
 
-    await expect(postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer)).rejects.toThrow(
-      /Review POST failed \(status 422\)/,
-    );
+    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
+
+    expect(postedReviews.map((posted) => posted.commit_id)).toEqual([footer.headSha, undefined]);
+    expect(parseAiReviewState(postedReviews[1]?.body ?? "")?.head).toBe(footer.headSha);
+  });
+
+  test("an older workflow's review carries no state, so it never retries a body-only 422", async () => {
+    const finding = makeFinding({ file: "file.ts", line: 999 });
+    const review = makeMergedReview({ findings: [finding] });
+    const { io, postedReviews } = makeReviewIo({ postReviewStatuses: [422] });
+    const unpinned = { ...footer, headSha: undefined, reviewsComplete: undefined };
+
+    await expect(
+      postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, unpinned),
+    ).rejects.toThrow(/Review POST failed \(status 422\)/);
     expect(postedReviews).toHaveLength(1);
+    expect(parseAiReviewState(postedReviews[0]?.body ?? "")).toBeNull();
   });
 
   test("throws with GitHub's response body when the retry also 422s, instead of swallowing it", async () => {
