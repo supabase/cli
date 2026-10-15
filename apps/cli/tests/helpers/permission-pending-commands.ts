@@ -10,8 +10,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
 
   "init",
 
-  "pull",
-
   "stack destroy",
   "stack list",
   "stack logs",
