@@ -18,7 +18,7 @@ import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
-import { dbPull } from "./pull.handler.ts";
+import { dbPull, resolveRemovedExperimental } from "./pull.handler.ts";
 import { dbPullRuntimeLayer } from "./pull.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 
@@ -93,6 +93,9 @@ export type DbPullFlags = CliCommand.Command.Config.Infer<typeof config>;
 const DECLARATIVE_SUGGESTION =
   "Use --declarative to pull the declarative schema. The diff engine is chosen with --diff-engine or [experimental.pgdelta] enabled in config.toml.";
 
+const EXPERIMENTAL_SUGGESTION =
+  "Use --declarative to pull per-object schema files, or pass --experimental=false (or unset SUPABASE_EXPERIMENTAL) for a migration pull.";
+
 // Rejected on a credential-free runtime: `dbPullRuntimeLayer` loads the profile and command
 // settings eagerly, so building it first could fail before the removal message.
 const removedFlagLayer = Layer.mergeAll(commandRuntimeLayer(["db", "pull"]), telemetryStateLayer);
@@ -141,19 +144,36 @@ export const dbPullCommand = Command.make("pull", config).pipe(
       { default: "linked" },
     ),
   ),
-  Command.withHandler((flags) =>
-    Option.isSome(flags.usePgDelta)
-      ? removedFlag("--use-pg-delta", DECLARATIVE_SUGGESTION).pipe(
-          withCommandTelemetry(telemetryOptions(flags)),
-          withJsonErrorHandling,
-          Effect.provide(removedFlagLayer),
-        )
-      : dbPull(flags).pipe(
-          withCommandTelemetry(telemetryOptions(flags)),
-          withJsonErrorHandling,
-          Effect.provide(dbPullRuntimeLayer),
-        ),
-  ),
+  Command.withHandler((flags) => {
+    const rejectRemoved = <E, R>(rejection: Effect.Effect<never, E, R>) =>
+      rejection.pipe(
+        withCommandTelemetry(telemetryOptions(flags)),
+        withJsonErrorHandling,
+        Effect.provide(removedFlagLayer),
+      );
+
+    if (Option.isSome(flags.usePgDelta)) {
+      return rejectRemoved(removedFlag("--use-pg-delta", DECLARATIVE_SUGGESTION));
+    }
+    return resolveRemovedExperimental(flags).pipe(
+      Effect.matchEffect({
+        onFailure: (error) => rejectRemoved(Effect.fail(error)),
+        onSuccess: ({ experimental, projectEnv }) =>
+          experimental
+            ? rejectRemoved(
+                removedFlag(
+                  "The --experimental structured-dump mode of db pull",
+                  EXPERIMENTAL_SUGGESTION,
+                ),
+              )
+            : dbPull(flags, projectEnv).pipe(
+                withCommandTelemetry(telemetryOptions(flags)),
+                withJsonErrorHandling,
+                Effect.provide(dbPullRuntimeLayer),
+              ),
+      }),
+    );
+  }),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
 );

@@ -215,9 +215,9 @@ Both fail with `RemovedSurfaceError` (exit 1). Telemetry records `cli_command_ex
   `--diff-engine migra`, `[experimental.pgdelta] enabled = false` or its env var.
 - The `--experimental` structured-dump mode is the global `--experimental` flag,
   `SUPABASE_EXPERIMENTAL` in the shell, or `SUPABASE_EXPERIMENTAL` in the project `.env` resolving
-  true (flag > shell env > project `.env`) without `--declarative`. It is rejected after the
-  profile and project `.env*` load, so a malformed `.env` fails first, but before any config,
-  database or network work. Message: "The --experimental structured-dump mode of db pull was
+  true (flag > shell env > project `.env`) without `--declarative`. It is rejected
+  before the profile or credentials load, after only the project `.env*` read from the workdir, so a
+  malformed `.env` fails first, but before any config, database or network work. Message: "The --experimental structured-dump mode of db pull was
   removed." Suggestion: "Use --declarative to pull per-object schema files, or pass
   --experimental=false (or unset SUPABASE_EXPERIMENTAL) for a migration pull."
   `--experimental --declarative` runs the declarative export without an error, and an explicit

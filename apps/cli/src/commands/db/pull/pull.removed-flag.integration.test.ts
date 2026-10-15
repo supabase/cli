@@ -144,6 +144,27 @@ describe("db pull removed surfaces through command dispatch", () => {
     }),
   );
 
+  it.live("rejects --experimental with a missing profile and no credentials", () =>
+    Effect.gen(function* () {
+      const { exit } = yield* runDbPull(["--experimental"], {
+        env: { SUPABASE_PROFILE: "missing-profile" },
+      });
+
+      expect(removedError(exit).message).toBe(EXPERIMENTAL_MESSAGE);
+    }),
+  );
+
+  it.live("rejects SUPABASE_EXPERIMENTAL set only in supabase/.env with a missing profile", () =>
+    Effect.gen(function* () {
+      const { exit } = yield* runDbPull([], {
+        env: { SUPABASE_PROFILE: "missing-profile" },
+        files: { "supabase/.env": "SUPABASE_EXPERIMENTAL=1\n" },
+      });
+
+      expect(removedError(exit).message).toBe(EXPERIMENTAL_MESSAGE);
+    }),
+  );
+
   it.live("a missing profile fails plain db pull with a profile load error", () =>
     Effect.gen(function* () {
       const { exit } = yield* runDbPull([], { env: { SUPABASE_PROFILE: "missing-profile" } });
@@ -222,6 +243,34 @@ describe("db pull removed surfaces through command dispatch", () => {
       }),
     );
   }
+
+  it.live(
+    "a migration name literally '--experimental=false' after -- does not suppress the env",
+    () =>
+      Effect.gen(function* () {
+        const { exit } = yield* runDbPull(["--", "--experimental=false"], {
+          env: { SUPABASE_EXPERIMENTAL: "true" },
+        });
+
+        expect(removedError(exit).message).toBe(EXPERIMENTAL_MESSAGE);
+      }),
+  );
+
+  it.live("rejects a repeated --experimental=false --experimental=true (last one wins)", () =>
+    Effect.gen(function* () {
+      const { exit } = yield* runDbPull(["--experimental=false", "--experimental=true"]);
+
+      expect(removedError(exit).message).toBe(EXPERIMENTAL_MESSAGE);
+    }),
+  );
+
+  it.live("rejects --experimental with --declarative=false", () =>
+    Effect.gen(function* () {
+      const { exit } = yield* runDbPull(["--experimental", "--declarative=false"]);
+
+      expect(removedError(exit).message).toBe(EXPERIMENTAL_MESSAGE);
+    }),
+  );
 
   it.live("rejects SUPABASE_EXPERIMENTAL set only in supabase/.env", () =>
     Effect.gen(function* () {

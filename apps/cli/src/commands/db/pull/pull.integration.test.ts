@@ -93,10 +93,6 @@ import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.ser
 import { PgDeltaEngine, PgDeltaEngineError } from "../shared/pgdelta-engine.service.ts";
 import type { DbPullFlags } from "./pull.command.ts";
 import { dbPull } from "./pull.handler.ts";
-import { RemovedSurfaceError } from "../../../command-internal/removed-command.ts";
-
-const EXPERIMENTAL_SUGGESTION =
-  "Use --declarative to pull per-object schema files, or pass --experimental=false (or unset SUPABASE_EXPERIMENTAL) for a migration pull.";
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
   HttpClient.HttpClient,
@@ -1725,66 +1721,6 @@ describe("db pull", () => {
     },
   );
 
-  const expectNothingRan = (s: ReturnType<typeof setup>) => {
-    expect(s.resolveCalls).toEqual([]);
-    expect(s.connectedDatabases).toEqual([]);
-    expect(s.engineCalls).toEqual([]);
-    expect(s.edgeCalls).toEqual([]);
-    expect(s.shadowSpawned).toEqual([]);
-    expect(s.cache.cached).toBe(false);
-  };
-
-  it.effect("rejects the global --experimental flag without --declarative", () => {
-    const s = setup(tmp.current, {
-      experimental: true,
-      edgeStdout: EXPORT_JSON,
-      args: ["db", "pull", "--experimental"],
-    });
-    return Effect.gen(function* () {
-      const error = yield* dbPull(flags()).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(RemovedSurfaceError);
-      expect(error).toMatchObject({
-        kind: "flag",
-        message: "The --experimental structured-dump mode of db pull was removed.",
-        suggestion: EXPERIMENTAL_SUGGESTION,
-      });
-      expectNothingRan(s);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("rejects SUPABASE_EXPERIMENTAL without --declarative", () => {
-    const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
-    return Effect.gen(function* () {
-      const error = yield* dbPull(flags({ diffEngine: Option.some("migra") })).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(RemovedSurfaceError);
-      expect(error).toMatchObject({ suggestion: EXPERIMENTAL_SUGGESTION });
-      expectNothingRan(s);
-    }).pipe(Effect.provide(s.layer), (body) =>
-      withConfigEnv({ SUPABASE_EXPERIMENTAL: "true" }, body),
-    );
-  });
-
-  it.effect("rejects SUPABASE_EXPERIMENTAL set only in supabase/.env", () => {
-    const s = setup(tmp.current, {
-      edgeStdout: EXPORT_JSON,
-      files: { "supabase/.env": "SUPABASE_EXPERIMENTAL=true\n" },
-    });
-    return Effect.gen(function* () {
-      const error = yield* dbPull(flags()).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(RemovedSurfaceError);
-      expectNothingRan(s);
-    }).pipe(Effect.provide(s.layer), withEmptyConfigEnv);
-  });
-
-  it.effect("rejects --experimental with --declarative=false", () => {
-    const s = setup(tmp.current, { experimental: true, args: ["db", "pull", "--experimental"] });
-    return Effect.gen(function* () {
-      const error = yield* dbPull(flags({ declarative: Option.some(false) })).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(RemovedSurfaceError);
-      expectNothingRan(s);
-    }).pipe(Effect.provide(s.layer));
-  });
-
   it.effect("--experimental --declarative runs the declarative export without an error", () => {
     const s = setup(tmp.current, {
       experimental: true,
@@ -1814,52 +1750,6 @@ describe("db pull", () => {
         yield* dbPull(flags({ diffEngine: Option.some("migra") }));
         expect(streamText(s.out, "stderr")).toContain("Connecting to remote database...\n");
         expect(s.historyUpserts.length).toBe(1);
-      }).pipe(Effect.provide(s.layer), (body) =>
-        withConfigEnv({ SUPABASE_EXPERIMENTAL: "true" }, body),
-      );
-    },
-  );
-
-  it.effect(
-    "a migration name literally '--experimental=false' after -- does not suppress SUPABASE_EXPERIMENTAL",
-    () => {
-      const s = setup(tmp.current, { args: ["db", "pull", "--", "--experimental=false"] });
-      return Effect.gen(function* () {
-        const error = yield* dbPull(flags({ name: Option.some("--experimental=false") })).pipe(
-          Effect.flip,
-        );
-        expect(error).toBeInstanceOf(RemovedSurfaceError);
-        expectNothingRan(s);
-      }).pipe(Effect.provide(s.layer), (body) =>
-        withConfigEnv({ SUPABASE_EXPERIMENTAL: "true" }, body),
-      );
-    },
-  );
-
-  it.effect(
-    "a repeated --experimental=false --experimental=true is rejected (last one wins)",
-    () => {
-      const s = setup(tmp.current, {
-        args: ["db", "pull", "--experimental=false", "--experimental=true"],
-      });
-      return Effect.gen(function* () {
-        const error = yield* dbPull(flags()).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(RemovedSurfaceError);
-        expectNothingRan(s);
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
-
-  it.effect(
-    "a bare --password consumes the following token, so SUPABASE_EXPERIMENTAL is still rejected",
-    () => {
-      const s = setup(tmp.current, {
-        args: ["db", "pull", "--password", "--experimental=false"],
-      });
-      return Effect.gen(function* () {
-        const error = yield* dbPull(flags()).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(RemovedSurfaceError);
-        expectNothingRan(s);
       }).pipe(Effect.provide(s.layer), (body) =>
         withConfigEnv({ SUPABASE_EXPERIMENTAL: "true" }, body),
       );
