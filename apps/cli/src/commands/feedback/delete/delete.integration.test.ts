@@ -7,13 +7,16 @@ import {
   FeedbackClient,
 } from "../../../shared/feedback/feedback-client.service.ts";
 import { OutputFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import { withAccountTargetBanner } from "../../../../tests/helpers/account-consent.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import {
   mockContextualAnalytics,
   mockOutput,
   mockProcessControl,
-  mockStdin,
   mockTelemetryRuntime,
+  mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -100,7 +103,6 @@ function mockFeedbackClient(opts: MockClientOpts = {}) {
 function setupFeedbackDelete(
   opts: {
     output?: Parameters<typeof mockOutput>[0];
-    stdinIsTTY?: boolean;
     client?: MockClientOpts;
     yes?: boolean;
     /** Simulates the `-o`/`--output` global flag. */
@@ -119,7 +121,7 @@ function setupFeedbackDelete(
     out.layer,
     client.layer,
     telemetryState.layer,
-    mockStdin(opts.stdinIsTTY ?? true),
+    mockTty({ stdinIsTty: true, stdoutIsTty: true }),
     mockTelemetryRuntime({
       cliVersion: "9.9.9",
       distinctId: opts.distinctId,
@@ -133,6 +135,7 @@ function setupFeedbackDelete(
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(OutputFlag, Option.fromNullishOr(opts.outputFlag)),
     Layer.succeed(CliArgs, { args: [] }),
+    Layer.succeed(TargetPolicy, { group: "account", consent: "no" }),
     // Real filesystem: the handler reads `supabase/.temp/project-ref` from the
     // temp workdir, so this must not be stubbed out.
     BunServices.layer,
@@ -167,7 +170,7 @@ describe("feedback delete", () => {
       // The CLI never reads the row: nothing is shown ahead of the prompt.
       expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "info" }));
       expect(out.promptConfirmCalls).toEqual([
-        { message: "Permanently delete this feedback?", opts: { defaultValue: false } },
+        { message: "permanently delete this feedback?", opts: { defaultValue: false } },
       ]);
       expect(client.deleteCalls).toEqual([{ token: TOKEN, projectRef: undefined }]);
       expect(out.messages).toContainEqual(
@@ -198,69 +201,6 @@ describe("feedback delete", () => {
       yield* feedbackDelete(deleteArgs({ token: TOKEN.toUpperCase() }));
 
       expect(client.deleteCalls).toEqual([{ token: TOKEN, projectRef: undefined }]);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("cancels without deleting when the confirmation is declined", () => {
-    const { layer, client } = setupFeedbackDelete({
-      output: { promptConfirmResponses: [false] },
-    });
-    return Effect.gen(function* () {
-      const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
-
-      expect(error).toMatchObject({ _tag: "FeedbackDeleteCancelledError" });
-      expect(client.deleteCalls).toHaveLength(0);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--yes skips the confirmation prompt", () => {
-    const { layer, out, client } = setupFeedbackDelete({ yes: true });
-    return Effect.gen(function* () {
-      yield* feedbackDelete(deleteArgs());
-
-      expect(out.promptConfirmCalls).toHaveLength(0);
-      expect(client.deleteCalls).toHaveLength(1);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("refuses to confirm from piped stdin, even with a TTY stdout", () => {
-    // `printf 'y' | supabase feedback delete <token>` in a terminal: stdout is
-    // a TTY (so `output.interactive` is true) but the confirm would answer on a
-    // single keypress read from the pipe, deleting without --yes. It must fail
-    // as non-interactive instead of consuming the piped byte.
-    const { layer, out, client } = setupFeedbackDelete({ stdinIsTTY: false });
-    return Effect.gen(function* () {
-      const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
-
-      expect(error).toMatchObject({
-        _tag: "NonInteractiveError",
-        detail: "Cannot prompt for confirmation in a non-interactive context",
-        suggestion: "Pass --yes to delete without confirmation",
-      });
-      expect(out.promptConfirmCalls).toHaveLength(0);
-      expect(client.deleteCalls).toHaveLength(0);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("refuses to confirm when stdout is not interactive, even on a TTY stdin", () => {
-    const { layer, out, client } = setupFeedbackDelete({ output: { interactive: false } });
-    return Effect.gen(function* () {
-      const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
-
-      expect(error).toMatchObject({ _tag: "NonInteractiveError" });
-      expect(out.promptConfirmCalls).toHaveLength(0);
-      expect(client.deleteCalls).toHaveLength(0);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--yes deletes without prompting when stdin is piped", () => {
-    // The documented escape hatch for non-interactive contexts.
-    const { layer, out, client } = setupFeedbackDelete({ yes: true, stdinIsTTY: false });
-    return Effect.gen(function* () {
-      yield* feedbackDelete(deleteArgs());
-
-      expect(out.promptConfirmCalls).toHaveLength(0);
-      expect(client.deleteCalls).toHaveLength(1);
     }).pipe(Effect.provide(layer));
   });
 
@@ -432,9 +372,9 @@ describe("feedback delete", () => {
     return Effect.gen(function* () {
       yield* feedbackDelete(deleteArgs());
 
-      expect(out.rawChunks).toHaveLength(1);
-      expect(out.rawChunks[0]?.stream).toBe("stdout");
-      const payload: unknown = yield* jsonValue(out.rawChunks[0]?.text ?? "");
+      const stdoutChunks = out.rawChunks.filter((chunk) => chunk.stream === "stdout");
+      expect(stdoutChunks).toHaveLength(1);
+      const payload: unknown = yield* jsonValue(stdoutChunks[0]?.text ?? "");
       expect(payload).toEqual({ deleted: true });
       // No human-readable acknowledgement — stdout is payload-only.
       expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "info" }));
@@ -442,29 +382,9 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("refuses to prompt under -o json without --yes, even on a TTY", () => {
-    // `-o json` leaves output.format === "text", so the interactive text layer
-    // would render the clack confirm onto stdout ahead of the raw JSON payload.
-    // Machine mode must fail loudly instead — the same contract as
-    // --output-format json.
-    const { layer, out, client } = setupFeedbackDelete({ outputFlag: "json" });
-    return Effect.gen(function* () {
-      const error = yield* feedbackDelete(deleteArgs()).pipe(Effect.flip);
-
-      expect(error).toMatchObject({
-        _tag: "NonInteractiveError",
-        detail: "Cannot prompt for confirmation with -o json",
-        suggestion: "Pass --yes to delete without confirmation",
-      });
-      expect(out.promptConfirmCalls).toHaveLength(0);
-      expect(client.deleteCalls).toHaveLength(0);
-      expect(out.rawChunks).toHaveLength(0);
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("fails loudly in json mode without --yes instead of silently deleting", () => {
     const { layer, out, client, processControl } = setupFeedbackDeleteHandler({
-      output: { format: "json", promptConfirmFail: true },
+      output: { format: "json" },
     });
     return Effect.gen(function* () {
       yield* feedbackDeleteHandler(deleteArgs());
@@ -510,4 +430,16 @@ describe("feedback delete", () => {
       expect(Object.keys(events[0]?.properties.flags ?? {})).toEqual(["project-ref"]);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("feedback delete", {
+  invoke: () => {
+    const client = mockFeedbackClient();
+    return {
+      run: withAccountTargetBanner(feedbackDelete(deleteArgs())).pipe(
+        Effect.provide(Layer.mergeAll(client.layer, mockTelemetryRuntime({ cliVersion: "9.9.9" }))),
+      ),
+      mutations: () => client.deleteCalls.length,
+    };
+  },
 });

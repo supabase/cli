@@ -35,14 +35,16 @@
 
 ## Exit Codes
 
-| Code | Condition                                                  |
-| ---- | ---------------------------------------------------------- |
-| `0`  | success — project deleted                                  |
-| `1`  | authentication error — no valid token found                |
-| `1`  | project not found — 404 response from `/v1/projects/{ref}` |
-| `1`  | API error — non-2xx/404 response from `/v1/projects/{ref}` |
-| `1`  | network / connection failure                               |
-| `1`  | declined confirmation (cancellation) / no ref on a non-TTY |
+| Code | Condition                                                     |
+| ---- | ------------------------------------------------------------- |
+| `0`  | success — project deleted                                     |
+| `1`  | authentication error — no valid token found                   |
+| `1`  | project not found — 404 response from `/v1/projects/{ref}`    |
+| `1`  | API error — non-2xx/404 response from `/v1/projects/{ref}`    |
+| `1`  | network / connection failure                                  |
+| `1`  | confirmation declined                                         |
+| `1`  | confirmation needed but this run can't prompt, and no `--yes` |
+| `1`  | no ref on a non-TTY                                           |
 
 ## Telemetry Events Fired
 
@@ -60,13 +62,15 @@
 
 ### `--output-format text`
 
-Prompts `Do you want to delete project <ref>? This action is irreversible.` (default
-**No**, honours the global `--yes`), then on success prints `Deleted project: <name>`
-to stdout.
+Prints `This action is irreversible.` and asks `delete project <ref>?` (default
+**No**), then on success prints `Deleted project: <name>` to stdout. `--yes` or a shell
+`SUPABASE_YES` answers the question and prints `Confirmed by --yes: delete project <ref>`
+on stderr; a `SUPABASE_YES` in a project `.env` does not count.
 
 ### `--output-format json`
 
-`success("Deleted project", { name })`.
+Requires `--yes`: a machine format can't prompt, so without it the command fails with
+the consent-required error before any `DELETE`. On success, `success("Deleted project", { name })`.
 
 ```json
 { "name": "my-project" }
@@ -92,5 +96,5 @@ On failure, an `error` event is emitted instead:
   user to select a project to delete.
 - In non-interactive mode (when stdin is not a TTY), the project ref positional argument
   is required.
-- A `PreRun` check is performed before the DELETE call to validate the project ref and
-  display a confirmation prompt in interactive mode.
+- The confirmation runs after the project ref is resolved and before the DELETE call;
+  stdin is never read for the answer.

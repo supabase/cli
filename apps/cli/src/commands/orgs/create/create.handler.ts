@@ -4,6 +4,7 @@ import { Effect, Option } from "effect";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { encodeEnv, encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
@@ -32,6 +33,8 @@ export const orgsCreate = Effect.fn("orgs.create")(function* (flags: OrgsCreateF
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
+    yield* requireHostedMutationConsent({ action: `create organization "${flags.name}"` });
+
     // Spinner only runs in text mode, since it would corrupt machine-readable stdout. It
     // gates on output.format rather than outputFlagFormat because --output pretty keeps the format
     // "text" while still rendering the table.

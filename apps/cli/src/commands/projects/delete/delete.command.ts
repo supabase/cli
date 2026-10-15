@@ -1,8 +1,6 @@
-import { Layer } from "effect";
 import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { projectsDelete } from "./delete.handler.ts";
@@ -31,8 +29,6 @@ export const projectsDeleteCommand = Command.make("delete", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  // `stdinLayer`: the delete confirmation reads piped stdin via `promptYesNo`
-  // on a non-TTY stdin.
-  Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["projects", "delete"]), stdinLayer)),
+  Command.provide(managementApiRuntimeLayer(["projects", "delete"])),
   withTargetPolicy({ group: "account", consent: "no" }),
 );

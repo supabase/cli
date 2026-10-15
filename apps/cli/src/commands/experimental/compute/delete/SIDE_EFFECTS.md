@@ -39,10 +39,13 @@ on disk; only the remote compute is deleted.
 ## Confirmation
 
 Interactively, the compute's name has to be typed back before anything is
-deleted. `--yes` (the root persistent flag) or `SUPABASE_YES` skips that. With
-neither — and no interactive terminal to prompt on, which includes a redirected
-stdout and any `--output-format json`/`stream-json` run — the command refuses
-rather than deleting unasked.
+deleted. `--yes` (the root persistent flag) or a shell `SUPABASE_YES` skips that and
+prints `Confirmed by --yes: …` on stderr; a `SUPABASE_YES` in a project `.env` does not
+count. With neither — and no interactive terminal to prompt on, which includes a
+redirected stdout, piped stdin and any `--output-format json`/`stream-json` run — the
+command fails with the consent-required error rather than deleting unasked. Stdin is
+never read for the answer. The action line and the running-instance tally (when one is
+known) are written to stderr before the typed-name prompt.
 
 ## API Routes
 
@@ -60,8 +63,8 @@ rather than deleting unasked.
 | `0`  | nothing deployed under that name, with `--yes` (teardown is idempotent)                          |
 | `1`  | invalid compute name                                                                             |
 | `1`  | nothing deployed under that name, without `--yes`                                                |
-| `1`  | the typed confirmation did not match the compute's name                                          |
-| `1`  | confirmation needed but no interactive terminal to ask on, and no `--yes`                        |
+| `1`  | the typed confirmation did not match the compute's name (declined)                               |
+| `1`  | confirmation needed but this run can't prompt, and no `--yes`                                    |
 | `1`  | API error, project not enrolled in the alpha, no such project, or a route the API does not serve |
 
 ## Environment Variables
@@ -87,14 +90,14 @@ wrapper emits for every command.
 
 ## Output Formats
 
-| Mode                          | stdout                                                                                         | stderr                                                              |
-| ----------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| text (default)                | the confirmation prompt, then what was deleted and kept                                        | that nothing local was kept when nothing was, and the redeploy hint |
-| `--output-format json`        | one structured result carrying `compute_name`, `project_ref`, `kept_*`                         | neither — both are text-only                                        |
-| `--output-format stream-json` | the same result as a single terminal event                                                     | neither — both are text-only                                        |
-| `-o json` / `yaml` / `toml`   | the same payload in that encoding, and nothing else                                            | neither — both are text-only                                        |
-| `-o pretty` / `table` / `csv` | the text rendering — these fall through rather than encoding                                   | both, as in text                                                    |
-| `-o env`                      | refused **before** the DELETE; discovering it at emit time deleted the compute and then failed | the error                                                           |
+| Mode                          | stdout                                                                                         | stderr                                                                                                  |
+| ----------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| text (default)                | the typed-name prompt, then what was deleted and kept                                          | the action line and instance tally, that nothing local was kept when nothing was, and the redeploy hint |
+| `--output-format json`        | one structured result carrying `compute_name`, `project_ref`, `kept_*`                         | neither — both are text-only                                                                            |
+| `--output-format stream-json` | the same result as a single terminal event                                                     | neither — both are text-only                                                                            |
+| `-o json` / `yaml` / `toml`   | the same payload in that encoding, and nothing else                                            | neither — both are text-only                                                                            |
+| `-o pretty` / `table` / `csv` | the text rendering — these fall through rather than encoding                                   | both, as in text                                                                                        |
+| `-o env`                      | refused **before** the DELETE; discovering it at emit time deleted the compute and then failed | the error                                                                                               |
 
 A structured emission is the end of the run: the handler returns at
 `emitComputeMachineOutput` or at `output.success`, so nothing in the text

@@ -10,6 +10,7 @@ import { CommandSettings } from "../../src/config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import { OutputFlag, YesFlag } from "../../src/command-internal/global-flags.ts";
+import { TargetPolicy } from "../../src/command-internal/target/target-policy.ts";
 import { randomLayer } from "../../src/shared/runtime/random.layer.ts";
 import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts";
 import { mockLinkedProjectCacheLayer } from "./command-mocks.ts";
@@ -344,6 +345,26 @@ export function makeComputeProject(files: Readonly<Record<string, string>> = {})
 }
 
 /**
+ * Writes `files` under `workdir` and links it to {@link COMPUTE_PROJECT_REF}, for
+ * `describeHostedConsent` scenarios whose runtime resolves the project from the real filesystem.
+ */
+export const seedLinkedComputeProject = (
+  workdir: string,
+  files: Readonly<Record<string, string>>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const all = { ...files, "supabase/.temp/project-ref": COMPUTE_PROJECT_REF };
+    for (const [relativePath, contents] of Object.entries(all)) {
+      const absolutePath = `${workdir}/${relativePath}`;
+      yield* fs.makeDirectory(absolutePath.slice(0, absolutePath.lastIndexOf("/")), {
+        recursive: true,
+      });
+      yield* fs.writeFileString(absolutePath, contents);
+    }
+  });
+
+/**
  * `CommandSettings` for the compute commands: the workdir they treat as the
  * project, and the host their URLs are built on, plus every other field
  * `CommandSettingsShape` requires.
@@ -430,7 +451,7 @@ export interface ComputeSetupOptions {
    * render text for.
    */
   readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
-  /** The root `--yes`, read by `delete` through `resolveYes`. */
+  /** The root `--yes`, which `push` and `delete` read through `resolveYes`. */
   readonly yes?: boolean;
   /** Raw argv, which `resolveYes` scans for an explicit `--yes=false`. */
   readonly cliArgs?: ReadonlyArray<string>;
@@ -505,6 +526,7 @@ export function setupCompute(options: ComputeSetupOptions) {
         options.outputFlag === undefined ? Option.none() : Option.some(options.outputFlag),
       ),
       Layer.succeed(YesFlag, options.yes ?? false),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
       Layer.succeed(CliArgs, { args: options.cliArgs ?? [] }),
       processControl.layer,
       BunServices.layer,
