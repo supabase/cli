@@ -74,13 +74,13 @@ live shadow available.
 
 ## API Routes
 
-| Method     | Path                               | Auth   | Purpose                                                    |
-| ---------- | ---------------------------------- | ------ | ---------------------------------------------------------- |
-| —          | —                                  | —      | local target: none                                         |
-| POST       | `/v1/projects/{ref}/roles`         | Bearer | `--linked`: temp login role when no password               |
-| GET        | `/v1/projects/{ref}/pooler/config` | Bearer | `--linked`: IPv4 pooler fallback (IPv6-only network)       |
-| GET/DELETE | `/v1/projects/{ref}/network-bans`  | Bearer | `--linked`: unban during pooler login retry                |
-| GET        | `/v1/projects/{ref}`               | Bearer | `--linked`: linked-project cache (post-run, unconditional) |
+| Method      | Path                                                                          | Auth   | Purpose                                                    |
+| ----------- | ----------------------------------------------------------------------------- | ------ | ---------------------------------------------------------- |
+| —           | —                                                                             | —      | local target: none                                         |
+| POST        | `/v1/projects/{ref}/cli/login-role`                                           | Bearer | `--linked`: temp login role when no password               |
+| GET         | `/v1/projects/{ref}/config/database/pooler`                                   | Bearer | `--linked`: IPv4 pooler fallback (IPv6-only network)       |
+| POST/DELETE | `/v1/projects/{ref}/network-bans/retrieve`, `/v1/projects/{ref}/network-bans` | Bearer | `--linked`: unban during pooler login retry                |
+| GET         | `/v1/projects/{ref}`                                                          | Bearer | `--linked`: linked-project cache (post-run, unconditional) |
 
 ## Environment Variables
 

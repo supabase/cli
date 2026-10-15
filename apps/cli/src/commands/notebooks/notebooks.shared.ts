@@ -441,13 +441,23 @@ const readRemoteNotebook = Effect.fnUntraced(function* (
     );
 
   const { description, favorite, content, name } = response.data.attributes;
+  // Response enums are open; the file must hold values a push can send back.
+  const file = yield* Schema.decodeUnknownEffect(NotebookFileSchema)({
+    ...(description === null ? {} : { description }),
+    favorite,
+    content: { cells: content.cells },
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new NotebookFileError({
+          detail: `Notebook ${subject} has content this CLI cannot write to a file: ${cause.message}`,
+          suggestion: "Update the CLI, or edit the notebook in the dashboard.",
+        }),
+    ),
+  );
   return {
     notebook: { id: response.data.id, name } satisfies RemoteNotebook,
-    file: {
-      ...(description === null ? {} : { description }),
-      favorite,
-      content: { cells: content.cells },
-    } satisfies NotebookFile,
+    file,
   };
 });
 

@@ -34,10 +34,6 @@ import {
 import { SeedConfigLoadError } from "../commands/seed/buckets/buckets.errors.ts";
 import { bucketObjectKey } from "../commands/seed/buckets/buckets.upload.ts";
 
-// Re-exported so `stack start` can report a project-context config-load failure with the
-// same tag `seedBucketsRun` itself fails with, without importing across command boundaries.
-export { SeedConfigLoadError };
-
 const CONFIG_PATH = "supabase/config.toml";
 const UPLOAD_CONCURRENCY = 5;
 

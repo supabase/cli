@@ -10,7 +10,7 @@ describe("orgs", () => {
       const result = await run(["orgs", "list"]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("ID");
-      expect(result.stdout).toMatch(/[a-z]{20}|__PROJECT_REF__/);
+      expect(result.stdout).toMatch(/[a-z]{20}/);
     });
 
     testBehaviour("returns json output with --output json", async ({ run }) => {
@@ -77,7 +77,7 @@ describe("orgs", () => {
       const result = await run(["orgs", "create", ORG_NAME]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Created organization:");
-      expect(result.stdout).toMatch(/[a-z]{20}|__PROJECT_REF__/);
+      expect(result.stdout).toMatch(/[a-z]{20}/);
     });
 
     testBehaviour("exits non-zero without name in non-TTY", async ({ run }) => {

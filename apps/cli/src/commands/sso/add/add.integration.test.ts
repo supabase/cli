@@ -870,6 +870,17 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("Go --output=json keeps response keys outside the OpenAPI schema", () => {
+    const { layer, out } = setup({
+      goOutput: "json",
+      body: { ...RESPONSE_PROVIDER, resource_id: "res-123" },
+    });
+    return Effect.gen(function* () {
+      yield* ssoAdd(defaultFlags);
+      expect(out.stdoutText).toMatch(/"resource_id":\s*"res-123"/);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("TS --output-format=json emits success", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
@@ -905,7 +916,7 @@ describe("sso add integration", () => {
       if (Exit.isFailure(exit)) {
         const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoAddUnexpectedStatusError");
-        expect(dump).toContain("Unexpected error adding identity provider");
+        expect(dump).toContain('Unexpected error adding identity provider: {"error":"boom"}');
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1025,6 +1036,52 @@ describe("sso add integration", () => {
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(BunServices.layer)),
   );
+
+  it.effect("an attribute mapping with an unknown key fails before the POST", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const path = pathService.join(tempRoot.current, "unknown-key.json");
+      yield* fs.writeFileString(path, '{"keys":{"email":{"nam":"email"}}}');
+      const flags = { ...defaultFlags, attributeMappingFile: Option.some(path) };
+      const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
+      return yield* Effect.gen(function* () {
+        const exit = yield* Effect.exit(ssoAdd(flags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = Cause.pretty(exit.cause);
+          expect(dump).toContain("SsoAddAttributeMappingFileError");
+          expect(dump).toContain("failed to parse attribute mapping: Expected no excess property");
+        }
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("a transport failure surfaces as a network error naming the operation", () => {
+    const { layer } = setup({ network: "fail" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(ssoAdd(defaultFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("SsoAddNetworkError");
+        expect(dump).toContain("failed to create sso provider:");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("a 201 body that fails the provider schema surfaces as an API response error", () => {
+    const { layer } = setup({ body: { saml: {} } });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(ssoAdd(defaultFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const classified = classifyCliCauseActionability(exit.cause);
+        expect(classified.error_fingerprint).toBe("tag:SsoAddNetworkError:api_response");
+      }
+    }).pipe(Effect.provide(layer));
+  });
 
   const writeProfileYaml = Effect.fnUntraced(function* (name: string, apiUrl: string) {
     const fs = yield* FileSystem.FileSystem;

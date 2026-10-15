@@ -2329,7 +2329,7 @@ port = 12345
     expect(
       warnings.some((m) =>
         m.includes(
-          "WARN: config section [inbucket] is deprecated. Please use [local_smtp] instead.",
+          "WARN: config section [inbucket] is deprecated and will be removed in v3, use [local_smtp] instead.",
         ),
       ),
     ).toBe(true);
@@ -2391,7 +2391,7 @@ port = 33333
     expect(
       warnings.some((m) =>
         m.includes(
-          "WARN: config section [remotes.staging.inbucket] is deprecated. Please use [remotes.staging.local_smtp] instead.",
+          "WARN: config section [remotes.staging.inbucket] is deprecated and will be removed in v3, use [remotes.staging.local_smtp] instead.",
         ),
       ),
     ).toBe(true);
@@ -2457,7 +2457,7 @@ orioledb_version = "15.1.0.150"
     expect(
       warnings.some((m) =>
         m.includes(
-          "WARN: experimental.orioledb_version is deprecated. Please use db.orioledb_version instead.",
+          "WARN: experimental.orioledb_version is deprecated and will be removed in v3, use db.orioledb_version instead.",
         ),
       ),
     ).toBe(true);
@@ -2495,7 +2495,7 @@ orioledb_version = "15.1.0.150"
     expect(
       warnings.some((m) =>
         m.includes(
-          "WARN: experimental.orioledb_version is deprecated. Please use db.orioledb_version instead.",
+          "WARN: experimental.orioledb_version is deprecated and will be removed in v3, use db.orioledb_version instead.",
         ),
       ),
     ).toBe(true);
@@ -2518,7 +2518,7 @@ orioledb_version = "15.1.0.150"
     expect(
       warnings.some((m) =>
         m.includes(
-          "WARN: experimental.orioledb_version is deprecated. Please use db.orioledb_version instead.",
+          "WARN: experimental.orioledb_version is deprecated and will be removed in v3, use db.orioledb_version instead.",
         ),
       ),
     ).toBe(true);
@@ -2603,7 +2603,7 @@ orioledb_version = "15.1.0.150"
     expect(
       warnings.some((m) =>
         m.includes(
-          "WARN: remotes.staging.experimental.orioledb_version is deprecated. Please use remotes.staging.db.orioledb_version instead.",
+          "WARN: remotes.staging.experimental.orioledb_version is deprecated and will be removed in v3, use remotes.staging.db.orioledb_version instead.",
         ),
       ),
     ).toBe(true);
@@ -2654,7 +2654,7 @@ enabled = true
     expect(
       warnings.some((m) =>
         m.includes(
-          'WARN: disabling deprecated "slack" provider. Please use [auth.external.slack_oidc] instead',
+          'WARN: disabling deprecated "slack" provider. It will be removed in v3, use [auth.external.slack_oidc] instead.',
         ),
       ),
     ).toBe(true);
@@ -2675,7 +2675,7 @@ enabled = true
     expect(
       warnings.some((m) =>
         m.includes(
-          'WARN: disabling deprecated "linkedin" provider. Please use [auth.external.linkedin_oidc] instead',
+          'WARN: disabling deprecated "linkedin" provider. It will be removed in v3, use [auth.external.linkedin_oidc] instead.',
         ),
       ),
     ).toBe(true);

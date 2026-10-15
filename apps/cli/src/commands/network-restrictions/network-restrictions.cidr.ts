@@ -142,7 +142,7 @@ export function validateAndPartitionCidrs(
  * the two flat string arrays the output template expects.
  */
 export function partitionPatchedCidrs(
-  items: ReadonlyArray<{ readonly address: string; readonly type: "v4" | "v6" }> | undefined,
+  items: ReadonlyArray<{ readonly address: string; readonly type: string }> | undefined,
 ): { readonly v4: string[]; readonly v6: string[] } {
   const v4: string[] = [];
   const v6: string[] = [];

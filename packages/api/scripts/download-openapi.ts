@@ -26,7 +26,7 @@ type OpenApiSource = {
   readonly baseUrl: string;
 };
 
-type JsonPatchOperation =
+type JsonPatchOperation = (
   | {
       readonly op: "add" | "test" | "replace";
       readonly path: string;
@@ -35,7 +35,10 @@ type JsonPatchOperation =
   | {
       readonly op: "remove";
       readonly path: string;
-    };
+    }
+) & {
+  readonly $comment?: unknown;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -53,6 +56,10 @@ function jsonPointerSegments(pointer: string): ReadonlyArray<string> {
     throw new Error(`Invalid JSON pointer ${JSON.stringify(pointer)}.`);
   }
   return pointer.slice(1).split("/").map(unescapeJsonPointerSegment);
+}
+
+function pointerFromSegments(segments: ReadonlyArray<string>): string {
+  return segments.map((segment) => `/${segment.replace(/~/g, "~0").replace(/\//g, "~1")}`).join("");
 }
 
 function getJsonPointerValue(document: unknown, pointer: string): unknown {
@@ -79,10 +86,7 @@ function replaceJsonPointerValue(document: unknown, pointer: string, value: unkn
     throw new Error("Replacing the document root is not supported.");
   }
 
-  let parent = document;
-  for (const segment of segments.slice(0, -1)) {
-    parent = getJsonPointerValue(parent, `/${segment.replace(/~/g, "~0").replace(/\//g, "~1")}`);
-  }
+  const parent = getJsonPointerValue(document, pointerFromSegments(segments.slice(0, -1)));
 
   const key = segments[segments.length - 1]!;
   if (Array.isArray(parent)) {
@@ -106,10 +110,7 @@ function addJsonPointerValue(document: unknown, pointer: string, value: unknown)
     throw new Error("Adding the document root is not supported.");
   }
 
-  let parent = document;
-  for (const segment of segments.slice(0, -1)) {
-    parent = getJsonPointerValue(parent, `/${segment.replace(/~/g, "~0").replace(/\//g, "~1")}`);
-  }
+  const parent = getJsonPointerValue(document, pointerFromSegments(segments.slice(0, -1)));
 
   const key = segments[segments.length - 1]!;
   if (Array.isArray(parent)) {
@@ -127,44 +128,27 @@ function addJsonPointerValue(document: unknown, pointer: string, value: unknown)
   parent[key] = value;
 }
 
-function removeJsonPointerValue(document: unknown, pointer: string): boolean {
+function removeJsonPointerValue(document: unknown, pointer: string): void {
   const segments = jsonPointerSegments(pointer);
   if (segments.length === 0) {
-    return false;
+    throw new Error("Removing the document root is not supported.");
   }
 
-  let parent: unknown = document;
-  for (const segment of segments.slice(0, -1)) {
-    if (Array.isArray(parent)) {
-      const index = Number(segment);
-      if (!Number.isInteger(index) || index < 0 || index >= parent.length) {
-        return false;
-      }
-      parent = parent[index];
-      continue;
-    }
-    if (isRecord(parent) && segment in parent) {
-      parent = parent[segment];
-      continue;
-    }
-    return false;
-  }
-
+  const parent = getJsonPointerValue(document, pointerFromSegments(segments.slice(0, -1)));
   const key = segments[segments.length - 1]!;
   if (Array.isArray(parent)) {
     const index = Number(key);
     if (!Number.isInteger(index) || index < 0 || index >= parent.length) {
-      return false;
+      throw new Error(`JSON pointer ${JSON.stringify(pointer)} does not exist.`);
     }
     parent.splice(index, 1);
-    return true;
+    return;
   }
 
   if (!isRecord(parent) || !(key in parent)) {
-    return false;
+    throw new Error(`JSON pointer ${JSON.stringify(pointer)} does not exist.`);
   }
   delete parent[key];
-  return true;
 }
 
 function assertJsonPatchOperation(value: unknown): asserts value is JsonPatchOperation {
@@ -194,7 +178,22 @@ function assertJsonPatchOperation(value: unknown): asserts value is JsonPatchOpe
 }
 
 function valuesEqual(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((entry, index) => valuesEqual(entry, right[index]))
+    );
+  }
+  if (isRecord(left) && isRecord(right)) {
+    const leftKeys = Object.keys(left);
+    return (
+      leftKeys.length === Object.keys(right).length &&
+      leftKeys.every((key) => key in right && valuesEqual(left[key], right[key]))
+    );
+  }
+  return left === right;
 }
 
 export function applyOpenApiOverrides(
@@ -217,24 +216,59 @@ export function applyOpenApiOverrides(
       continue;
     }
     if (override.op === "remove") {
-      // Silently ignores removing a pointer that doesn't exist (a deviation from
-      // RFC 6902): staging's /api/v2-json is served by two backend variants that
-      // disagree about whether the webhook paths exist, so a strict remove would
-      // fail on most staging runs.
       removeJsonPointerValue(document, override.path);
       continue;
+    }
+    if (valuesEqual(getJsonPointerValue(document, override.path), override.value)) {
+      throw new Error(
+        `OpenAPI override replace at ${override.path} is redundant: upstream already has ${JSON.stringify(override.value)}.`,
+      );
     }
     replaceJsonPointerValue(document, override.path, override.value);
   }
   return document;
 }
 
-async function loadOpenApiOverrides(): Promise<ReadonlyArray<unknown>> {
-  const parsed = JSON.parse(await readFile(OPENAPI_OVERRIDES_PATH, "utf8"));
+function hasComment(override: JsonPatchOperation): boolean {
+  return typeof override.$comment === "string" && override.$comment.trim().length > 0;
+}
+
+/**
+ * Validates the override list's structure: every `replace` is guarded by a `test` on the same
+ * path directly before it, and every test+replace pair or standalone entry explains its upstream
+ * cause in a `$comment`.
+ */
+export function parseOpenApiOverrides(parsed: unknown): ReadonlyArray<JsonPatchOperation> {
   if (!Array.isArray(parsed)) {
     throw new Error("OpenAPI overrides file must contain a JSON Patch array.");
   }
-  return parsed;
+  const entries: Array<JsonPatchOperation> = [];
+  for (const override of parsed) {
+    assertJsonPatchOperation(override);
+    entries.push(override);
+  }
+
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index]!;
+    const next = entries[index + 1];
+    const isGuardedPair = entry.op === "test" && next?.op === "replace" && next.path === entry.path;
+    if (entry.op === "replace") {
+      throw new Error(
+        `OpenAPI override replace at ${entry.path} must be directly preceded by a test on the same path.`,
+      );
+    }
+    if (!hasComment(entry) && !(isGuardedPair && hasComment(next))) {
+      throw new Error(`OpenAPI override ${entry.op} at ${entry.path} needs a $comment.`);
+    }
+    if (isGuardedPair) {
+      index++;
+    }
+  }
+  return entries;
+}
+
+export async function loadOpenApiOverrides(): Promise<ReadonlyArray<JsonPatchOperation>> {
+  return parseOpenApiOverrides(JSON.parse(await readFile(OPENAPI_OVERRIDES_PATH, "utf8")));
 }
 
 function assertOpenApiSource(value: unknown): asserts value is OpenApiSource {
@@ -398,9 +432,6 @@ export function mergeOpenApiDocuments(
   };
 }
 
-// Must run after overrides are applied: some upstream webhook operations share
-// duplicate operationIds that the overrides remove, so validating first would
-// abort regeneration.
 export function assertMergedOpenApiDocument(document: OpenApiDocument): void {
   const operationClaims = new Map<string, Array<string>>();
 

@@ -1468,10 +1468,48 @@ describe("db start", () => {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         const inbucketWarnings = warnings.filter((m) =>
           m.includes(
-            "WARN: config section [inbucket] is deprecated. Please use [local_smtp] instead.",
+            "WARN: config section [inbucket] is deprecated and will be removed in v3, use [local_smtp] instead.",
           ),
         );
         expect(inbucketWarnings).toHaveLength(1);
+      }).pipe(Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
+    },
+  );
+
+  it.effect.each([
+    {
+      with: "alone",
+      env: { SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: "17.11.0.002" },
+      expectedTag: "17.11.0.002-orioledb",
+    },
+    {
+      with: "and SUPABASE_DB_ORIOLEDB_VERSION (wins)",
+      env: {
+        SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: "17.11.0.002",
+        SUPABASE_DB_ORIOLEDB_VERSION: "17.11.0.003",
+      },
+      expectedTag: "17.11.0.003-orioledb",
+    },
+  ])(
+    "selects the OrioleDB image with SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION $with, warning once that it is removed in v3",
+    ({ env, expectedTag }) => {
+      for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
+      const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
+      const warnings: Array<string> = [];
+      const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+        warnings.push(args.map((a) => String(a)).join(" "));
+      });
+      return Effect.gen(function* () {
+        yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        const image = createArgs(child.spawned)?.find((arg) => arg.includes("supabase/postgres:"));
+        expect(image).toContain(expectedTag);
+        expect(
+          warnings.filter(
+            (m) =>
+              m ===
+              "WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.",
+          ),
+        ).toHaveLength(1);
       }).pipe(Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
     },
   );

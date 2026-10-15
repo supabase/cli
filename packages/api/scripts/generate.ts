@@ -246,13 +246,14 @@ export function sanitizeOpenApiSchema(
       continue;
     }
 
-    if (
-      !inPropertiesMap &&
-      key === "propertyNames" &&
-      isRecord(rawValue) &&
-      Object.keys(rawValue).length === 1 &&
-      rawValue.type === "string"
-    ) {
+    // The OpenAPI 3.0 converter rejects `propertyNames`; key constraints are left to the server.
+    if (!inPropertiesMap && key === "propertyNames" && isRecord(rawValue)) {
+      continue;
+    }
+
+    // The OpenAPI 3.0 converter rejects `const`; a one-value `enum` is equivalent.
+    if (!inPropertiesMap && key === "const") {
+      Object.assign(sanitized, { enum: [rawValue] });
       continue;
     }
 
@@ -310,13 +311,133 @@ export function sanitizeOpenApiSchema(
   return sanitized;
 }
 
-function convertSchemaToDraft2020(schema: OpenApiSchema) {
+function convertSchemaToDraft2020(
+  schema: OpenApiSchema,
+  options?: { readonly openEnums: boolean },
+) {
   const sanitized = sanitizeOpenApiSchema(schema);
+  const prepared = options?.openEnums === true ? openStringEnums(sanitized) : sanitized;
   return (
-    sanitized.$schema === JsonSchema.META_SCHEMA_URI_DRAFT_2020_12
-      ? JsonSchema.fromSchemaDraft2020_12(sanitized)
-      : JsonSchema.fromSchemaOpenApi3_0(sanitized)
+    prepared.$schema === JsonSchema.META_SCHEMA_URI_DRAFT_2020_12
+      ? JsonSchema.fromSchemaDraft2020_12(prepared)
+      : JsonSchema.fromSchemaOpenApi3_0(prepared)
   ).schema;
+}
+
+const OPEN_STRING_FORMAT = "x-open-string";
+const COMPONENT_REF_PREFIX = "#/components/schemas/";
+
+function isOpenableStringEnum(schema: OpenApiSchema): boolean {
+  if (!Array.isArray(schema.enum) || (schema.type !== undefined && schema.type !== "string")) {
+    return false;
+  }
+  const values = schema.enum.filter((value) => value !== null);
+  return values.length > 1 && values.every((value) => typeof value === "string");
+}
+
+/**
+ * Widens every multi-value string enum to `enum | any string`. Single-value enums stay closed
+ * because they tag union variants, and widening them would make variant matching ambiguous.
+ */
+export function openStringEnums(schema: OpenApiSchema): OpenApiSchema {
+  const visitSchema = (value: OpenApiSchema): OpenApiSchema => {
+    const visited: OpenApiSchema = {};
+    for (const [key, entry] of Object.entries(value)) {
+      visited[key] = visit(entry);
+    }
+    return isOpenableStringEnum(visited)
+      ? { anyOf: [visited, { type: "string", format: OPEN_STRING_FORMAT }] }
+      : visited;
+  };
+  const visit = (value: unknown): unknown => {
+    if (Array.isArray(value)) {
+      return value.map(visit);
+    }
+    if (!isRecord(value)) {
+      return value;
+    }
+    return visitSchema(value);
+  };
+  return visitSchema(schema);
+}
+
+function collectComponentRefs(value: unknown, into: Set<string>): void {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectComponentRefs(entry, into);
+    }
+  } else if (isRecord(value)) {
+    for (const [key, entry] of Object.entries(value)) {
+      if (key === "$ref" && typeof entry === "string" && entry.startsWith(COMPONENT_REF_PREFIX)) {
+        into.add(entry.slice(COMPONENT_REF_PREFIX.length));
+      } else {
+        collectComponentRefs(entry, into);
+      }
+    }
+  }
+}
+
+function componentRefClosure(
+  components: Record<string, OpenApiSchema>,
+  roots: ReadonlyArray<OpenApiSchema>,
+): ReadonlySet<string> {
+  const pending = new Set<string>();
+  for (const root of roots) {
+    collectComponentRefs(root, pending);
+  }
+  const reachable = new Set<string>();
+  for (const name of pending) {
+    if (reachable.has(name)) {
+      continue;
+    }
+    reachable.add(name);
+    const component = components[name];
+    if (component !== undefined) {
+      collectComponentRefs(component, pending);
+    }
+  }
+  return reachable;
+}
+
+function containsOpenableStringEnum(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some(containsOpenableStringEnum);
+  }
+  return (
+    isRecord(value) &&
+    (isOpenableStringEnum(value) || Object.values(value).some(containsOpenableStringEnum))
+  );
+}
+
+/**
+ * Components reachable from response schemas whose string enums are widened. A component that
+ * both requests and responses reach would need two variants, which the generator does not model.
+ */
+function outputEnumComponents(
+  components: Record<string, OpenApiSchema>,
+  operations: ReadonlyArray<OperationDefinition>,
+): ReadonlySet<string> {
+  const outputRoots = operations.flatMap((operation) =>
+    operation.response.kind !== "void" && operation.outputSchema ? [operation.outputSchema] : [],
+  );
+  const outputReachable = componentRefClosure(components, outputRoots);
+  const inputReachable = componentRefClosure(
+    components,
+    operations.map((operation) => operation.inputSchema),
+  );
+  for (const name of outputReachable) {
+    const component = components[name];
+    if (
+      inputReachable.has(name) &&
+      component !== undefined &&
+      containsOpenableStringEnum(sanitizeOpenApiSchema(component))
+    ) {
+      throw new Error(
+        `Schema "${name}" has string enums and is reachable from both request and response schemas; response enums are widened, so it cannot be shared.`,
+      );
+    }
+  }
+  return outputReachable;
 }
 
 function containsBinarySchema(schema: OpenApiSchema): boolean {
@@ -349,6 +470,16 @@ function containsBinarySchema(schema: OpenApiSchema): boolean {
 
 function replaceBinarySchemaCode(code: string): string {
   return code.replace(/Schema\.String\.annotate\(\{\s*"format":\s*"binary"\s*\}\)/g, "BinaryInput");
+}
+
+function replaceOpenStringCode(code: string): string {
+  return code.replace(
+    new RegExp(
+      `Schema\\.String\\.annotate\\(\\{\\s*"format":\\s*"${OPEN_STRING_FORMAT}"\\s*\\}\\)`,
+      "g",
+    ),
+    "OpenString",
+  );
 }
 
 function normalizeJsonSchemaValue(value: unknown): unknown {
@@ -755,10 +886,15 @@ function renderSchemaSource(
   operations: ReadonlyArray<OperationDefinition>,
 ): string {
   const schemaEntries = operations.flatMap((operation) => {
-    const entries: Array<{ readonly name: string; readonly schema: OpenApiSchema }> = [
+    const entries: Array<{
+      readonly name: string;
+      readonly schema: OpenApiSchema;
+      readonly isOutput: boolean;
+    }> = [
       {
         name: operation.inputSchemaName,
         schema: operation.inputSchema,
+        isOutput: false,
       },
     ];
 
@@ -766,22 +902,29 @@ function renderSchemaSource(
       entries.push({
         name: operation.outputSchemaName,
         schema: operation.outputSchema,
+        isOutput: true,
       });
     }
 
     return entries;
   });
 
+  const components = document.components?.schemas ?? {};
+  const openEnumComponents = outputEnumComponents(components, operations);
   const definitions = Object.fromEntries(
-    Object.entries(document.components?.schemas ?? {}).map(([name, schema]) => [
+    Object.entries(components).map(([name, schema]) => [
       name,
-      normalizeNullableJsonSchema(convertSchemaToDraft2020(schema)),
+      normalizeNullableJsonSchema(
+        convertSchemaToDraft2020(schema, { openEnums: openEnumComponents.has(name) }),
+      ),
     ]),
   );
 
   const nameMap = schemaEntries.map((entry) => entry.name);
   const schemas = schemaEntries.map((entry) =>
-    normalizeNullableJsonSchema(convertSchemaToDraft2020(entry.schema)),
+    normalizeNullableJsonSchema(
+      convertSchemaToDraft2020(entry.schema, { openEnums: entry.isOutput }),
+    ),
   );
 
   if (!Arr.isArrayNonEmpty(schemas)) {
@@ -818,15 +961,16 @@ function renderSchemaSource(
     containsBinarySchema(operation.inputSchema),
   );
 
+  const finalizeCode = (code: string): string => {
+    const withOpenStrings = replaceOpenStringCode(code);
+    return hasBinaryInputs ? replaceBinarySchemaCode(withOpenStrings) : withOpenStrings;
+  };
+
   const parts: Array<string> = [];
   if (codeDocument.references.nonRecursives.length > 0) {
     parts.push("// non-recursive definitions");
     for (const reference of codeDocument.references.nonRecursives) {
-      parts.push(
-        `export const ${reference.$ref} = ${
-          hasBinaryInputs ? replaceBinarySchemaCode(reference.code.runtime) : reference.code.runtime
-        }`,
-      );
+      parts.push(`export const ${reference.$ref} = ${finalizeCode(reference.code.runtime)}`);
     }
   }
 
@@ -835,7 +979,7 @@ function renderSchemaSource(
     parts.push("// recursive definitions");
     for (const [name, code] of recursiveEntries) {
       parts.push(
-        `export type ${name} = ${code.Type}\nexport const ${name} = ${hasBinaryInputs ? replaceBinarySchemaCode(code.runtime) : code.runtime}`,
+        `export type ${name} = ${code.Type}\nexport const ${name} = ${finalizeCode(code.runtime)}`,
       );
     }
   }
@@ -851,9 +995,7 @@ function renderSchemaSource(
     parts.push("// operation schemas");
     for (const [index, code] of codeDocument.codes.entries()) {
       const name = nameMap[index]!;
-      parts.push(
-        `export const ${name} = ${hasBinaryInputs ? replaceBinarySchemaCode(code.runtime) : code.runtime}`,
-      );
+      parts.push(`export const ${name} = ${finalizeCode(code.runtime)}`);
     }
   }
 
@@ -861,6 +1003,14 @@ function renderSchemaSource(
     if (operation.response.kind === "void") {
       parts.push(`export const ${operation.outputSchemaName} = Schema.Void`);
     }
+  }
+
+  // `string & {}` keeps the literal members of a widened enum visible to autocomplete.
+  if (parts.some((part) => /\bOpenString\b/u.test(part))) {
+    parts.unshift(
+      "// open string helper",
+      'export const OpenString = Schema.declare((value: unknown): value is string & {} => typeof value === "string")',
+    );
   }
 
   return parts.join("\n") + "\n";
@@ -960,19 +1110,21 @@ export function renderEffectClient(operations: ReadonlyArray<OperationDefinition
           const isEmptyInput =
             operation.inputSchema.type === "object" &&
             Object.keys(operation.inputSchema.properties ?? {}).length === 0;
-          const signature = isEmptyInput
-            ? ""
+          const inputParameter = isEmptyInput
+            ? "_input: Record<string, never> = {}"
             : `input: typeof operationDefinitions.${operation.operationName}.inputSchema.Type`;
           const inputExpression = isEmptyInput ? "{}" : "input";
 
           return `    ${methodName}: (
-      ${signature}
+      ${inputParameter},
+      options?: SupabaseApiRequestOptions,
     ): Effect.Effect<typeof operationDefinitions.${operation.operationName}.outputSchema.Type, SupabaseApiError, SupabaseApiClient> =>
       Effect.gen(function* () {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<${JSON.stringify(operation.operationName)}>(
           operationDefinitions.${operation.operationName},
           ${inputExpression},
+          options,
         );
       }),`;
         })
@@ -984,29 +1136,9 @@ ${methods}
     })
     .join("\n");
 
-  const executorCases = operations
-    .map((operation) => {
-      const { version, methodName } = operation;
-      const isEmptyInput =
-        operation.inputSchema.type === "object" &&
-        Object.keys(operation.inputSchema.properties ?? {}).length === 0;
-      const decodedExpression = `Schema.decodeUnknownEffect(operationDefinitions.${operation.operationName}.inputSchema)(input)`;
-      const decodedParam = isEmptyInput ? "_decoded" : "decoded";
-      const callExpression = isEmptyInput
-        ? `api.${version}.${methodName}()`
-        : `api.${version}.${methodName}(decoded)`;
+  return `import { Effect } from "effect";
 
-      return `    case ${JSON.stringify(operation.operationName)}:
-      return ${decodedExpression}.pipe(
-        Effect.flatMap((${decodedParam}) => ${callExpression}),
-      );`;
-    })
-    .join("\n");
-
-  return `import { Effect, Schema } from "effect";
-
-import type { EffectClient } from "../internal/effect-client.ts";
-import type { SupabaseApiError } from "../internal/client.ts";
+import type { SupabaseApiError, SupabaseApiRequestOptions } from "../internal/client.ts";
 import { SupabaseApiClient } from "../internal/client.ts";
 import { operationDefinitions } from "./contracts.ts";
 
@@ -1015,17 +1147,6 @@ ${versionedOperationsSource}
 } as const;
 
 export type GeneratedEffectOperations = typeof versionedEffectOperations;
-type GeneratedApiClient = EffectClient<GeneratedEffectOperations>;
-
-export function executeApiClientOperation(
-  operationId: keyof typeof operationDefinitions,
-  api: GeneratedApiClient,
-  input: unknown,
-) {
-  switch (operationId) {
-${executorCases}
-  }
-}
 `;
 }
 

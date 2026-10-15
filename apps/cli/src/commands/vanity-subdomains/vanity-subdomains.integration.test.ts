@@ -1,6 +1,7 @@
 import type {
   V1ActivateVanitySubdomainConfigOutput,
   V1CheckVanitySubdomainAvailabilityOutput,
+  V1GetProjectOutput,
   V1GetVanitySubdomainConfigOutput,
 } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
@@ -25,6 +26,7 @@ import { vanitySubdomainsGet } from "./get/get.handler.ts";
 type VanityConfig = typeof V1GetVanitySubdomainConfigOutput.Type;
 type AvailabilityResponse = typeof V1CheckVanitySubdomainAvailabilityOutput.Type;
 type ActivateResponse = typeof V1ActivateVanitySubdomainConfigOutput.Type;
+type ProjectResponse = typeof V1GetProjectOutput.Type;
 
 const tempRoot = useTempWorkdir("supabase-vanity-int-");
 
@@ -44,6 +46,24 @@ const SAMPLE_CHECK: AvailabilityResponse = {
 
 const SAMPLE_ACTIVATE: ActivateResponse = {
   custom_domain: "example.com",
+};
+
+// Schema-valid project body: the upgrade-suggest fallback decodes it with the typed client.
+const SAMPLE_PROJECT: ProjectResponse = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org-123",
+  organization_slug: "supabase",
+  name: "Test Project",
+  region: "us-east-1",
+  created_at: "2026-01-01T00:00:00Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.example.com",
+    version: "15",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
 };
 
 type GoOutput = "env" | "pretty" | "json" | "toml" | "yaml";
@@ -77,7 +97,7 @@ function gatedApi(matchWrite: (url: string) => boolean) {
           return jsonResponse(request, 402, {});
         }
         if (request.method === "GET" && request.url.endsWith(`/v1/projects/${VALID_REF}`)) {
-          return jsonResponse(request, 200, { organization_slug: "supabase" });
+          return jsonResponse(request, 200, SAMPLE_PROJECT);
         }
         if (request.method === "GET" && request.url.includes("/entitlements")) {
           return jsonResponse(request, 200, {

@@ -358,14 +358,14 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("tolerates placeholder/short refs in the response (lenient parse)", () => {
-    // The typed client rejects refs under 20 chars; the raw-HTTP path renders them verbatim
-    // so placeholder fixtures still work.
-    const placeholder = { ...SAMPLE_PROJECT, id: "__PROJECT_REF__", ref: "__PROJECT_REF__" };
-    const { layer, out } = setup({ response: [placeholder] });
+  it.effect("passes through project fields the schema does not declare", () => {
+    const { layer, out } = setup({
+      goOutput: "json",
+      response: [{ ...SAMPLE_PROJECT, undeclared_field: "kept" }],
+    });
     return Effect.gen(function* () {
       yield* projectsList({});
-      expect(out.stdoutText).toContain("__PROJECT_REF__");
+      expect(out.stdoutText).toContain('"undeclared_field": "kept"');
     }).pipe(Effect.provide(layer));
   });
 

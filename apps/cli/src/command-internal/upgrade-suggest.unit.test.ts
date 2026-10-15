@@ -349,19 +349,38 @@ describe("suggestUpgrade", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("a reconciled profile with no token sends the fallback GETs unauthenticated", () => {
+  it.live(
+    "a reconciled profile with no token skips the fallback instead of reusing another token",
+    () => {
+      const { layer, api, analytics } = setup();
+      return Effect.gen(function* () {
+        const suggested = yield* suggestUpgrade({
+          projectRef: VALID_REF,
+          featureKey: "branching_limit",
+          statusCode: 402,
+          accessToken: Option.none(),
+        });
+        expect(suggested).toBe(false);
+        expect(api.requests).toHaveLength(0);
+        expect(analytics.captured).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("a caller-provided apiUrl routes the fallback GETs to that host", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* suggestUpgrade({
         projectRef: VALID_REF,
         featureKey: "branching_limit",
         statusCode: 402,
-        accessToken: Option.none(),
+        apiUrl: "https://api.reconciled.example",
+        accessToken: Option.some(Redacted.make("sbp_reconciled_token")),
       });
-      expect(api.requests).toHaveLength(2);
-      for (const req of api.requests) {
-        expect(req.headers["authorization"]).toBeUndefined();
-      }
+      expect(api.requests.map((req) => new URL(req.url).origin)).toEqual([
+        "https://api.reconciled.example",
+        "https://api.reconciled.example",
+      ]);
     }).pipe(Effect.provide(layer));
   });
 

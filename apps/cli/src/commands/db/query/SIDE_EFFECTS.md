@@ -25,7 +25,7 @@ the result as a table or JSON.
 
 | Method | Path                                | Auth   | Request body        | Response                                                                                                     |
 | ------ | ----------------------------------- | ------ | ------------------- | ------------------------------------------------------------------------------------------------------------ |
-| POST   | `/v1/projects/{ref}/database/query` | Bearer | `{"query":"<sql>"}` | 201, JSON array of row objects (raw — the typed client voids the body, so the linked path uses raw HTTP).    |
+| POST   | `/v1/projects/{ref}/database/query` | Bearer | `{"query":"<sql>"}` | 201, JSON array of row objects (read via `executeRaw`, since the typed operation voids the body).            |
 | GET    | `/v1/projects/{ref}`                | Bearer | —                   | 200 → linked-project cache write; any other status → no write. Fired after the query on the `--linked` path. |
 
 ## Environment Variables

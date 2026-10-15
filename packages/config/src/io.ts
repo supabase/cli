@@ -586,14 +586,14 @@ export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
   for (const section of deprecatedSections) {
     const replacement = section.replace(/inbucket$/, "local_smtp");
     yield* Console.error(
-      `WARN: config section [${section}] is deprecated. Please use [${replacement}] instead.`,
+      `WARN: config section [${section}] is deprecated and will be removed in v3, use [${replacement}] instead.`,
     ).pipe(Effect.provideService(Console.Console, globalThis.console));
   }
   for (const path of deprecatedOrioleDBPaths) {
     const replacement = path.replace(/experimental\.orioledb_version$/, "db.orioledb_version");
-    yield* Console.error(`WARN: ${path} is deprecated. Please use ${replacement} instead.`).pipe(
-      Effect.provideService(Console.Console, globalThis.console),
-    );
+    yield* Console.error(
+      `WARN: ${path} is deprecated and will be removed in v3, use ${replacement} instead.`,
+    ).pipe(Effect.provideService(Console.Console, globalThis.console));
   }
 
   // Substitute `env(VAR)` references against `.env`/`.env.local`/ambient env before schema
@@ -667,7 +667,7 @@ export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
   if (goViperCompat) {
     for (const ext of deprecatedProviders) {
       yield* Console.error(
-        `WARN: disabling deprecated "${ext}" provider. Please use [auth.external.${ext}_oidc] instead`,
+        `WARN: disabling deprecated "${ext}" provider. It will be removed in v3, use [auth.external.${ext}_oidc] instead.`,
       ).pipe(Effect.provideService(Console.Console, globalThis.console));
     }
   }

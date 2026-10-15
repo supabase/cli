@@ -359,9 +359,25 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
     const parsedGroupId = Option.isSome(groupIdLine) ? Number(groupIdLine.value) : Number.NaN;
     if (!Number.isSafeInteger(parsedGroupId) || parsedGroupId <= 0) {
       yield* Stream.run(Stream.empty, handle.getInputFd(3)).pipe(Effect.ignore);
-      yield* handle.exitCode.pipe(Effect.ignore, Effect.timeout("5 seconds"), Effect.ignore);
+      const stderr = yield* Effect.all(
+        [
+          handle.stderr.pipe(
+            Stream.decodeText,
+            Stream.runFold(
+              () => "",
+              (text, chunk) => (text + chunk).slice(-4096),
+            ),
+          ),
+          handle.exitCode.pipe(Effect.ignore),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(
+        Effect.map(([text]) => text.trim()),
+        Effect.timeout("5 seconds"),
+        Effect.orElseSucceed(() => ""),
+      );
       return yield* new NativeProcessError({
-        message: "Native launcher did not report a valid workload process group",
+        message: `Native launcher did not report a valid workload process group${stderr === "" ? "" : `: ${stderr}`}`,
         executable: spec.executable,
       });
     }

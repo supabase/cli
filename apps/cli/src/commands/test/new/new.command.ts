@@ -2,6 +2,7 @@ import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
@@ -37,6 +38,7 @@ const testNewRuntimeLayer = Layer.mergeAll(
 export const testNewCommand = Command.make("new", config).pipe(
   Command.withDescription("Create a new test file."),
   Command.withShortDescription("Create a new test file"),
+  withPermissions({ operations: [], noApiEffectFlags: ["template"] }),
   Command.withHandler((flags) =>
     testNew(flags).pipe(
       withCommandTelemetry({

@@ -26,7 +26,7 @@ export interface MergeOptions {
   readonly warn?: (message: string) => void;
 }
 
-const PROJECT_PREFIX = "e2e:";
+const PROJECT_PREFIXES = ["e2e:", "e2e-exclusive:"];
 
 function major(version: string): string {
   return version.split(".")[0] ?? version;
@@ -48,10 +48,11 @@ export function mergeTimings(
       );
     }
     for (const [key, result] of cache.results) {
-      if (!key.startsWith(PROJECT_PREFIX)) {
+      const prefix = PROJECT_PREFIXES.find((candidate) => key.startsWith(candidate));
+      if (prefix === undefined) {
         continue;
       }
-      const path = key.slice(PROJECT_PREFIX.length);
+      const path = key.slice(prefix.length);
       if (result.failed) {
         warn(`skipping failed ${path}`);
         continue;

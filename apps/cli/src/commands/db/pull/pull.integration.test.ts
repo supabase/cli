@@ -1893,6 +1893,48 @@ describe("db pull", () => {
     },
   );
 
+  it.effect.each([
+    {
+      mode: "the deprecated --experimental export",
+      opts: { experimental: true, edgeStdout: EXPORT_JSON },
+    },
+    {
+      mode: "a migration pull",
+      opts: {
+        migrations: ["20240101000000"],
+        remoteVersions: ["20240101000000"],
+        edgeStdout: "create table remote ();\n",
+        yes: true,
+      },
+    },
+  ])(
+    "warns once on stderr that SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is removed in v3 for $mode",
+    ({ opts }) => {
+      const s = setup(tmp.current, opts);
+      const consoleErrors: Array<string> = [];
+      const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+        consoleErrors.push(args.map((a) => String(a)).join(" "));
+      });
+      const [name, value] = ["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION", "17.11.0.002"] as const;
+      // The project-context load reads `process.env`; `readDbToml` reads `Config`.
+      return withEnvVar(
+        name,
+        value,
+        withConfigEnv(
+          { [name]: value },
+          Effect.gen(function* () {
+            yield* dbPull(flags());
+            const warning =
+              "WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.";
+            const stderrLines = [...streamText(s.out, "stderr").split("\n"), ...consoleErrors];
+            expect(stderrLines.filter((line) => line === warning)).toHaveLength(1);
+            expect(streamText(s.out, "stdout")).not.toContain(warning);
+          }),
+        ),
+      ).pipe(Effect.provide(s.layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
+    },
+  );
+
   it.effect(
     "an experimental pull in json mode reports a declarative export with no history repair",
     () => {
