@@ -194,7 +194,7 @@ echoed, because those may genuinely have reached the server.
 ## Target selection
 
 With no `--local`, `--linked` or `--db-url` flag, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
-shell environment first, then `supabase/.env*`), then `target` in `supabase/config.toml` (or
+shell environment first, then the project `.env*` files), then `target` in `supabase/config.toml` (or
 `config.json`), then the local default. `remote` targets the linked project through the existing
 linked path (same prompts and checks as `--linked`). An explicit selector flag always wins over the
 target. `--project-ref` is not a selector: a `remote` target resolves it to the linked project, while with no target or

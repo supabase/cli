@@ -60,7 +60,7 @@ read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` 
 ## Target selection
 
 With no `--local` or `--linked` flag, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
-shell environment first, then `supabase/.env*`), then `target` in `supabase/config.toml` (or
+shell environment first, then the project `.env*` files), then `target` in `supabase/config.toml` (or
 `config.json`). `remote` targets the linked project through the existing linked path; `local`
 targets the local stack. An explicit selector flag always wins over the target. `--project-ref` is not a selector: a `remote` target resolves it to the linked project, while with no target or
 `target = "local"` it behaves exactly as it did before the target existed. An invalid

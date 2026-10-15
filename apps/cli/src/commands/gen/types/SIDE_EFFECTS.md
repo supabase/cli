@@ -101,7 +101,7 @@ way `--db-url` does.
 ## Target selection
 
 With none of `--local`, `--linked`, `--db-url` or `--project-id`, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
-shell environment first, then `supabase/.env*`), then `target` in `supabase/config.toml` (or
+shell environment first, then the project `.env*` files), then `target` in `supabase/config.toml` (or
 `config.json`). `remote` targets the linked project through the existing linked path; `local`
 targets the local database. An explicit selector flag always wins over the target, and `--project-id` pins that project and skips target resolution (no warning, no provenance line). An invalid
 `SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. Config is only read for
