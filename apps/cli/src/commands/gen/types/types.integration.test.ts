@@ -1283,6 +1283,71 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
+    it.effect("accepts --linked together with --project-ref", () =>
+      Effect.gen(function* () {
+        const { layer, api, out } = yield* setup({
+          args: ["gen", "types", "--linked", "--project-ref", VALID_REF],
+          projectTypes: "export type Database = {};",
+        });
+        yield* genTypes(defaultFlags({ linked: true, projectRef: Option.some(VALID_REF) })).pipe(
+          Effect.provide(layer),
+        );
+
+        expect(out.stdoutText).toBe("export type Database = {};");
+        expect(api.requests).toEqual([
+          {
+            method: "generateTypescriptTypes",
+            input: { ref: VALID_REF, included_schemas: "public" },
+          },
+        ]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("rejects --query-timeout with --linked and --project-ref (mutex group)", () =>
+      Effect.gen(function* () {
+        const { layer, api } = yield* setup({
+          args: ["gen", "types", "--linked", "--project-ref", VALID_REF, "--query-timeout", "20s"],
+        });
+        const exit = yield* genTypes(
+          defaultFlags({
+            linked: true,
+            projectRef: Option.some(VALID_REF),
+            queryTimeout: "20s",
+          }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain(
+            "if any flags in the group [linked project-ref query-timeout] are set none of the others can be; [linked project-ref query-timeout] were all set",
+          );
+        }
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("rejects --linked with --project-ref when --local is also set", () =>
+      Effect.gen(function* () {
+        const { layer, api } = yield* setup({
+          args: ["gen", "types", "--local", "--linked", "--project-ref", VALID_REF],
+        });
+        const exit = yield* genTypes(
+          defaultFlags({ local: true, linked: true, projectRef: Option.some(VALID_REF) }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(
+            Option.exists(
+              Cause.findErrorOption(exit.cause),
+              Predicate.isTagged("TargetSelectorConflictError"),
+            ),
+          ).toBe(true);
+        }
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
     it.effect("rejects --query-timeout with --project-ref (mutex group)", () =>
       Effect.gen(function* () {
         const { layer } = yield* setup({
@@ -2716,7 +2781,7 @@ describe("gen types", () => {
             "port = 54321",
           ].join("\n"),
         );
-        const { layer } = yield* setup({
+        const { layer, out } = yield* setup({
           workdir,
           childExitCode: 1,
           childStderr: ["Error: No such container: supabase_db_demo"],
@@ -2727,6 +2792,7 @@ describe("gen types", () => {
         );
 
         expect(Exit.isFailure(exit)).toBe(true);
+        expect(out.stderrText).toContain("Target: local stack (");
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain("supabase start is not running.");
           expect(

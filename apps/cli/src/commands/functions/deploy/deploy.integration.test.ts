@@ -1456,13 +1456,15 @@ describe("functions deploy", () => {
       readonly yes: boolean;
       readonly interactive?: boolean;
       readonly confirmResponses?: ReadonlyArray<boolean>;
+      readonly format?: "text" | "json";
+      readonly handler?: ApiHandler;
     }) => {
       const out = mockOutput({
-        format: "text",
+        format: opts.format ?? "text",
         interactive: opts.interactive,
         promptConfirmResponses: opts.confirmResponses,
       });
-      const api = mockCommandPlatformApi({ handler: pruneApiHandler });
+      const api = mockCommandPlatformApi({ handler: opts.handler ?? pruneApiHandler });
       const layer = Layer.mergeAll(
         cliConfigValuesTestLayer,
         buildTestRuntime({
@@ -1527,6 +1529,89 @@ describe("functions deploy", () => {
           "Functions to deploy:\n • hello-world\nFunctions to delete (not found locally):\n • remote-only\n",
         );
         expect(mutations(api).map((request) => request.method)).toEqual(["POST", "DELETE"]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("emits one json success envelope once the prune has finished", () => {
+      let messagesWhenDeleting: number | undefined;
+      const { out, layer } = setupPrune({
+        yes: true,
+        format: "json",
+        handler: (request, recorded) => {
+          if (request.method === "DELETE") messagesWhenDeleting = out.messages.length;
+          return pruneApiHandler(request, recorded);
+        },
+      });
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        yield* functionsDeploy({ ...baseFlags, prune: true }).pipe(withJsonErrorHandling);
+
+        expect(messagesWhenDeleting).toBe(0);
+        expect(out.messages).toEqual([
+          {
+            type: "success",
+            message: "Deployed Functions.",
+            data: {
+              project_ref: VALID_REF,
+              functions: ["hello-world"],
+              dashboard_url: `https://supabase.com/dashboard/project/${VALID_REF}/functions`,
+            },
+          },
+        ]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("emits only the failure envelope when the prune fails after a deploy", () => {
+      const { out, api, layer } = setupPrune({
+        yes: true,
+        format: "json",
+        handler: (request, recorded) =>
+          request.method === "DELETE"
+            ? Effect.succeed(jsonResponse(request, 500, { message: "boom" }))
+            : pruneApiHandler(request, recorded),
+      });
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        yield* functionsDeploy({ ...baseFlags, prune: true }).pipe(withJsonErrorHandling);
+
+        expect(api.requests.some((request) => request.method === "POST")).toBe(true);
+        expect(out.messages.map((message) => message.type)).toEqual(["fail"]);
+        expect(out.failures[0]?.message).toContain("unexpected delete function status 500");
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("emits the up-to-date json envelope after pruning when nothing is enabled", () => {
+      let messagesWhenDeleting: number | undefined;
+      const { out, layer } = setupPrune({
+        yes: true,
+        format: "json",
+        handler: (request, recorded) => {
+          if (request.method === "DELETE") messagesWhenDeleting = out.messages.length;
+          return pruneApiHandler(request, recorded);
+        },
+      });
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(
+          tempRoot.current,
+          ['project_id = "test-project"', '[functions."hello-world"]', "enabled = false", ""].join(
+            "\n",
+          ),
+        );
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        yield* functionsDeploy({ ...baseFlags, prune: true }).pipe(withJsonErrorHandling);
+
+        expect(messagesWhenDeleting).toBe(0);
+        expect(out.messages.map((message) => [message.type, message.message])).toEqual([
+          ["success", "All Functions are up to date."],
+        ]);
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
 

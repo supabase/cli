@@ -2630,23 +2630,18 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
     dependencies.api,
     jobs,
   ).pipe(
-    Effect.as(true),
+    Effect.as(Option.none<string>()),
     Effect.catchIf(
       (error): error is NoFunctionsToDeployError => error instanceof NoFunctionsToDeployError,
       (error) =>
-        (output.format === "text"
-          ? output.raw(`${error.message}\n`, "stderr")
-          : output.success(error.message, {
-              project_ref: projectRef,
-              functions: uniqueSlugs,
-              dashboard_url: dashboardUrl,
-            })
-        ).pipe(Effect.as(false)),
+        (output.format === "text" ? output.raw(`${error.message}\n`, "stderr") : Effect.void).pipe(
+          Effect.as(Option.some(error.message)),
+        ),
     ),
   );
 
   const styleWarning = dependencies.styleWarning ?? ((text: string) => text);
-  const deployed = useLocalBundler
+  const nothingToDeployMessage = useLocalBundler
     ? yield* Effect.gen(function* () {
         if (!(yield* isDockerRunning())) {
           yield* output.raw(`${styleWarning("WARNING:")} Docker is not running\n`, "stderr");
@@ -2675,28 +2670,31 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
           styleEmphasis,
           projectEnvValues: context.projectEnvValues,
         });
-        return true;
+        return Option.none<string>();
       })
     : yield* deployWithApi;
 
-  if (deployed) {
-    if (output.format === "text") {
-      // Joins the raw `slugs` list, not the deduped set, so `functions deploy foo foo` prints
-      // "foo, foo".
-      yield* output.raw(
-        `Deployed Functions on project ${styleIdentifier(projectRef)}: ${slugs.join(", ")}\n`,
-      );
-      yield* output.raw(`You can inspect your deployment in the Dashboard: ${dashboardUrl}\n`);
-    } else {
-      yield* output.success("Deployed Functions.", {
-        project_ref: projectRef,
-        functions: uniqueSlugs,
-        dashboard_url: dashboardUrl,
-      });
-    }
+  if (output.format === "text" && Option.isNone(nothingToDeployMessage)) {
+    // Joins the raw `slugs` list, not the deduped set, so `functions deploy foo foo` prints
+    // "foo, foo".
+    yield* output.raw(
+      `Deployed Functions on project ${styleIdentifier(projectRef)}: ${slugs.join(", ")}\n`,
+    );
+    yield* output.raw(`You can inspect your deployment in the Dashboard: ${dashboardUrl}\n`);
   }
 
   if (flags.prune) {
     yield* pruneFunctions(projectRef, toPrune, dependencies.api);
+  }
+
+  if (output.format !== "text") {
+    yield* output.success(
+      Option.getOrElse(nothingToDeployMessage, () => "Deployed Functions."),
+      {
+        project_ref: projectRef,
+        functions: uniqueSlugs,
+        dashboard_url: dashboardUrl,
+      },
+    );
   }
 });

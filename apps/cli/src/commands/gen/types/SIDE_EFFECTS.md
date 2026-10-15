@@ -31,9 +31,9 @@ inspecting `supabase_db_*`. `--project-id` is a deprecated alias of `--project-r
 
 ## Files Written
 
-| Path                                           | Format | When                                                                                                                                  |
-| ---------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | project-ref paths (`--linked`, `--project-id`, the implicit linked fallback), via `LinkedProjectCache.cache`, when the file is absent |
+| Path                                           | Format | When                                                                                                                                                       |
+| ---------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | linked targets (`--linked`, `--project-ref`, `--project-id`, or a workspace `target` of `remote`), via `LinkedProjectCache.cache`, when the file is absent |
 
 `--local` and `--db-url` write no files.
 
@@ -127,9 +127,11 @@ way `--db-url` does.
 Prints generated TypeScript (or other language) type definitions to stdout.
 Diagnostics go to stderr: one `Target: …` banner naming the resolved target (the project
 ref and whether its identity is verified, the local stack host and port, or the custom
-Postgres host) and `Connecting to …` for database introspection. In-process TypeScript also
-prints a stderr note that the output is unformatted. `--project-id` additionally prints
-`--project-id is deprecated; use --project-ref instead.` on stderr.
+Postgres host) and `Connecting to …` for database introspection. On the legacy Docker Compose
+stack the banner prints before the running check, so a stopped stack still shows the chosen
+target. In-process TypeScript also prints a stderr note that the output is unformatted.
+`--project-id` additionally prints `--project-id is deprecated; use --project-ref instead.` on
+stderr.
 
 ### `--output-format json`
 
@@ -146,12 +148,14 @@ Not applicable.
 - The target comes from `resolveTarget`: a selector flag wins, then the workspace `target`
   (`SUPABASE_TARGET`, then `config.toml`), then local. With no selector the command generates
   from the local database; it neither prompts for a target nor fails. `--project-ref` implies
-  `--linked`; combining it with `--local` or `--db-url` is an error, as is combining two of
+  `--linked`; `--linked --project-ref <ref>` together is accepted and targets that ref, while
+  combining `--project-ref` with `--local` or `--db-url` is an error, as is combining two of
   `--local`, `--linked` and `--db-url`. A `false` switch (`--linked=false`) counts as absent.
 - `--project-id` is a deprecated alias of `--project-ref`; passing both is an error.
-- `--linked`/`--project-ref` are mutually exclusive with `postgrest-v9-compat`, `query-timeout`,
-  and each language flag (`swift-access-control`), enforced with the exact error text and sorted
-  group order `linked/project-ref/<flag>`.
+- `--linked`/`--project-ref` (one member of the group, so the pair itself is allowed) are mutually
+  exclusive with `postgrest-v9-compat`, `query-timeout`, and each language flag
+  (`swift-access-control`), enforced with the exact error text and sorted group order
+  `linked/project-ref/<flag>`.
 - With `--local`, a missing `supabase/config.toml` uses the embedded config defaults plus
   shell and nested dotenv overrides, matching the CLI. The database password is the `[db].password`
   value (default `postgres`); `SUPABASE_DB_PASSWORD` has no effect, and the command has no
