@@ -147,5 +147,9 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
   Command.provide(dbDiffRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
-  withTargetPolicy({ group: "selectable", consent: "none" }),
+  withTargetPolicy({
+    group: "selectable",
+    consent: "none",
+    consentExemptReason: "reads the target and writes only local migration files",
+  }),
 );

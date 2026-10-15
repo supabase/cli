@@ -437,7 +437,7 @@ const CONSENT_SERVICE_NAME: Readonly<Record<PushResource | "experimental.webhook
   "experimental.webhooks": "Webhooks",
 };
 
-/** The consent action for a push that will write `services`, phrased to follow "Confirmed by --yes:". */
+/** The consent action for a push that will write `services`. */
 export function pushConsentAction(
   services: ReadonlyArray<PushResource | "experimental.webhooks">,
 ): string {
@@ -445,7 +445,7 @@ export function pushConsentAction(
   const last = names.at(-1);
   const list =
     names.length > 1 && last !== undefined ? `${names.slice(0, -1).join(", ")} and ${last}` : last;
-  return `push config changes to ${list}`;
+  return `Push config changes to ${list}`;
 }
 
 /** The price line shown before consent for a paid addon the push would switch on. */

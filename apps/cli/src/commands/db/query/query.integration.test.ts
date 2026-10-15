@@ -1335,7 +1335,6 @@ describeHostedConsent("db query", {
             mockTelemetryOutputFormat().layer,
             Layer.succeed(Random, { randomHex: () => Effect.succeed(BOUNDARY) }),
             Layer.succeed(AiTool, { name: Option.none() }),
-            Layer.succeed(AgentFlag, "no"),
             Layer.succeed(DnsResolverFlag, "native"),
           ),
         ),

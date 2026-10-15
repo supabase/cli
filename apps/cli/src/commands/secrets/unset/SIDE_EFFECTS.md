@@ -67,7 +67,7 @@
 
 ### `--output pretty` (default) / `--output-format text`
 
-Stdout: `Finished supabase secrets unset.\n`. Stderr: the `Target:` banner, then either the confirmation (`Secrets to unset:` with the bulleted names, then `unset N secret(s) on <target>?`, default No) on an interactive terminal or `Confirmed by --yes: unset N secret(s) on <target>` under `--yes`.
+Stdout: `Finished supabase secrets unset.\n`. Stderr: the `Target:` banner, then either the confirmation (`Secrets to unset:` with the bulleted names, then `Unset N secret(s) on <target>?`, default No) on an interactive terminal or `Confirmed by --yes: Unset N secret(s) on <target>` under `--yes`.
 
 `--dry-run` stdout, with no `Finished` line and no prompt:
 

@@ -72,5 +72,9 @@ export const notebooksPullCommand = Command.make("pull", config).pipe(
   ),
   Command.withHandler(notebooksPullHandler),
   Command.provide(managementApiRuntimeLayer(["notebooks", "pull"])),
-  withTargetPolicy({ group: "hosted", consent: "none" }),
+  withTargetPolicy({
+    group: "hosted",
+    consent: "none",
+    consentExemptReason: "creates project notebooks only after an interactive reconcile choice",
+  }),
 );

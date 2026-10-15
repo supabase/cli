@@ -6,7 +6,12 @@ import {
   VALUE_CONSUMING_LONG_FLAGS,
   VALUE_CONSUMING_SHORT_FLAGS,
 } from "../shared/cli/value-consuming-flags.ts";
-import { supabaseEnvBool, supabaseEnvBoolWithProjectFallback } from "./supabase-env.ts";
+import { envValue } from "../shared/config/env-option.ts";
+import {
+  parseEnvBool,
+  supabaseEnvBool,
+  supabaseEnvBoolWithProjectFallback,
+} from "./supabase-env.ts";
 
 // The CLI's global-flag registry is tree-wide, so `-o/--output` can't be redeclared per command to
 // vary its allowed values; this models it as the union of every command's accepted values, and
@@ -90,7 +95,9 @@ export const NetworkIdFlag = GlobalFlag.Setting("network-id")({
 
 export const YesFlag = GlobalFlag.Setting("yes")({
   flag: Flag.Boolean("yes").pipe(
-    Flag.withDescription("answer yes to all prompts"),
+    Flag.withDescription(
+      "answer yes to all prompts; hosted changes only accept this flag or SUPABASE_YES exported in your shell, never supabase/.env or another .env file",
+    ),
     Flag.withDefault(false),
   ),
 });
@@ -220,19 +227,29 @@ const yesFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean =>
     (arg) => arg.startsWith("--yes=") && FALSE_VALUES.has(arg.slice("--yes=".length)),
   );
 
+/** `raw` is the `SUPABASE_YES` value the process sees, which may come from a dotenv file Bun autoloaded. */
+export type YesSource = { readonly via: "flag" } | { readonly via: "env"; readonly raw: string };
+
+/** The origin of a granted `--yes`, or `None`; an explicit `--yes=false` wins over the env. */
+export const resolveYesSource = Effect.gen(function* () {
+  const flag = yield* YesFlag;
+  const cliArgs = yield* CliArgs;
+  if (yesFlagExplicitlyFalse(cliArgs.args)) {
+    return Option.none<YesSource>();
+  }
+  if (flag) return Option.some<YesSource>({ via: "flag" });
+  const raw = yield* envValue("SUPABASE_YES");
+  return raw !== undefined && parseEnvBool(raw)
+    ? Option.some<YesSource>({ via: "env", raw })
+    : Option.none<YesSource>();
+});
+
 /**
  * `--yes` resolved with an env fallback: when the flag isn't passed, `SUPABASE_YES` is honored. An
  * explicit `--yes` (including `--yes=false`) wins over the env. Prefer this over reading
  * {@link YesFlag} directly anywhere a command auto-confirms a prompt.
  */
-export const resolveYes = Effect.gen(function* () {
-  const flag = yield* YesFlag;
-  const cliArgs = yield* CliArgs;
-  if (yesFlagExplicitlyFalse(cliArgs.args)) {
-    return false;
-  }
-  return flag || (yield* supabaseEnvBool("SUPABASE_YES"));
-});
+export const resolveYes = Effect.map(resolveYesSource, Option.isSome);
 
 /**
  * `--yes` resolved with the project `.env` consulted too, for commands that load the nested

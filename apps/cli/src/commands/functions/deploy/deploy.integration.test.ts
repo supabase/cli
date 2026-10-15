@@ -1499,7 +1499,7 @@ describe("functions deploy", () => {
           yield* functionsDeploy({ ...baseFlags, prune: true });
 
           expect(stripControlSequences(out.stderrText)).toContain(
-            "Confirmed by --yes: deploy 1 Function and delete 1 Function with --prune on project",
+            "Confirmed by --yes: Deploy 1 Function and delete 1 Function with --prune on project",
           );
           expect(out.promptConfirmCalls).toHaveLength(0);
           expect(api.requests.some((request) => request.method === "DELETE")).toBe(true);
@@ -1522,7 +1522,7 @@ describe("functions deploy", () => {
 
         expect(out.promptConfirmCalls).toHaveLength(1);
         expect(out.promptConfirmCalls[0]?.message).toContain(
-          "deploy 1 Function and delete 1 Function with --prune",
+          "Deploy 1 Function and delete 1 Function with --prune",
         );
         expect(out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
         expect(stripControlSequences(out.stderrText)).toContain(

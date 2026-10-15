@@ -53,7 +53,7 @@ export const deleteFunction = Effect.fn("functions.delete")(function* <
 
   yield* validateSlug(flags.slug);
   const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
-  yield* requireHostedMutationConsent({ action: `delete Function ${flags.slug}` });
+  yield* requireHostedMutationConsent({ action: `Delete Function ${flags.slug}` });
 
   const response = yield* dependencies.api
     .executeRaw(operationDefinitions.v1DeleteAFunction, {

@@ -105,7 +105,7 @@ export const secretsUnset = Effect.fn("secrets.unset")(function* (flags: Secrets
     }
 
     yield* requireHostedMutationConsent({
-      action: `unset ${names.length} ${names.length === 1 ? "secret" : "secrets"}`,
+      action: `Unset ${names.length} ${names.length === 1 ? "secret" : "secrets"}`,
       details: ["Secrets to unset:", ...names.map((name) => ` • ${sanitizeInlineName(name)}`)],
     });
 

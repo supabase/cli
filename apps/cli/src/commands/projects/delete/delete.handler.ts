@@ -61,7 +61,7 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
     }
 
     yield* requireHostedMutationConsent({
-      action: `delete project ${ref}`,
+      action: `Delete project ${ref}`,
       details: ["This action is irreversible."],
     });
 

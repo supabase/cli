@@ -56,5 +56,5 @@ export const storageLsCommand = Command.make("ls", config).pipe(
   Command.provide(storageGatewayRuntimeLayer(["storage", "ls"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
-  withTargetPolicy({ group: "selectable", consent: "none" }),
+  withTargetPolicy({ group: "selectable", consent: "none", consentExemptReason: "read-only" }),
 );

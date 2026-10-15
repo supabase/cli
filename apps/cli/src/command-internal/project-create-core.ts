@@ -131,7 +131,7 @@ export const projectCreateCore = Effect.fn("ProjectCreate.run")(function* (
 
   if (input.consent === undefined) {
     yield* requireHostedMutationConsent({
-      action: `create project "${name}" in organization ${orgId}`,
+      action: `Create project "${name}" in organization ${orgId}`,
     });
   }
 

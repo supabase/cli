@@ -3,20 +3,32 @@ import { Command } from "effect/cli";
 
 export type TargetGroup = "local-only" | "account" | "hosted" | "sync" | "selectable" | "removed";
 
-interface TargetPolicyBase {
+export interface TargetPolicyShape {
   readonly group: TargetGroup;
+  readonly consent: "none" | "no" | "yes";
+  readonly consentExemptReason?: string | undefined;
 }
 
-/** `consentExemptReason` is only meaningful on a leaf that never asks for hosted-mutation consent. */
-export type TargetPolicyShape =
-  | (TargetPolicyBase & {
+/**
+ * What a leaf declares. `consentExemptReason` explains why a leaf never asks for hosted-mutation
+ * consent; a `sync` or `selectable` leaf must give one because it can reach a hosted database.
+ */
+export type TargetPolicyDeclaration =
+  | {
+      readonly group: "sync" | "selectable";
+      readonly consent: "none";
+      readonly consentExemptReason: string;
+    }
+  | {
+      readonly group: Exclude<TargetGroup, "sync" | "selectable">;
       readonly consent: "none";
       readonly consentExemptReason?: string;
-    })
-  | (TargetPolicyBase & {
+    }
+  | {
+      readonly group: TargetGroup;
       readonly consent: "no" | "yes";
       readonly consentExemptReason?: never;
-    });
+    };
 
 /** The command's target group and hosted-mutation consent default, provided to its handler. */
 export class TargetPolicy extends Context.Service<TargetPolicy, TargetPolicyShape>()(
@@ -34,7 +46,7 @@ export class TargetPolicyAnnotation extends Context.Service<
  * other `Command.provide` layers so every one of them can read `TargetPolicy`.
  */
 export const withTargetPolicy =
-  (policy: TargetPolicyShape) =>
+  (policy: TargetPolicyDeclaration) =>
   <const Name extends string, Input, ContextInput, E, R>(
     self: Command.Command<Name, Input, ContextInput, E, R>,
   ) =>

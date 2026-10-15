@@ -7,7 +7,7 @@ import {
   HostedMutationConsentRequiredError,
   HostedMutationDeclinedError,
 } from "../../src/command-internal/hosted-consent/hosted-consent.errors.ts";
-import { YesFlag } from "../../src/command-internal/global-flags.ts";
+import { AgentFlag, YesFlag } from "../../src/command-internal/global-flags.ts";
 import { TargetPolicy, readTargetPolicy } from "../../src/command-internal/target/target-policy.ts";
 import type { TargetPolicyShape } from "../../src/command-internal/target/target-policy.ts";
 import { commandTreeFor } from "./command-flags.ts";
@@ -24,8 +24,18 @@ import { mockOutput, mockStdin, mockTty } from "./mocks.ts";
 
 type RuntimeLayer = ReturnType<typeof buildTestRuntime>;
 
-const consentLayer = (runtime: RuntimeLayer, yes: boolean, policy: TargetPolicyShape) =>
-  Layer.mergeAll(runtime, Layer.succeed(YesFlag, yes), Layer.succeed(TargetPolicy, policy));
+const consentLayer = (
+  runtime: RuntimeLayer,
+  yes: boolean,
+  policy: TargetPolicyShape,
+  agent: "auto" | "yes",
+) =>
+  Layer.mergeAll(
+    runtime,
+    Layer.succeed(YesFlag, yes),
+    Layer.succeed(AgentFlag, agent),
+    Layer.succeed(TargetPolicy, policy),
+  );
 
 /** Everything a leaf's handler can require while `describeHostedConsent` runs it. */
 type HostedConsentServices = Layer.Success<ReturnType<typeof consentLayer>>;
@@ -58,6 +68,7 @@ interface CaseOptions {
   readonly interactive?: boolean;
   readonly yes?: boolean;
   readonly shellYes?: boolean;
+  readonly agent?: boolean;
   readonly projectEnvYes?: boolean;
   readonly stdinInput?: string;
   readonly confirmResponses?: ReadonlyArray<boolean>;
@@ -104,8 +115,8 @@ const nonGetRequests = (api: HostedConsentEnv["api"]): number =>
 
 /**
  * Runs the hosted-consent matrix against the leaf at `path`: no consent without `--yes` in
- * JSON or piped text, a TTY decline, `--yes`, shell `SUPABASE_YES`, and a project `.env`
- * that must not count as consent.
+ * JSON or piped text, a TTY decline, no prompt for an agent, `--yes`, shell `SUPABASE_YES`, and
+ * a project `.env` that must not count as consent.
  */
 export function describeHostedConsent(path: string, scenario: HostedConsentScenario): void {
   const policy = policyFor(path, scenario);
@@ -134,7 +145,12 @@ export function describeHostedConsent(path: string, scenario: HostedConsentScena
           outputFlag: options.json ? Option.some("json") : Option.none(),
           cliArgs: options.yes === true ? ["--yes"] : [],
         });
-        const layer = consentLayer(runtime, options.yes ?? false, policy);
+        const layer = consentLayer(
+          runtime,
+          options.yes ?? false,
+          policy,
+          options.agent ? "yes" : "auto",
+        );
 
         if (scenario.setup !== undefined) {
           yield* scenario.setup(workdir).pipe(Effect.provide(BunServices.layer));
@@ -187,6 +203,21 @@ export function describeHostedConsent(path: string, scenario: HostedConsentScena
       }),
     );
 
+    it.effect("refuses to prompt an agent in an interactive terminal and changes nothing", () =>
+      Effect.gen(function* () {
+        const { exit, out, mutations } = yield* runCase({
+          json: false,
+          interactive: true,
+          agent: true,
+          confirmResponses: [true],
+        });
+        expect(failureOf(exit)).toBeInstanceOf(HostedMutationConsentRequiredError);
+        expect(out.promptConfirmCalls).toEqual([]);
+        expect(out.promptTextCalls).toEqual([]);
+        expect(mutations).toBe(0);
+      }),
+    );
+
     it.effect(
       policy.group === "account"
         ? "runs under --yes and echoes the confirmation"
@@ -205,11 +236,12 @@ export function describeHostedConsent(path: string, scenario: HostedConsentScena
         }),
     );
 
-    it.effect("runs under a shell SUPABASE_YES", () =>
+    it.effect("runs under a shell SUPABASE_YES and echoes it as the source", () =>
       Effect.gen(function* () {
-        const { exit, mutations } = yield* runCase({ json: true, shellYes: true });
+        const { exit, out, mutations } = yield* runCase({ json: true, shellYes: true });
         expectSuccess(exit);
         expect(mutations).toBeGreaterThan(0);
+        expect(out.stderrText).toContain("Confirmed by SUPABASE_YES: ");
       }),
     );
 

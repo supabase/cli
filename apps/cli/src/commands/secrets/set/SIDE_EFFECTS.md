@@ -70,7 +70,7 @@
 
 ### `--output pretty` (default) / `--output-format text`
 
-Stdout: `Finished supabase secrets set.\n`. Stderr: the `Target:` banner, one `Env name cannot start with SUPABASE_, skipping: <name>` line per filtered entry, then either the confirmation (`Secrets to set:` with the bulleted names, then `set N secret(s) on <target>?`, default No) on an interactive terminal or `Confirmed by --yes: set N secret(s) on <target>` under `--yes`. Secret values are never printed.
+Stdout: `Finished supabase secrets set.\n`. Stderr: the `Target:` banner, one `Env name cannot start with SUPABASE_, skipping: <name>` line per filtered entry, then either the confirmation (`Secrets to set:` with the bulleted names, then `Set N secret(s) on <target>?`, default No) on an interactive terminal or `Confirmed by --yes: Set N secret(s) on <target>` under `--yes`. Secret values are never printed.
 
 The `--output {json,yaml,toml,env}` flags all collapse to the same text-mode `Finished` message.
 

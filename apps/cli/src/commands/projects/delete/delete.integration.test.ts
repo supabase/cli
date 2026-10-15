@@ -121,7 +121,7 @@ describe("projects delete integration", () => {
     const { layer, out, api } = setup({ yes: true });
     return Effect.gen(function* () {
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
-      expect(out.stderrText).toContain(`Confirmed by --yes: delete project ${VALID_REF}`);
+      expect(out.stderrText).toContain(`Confirmed by --yes: Delete project ${VALID_REF}`);
       expect(hasMethod(api, "DELETE")).toBe(true);
     }).pipe(Effect.provide(layer));
   });

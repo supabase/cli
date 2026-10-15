@@ -31,11 +31,19 @@ const CONSENT_FREE_OPERATIONS: ReadonlyMap<string, string> = new Map([
   ["v1-list-all-network-bans", "a POST that only reads the ban list"],
   ["v1-verify-dns-config", "re-runs verification and changes no configuration"],
   ["v1-check-vanity-subdomain-availability", "a POST that only reads availability"],
+]);
+
+/** Non-GET operations one leaf may call without consent; the leaf must also declare `consentExemptReason`. */
+const LEAF_CONSENT_FREE_OPERATIONS: ReadonlyMap<string, ReadonlyMap<string, string>> = new Map([
   [
-    "v2-create-notebook",
-    "notebooks pull creates remote notebooks only after an interactive reconcile choice",
+    "notebooks pull",
+    new Map([["v2-create-notebook", "creates remote notebooks only after an interactive choice"]]),
   ],
 ]);
+
+const isConsentFree = (path: string, operationId: string) =>
+  CONSENT_FREE_OPERATIONS.has(operationId) ||
+  LEAF_CONSENT_FREE_OPERATIONS.get(path)?.has(operationId) === true;
 
 const MUTATING_VERBS: ReadonlySet<string> = new Set([
   "create",
@@ -144,12 +152,35 @@ describe.each(leavesByVariant)(
           return permissions.operations
             .filter(
               ({ operationId }) =>
-                OPERATIONS.get(operationId)?.method !== "GET" &&
-                !CONSENT_FREE_OPERATIONS.has(operationId),
+                OPERATIONS.get(operationId)?.method !== "GET" && !isConsentFree(path, operationId),
             )
             .map(({ operationId }) => `${path}: ${operationId}`);
         });
       expect([...new Set(offenders)]).toEqual([]);
+    });
+
+    it("requires an exemption reason on a sync or selectable leaf that never asks for consent", () => {
+      const offenders = withPolicy
+        .filter(({ policy }) => policy.group === "sync" || policy.group === "selectable")
+        .filter(
+          ({ policy }) =>
+            policy.consent === "none" && (policy.consentExemptReason ?? "").trim() === "",
+        )
+        .map(({ path }) => path);
+      expect(offenders).toEqual([]);
+    });
+
+    it("gives every leaf-scoped consent-free operation a leaf that declares its reason", () => {
+      const reasonByPath = new Map(withPolicy.map(({ path, policy }) => [path, policy]));
+      const offenders = [...LEAF_CONSENT_FREE_OPERATIONS.keys()].filter((path) => {
+        const policy = reasonByPath.get(path);
+        return (
+          policy === undefined ||
+          policy.consent !== "none" ||
+          (policy.consentExemptReason ?? "").trim() === ""
+        );
+      });
+      expect(offenders).toEqual([]);
     });
 
     it("requires consent or an exemption reason on a leaf named for a mutating verb", () => {
@@ -167,9 +198,10 @@ describe.each(leavesByVariant)(
 
 describe("target policy allowlists", () => {
   it("name only operations in the API spec", () => {
-    const unknown = [...CONSENT_FREE_OPERATIONS.keys()].filter(
-      (operationId) => !OPERATIONS.has(operationId),
-    );
+    const unknown = [
+      ...CONSENT_FREE_OPERATIONS.keys(),
+      ...[...LEAF_CONSENT_FREE_OPERATIONS.values()].flatMap((operations) => [...operations.keys()]),
+    ].filter((operationId) => !OPERATIONS.has(operationId));
     expect(unknown).toEqual([]);
   });
 });
@@ -190,6 +222,15 @@ describe("withTargetPolicy", () => {
   it("annotates the command with the declared policy", () => {
     const leaf = Command.make("leaf").pipe(withTargetPolicy({ group: "hosted", consent: "no" }));
     expect(readTargetPolicy(leaf)).toEqual(Option.some({ group: "hosted", consent: "no" }));
+  });
+
+  it("requires a reason from a sync or selectable declaration that never asks for consent", () => {
+    // @ts-expect-error a leaf that can reach a hosted database must say why it never asks
+    withTargetPolicy({ group: "sync", consent: "none" });
+    // @ts-expect-error a leaf that can reach a hosted database must say why it never asks
+    withTargetPolicy({ group: "selectable", consent: "none" });
+    withTargetPolicy({ group: "selectable", consent: "none", consentExemptReason: "read-only" });
+    withTargetPolicy({ group: "hosted", consent: "none" });
   });
 
   it("reads no policy from an unannotated command", () => {

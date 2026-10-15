@@ -8,11 +8,7 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { NotebookNotFoundError } from "../notebooks.errors.ts";
-import {
-  emitNotebooksMachineOutput,
-  notebooksMachineOutputRequested,
-  rejectNotebooksEnvOutput,
-} from "../notebooks.output.ts";
+import { emitNotebooksMachineOutput, rejectNotebooksEnvOutput } from "../notebooks.output.ts";
 import {
   deleteRemoteNotebook,
   downloadNotebook,
@@ -58,7 +54,6 @@ export const notebooksPush = Effect.fn("notebooks.push")(function* (flags: Noteb
     // Refused before the project is resolved: failing at emit time would mean
     // failing after the project has already changed.
     yield* rejectNotebooksEnvOutput();
-    const machineOutput = yield* notebooksMachineOutputRequested();
 
     const ref = yield* resolver.resolve(flags.projectRef);
 
@@ -99,7 +94,6 @@ export const notebooksPush = Effect.fn("notebooks.push")(function* (flags: Noteb
           names: remoteOnly.map((notebook) => notebook.name),
           copyLabel: `Write them into ${dir}`,
           deleteLabel: "Delete them from the project",
-          machineOutput,
         });
       }
       // Resolve and validate the selected plan before the first upload.

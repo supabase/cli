@@ -77,5 +77,9 @@ export const dbLintCommand = Command.make("lint", config).pipe(
   Command.provide(dbLintRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
-  withTargetPolicy({ group: "selectable", consent: "none" }),
+  withTargetPolicy({
+    group: "selectable",
+    consent: "none",
+    consentExemptReason: "its transaction is always rolled back",
+  }),
 );

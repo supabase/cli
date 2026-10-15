@@ -64,5 +64,5 @@ export const migrationListCommand = Command.make("list", config).pipe(
   Command.provide(migrationDbRuntimeLayer(["migration", "list"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
-  withTargetPolicy({ group: "selectable", consent: "none" }),
+  withTargetPolicy({ group: "selectable", consent: "none", consentExemptReason: "read-only" }),
 );

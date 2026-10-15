@@ -68,7 +68,7 @@ describe("compute delete", () => {
         });
 
         expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
-        expect(out.stderrText).toContain('permanently delete compute "api"');
+        expect(out.stderrText).toContain('Permanently delete compute "api"');
         assertPermissionDrift({
           command: "compute delete",
           variant: { computeEnabled: true },
@@ -206,7 +206,7 @@ describe("compute delete", () => {
       return yield* Effect.gen(function* () {
         yield* computeDelete({ name: "api", projectRef: Option.none() });
 
-        expect(out.stderrText).toContain('permanently delete compute "api"');
+        expect(out.stderrText).toContain('Permanently delete compute "api"');
         // No count is quoted: the read that would have supplied one was refused.
         expect(out.stderrText).not.toContain("will be terminated");
         expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
@@ -274,7 +274,7 @@ describe("compute delete", () => {
 
         expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
         expect(out.promptTextCalls).toEqual([]);
-        expect(out.stderrText).toContain('Confirmed by --yes: permanently delete compute "api"');
+        expect(out.stderrText).toContain('Confirmed by --yes: Permanently delete compute "api"');
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -642,7 +642,7 @@ describe("compute delete", () => {
       return yield* Effect.gen(function* () {
         yield* computeDelete({ name: "api", projectRef: Option.none() });
 
-        expect(out.stderrText).toContain('permanently delete compute "api"');
+        expect(out.stderrText).toContain('Permanently delete compute "api"');
         expect(out.stderrText).not.toContain("will be terminated");
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),

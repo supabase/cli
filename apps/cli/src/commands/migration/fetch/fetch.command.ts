@@ -52,5 +52,9 @@ export const migrationFetchCommand = Command.make("fetch", config).pipe(
   Command.provide(migrationDbRuntimeLayer(["migration", "fetch"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
-  withTargetPolicy({ group: "sync", consent: "none" }),
+  withTargetPolicy({
+    group: "sync",
+    consent: "none",
+    consentExemptReason: "reads the remote migration history and writes only local migration files",
+  }),
 );

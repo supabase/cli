@@ -62,9 +62,9 @@
 
 ### `--output-format text`
 
-Prints `This action is irreversible.` and asks `delete project <ref>?` (default
+Prints `This action is irreversible.` and asks `Delete project <ref>?` (default
 **No**), then on success prints `Deleted project: <name>` to stdout. `--yes` or a shell
-`SUPABASE_YES` answers the question and prints `Confirmed by --yes: delete project <ref>`
+`SUPABASE_YES` answers the question and prints `Confirmed by --yes: Delete project <ref>`
 on stderr; a `SUPABASE_YES` in a project `.env` does not count.
 
 ### `--output-format json`

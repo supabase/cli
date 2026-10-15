@@ -88,7 +88,7 @@ The confirmation prompt runs before the row's existence is known (the CLI
 never reads the row), so a wrong token is answered with the not-found error
 after the prompt. The delete runs behind a "Deleting feedback..." spinner.
 `--yes` / a shell `SUPABASE_YES` skips the confirmation prompt and prints
-`Confirmed by --yes: permanently delete this feedback` on stderr; a `SUPABASE_YES` in a
+`Confirmed by --yes: Permanently delete this feedback` on stderr; a `SUPABASE_YES` in a
 project `.env` does not count, and stdin is never read for the answer. `-o json` requires
 `--yes` like the machine output formats do: it never prompts, even on a TTY,
 so stdout stays payload-only, and it emits `{ "deleted": true }`.
