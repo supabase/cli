@@ -143,4 +143,21 @@ describe("CLI output to a closed stdout", () => {
       expect(stderr).not.toContain("Stdio");
     }),
   );
+
+  it.live.each([
+    { name: "a handler failure", args: ["projects", "list", "--output-format", "json"] },
+    {
+      name: "a parse failure",
+      args: ["gen", "signing-key", "--algorithm", "BOGUS", "--output-format", "json"],
+    },
+  ])("keeps exit 1 for $name whose JSON error cannot be written", ({ args }) =>
+    Effect.gen(function* () {
+      const { exitCode, stderr } = yield* runSupabaseEffect(args, {
+        closeStdout: true,
+        env: { SUPABASE_ACCESS_TOKEN: undefined },
+      });
+      expect(exitCode).toBe(1);
+      expect(stderr).not.toContain("StdoutClosedError");
+    }),
+  );
 });

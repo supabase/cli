@@ -1,4 +1,4 @@
-import { Data, Runtime } from "effect";
+import { Cause, Data, Effect, Runtime } from "effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -41,3 +41,19 @@ export class StdoutClosedError extends Data.TaggedError("StdoutClosedError") {
     return actionability.cancelled;
   }
 }
+
+/** Whether a run ended because stdout closed, rather than through its own success or failure. */
+export const endedByClosedStdout = (cause: Cause.Cause<unknown>): boolean =>
+  cause.reasons.some(
+    (reason) => Cause.isDieReason(reason) && reason.defect instanceof StdoutClosedError,
+  );
+
+/** Lets a final message to a closed stdout be dropped, so it cannot replace the outcome it reports. */
+export const ignoreStdoutClosed = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A | void, E, R> =>
+  effect.pipe(
+    Effect.catchDefect((defect) =>
+      defect instanceof StdoutClosedError ? Effect.void : Effect.die(defect),
+    ),
+  );
