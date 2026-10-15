@@ -46,7 +46,7 @@ const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
     Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
   );
 
-const confirmedDelete = `Confirmed by --yes: Delete the vanity subdomain on project ${VALID_REF} · identity unverified\n`;
+const confirmedDelete = `Confirmed by --yes: Delete the vanity subdomain on project ${VALID_REF}\n`;
 const API_URL = "https://api.supabase.com";
 
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));

@@ -41,7 +41,7 @@ const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
     Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
   );
 
-const confirmed = `Confirmed by --yes: Delete the custom hostname config on project ${VALID_REF} · identity unverified\n`;
+const confirmed = `Confirmed by --yes: Delete the custom hostname config on project ${VALID_REF}\n`;
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function setup(opts: SetupOpts = {}) {
@@ -184,7 +184,9 @@ describe("domains delete integration", () => {
         expect(yield* fs.exists(cachePath)).toBe(false);
         yield* domainsDelete(baseFlags);
         expect(out.stderrText).toBe(
-          unverifiedTargetBanner() + confirmed + "Deleted custom hostname config successfully.\n",
+          `Target: project alpha (${VALID_REF})\n` +
+            `Confirmed by --yes: Delete the custom hostname config on project alpha (${VALID_REF})\n` +
+            "Deleted custom hostname config successfully.\n",
         );
         expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
           "GET https://api.supabase.com/v1/projects",

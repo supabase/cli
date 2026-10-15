@@ -60,7 +60,7 @@ const MIXED_SECRETS: SecretsList = [
   { name: "BAR", value: "d3" },
 ];
 
-const ON_TARGET = `project ${VALID_REF} · identity unverified`;
+const ON_TARGET = `project ${VALID_REF}`;
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({

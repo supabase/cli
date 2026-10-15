@@ -28,7 +28,7 @@ describe("supabase inspect report", () => {
             { home: home.dir, env: { HOME: home.dir } },
           );
           expect(exitCode).toBe(1);
-          expect(stderr).toContain("Target: custom Postgres (127.0.0.1)");
+          expect(stderr).toContain("Target: custom Postgres (127.0.0.1:1)");
           expect(stderr).toMatch(/failed to connect to postgres|connection refused|ECONNREFUSED/i);
           const dated = (yield* fs.readDirectory(outputDir)).filter((name) =>
             /^\d{4}-\d{2}-\d{2}$/.test(name),

@@ -355,7 +355,7 @@ describe("projectRefLayer", () => {
         const { resolveRef } = yield* ProjectRefResolver;
         const resolved = yield* resolveRef(Option.some(VALID_REF));
         expect(resolved).toEqual({ ref: VALID_REF, source: "flag", matchesLinkedRef: false });
-        expect(out.stderrText).toBe(banner(`project ${VALID_REF} · identity unverified`));
+        expect(out.stderrText).toBe(banner(`project ${VALID_REF}`));
       }).pipe(Effect.provide(layer));
     });
 
@@ -380,20 +380,18 @@ describe("projectRefLayer", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.effect("treats a saved ref that differs from the cached project as its branch", () => {
+    it.effect("never calls a saved ref a branch just because the cache names another project", () => {
       writeRefFile(tempRoot, ANOTHER_REF);
       writeLinkedCache(tempRoot, { ref: VALID_REF, name: "alpha" });
       const { layer, out } = makeLayer({ workdir: tempRoot });
       return Effect.gen(function* () {
         const { resolveRef } = yield* ProjectRefResolver;
         yield* resolveRef(Option.none());
-        expect(out.stderrText).toBe(
-          banner(`project alpha (${VALID_REF}) · branch (${ANOTHER_REF})`),
-        );
+        expect(out.stderrText).toBe(banner(`project ${ANOTHER_REF}`));
       }).pipe(Effect.provide(layer));
     });
 
-    it.effect("leaves a flag ref outside the linked project unverified", () => {
+    it.effect("says a flag ref outside the linked project is not the linked project", () => {
       writeRefFile(tempRoot, VALID_REF);
       writeLinkedCache(tempRoot, { ref: VALID_REF, name: "alpha" });
       const { layer, out } = makeLayer({ workdir: tempRoot });
@@ -401,7 +399,17 @@ describe("projectRefLayer", () => {
         const { resolveRef } = yield* ProjectRefResolver;
         const resolved = yield* resolveRef(Option.some(ANOTHER_REF));
         expect(resolved.matchesLinkedRef).toBe(false);
-        expect(out.stderrText).toBe(banner(`project ${ANOTHER_REF} · identity unverified`));
+        expect(out.stderrText).toBe(banner(`project ${ANOTHER_REF} (not the linked project)`));
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("says an env ref outside the linked project is not the linked project", () => {
+      writeRefFile(tempRoot, VALID_REF);
+      const { layer, out } = makeLayer({ workdir: tempRoot, projectId: ANOTHER_REF });
+      return Effect.gen(function* () {
+        const { resolveRef } = yield* ProjectRefResolver;
+        yield* resolveRef(Option.none());
+        expect(out.stderrText).toBe(banner(`project ${ANOTHER_REF} (not the linked project)`));
       }).pipe(Effect.provide(layer));
     });
 
@@ -432,13 +440,30 @@ describe("projectRefLayer", () => {
       }).pipe(Effect.provide(layer));
     });
 
+    it.effect("names the project the picker chose in the banner", () => {
+      const projects = [
+        { id: ANOTHER_REF, name: "beta", organization_slug: "acme", region: "eu-west-1" },
+      ];
+      const { layer, out } = makeLayer({
+        workdir: tempRoot,
+        stdinIsTty: true,
+        projects,
+        promptSelectResponses: [ANOTHER_REF],
+      });
+      return Effect.gen(function* () {
+        const { resolveRef } = yield* ProjectRefResolver;
+        yield* resolveRef(Option.none());
+        expect(out.stderrText).toBe(banner(`project beta (${ANOTHER_REF})`));
+      }).pipe(Effect.provide(layer));
+    });
+
     it.effect("announces once when the same command resolves twice", () => {
       const { layer, out } = makeLayer({ workdir: tempRoot });
       return Effect.gen(function* () {
         const { resolve } = yield* ProjectRefResolver;
         yield* resolve(Option.some(VALID_REF));
         yield* resolve(Option.some(VALID_REF));
-        expect(out.stderrText).toBe(banner(`project ${VALID_REF} · identity unverified`));
+        expect(out.stderrText).toBe(banner(`project ${VALID_REF}`));
       }).pipe(Effect.provide(layer));
     });
 
@@ -470,7 +495,7 @@ describe("projectRefLayer", () => {
       return Effect.gen(function* () {
         const { resolveForLink } = yield* ProjectRefResolver;
         yield* resolveForLink(Option.some(VALID_REF));
-        expect(out.stderrText).toBe(banner(`project ${VALID_REF} · identity unverified`));
+        expect(out.stderrText).toBe(banner(`project ${VALID_REF}`));
       }).pipe(Effect.provide(layer));
     });
   });

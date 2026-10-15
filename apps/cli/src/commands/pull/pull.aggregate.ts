@@ -1,7 +1,6 @@
 import type { DownloadFunctionsResult } from "../../shared/functions/download.ts";
 import type { MigrationFetchOutcome } from "../../command-internal/migration-fetch-run.ts";
 import type { DbPullOutcome } from "../../command-internal/db-pull-run.ts";
-import type { TargetJson } from "../../shared/output/command-target.service.ts";
 import type {
   PullAggregate,
   PullStepFailure,
@@ -339,7 +338,6 @@ export function pullCounts(results: ReadonlyArray<PullStepResult>): PullCounts {
 export function pullAggregate(input: {
   readonly ref: string;
   readonly branch: string | undefined;
-  readonly targetIdentity: TargetJson;
   readonly dryRun: boolean;
   readonly confirmed: boolean;
   readonly dirtyPaths: ReadonlyArray<string>;
@@ -348,7 +346,6 @@ export function pullAggregate(input: {
   return {
     ref: input.ref,
     branch: input.branch,
-    targetIdentity: input.targetIdentity,
     dryRun: input.dryRun,
     confirmed: input.confirmed,
     dirtyPaths: input.dirtyPaths,

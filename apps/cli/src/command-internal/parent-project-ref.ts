@@ -159,10 +159,7 @@ export const resolveParentScopedProjectRef = Effect.fn("ParentProjectRef.resolve
       yield* Path.Path,
       cliSettings.workdir,
     );
-    const cachedParent = Option.exists(cache, (project) => project.ref === parent.ref);
-    yield* announceTarget(
-      describeLinkedTarget({ ref: parent.ref, source: cachedParent ? "file" : "env", cache }),
-    );
+    yield* announceTarget(describeLinkedTarget({ ref: parent.ref, cache }));
     return parent.ref;
   }
 

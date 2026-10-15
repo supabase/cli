@@ -103,7 +103,7 @@ subprocess's stdout is forwarded chunk-by-chunk, byte-exact and unframed) —
 ### `--output-format text`
 
 TAP streams to stdout. The `Target: …` line (linked project `Target: <name> (<ref>)`,
-`Target: local stack (<host>:<port>)`, or `Target: custom Postgres (<host>)`) and the hosted
+`Target: local stack (<host>:<port>)`, or `Target: custom Postgres (<host>:<port>)`) and the hosted
 confirmation question are written to **stderr**, never to stdout — no
 spinner is used, so stdout carries only the raw TAP bytes.
 

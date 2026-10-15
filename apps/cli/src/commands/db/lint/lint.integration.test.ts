@@ -254,6 +254,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(YesFlag, false),
     Layer.succeed(CliArgs, { args: [] }),
     Layer.succeed(DnsResolverFlag, "native"),
+    BunServices.layer,
   );
   return { layer, out, resolver, connection, telemetry, processControl, projectRef, cache, http };
 }

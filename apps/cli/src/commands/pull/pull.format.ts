@@ -34,7 +34,6 @@ export function pullPayload(aggregate: PullAggregate): Record<string, unknown> {
   return {
     schema_version: PULL_PAYLOAD_VERSION,
     target: {
-      ...aggregate.targetIdentity,
       project_ref: aggregate.ref,
       ...(aggregate.branch === undefined ? {} : { branch: aggregate.branch }),
     },

@@ -16,7 +16,12 @@ import {
 import { TestClock } from "effect/testing";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
 import { mockTty } from "../../../tests/helpers/mocks.ts";
-import { announceTarget, CommandTarget } from "./command-target.service.ts";
+import {
+  announceTarget,
+  CommandTarget,
+  type RenderedTarget,
+  withAnnouncedTarget,
+} from "./command-target.service.ts";
 import { commandTargetLayer } from "./command-target.layer.ts";
 import { machineErrorContextLayer } from "./machine-error-context.layer.ts";
 import { MachineErrorContext } from "./machine-error-context.service.ts";
@@ -1342,12 +1347,12 @@ describe("Output", () => {
   });
 
   describe("command target", () => {
-    const localTarget = {
+    const localTarget: RenderedTarget = {
       text: "local stack (127.0.0.1:54322)",
       json: { kind: "local", host: "127.0.0.1", port: 54322 },
     };
-    const linkedTarget = {
-      text: "project abcdefghijklmnopqrst · identity unverified",
+    const linkedTarget: RenderedTarget = {
+      text: "project abcdefghijklmnopqrst",
       json: {
         kind: "linked",
         project_ref: "abcdefghijklmnopqrst",
@@ -1498,7 +1503,7 @@ describe("Output", () => {
         yield* announceTarget(localTarget);
         yield* out.result({ diff: "" });
         expect(mock.stderr).toEqual([
-          "Target: project abcdefghijklmnopqrst · identity unverified\n",
+          "Target: project abcdefghijklmnopqrst\n",
           "Target: local stack (127.0.0.1:54322)\n",
         ]);
         const parsed = yield* decodeJson(mock.stdout[0]!);
@@ -1514,6 +1519,48 @@ describe("Output", () => {
         yield* announceTarget(linkedTarget);
         yield* announceTarget(localTarget);
         expect(yield* cell.text).toEqual(Option.some(linkedTarget.text));
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("a local banner carries the hint set before it was announced", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const cell = yield* CommandTarget;
+        yield* cell.hintLocal("default; pass --linked for alpha (abcdefghijklmnopqrst)");
+        yield* announceTarget(localTarget);
+        expect(mock.stderr).toEqual([
+          "Target: local stack (127.0.0.1:54322) · default; pass --linked for alpha (abcdefghijklmnopqrst)\n",
+        ]);
+        expect(yield* cell.json).toEqual(Option.some(localTarget.json));
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("the hint only applies to a local banner", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const cell = yield* CommandTarget;
+        yield* cell.hintLocal("default; pass --linked for abcdefghijklmnopqrst");
+        yield* announceTarget(linkedTarget);
+        expect(mock.stderr).toEqual(["Target: project abcdefghijklmnopqrst\n"]);
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("withAnnouncedTarget puts the announced target in front of the payload's own", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const announced = yield* withAnnouncedTarget({ rows: 1 });
+        expect(announced).toEqual({ rows: 1 });
+        yield* announceTarget(linkedTarget);
+        expect(yield* withAnnouncedTarget({ rows: 1 })).toEqual({
+          rows: 1,
+          target: linkedTarget.json,
+        });
+        expect(
+          yield* withAnnouncedTarget({ rows: 1, target: { environment: "branch", extra: true } }),
+        ).toEqual({
+          rows: 1,
+          target: { ...linkedTarget.json, environment: "branch", extra: true },
+        });
       }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
     });
 

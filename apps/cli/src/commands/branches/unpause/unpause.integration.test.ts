@@ -68,7 +68,7 @@ const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
     Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
   );
 
-const confirmed = `Confirmed by --yes: Unpause preview branch ${BRANCH_REF} on project ${VALID_REF} · identity unverified\n`;
+const confirmed = `Confirmed by --yes: Unpause preview branch ${BRANCH_REF} on project ${VALID_REF}\n`;
 const sequence = (requests: ReadonlyArray<{ method: string; url: string }>) =>
   requests.map(({ method, url }) => `${method} ${url}`);
 

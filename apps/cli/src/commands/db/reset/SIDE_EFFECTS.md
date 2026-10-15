@@ -221,7 +221,7 @@ surfaced as `1`.
 
 Every target prints a `Target: …` line to **stderr** before the first database change: the
 linked project (`Target: <name> (<ref>)`), `Target: local stack (<host>:<port>)`, or
-`Target: custom Postgres (<host>)`. There is no `Connecting to … database…` line.
+`Target: custom Postgres (<host>:<port>)`. There is no `Connecting to … database…` line.
 
 The remote path then asks for confirmation (see Notes), prints `Resetting remote database…` to
 **stderr**, then either the schema-files branch's apply (no per-file progress, CLI-1958) or the

@@ -9,14 +9,13 @@ import { validateWorkdirIsDirectory } from "../../command-internal/workdir-valid
 import { MachineErrorContext } from "../../shared/output/machine-error-context.service.ts";
 import { resolveYes, OutputFlag } from "../../command-internal/global-flags.ts";
 import { requireHostedMutationConsent } from "../../command-internal/hosted-consent/hosted-consent.ts";
-import { CommandTarget, type TargetJson } from "../../shared/output/command-target.service.ts";
+import { withAnnouncedTarget } from "../../shared/output/command-target.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import {
   configTargetErrorsFor,
-  linkedTargetForConfigRef,
   resolveConfigTarget,
 } from "../../command-internal/project-target.ts";
 import { unexpectedStatusMessage } from "../../command-internal/http-errors.ts";
@@ -101,10 +100,18 @@ const configPullPayloadFor = (runPlan: ConfigPullRunPlan, outcome: ConfigPullOut
  * mixed-failure disposition is inlined separately instead, since machine mode there feeds the
  * payload into `MachineErrorContext` ahead of a re-failed cause.
  */
-const pullEmit = (output: typeof Output.Service, aggregate: PullAggregate) =>
-  output.format === "text"
-    ? output.raw(renderPullSummary(aggregate))
-    : output.success(pullSummaryMessage(aggregate), pullPayload(aggregate));
+const pullEmit = Effect.fnUntraced(function* (
+  output: typeof Output.Service,
+  aggregate: PullAggregate,
+) {
+  if (output.format === "text") {
+    return yield* output.raw(renderPullSummary(aggregate));
+  }
+  return yield* output.success(
+    pullSummaryMessage(aggregate),
+    yield* withAnnouncedTarget(pullPayload(aggregate)),
+  );
+});
 
 /**
  * Runs `effect`, capturing a typed failure into a failed `Exit` instead of letting it
@@ -194,7 +201,6 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const machineErrorContext = yield* MachineErrorContext;
-  const commandTarget = yield* CommandTarget;
 
   const requested = Option.filter(flags.projectRef, (value) => value.length > 0);
   const remoteLabel = Option.getOrUndefined(
@@ -219,7 +225,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
 
     // Resolves the pull target exactly once; every sub-step below targets `ref` directly
     // instead of re-resolving (ADR 0024).
-    const { ref, branch, runPlan, source } = yield* Effect.gen(function* () {
+    const { ref, branch, linked, runPlan, source } = yield* Effect.gen(function* () {
       const pullSource = yield* openConfigPullSource();
       const target = yield* resolveConfigTarget(requested, pullTargetErrors, mapBranchResolveError);
       yield* Ref.set(resolvedRef, Option.some(target.ref));
@@ -231,11 +237,14 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
         remoteLabel,
         source: pullSource,
       });
-      return { ref: target.ref, branch: target.branch, runPlan: plan, source: pullSource };
+      return {
+        ref: target.ref,
+        branch: target.branch,
+        linked: target.linked,
+        runPlan: plan,
+        source: pullSource,
+      };
     }).pipe(Effect.withSpan("pull.resolveTarget"));
-
-    const linkedTarget = yield* linkedTargetForConfigRef(requested, ref);
-    const targetIdentity: TargetJson = Option.getOrElse(yield* commandTarget.json, () => ({}));
 
     // Retry hints below use the planned remote destination's label, not the raw `remoteLabel`
     // flag: for a branch-derived implicit target, that's the `[remotes.<branch>]` block the
@@ -355,7 +364,6 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
       const aggregate = pullAggregate({
         ref,
         branch,
-        targetIdentity,
         dryRun: true,
         confirmed: false,
         dirtyPaths,
@@ -387,7 +395,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     const stepContext: PullStepContext = {
       ref,
       assumeYes: true,
-      target: linkedTarget,
+      target: linked,
       preapproved,
     };
     const { results, firstFailureCause } = yield* Effect.gen(function* () {
@@ -483,7 +491,6 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     const aggregate = pullAggregate({
       ref,
       branch,
-      targetIdentity,
       dryRun: false,
       confirmed: true,
       dirtyPaths,
@@ -497,7 +504,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     if (output.format === "text") {
       yield* output.raw(renderPullSummary(aggregate));
     } else {
-      yield* machineErrorContext.set(pullPayload(aggregate));
+      yield* machineErrorContext.set(yield* withAnnouncedTarget(pullPayload(aggregate)));
     }
     return yield* Effect.failCause(firstFailureCause);
   }).pipe(

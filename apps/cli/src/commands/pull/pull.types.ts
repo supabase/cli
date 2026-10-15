@@ -2,7 +2,6 @@ import type { Option } from "effect";
 
 import type { HostedMutationConsent } from "../../command-internal/hosted-consent/hosted-consent.token.ts";
 import type { ResolvedTarget } from "../../command-internal/target/resolve-target.ts";
-import type { TargetJson } from "../../shared/output/command-target.service.ts";
 
 export const PULL_STEP_ORDER = ["config", "migration_history", "db", "functions"] as const;
 
@@ -42,8 +41,6 @@ export interface PullStepContext {
 export interface PullAggregate {
   readonly ref: string;
   readonly branch: string | undefined;
-  /** The announced target's machine form (`kind`, identity fields), merged into the payload's `target`. */
-  readonly targetIdentity?: TargetJson;
   readonly dryRun: boolean;
   readonly confirmed: boolean;
   /** Workdir-relative paths that had uncommitted or untracked changes at the start of this

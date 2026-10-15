@@ -538,7 +538,6 @@ describe("pullAggregate", () => {
       pullAggregate({
         ref: "abcdefghijklmnopqrst",
         branch: "staging",
-        targetIdentity: { kind: "linked", environment: "branch" },
         dryRun: true,
         confirmed: false,
         dirtyPaths: ["supabase/config.toml"],
@@ -547,7 +546,6 @@ describe("pullAggregate", () => {
     ).toEqual({
       ref: "abcdefghijklmnopqrst",
       branch: "staging",
-      targetIdentity: { kind: "linked", environment: "branch" },
       dryRun: true,
       confirmed: false,
       dirtyPaths: ["supabase/config.toml"],
@@ -560,7 +558,6 @@ describe("pullAggregate", () => {
       pullAggregate({
         ref: "abcdefghijklmnopqrst",
         branch: undefined,
-        targetIdentity: {},
         dryRun: false,
         confirmed: true,
         dirtyPaths: [],
@@ -586,7 +583,6 @@ describe("pullAggregate", () => {
     const aggregate = pullAggregate({
       ref: "abcdefghijklmnopqrst",
       branch: undefined,
-      targetIdentity: {},
       dryRun: false,
       confirmed: true,
       dirtyPaths: [],

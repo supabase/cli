@@ -68,12 +68,12 @@ const NO_EXTRAS_OR_FORCED = { extras: [], forced: [], secretsEncoded: [] };
 
 describe("pushUpdatingLine", () => {
   const RESOURCE_PREFIXES: ReadonlyArray<readonly [PushResource, string]> = [
-    ["api", "Updating API service with config:"],
-    ["db.settings", "Updating DB service with config:"],
-    ["db.network_restrictions", "Updating network restrictions with config:"],
-    ["db.ssl_enforcement", "Updating SSL enforcement with config:"],
-    ["auth", "Updating Auth service with config:"],
-    ["storage", "Updating Storage service with config:"],
+    ["api", "Would update API service with:"],
+    ["db.settings", "Would update DB service with:"],
+    ["db.network_restrictions", "Would update network restrictions with:"],
+    ["db.ssl_enforcement", "Would update SSL enforcement with:"],
+    ["auth", "Would update Auth service with:"],
+    ["storage", "Would update Storage service with:"],
   ];
 
   test.each(RESOURCE_PREFIXES)("uses the established prefix for %s", (resource, prefix) => {
@@ -97,7 +97,7 @@ describe("pushUpdatingLine", () => {
         secretsEncoded: [SENT_SECRET.path],
       }),
     ).toBe(
-      "Updating Auth service with config:\n" +
+      "Would update Auth service with:\n" +
         "api.max_rows [update]\n" +
         "  local:  2000\n" +
         "  remote: 1000\n" +
@@ -119,7 +119,7 @@ describe("pushUpdatingLine", () => {
         secretsEncoded: [SENT_SECRET_ABSENT_REMOTE.path],
       }),
     ).toBe(
-      "Updating Auth service with config:\n" +
+      "Would update Auth service with:\n" +
         "auth.captcha.secret [secret]\n" +
         "  local:  (set)\n" +
         "  remote: (not set)\n" +
@@ -136,7 +136,7 @@ describe("pushUpdatingLine", () => {
         ...NO_EXTRAS_OR_FORCED,
       }),
     ).toBe(
-      "Updating Auth service with config:\n" +
+      "Would update Auth service with:\n" +
         "auth.sms.twilio.auth_token [secret]\n" +
         "  local:  (not set — empty or unresolved env reference; will not be pushed)\n" +
         "  remote: (not set)\n" +
@@ -153,7 +153,7 @@ describe("pushUpdatingLine", () => {
         ...NO_EXTRAS_OR_FORCED,
       }),
     ).toBe(
-      "Updating Auth service with config:\n" +
+      "Would update Auth service with:\n" +
         "auth.sms.twilio.auth_token [secret]\n" +
         "  local:  (not set — empty or unresolved env reference; will not be pushed)\n" +
         "  remote: (set)\n" +
@@ -182,7 +182,7 @@ describe("pushUpdatingLine", () => {
         secretsEncoded: [],
       }),
     ).toBe(
-      "Updating Auth service with config:\n" +
+      "Would update Auth service with:\n" +
         "api.max_rows [update]\n" +
         "  local:  2000\n" +
         "  remote: 1000\n" +
@@ -202,7 +202,7 @@ describe("pushUpdatingLine", () => {
         secrets: [UNCHANGED_SECRET, GATED_SECRET],
         ...NO_EXTRAS_OR_FORCED,
       }),
-    ).toBe("Updating Auth service with config:\n");
+    ).toBe("Would update Auth service with:\n");
   });
 
   test("renders a [content] block for a template/notification body with no registry row", () => {
@@ -216,7 +216,7 @@ describe("pushUpdatingLine", () => {
         forced: [],
       }),
     ).toBe(
-      "Updating Auth service with config:\n" +
+      "Would update Auth service with:\n" +
         "auth.email.template.invite.content [content]\n" +
         "  local:  (file content from content_path)\n" +
         "  remote: (differs)\n" +
@@ -235,7 +235,7 @@ describe("pushUpdatingLine", () => {
         forced: [{ path: ["db", "network_restrictions", "allowed_cidrs_v6"], value: [] }],
       }),
     ).toBe(
-      "Updating network restrictions with config:\n" +
+      "Would update network restrictions with:\n" +
         "db.network_restrictions.allowed_cidrs_v6 [group-write]\n" +
         "  local:  [] (schema default — not declared in config.toml)\n" +
         "  remote: (not returned)\n" +
@@ -254,7 +254,7 @@ describe("pushUpdatingLine", () => {
     });
     expect(rendered.endsWith("\n\n")).toBe(true);
     expect(rendered).toBe(
-      "Updating Auth service with config:\n" +
+      "Would update Auth service with:\n" +
         "api.max_rows [update]\n" +
         "  local:  2000\n" +
         "  remote: 1000\n" +
