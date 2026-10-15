@@ -10,7 +10,10 @@ import {
 import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConnectionInput } from "../../../command-internal/db-config.types.ts";
+import type {
+  DbConnectionInput,
+  ResolvedDbConfig,
+} from "../../../command-internal/db-config.types.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { bloatSpec } from "./bloat/bloat.query.ts";
