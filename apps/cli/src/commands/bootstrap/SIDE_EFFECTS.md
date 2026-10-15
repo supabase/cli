@@ -1,7 +1,7 @@
 # `supabase bootstrap [template]`
 
-`bootstrap` is a meta-orchestrator: it chains a workdir prompt → template fetch/download →
-blank `init` → ensure-login → `projects create` → `projects api-keys` → `link` services →
+`bootstrap` is a meta-orchestrator: it chains a workdir prompt → hosted-mutation consent →
+template fetch/download → blank `init` → ensure-login → `projects create` → `projects api-keys` → `link` services →
 health poll → write `.env` → `db push` → start suggestion. Every step is native TypeScript,
 including the migration push (`dbPushCore`, shared with the standalone `supabase db push`
 command — see Notes).
@@ -68,15 +68,15 @@ neither branch ever reaches the temp-login-role/Management-API path a passwordle
 | `GITHUB_TOKEN`                | raise the GitHub API rate limit for template fetch                                                                                                             | no        |
 | `SUPABASE_ACCESS_TOKEN`       | auth bypass for ensure-login                                                                                                                                   | no        |
 | `SUPABASE_PROFILE`            | profile name/path (env → `~/.supabase/profile` → `supabase`)                                                                                                   | no        |
-| `SUPABASE_YES`                | auto-confirm the native push step's prompts, read project-`.env`-aware like the standalone `db push`                                                           | no        |
+| `SUPABASE_YES`                | shell value confirms the hosted-mutation consent and the overwrite prompt; a `SUPABASE_YES` in the project `supabase/.env` does not confirm the consent        | no        |
 | `SUPABASE_EXPERIMENTAL_STACK` | blank/`scratch` path only; when `1`, persists `[experimental] stack = true` and omits Docker-era default ports. Empty is unset; non-boolean values fail closed | no        |
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `1`  | invalid template arg; overwrite declined (`context canceled`); template list/download failure; login failure; create failure; api-keys exhausted; health unhealthy / error status; native push failure (missing local/remote migrations, cancelled confirmation, connect/apply failure); invalid `SUPABASE_EXPERIMENTAL_STACK` on the blank path; any network failure. The `.env` derive/write is **non-fatal** (prints `Failed to create .env file: <err>` and continues). |
+| Code | Condition                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `1`  | invalid template arg; overwrite declined (`context canceled`); template list/download failure; login failure; create failure; api-keys exhausted; health unhealthy / error status; hosted-mutation consent declined, or required but unavailable (JSON, piped stdin or agent run without `--yes`/shell `SUPABASE_YES`); native push failure (missing local/remote migrations, connect/apply failure); invalid `SUPABASE_EXPERIMENTAL_STACK` on the blank path; any network failure. The `.env` derive/write is **non-fatal** (prints `Failed to create .env file: <err>` and continues). |
 
 ## Telemetry
 
@@ -96,9 +96,9 @@ neither branch ever reaches the temp-login-role/Management-API path a passwordle
 ### `--output-format text`
 
 stderr progress: `Using workdir …`, `Created a new project at …`, `Linking project…`,
-`Checking project health…`, the native push step's own progress (`Connecting to remote
-database…`, `Applying migration …`, `Seeding…`, skip/up-to-date notices, confirmation prompts —
-byte-identical to the standalone `db push`, see its own `SIDE_EFFECTS.md`), and the final
+`Checking project health…`, the native push step's own progress (`Applying migration …`, `Seeding…`,
+skip/up-to-date notices, as in the standalone `db push`, see its own `SIDE_EFFECTS.md`; it asks
+no confirmation of its own), and the final
 `To start your app:` suggestion (Aqua command lines). `Downloading: <url>` goes to stdout (text
 mode only). The `create` sub-step also echoes the new project per `-o`
 (`pretty|json|yaml|toml|env`); bootstrap adds no `-o` output of its own. The push step's own
@@ -123,9 +123,18 @@ suppressed; a single structured result is emitted for the whole command:
 
 ## Notes
 
+- **Hosted-mutation consent.** Bootstrap declares the `account` target group with consent
+  default Yes. After the template is chosen and before anything is written, it asks once:
+  `Create a new Supabase project from the "<template>" template?`. Declining stops the command
+  with nothing written. JSON, piped-stdin and agent runs never prompt and need `--yes` or a shell
+  `SUPABASE_YES`; under either, stderr echoes `Confirmed by --yes: Create a new Supabase project
+from the "<template>" template`. A `SUPABASE_YES` in `supabase/.env` is not consent. The one
+  confirmation also covers the push into the new project (migrations, roles, seed, vault), so the
+  native push step asks nothing further and every retry reuses it.
 - **Native migration push, sharing `db push`'s own core (CLI-1953).** The push step calls
   `dbPushCore` — the same handler `db push`'s own command extracts its business logic into
-  — directly with `{ includeAll: false, includeRoles: true, includeSeed: true, dryRun: false }`.
+  — directly with `{ includeAll: false, includeRoles: true, includeSeed: true, includeVault: true,
+dryRun: false }` and the consent above as its `preapproved` proof.
   Bootstrap never re-resolves the project ref for push: the earlier `create` step already
   resolved it, and it's reused as-is (passed as a plain value, never re-derived via
   `ProjectRefResolver`, which keys off `CommandSettings.workdir`, stale after this handler's
@@ -158,7 +167,7 @@ suppressed; a single structured result is emitted for the whole command:
   delegation, CLI-1617, which had to route the resolved password across process boundaries).
 - **Retry**: the native push step is wrapped in the same `bootstrapRetryNotify` +
   `Effect.retry(retry)` policy as the api-keys and health-poll steps. A retried attempt re-runs
-  the whole push (connect, list pending migrations/seeds/roles, prompt, apply).
+  the whole push (connect, list pending migrations/seeds/roles, apply).
 - The api-keys, health, and push retries use the same backoff policy:
   exponential backoff, 3s initial interval, multiplier 1.5, 60s max interval (capped before
   jitter), ±50% jitter (randomization factor 0.5), 15m max-elapsed cap, and 8 retries (9 total
