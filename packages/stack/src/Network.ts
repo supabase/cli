@@ -2,7 +2,7 @@ import { Context, Data, Effect, Exit, Layer, Ref, Scope, Semaphore } from "effec
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import * as StackNamespace from "./StackNamespace.ts";
-import { makePorts, probeVacant } from "./Ports.ts";
+import { makePorts, probeVacant, type PortError } from "./Ports.ts";
 import { bindTcp, serveTcp, type BackendAddress, type ProxyError } from "./Proxy.ts";
 import { makeHttpProxy, type HttpAccessSink, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
 
@@ -62,6 +62,14 @@ export interface Interface {
     readonly id: string;
     readonly endpoints: Readonly<Record<string, NetworkEndpoint>>;
   }) => Effect.Effect<NetworkNamespace, NetworkError>;
+  /**
+   * Claims a native backend port for this stack until the ambient scope closes; `false` while
+   * another live stack holds it.
+   */
+  readonly claimNativePort: (
+    key: string,
+    port: number,
+  ) => Effect.Effect<boolean, PortError, Scope.Scope>;
 }
 
 export class Service extends Context.Service<Service, Interface>()("@supabase/stack/Network") {}
@@ -364,6 +372,7 @@ const makeNetwork = (options: {
     return {
       register,
       releaseStack: releaseStack(),
+      claimNativePort: (key, port) => ports.claimNative(options.stackId, key, port),
     } satisfies Interface;
   });
 

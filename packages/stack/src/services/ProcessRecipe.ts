@@ -494,6 +494,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         const reserveEndpoints = Effect.fn("ProcessRecipe.reserveEndpoints")(function* (
           parent: Scope.Closeable,
         ) {
+          const claimScope = yield* Scope.fork(parent, "sequential");
           const portScope = yield* Scope.fork(parent, "sequential");
           const excluded = yield* Ref.get(excludedByKey);
           const reservations = yield* Effect.forEach(
@@ -502,7 +503,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
               reserveNativePort(keyFor(name), {
                 excluded: excluded.get(keyFor(name)) ?? emptyNativePortSet,
                 claim: (port) => options.claimNativePort(keyFor(name), port),
-                claimScope: parent,
+                claimScope,
               }),
             { concurrency: 1 },
           ).pipe(
@@ -520,15 +521,11 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
               port: reservation.port,
             });
           }
-          return { portScope, endpoints: selected };
+          return { claimScope, portScope, endpoints: selected };
         });
+        type NativeReservation = Effect.Success<ReturnType<typeof reserveEndpoints>>;
 
-        let reusableReservation:
-          | {
-              readonly portScope: Scope.Closeable;
-              readonly endpoints: ReadonlyMap<string, ServiceEndpoint>;
-            }
-          | undefined;
+        let reusableReservation: NativeReservation | undefined;
         if (spec.startupCommands.length > 0) {
           const startupScope = yield* Scope.fork(launchScope, "sequential");
           const reservation =
@@ -584,11 +581,13 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         }
 
         const deadline = (yield* Clock.currentTimeMillis) + startupTimeoutSeconds * 1_000;
-        const spawnAttempt = Effect.fn("ProcessRecipe.spawnNativeAttempt")(function* (held?: {
-          readonly portScope: Scope.Closeable;
-          readonly endpoints: ReadonlyMap<string, ServiceEndpoint>;
-        }) {
+        const spawnAttempt = Effect.fn("ProcessRecipe.spawnNativeAttempt")(function* (
+          held?: NativeReservation,
+        ) {
           const scope = yield* Scope.fork(launchScope, "sequential");
+          // Registered before the spawn, so a held reservation's claims are released after its process stops.
+          if (held !== undefined)
+            yield* Scope.addFinalizer(scope, Scope.close(held.claimScope, Exit.void));
           const reservation = held ?? (yield* reserveEndpoints(scope));
           const selected = reservation.endpoints;
           const args = yield* spec.args(context.config, selected, {
