@@ -1,20 +1,26 @@
 import type { V1ListAllFunctionsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import {
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { functionsList } from "./list.handler.ts";
 
@@ -53,6 +59,8 @@ const UNKNOWN_STATUS_FUNCTION = {
   ...SAMPLE_FUNCTION,
   status: "PAUSED_FOR_REBALANCE",
 };
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const tempRoot = useTempWorkdir("supabase-functions-list-int-");
 
@@ -244,6 +252,75 @@ describe("functions list integration", () => {
       yield* functionsList({ projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/functions`);
+      assertPermissionDrift({ command: "functions list", requests: api.requests, exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("picks a project interactively and fills the linked-project cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.succeed(
+          request.url === "https://api.supabase.com/v1/projects"
+            ? jsonResponse(request, 200, [projectResponse(VALID_REF)])
+            : request.url === `https://api.supabase.com/v1/projects/${VALID_REF}`
+              ? jsonResponse(request, 200, projectResponse(VALID_REF))
+              : jsonResponse(request, 200, [SAMPLE_FUNCTION]),
+        ),
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      tty: mockTty({ stdinIsTty: true, stdoutIsTty: true }),
+      linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* functionsList({ projectRef: Option.none() });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toContain("Hello World");
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({ command: "functions list", requests: api.requests, exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("skips the project picker when --project-ref is empty and a ref file exists", () => {
+    const savedRef = "qrstuvwxyzabcdefghij";
+    const out = mockOutput();
+    const api = mockCommandPlatformApi({ response: { status: 200, body: [SAMPLE_FUNCTION] } });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings: mockCommandSettings({ workdir: tempRoot.current, projectId: Option.none() }),
+      tty: mockTty({ stdinIsTty: true, stdoutIsTty: true }),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(`${tempRoot.current}/supabase/.temp`, { recursive: true });
+      yield* fs.writeFileString(`${tempRoot.current}/supabase/.temp/project-ref`, savedRef);
+      yield* functionsList({ projectRef: Option.some("") });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${savedRef}/functions`,
+      ]);
+      assertPermissionDrift({
+        command: "functions list",
+        activeFlags: { "project-ref": "" },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -260,11 +337,17 @@ describe("functions list integration", () => {
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.some("qrstuvwxyzabcdefghij") });
       expect(api.requests[0]?.url).toContain("/v1/projects/qrstuvwxyzabcdefghij/functions");
+      assertPermissionDrift({
+        command: "functions list",
+        activeFlags: { "project-ref": "qrstuvwxyzabcdefghij" },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("fails with FunctionsListUnexpectedStatusError on HTTP 503", () => {
-    const { layer } = setup({ status: 503, response: [] });
+    const { layer, api } = setup({ status: 503, response: [] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -273,6 +356,10 @@ describe("functions list integration", () => {
         expect(causeText).toContain("FunctionsListUnexpectedStatusError");
         expect(causeText).toContain("unexpected list functions status 503");
       }
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
+      ]);
+      assertPermissionDrift({ command: "functions list", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
