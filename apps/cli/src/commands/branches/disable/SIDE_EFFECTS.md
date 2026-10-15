@@ -23,13 +23,17 @@ Same auth fallback chain as every Management-API command. Project-ref discovery 
 
 `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROFILE`, `SUPABASE_PROJECT_ID`, `SUPABASE_WORKDIR` — same semantics as `branches list` (including the CLI-2167 PARENT-scoped resolution chain).
 
+`SUPABASE_YES` — approves the hosted-mutation confirmation like `--yes`; read from the shell environment only, never `supabase/.env`.
+
 ## Exit Codes
 
-| Code | Condition                                                                           |
-| ---- | ----------------------------------------------------------------------------------- |
-| `0`  | success — preview branching disabled for the project                                |
-| `1`  | `BranchesDisableUnexpectedStatusError` — non-200 response from the disable endpoint |
-| `1`  | `BranchesDisableNetworkError` — transport-level network failure                     |
+| Code | Condition                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — preview branching disabled for the project                                                                   |
+| `1`  | `BranchesDisableUnexpectedStatusError` — non-200 response from the disable endpoint                                    |
+| `1`  | `BranchesDisableNetworkError` — transport-level network failure                                                        |
+| `1`  | `HostedMutationConsentRequiredError` — no `--yes` / shell `SUPABASE_YES` and the run cannot prompt; nothing is changed |
+| `1`  | `HostedMutationDeclinedError` — the confirmation prompt was declined                                                   |
 
 ## Telemetry Events Fired
 
@@ -46,3 +50,8 @@ Same auth fallback chain as every Management-API command. Project-ref discovery 
 ### `--output-format json` / `stream-json`
 
 Single `success` event carrying `{project_ref}`.
+
+## Notes
+
+- Resolves the parent project and prints `Target: <project>` once on stderr in every output format, for example `Target: project <name> (<ref>) · production`. `--output-format json|stream-json` object results and error envelopes also carry a `target` object; `--output {json,yaml,toml,env}` payloads are unchanged.
+- **Consent.** Asks once, after the parent project is resolved and before the DELETE, with default No: `Disable preview branching`. `--yes` or a shell `SUPABASE_YES` approves it (`supabase/.env` does not) and echoes `Confirmed by --yes: <action> on <target>` to stderr. Without it, only an interactive text-mode terminal is asked: JSON, `-o`, piped and agent runs exit 1 with `HostedMutationConsentRequiredError` and change nothing, and declining exits 1 with `HostedMutationDeclinedError`. Stdin is never read.

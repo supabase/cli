@@ -107,3 +107,5 @@ One `result` NDJSON event with `{branches: [...]}`.
 
 - Timestamps are formatted as UTC `YYYY-MM-DD HH:MM:SS`.
 - Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers.
+
+- Resolves the parent project and prints `Target: <project>` once on stderr in every output format, for example `Target: project <name> (<ref>) · production`. `--output-format json|stream-json` object results and error envelopes also carry a `target` object; `--output {json,yaml,toml,env}` payloads are unchanged. Reads never prompt.

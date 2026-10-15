@@ -50,3 +50,7 @@ styled 7-column table: `HOST`, `PORT`, `USER`, `PASSWORD`, `JWT SECRET`, `POSTGR
 ### `--output {json,yaml,toml,env}` / `--output-format json` / `stream-json`
 
 Emits the standard-env projection: `POSTGRES_URL` (pooled, falls back to direct on parse failure with `WARNING:` to stderr), `POSTGRES_URL_NON_POOLING` (direct), `SUPABASE_URL = https://<ref>.<project_host>`, `SUPABASE_JWT_SECRET`, plus `SUPABASE_<SUFFIX>_KEY` per API key. Publishable keys named `default` map to `SUPABASE_PUBLISHABLE_KEY` (not `SUPABASE_DEFAULT_KEY`) to avoid colliding with the default secret key.
+
+## Notes
+
+- Resolves the parent project and prints `Target: <project>` once on stderr in every output format, for example `Target: project <name> (<ref>) · production`. `--output-format json|stream-json` object results and error envelopes also carry a `target` object; `--output {json,yaml,toml,env}` payloads are unchanged. Reads never prompt.
