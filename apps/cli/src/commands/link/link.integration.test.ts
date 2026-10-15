@@ -1576,15 +1576,18 @@ describe("link permissions", () => {
           return jsonResponse(request, 404, { message: "unexpected request" });
         }),
     });
-    const layer = buildTestRuntime({
-      out,
-      api,
-      cliSettings: mockCommandSettings({
-        workdir: tempRoot.current,
-        projectId: Option.none(),
+    const layer = Layer.merge(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({
+          workdir: tempRoot.current,
+          projectId: Option.none(),
+        }),
+        tty: mockTty({ stdinIsTty: true }),
       }),
-      tty: mockTty({ stdinIsTty: true }),
-    });
+      cliConfigValuesTestLayer,
+    );
     return { layer, api, out, workdir: tempRoot.current };
   }
 

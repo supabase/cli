@@ -1248,6 +1248,7 @@ describe("functions deploy", () => {
       });
       const child = mockDockerBundleSpawner();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1533,6 +1534,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,

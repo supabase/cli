@@ -3153,6 +3153,7 @@ const setupRecorded = Effect.fnUntraced(function* (opts: {
   });
   const layer = Layer.mergeAll(
     runtime,
+    cliConfigValuesTestLayer,
     BunServices.layer,
     mockInspectSpawner().layer,
     Stdio.layerTest({ args: Effect.succeed(opts.args) }),

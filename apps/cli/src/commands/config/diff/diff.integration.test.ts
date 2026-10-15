@@ -1373,16 +1373,19 @@ describe("config diff integration", () => {
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildTestRuntime({
-        out,
-        api,
-        cliSettings,
-        tty: mockTty({ stdinIsTty: true }),
-        linkedProjectCache: realLinkedProjectCache({
-          httpClient: api.httpClientLayer,
+      const layer = Layer.merge(
+        buildTestRuntime({
+          out,
+          api,
           cliSettings,
+          tty: mockTty({ stdinIsTty: true }),
+          linkedProjectCache: realLinkedProjectCache({
+            httpClient: api.httpClientLayer,
+            cliSettings,
+          }),
         }),
-      });
+        cliConfigValuesTestLayer,
+      );
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         yield* writeProjectFile("config.toml", 'project_id = "test"\n');
