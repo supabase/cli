@@ -245,6 +245,9 @@ without one. Declare the target flags only through `targetFlags` in
 - Every leaf with consent has a `describeHostedConsent("<command path>", …)` test from
   `tests/helpers/hosted-consent.ts`.
 
+See [ADR 0033](../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md) for the
+target-default and consent rules.
+
 ## Tests
 
 Follow the root testing philosophy and use the package scripts in `package.json`. Cover meaningful

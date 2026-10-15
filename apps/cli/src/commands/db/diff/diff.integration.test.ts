@@ -145,7 +145,7 @@ interface SetupOpts {
   // `CommandSettings.projectId`; defaults to `Option.some("test")`. Pass
   // `Option.none()` to exercise the config.toml/workdir-basename fallback.
   readonly projectId?: Option.Option<string>;
-  // Simulates an unlinked workdir: `loadProjectRef` fails with
+  // Simulates an unlinked workdir: the project-ref resolver fails with
   // `ProjectRefNotLinkedError` absent an explicit `--project-ref` flag.
   readonly linkedFails?: boolean;
   // Per-differ-run `--json-diff` stdout, indexed by run order; falls back to `""`

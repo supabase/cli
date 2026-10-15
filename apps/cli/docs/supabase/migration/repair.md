@@ -45,6 +45,10 @@ Now you can run `db pull` again to dump the remote schema as a local migration f
 
 ```bash
 $ supabase db pull
+Target: project My Project (abcdefghijklmnopqrst) · production
+Write 1 migration file to supabase/migrations.
+Record them as applied in the remote migration history.
+Update the remote migration history table on project My Project (abcdefghijklmnopqrst) · production? [y/N]
 Schema written to supabase/migrations/20240414044403_remote_schema.sql
 Finished supabase db pull.
 

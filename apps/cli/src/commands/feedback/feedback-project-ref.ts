@@ -11,7 +11,7 @@ import { readProjectRefFile } from "../../shared/config/temp-paths.ts";
 // - The caller-supplied override (`--project-ref` and/or `SUPABASE_PROJECT_ID`,
 //   captured by `CommandSettings`) is validated against `PROJECT_REF_PATTERN`
 //   and fails with the shared `InvalidProjectRefError` when malformed — the
-//   same hard check every `resolve`/`loadProjectRef` caller applies to a value
+//   same hard check every project-ref caller applies to a value
 //   the user typed, so a typo is reported instead of silently falling through
 //   to a different project's context.
 // - `<workdir>/supabase/.temp/project-ref`, the file `supabase link` writes, is

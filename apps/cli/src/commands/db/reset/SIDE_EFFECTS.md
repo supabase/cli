@@ -29,9 +29,9 @@ The whole local-reset composition is hoisted into `command-internal/db-bootstrap
 reset-local-database.ts`'s `resetLocalDatabase` (CLI-2062), which this
 handler's own `cfg.isLocal` branch calls as a thin wrapper (keeping only version/
 seed-flags resolution and the JSON envelope, which are specific to this top-level
-command). `db schema declarative`'s smart-target local-reset prompt and `db schema
-sync`'s failed-apply recovery reset both call the SAME function in-process — see those
-commands' own `SIDE_EFFECTS.md`.
+command). `db schema declarative`'s optional local reset and `db schema sync`'s
+failed-apply recovery reset both call the same function in-process — see those commands' own
+`SIDE_EFFECTS.md`.
 
 When the `experimental.stack` feature flag is on (`SUPABASE_EXPERIMENTAL_STACK=1|0` env
 precedence, same rules as [`docs/stack-commands.md`](../../../../docs/stack-commands.md)), the
