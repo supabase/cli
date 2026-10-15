@@ -1,7 +1,10 @@
 import { Effect } from "effect";
 import { Flag } from "effect/cli";
 
+import { compose, withCondition } from "../../command-internal/command-permissions/model.ts";
 import { changedLinkedLocalFlags } from "../../command-internal/db-target-flags.ts";
+import { storageCredentials } from "../../command-internal/storage-credentials.ts";
+import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
 import { StorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
 
 /**
@@ -26,6 +29,12 @@ export const StorageLocalFlagDef = Flag.Boolean("local").pipe(
 export const StorageProjectRefFlagDef = Flag.String("project-ref").pipe(
   Flag.withDescription("Project ref of the Supabase project."),
   Flag.optional,
+);
+
+/** The Management API calls every `storage` subcommand makes on the linked project. */
+export const STORAGE_PERMISSIONS = compose(
+  { operations: [], noApiEffectFlags: ["linked", "project-ref", "recursive"] },
+  withCondition(compose(storageCredentials, linkedProjectCache), { flag: "local", is: false }),
 );
 
 /**
