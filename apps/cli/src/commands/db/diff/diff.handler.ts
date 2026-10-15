@@ -428,10 +428,8 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       return;
     }
 
-    // `--use-pg-schema` is an explicit engine selection that doesn't depend on config, so it
-    // short-circuits before the target resolve (disabling the child's telemetry so only this
-    // command's instrumentation fires). `--use-pgadmin` doesn't short-circuit: it needs the same
-    // config validation and target resolve as the other native engines, further down.
+    // The target resolves before the `--use-pg-schema` delegation and its `--project-ref` guard,
+    // so a workspace target reaches the delegated engine.
     const usePgAdmin = Option.getOrElse(flags.usePgAdmin, () => false);
     const usePgSchema = Option.getOrElse(flags.usePgSchema, () => false);
     const resolvedTarget = yield* resolveDbTarget({
