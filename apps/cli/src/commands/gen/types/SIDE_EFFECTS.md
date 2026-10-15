@@ -129,7 +129,7 @@ Diagnostics go to stderr: one `Target: …` banner naming the resolved target (t
 ref and whether its identity is verified, the local stack host and port, or the custom
 Postgres host) and `Connecting to …` for database introspection. In-process TypeScript also
 prints a stderr note that the output is unformatted. `--project-id` additionally prints
-`--project-id is deprecated; use --project-ref instead.` on stderr.
+`--project-id is deprecated and will be removed in v4; use --project-ref instead.` on stderr.
 
 ### `--output-format json`
 

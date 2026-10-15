@@ -99,7 +99,7 @@ export const seedTargetGlobalFlags = {
 
 /** Hidden alias of `--project-ref`, accepted only by `gen types`. */
 export const deprecatedProjectIdFlag = Flag.String("project-id").pipe(
-  Flag.withDescription("Deprecated: use --project-ref."),
+  Flag.withDescription("Deprecated, removed in v4: use --project-ref."),
   Flag.optional,
   Flag.withHidden,
 );

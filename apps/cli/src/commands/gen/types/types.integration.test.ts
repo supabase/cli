@@ -1019,7 +1019,9 @@ describe("gen types", () => {
           Effect.provide(layer),
         );
 
-        expect(out.stderrText).toContain("--project-id is deprecated; use --project-ref instead.");
+        expect(out.stderrText).toContain(
+          "--project-id is deprecated and will be removed in v4; use --project-ref instead.",
+        );
         expect(out.stderrText).toContain(unverifiedTargetBanner());
         expect(api.requests).toContainEqual({
           method: "generateTypescriptTypes",
