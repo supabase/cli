@@ -2,11 +2,17 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
-import { mockTelemetryStateTracked } from "../../../../tests/helpers/command-mocks.ts";
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
+import {
+  buildTestRuntime,
+  mockCommandPlatformApi,
+  mockCommandSettings,
+  mockTelemetryStateTracked,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import type { DbConnectionInput } from "../../../command-internal/db-config.types.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import type { InspectConnectionFlags, InspectQuerySpec } from "./inspect-query.ts";
 import { dbStatsSpec } from "./db-stats/db-stats.query.ts";
@@ -36,14 +42,20 @@ function setup() {
   const telemetry = mockTelemetryStateTracked();
   let querySql: string | undefined;
   const layer = Layer.mergeAll(
-    out.layer,
-    telemetry.layer,
+    buildTestRuntime({
+      out,
+      api: mockCommandPlatformApi(),
+      cliSettings: mockCommandSettings({ workdir: "/tmp/inspect-deprecated-test" }),
+      telemetry: telemetry.layer,
+    }),
     Layer.succeed(DnsResolverFlag, "native"),
-    Layer.succeed(CliArgs, { args: [] }),
+    Layer.succeed(YesFlag, false),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
+    configValuesLayer(),
     Layer.succeed(DbConfigResolver, {
-      resolve: (_flags: DbConfigFlags) =>
-        Effect.succeed({ conn: LOCAL_CONN, isLocal: true } satisfies ResolvedDbConfig),
-      resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
+      resolve: () => Effect.die("resolve is not used by this test"),
+      resolveConnection: (input: DbConnectionInput) =>
+        Effect.succeed({ conn: LOCAL_CONN, isLocal: true, target: input.target }),
       resolvePoolerFallback: () => Effect.succeed(Option.none()),
     }),
     Layer.succeed(DbConnection, {

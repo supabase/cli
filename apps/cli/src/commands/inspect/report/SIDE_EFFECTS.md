@@ -2,18 +2,21 @@
 
 Runs every inspect query against the target Postgres database, writes one CSV per
 query into `<output-dir>/<YYYY-MM-DD>/`, then prints a "rules" summary table
-validating those CSVs.
+validating those CSVs. The target is `--db-url` / `--linked` / `--local` / `--project-ref`,
+else the workspace `target` (local by default). The command is `selectable` and never asks
+for hosted-mutation consent.
 
 ## Files Read
 
-| Path                                       | Format     | When                                                                                   |
-| ------------------------------------------ | ---------- | -------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`           | TOML       | always — `[experimental.inspect.rules]` (custom rules) + `[db]` subtree                |
-| `<workdir>/supabase/.env*` (nested)        | dotenv     | always — `env(VAR)` expansion for `[db]` and rule string fields                        |
-| `<workdir>/supabase/.temp/pooler-url`      | plain text | `--linked` path (pooler connection string)                                             |
-| `<workdir>/supabase/.temp/project-ref`     | plain text | `--linked` path, without `--project-ref` or `SUPABASE_PROJECT_ID` (linked project ref) |
-| `~/.supabase/access-token`                 | plain text | `--linked` path, when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable            |
-| `<output-dir>/<YYYY-MM-DD>/<name>.csv` ×14 | CSV        | read back in-memory for rule evaluation                                                |
+| Path                                           | Format     | When                                                                                       |
+| ---------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/config.toml`               | TOML       | always — `[experimental.inspect.rules]` (custom rules), `[db]` subtree, workspace `target` |
+| `<workdir>/supabase/.env*` (nested)            | dotenv     | always — `env(VAR)` expansion for `[db]` and rule string fields                            |
+| `<workdir>/supabase/.temp/pooler-url`          | plain text | linked target (pooler connection string)                                                   |
+| `<workdir>/supabase/.temp/project-ref`         | plain text | linked target, without `--project-ref` or `SUPABASE_PROJECT_ID` (linked project ref)       |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON       | linked target, for the `Target:` banner (no API call)                                      |
+| `~/.supabase/access-token`                     | plain text | linked target, when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                  |
+| `<output-dir>/<YYYY-MM-DD>/<name>.csv` ×14     | CSV        | read back in-memory for rule evaluation                                                    |
 
 A **missing** `config.toml` is fine (defaults apply); a
 **malformed** file, an invalid value (including a non-string rule field such as `query = 123` or
@@ -57,29 +60,32 @@ wasn't refreshed this run.
 | —      | —    | —    | —            | —                      |
 
 Queries run directly against Postgres (server-side `COPY (<query>) TO STDOUT WITH
-CSV HEADER`). The Management API is used lazily only on the `--linked` path, to
-resolve the connection (via `DbConfigResolver`).
+CSV HEADER`). The Management API is used lazily only on a linked target, to
+resolve the connection (via `DbConfigResolver`); a network ban is cleared there only under
+`--yes` or a shell `SUPABASE_YES`, otherwise the command fails with `LinkedDbNetworkBannedError`.
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                              |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------ |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no                                                     |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`) |
-| `SUPABASE_DB_*`         | override `[db]` port / shadow_port / password        | no                                                     |
-| `SUPABASE_ENV`          | selects which project `.env` files load              | no                                                     |
+| Variable                | Purpose                                                               | Required?                                              |
+| ----------------------- | --------------------------------------------------------------------- | ------------------------------------------------------ |
+| `SUPABASE_TARGET`       | workspace target (`local` or `remote`) when no selector flag is given | no (defaults to `local`)                               |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                  | no                                                     |
+| `SUPABASE_YES`          | shell value lets a linked connection clear a network ban              | no                                                     |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                               | no (falls back to `~/.supabase/profile` -> `supabase`) |
+| `SUPABASE_DB_*`         | override `[db]` port / shadow_port / password                         | no                                                     |
+| `SUPABASE_ENV`          | selects which project `.env` files load                               | no                                                     |
 
 ## Exit Codes
 
-| Code | Condition                                                                                    |
-| ---- | -------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                      |
-| `1`  | mkdir failure (`failed to mkdir`)                                                            |
-| `1`  | DB connection / resolution failure (not linked, invalid ref, dial failure)                   |
-| `1`  | COPY failure (`failed to copy output`) / file-write failure (`failed to create output file`) |
-| `1`  | malformed `config.toml`                                                                      |
-| `1`  | more than one of `--db-url` / `--linked` / `--local`                                         |
-| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                     |
+| Code | Condition                                                                                      |
+| ---- | ---------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                        |
+| `1`  | mkdir failure (`failed to mkdir`)                                                              |
+| `1`  | DB connection / resolution failure (not linked, invalid ref, dial failure)                     |
+| `1`  | COPY failure (`failed to copy output`) / file-write failure (`failed to create output file`)   |
+| `1`  | malformed `config.toml`                                                                        |
+| `1`  | more than one of `--db-url` / `--linked` / `--local`, or an empty `--db-url` / `--project-ref` |
+| `1`  | `--project-ref` combined with `--local` or `--db-url`                                          |
 
 A **per-rule** csvq evaluation error does **not** fail the command — it becomes the
 rule's STATUS cell.
@@ -91,7 +97,7 @@ rule's STATUS cell.
 stderr progress, in order:
 
 ```
-Connecting to <local|remote> database...
+Target: <resolved target>
 Running queries...
 Reports saved to <output-dir>/<date>    (path bolded when stdout is a TTY)
 Loading default rules...                (only when no custom config.toml rules)
@@ -110,17 +116,15 @@ count.
 ### `--output-format json` / `stream-json` (additive; there is no other machine output)
 
 The CSVs are still written. Progress lines are suppressed and no table is printed;
-instead a structured result is emitted:
+instead a structured result is emitted. The stderr `Target:` banner is still printed.
 
 ```json
-{ "outputDir": "<abs path>", "files": [{ "name": "locks", "path": "..." }, ...], "rules": [{ "name": "...", "status": "...", "matches": "..." }, ...] }
+{ "outputDir": "<abs path>", "files": [{ "name": "locks", "path": "..." }, ...], "rules": [{ "name": "...", "status": "...", "matches": "..." }, ...], "target": { ... } }
 ```
 
 ## Notes
 
-- **`--project-ref`** overrides ONLY the linked-ref resolution `DbConfigResolver` performs
-  (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies
-  `--linked`: passing it with a resolved `--local`/`--db-url` target is a hard
-  error rather than a silently discarded flag (stricter than
-  `SUPABASE_PROJECT_ID`, which is simply left unused on
-  a non-linked target).
+- The target comes from `resolveTarget`: a selector flag wins, then the workspace `target`
+  (`SUPABASE_TARGET`, then `config.toml`), then local. `--project-ref` implies `--linked`;
+  combining it with `--local` or `--db-url` is an error, as is combining two selectors. A `false`
+  switch (`--linked=false`) counts as absent.

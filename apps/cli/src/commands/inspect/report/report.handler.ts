@@ -1,6 +1,5 @@
 import { Clock, DateTime, Effect, FileSystem, Option, Path } from "effect";
 
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -9,9 +8,9 @@ import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
-import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
+import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { InspectMutuallyExclusiveFlagsError } from "../db/inspect-query.ts";
 import type { InspectReportFlags } from "./report.command.ts";
 import { type CsvTable, type CsvTableProvider, parseReportCsv } from "./report.csvq.ts";
 import { readInspectRules } from "./report.config.ts";
@@ -63,37 +62,18 @@ const runInspectReport = Effect.fnUntraced(function* (
   const tty = yield* Tty;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const cliArgs = yield* CliArgs;
   const isText = output.format === "text";
-
-  // Mutual exclusivity is keyed off raw argv, not the parsed boolean value: `--local=false`
-  // was explicitly passed, so value-based detection would miss it and default to linked.
-  const target = resolveDbTargetFlags(cliArgs.args);
-  if (target.setFlags.length > 1) {
-    return yield* new InspectMutuallyExclusiveFlagsError({
-      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-    });
-  }
 
   // Validated before any DB work so a malformed config aborts before connecting or writing
   // CSVs; applied later in the summary rendering below.
   const configRules = yield* readInspectRules(cliSettings.workdir);
 
-  // `--linked` is the default, so absence of the others resolves to linked.
-  const connType = target.connType ?? "linked";
-
-  if (Option.isSome(flags.projectRef) && connType !== "linked") {
-    return yield* new InspectMutuallyExclusiveFlagsError({
-      message:
-        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-    });
-  }
-
-  const cfg = yield* resolver.resolve({
-    dbUrl: flags.dbUrl,
-    connType,
+  const target = yield* resolveTarget(flags);
+  const cfg = yield* resolver.resolveConnection({
+    target,
     dnsResolver,
-    linkedProjectRef: flags.projectRef,
+    password: Option.none(),
+    networkBanRemoval: yield* hostedMutationPreapproval,
   });
 
   // Resolved against the process CWD when relative, not `--workdir`.
@@ -109,10 +89,6 @@ const runInspectReport = Effect.fnUntraced(function* (
         (error) => new InspectReportMkdirError({ message: `failed to mkdir: ${error}` }),
       ),
     );
-
-  if (isText) {
-    yield* output.raw(`Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`, "stderr");
-  }
 
   const ignoreSchemas = reportIgnoreSchemas();
   const dbLiteral = `'${cfg.conn.database}'`;

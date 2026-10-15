@@ -1,6 +1,5 @@
 import { Data, Effect, Option } from "effect";
 
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
@@ -12,19 +11,15 @@ import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
-import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
+import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 
-/**
- * The connection selector flags every `inspect db` subcommand inherits: `--db-url` / `--linked`
- * / `--local`, mutually exclusive, with `--linked` as the default. Exclusivity is keyed off the
- * raw explicitly-set flags, not the resolved boolean values.
- */
+/** The target selector flags every `inspect db` subcommand inherits; see `targetFlags`. */
 export interface InspectConnectionFlags {
   readonly dbUrl: Option.Option<string>;
   readonly linked: boolean;
   readonly local: boolean;
-  // TS-only override of the linked project ref — see push.command.ts (db push).
   readonly projectRef: Option.Option<string>;
 }
 
@@ -47,9 +42,9 @@ export interface InspectQuerySpec {
 }
 
 /**
- * Raised when more than one of `--db-url` / `--linked` / `--local` is explicitly set, with the
- * established mutually-exclusive-flags message. Not reused from `test db`'s identical error
- * type: hoisting would drag that command's test surface into scope for one shared string.
+ * Retained for its telemetry tag; the shared target selector now rejects conflicting target flags.
+ *
+ * @public
  */
 export class InspectMutuallyExclusiveFlagsError extends Data.TaggedError(
   "InspectMutuallyExclusiveFlagsError",
@@ -132,9 +127,9 @@ export function inspectBacktickStmt(value: unknown): string {
 }
 
 /**
- * Runs an `inspect db` subcommand's query and renders the result: resolve the connection,
- * connect (printing "Connecting to <local|remote> database..." to stderr), run the query, then
- * render the table — or, in `json`/`stream-json` mode, emit the raw driver rows instead.
+ * Runs an `inspect db` subcommand's query and renders the result: resolve the target and its
+ * connection, run the query, then render the table — or, in `json`/`stream-json` mode, emit the
+ * raw driver rows instead.
  */
 export const runInspectQuery = Effect.fn("Inspect.runQuery")(function* (
   spec: InspectQuerySpec,
@@ -144,46 +139,17 @@ export const runInspectQuery = Effect.fn("Inspect.runQuery")(function* (
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
   const dbConn = yield* DbConnection;
-  const cliArgs = yield* CliArgs;
 
-  // Mutual exclusivity is keyed off raw argv (which flags were explicitly passed), not the
-  // parsed boolean value — `--local=false` counts as explicitly set.
-  const target = resolveDbTargetFlags(cliArgs.args);
-  if (target.setFlags.length > 1) {
-    return yield* new InspectMutuallyExclusiveFlagsError({
-      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-    });
-  }
-
-  // `--linked` is the default; exclusivity above is already keyed off the raw flags, so
-  // deriving the connType here does not re-trigger it.
-  const connType = target.connType ?? "linked";
-
-  // `--project-ref` never implies `--linked` and must not be silently
-  // discarded on a non-linked target — see push.handler.ts's identical guard
-  // (db push) for the full TS-only rationale.
-  if (Option.isSome(flags.projectRef) && connType !== "linked") {
-    return yield* new InspectMutuallyExclusiveFlagsError({
-      message:
-        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-    });
-  }
-
-  const cfg = yield* resolver.resolve({
-    dbUrl: flags.dbUrl,
-    connType,
+  const target = yield* resolveTarget(flags);
+  const cfg = yield* resolver.resolveConnection({
+    target,
     dnsResolver,
-    linkedProjectRef: flags.projectRef,
+    password: Option.none(),
+    networkBanRemoval: yield* hostedMutationPreapproval,
   });
 
   const rows = yield* Effect.scoped(
     Effect.gen(function* () {
-      // Always written to stderr, even in json/stream-json modes, since stdout is reserved
-      // for the rendered table / machine payload.
-      yield* output.raw(
-        `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
-        "stderr",
-      );
       const session = yield* dbConn.connect(cfg.conn, { isLocal: cfg.isLocal, dnsResolver });
       return yield* session.query(spec.sql, spec.params(cfg));
     }),
@@ -196,7 +162,6 @@ export const runInspectQuery = Effect.fn("Inspect.runQuery")(function* (
     return;
   }
 
-  // json / stream-json — emit the raw driver rows (snake_case keys).
   yield* output.success(`inspect db ${spec.name}`, { rows });
 });
 
