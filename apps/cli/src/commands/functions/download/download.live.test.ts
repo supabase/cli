@@ -19,7 +19,7 @@ class FunctionsDownloadLiveError extends Data.TaggedError("FunctionsDownloadLive
 
 function cleanupFunction(cliEffect: LiveCliEffect, slug: string, ref: string) {
   return Effect.gen(function* () {
-    const deleted = yield* cliEffect(["functions", "delete", slug, "--project-ref", ref]);
+    const deleted = yield* cliEffect(["functions", "delete", slug, "--project-ref", ref, "--yes"]);
     if (
       deleted.exitCode !== 0 &&
       !/not found|does not exist/i.test(`${deleted.stdout}\n${deleted.stderr}`)
@@ -51,7 +51,13 @@ describe("functions download (live)", () => {
         yield* fs.writeFileString(path.join(directory, "deno.json"), '{\n  "imports": {}\n}\n');
 
         const target = Effect.gen(function* () {
-          const deployed = yield* cliEffect(["functions", "deploy", "--project-ref", project.ref]);
+          const deployed = yield* cliEffect([
+            "functions",
+            "deploy",
+            "--project-ref",
+            project.ref,
+            "--yes",
+          ]);
           requireLiveSuccess(deployed, "functions deploy setup");
 
           yield* fs.remove(directory, { recursive: true, force: true });

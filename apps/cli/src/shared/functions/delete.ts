@@ -6,6 +6,7 @@ import {
 } from "@supabase/api/effect";
 import { Effect, type Option } from "effect";
 import * as HttpClientError from "effect/http/HttpClientError";
+import { requireHostedMutationConsent } from "../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../output/output.service.ts";
 import {
   DeleteFunctionNetworkError,
@@ -52,6 +53,7 @@ export const deleteFunction = Effect.fn("functions.delete")(function* <
 
   yield* validateSlug(flags.slug);
   const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
+  yield* requireHostedMutationConsent({ action: `delete Function ${flags.slug}` });
 
   const response = yield* dependencies.api
     .executeRaw(operationDefinitions.v1DeleteAFunction, {

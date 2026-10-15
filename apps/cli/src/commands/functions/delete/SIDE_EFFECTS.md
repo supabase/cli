@@ -34,16 +34,19 @@
 | `SUPABASE_NO_KEYRING`   | disables the OS keyring, forcing the access-token file fallback | no                                                                                                              |
 | `SUPABASE_PROFILE`      | select a built-in profile or YAML profile file with `api_url:`  | no (falls back to `~/.supabase/profile` -> `supabase`)                                                          |
 | `SUPABASE_PROJECT_ID`   | provides the project ref when `--project-ref` is unset          | no (falls back to `<workdir>/supabase/.temp/project-ref`)                                                       |
+| `SUPABASE_YES`          | confirms the delete without a prompt, same as `--yes`           | no (read from the shell only; a project `.env` value does not count)                                            |
 | `SUPABASE_WORKDIR`      | sets `<workdir>` for local Supabase temp files                  | no (falls back to `--workdir` -> nearest ancestor with `supabase/config.toml` or `supabase/config.json` -> cwd) |
 
 ## Exit Codes
 
-| Code | Condition                             |
-| ---- | ------------------------------------- |
-| `0`  | success                               |
-| `1`  | API error (non-2xx response)          |
-| `1`  | authentication error (no token found) |
-| `1`  | network / connection failure          |
+| Code | Condition                                                                                                                             |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                               |
+| `1`  | API error (non-2xx response)                                                                                                          |
+| `1`  | authentication error (no token found)                                                                                                 |
+| `1`  | network / connection failure                                                                                                          |
+| `1`  | `HostedMutationDeclinedError` — the confirmation was declined; nothing is deleted                                                     |
+| `1`  | `HostedMutationConsentRequiredError` — no `--yes`/shell `SUPABASE_YES` on a non-interactive or machine-output run; nothing is deleted |
 
 ## Telemetry Events Fired
 
@@ -55,20 +58,22 @@
 
 ### `--output-format text`
 
-Prints a success message after the function is deleted.
+Prints a success message after the function is deleted. Stderr carries the `Target:` banner, then either the confirmation question (`delete Function <slug> on <target>?`, default No) on an interactive terminal or `Confirmed by --yes: delete Function <slug> on <target>` under `--yes`.
 
 ### `--output-format json`
 
-Prints a structured success result with the function slug and project ref.
+Prints a structured success result with the function slug and project ref, plus a `target` object (`kind: "linked"`, `project_ref`, `project_name`, `environment`, `parent_project_ref` when known). The run needs `--yes` or a shell `SUPABASE_YES`, because machine output never prompts.
 
 ### `--output-format stream-json`
 
-Prints a structured success result with the function slug and project ref.
+Prints the same structured success result, including `target`, and needs `--yes` or a shell `SUPABASE_YES`.
 
 ## Notes
 
 - Requires exactly one argument: the function slug/name.
 - Does NOT remove the function from the local filesystem.
 - Requires a linked project (`--project-ref` or linked project config).
+- Asks one question before the DELETE request: `delete Function <slug>` on the announced target, default No. The slug is validated and the project resolved first, so a usage error never prompts.
+- `--yes` or a `SUPABASE_YES` set in the shell skips the question. A `SUPABASE_YES` in a project `.env*` file does not count, and piped stdin answers are never read.
 - Runs natively in TypeScript through the Management API.
 - Refreshes the linked-project telemetry cache and flushes telemetry state after resolving a project ref.

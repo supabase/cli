@@ -13,7 +13,7 @@ import { readProjectRefFile, tempPaths } from "../../../shared/config/temp-paths
 import { Output } from "../../../shared/output/output.service.ts";
 
 /**
- * What `ref` actually is, resolved for `config push`'s target-echo and branch confirmation gate:
+ * What `ref` actually is, resolved for `config push`'s target echo:
  *
  * - `"project"` — `ref` is the linked project itself; `name` is present when the live probe
  *   found it.
@@ -21,9 +21,8 @@ import { Output } from "../../../shared/output/output.service.ts";
  *   <name-or-uuid>`, or a live 404); `parentRef`/`parentName`/`branch` are each present only
  *   when they could be determined.
  * - `"unknown"` — the live probe couldn't tell (a timeout, a transport failure, or an
- *   unexpected status). Never asserted as a branch, since an uncertain outcome must not gate an
- *   unattended push behind a confirmation that then auto-declines it; never asserted as a
- *   project either — the target-echo line says plainly that it doesn't know.
+ *   unexpected status). Asserted as neither a branch nor a project — the target-echo line says
+ *   plainly that it doesn't know.
  */
 export type ConfigPushTarget =
   | { readonly kind: "project"; readonly ref: string; readonly name?: string }
@@ -76,7 +75,7 @@ const ProbeOutcome = Data.taggedEnum<ProbeOutcome>();
 
 /**
  * Resolves what `ref` actually is, so `config push` can tell the user whether they're pushing to
- * the linked project or a branch, and gate a branch push behind confirmation. Never fails: this
+ * the linked project or a branch. Never fails: this
  * probe is diagnostic-only and must never abort a push that would otherwise succeed.
  *
  * A known branch name/UUID skips the live probe. Otherwise `GET /v1/projects/{ref}` (bounded at

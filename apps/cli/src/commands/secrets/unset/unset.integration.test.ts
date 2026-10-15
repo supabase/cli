@@ -3,7 +3,13 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
+import {
+  HostedMutationConsentRequiredError,
+  HostedMutationDeclinedError,
+} from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -16,12 +22,7 @@ import {
   withConfigEnv,
   unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
-import {
-  SecretsNoArgumentsError,
-  SecretsUnsetCancelledError,
-  SecretsUnsetConfirmationRequiredError,
-  SecretsUnsetInputError,
-} from "../secrets.errors.ts";
+import { SecretsNoArgumentsError, SecretsUnsetInputError } from "../secrets.errors.ts";
 import type { SecretsUnsetFlags } from "./unset.command.ts";
 import { secretsUnset } from "./unset.handler.ts";
 
@@ -52,7 +53,7 @@ const MIXED_SECRETS: SecretsList = [
   { name: "BAR", value: "d3" },
 ];
 
-const FOO_PROMPT = `Do you want to unset these function secrets from project ${VALID_REF}?\n • FOO\n\n`;
+const ON_TARGET = `project ${VALID_REF} · identity unverified`;
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({
@@ -90,6 +91,7 @@ function setup(opts: SetupOpts = {}) {
       outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     }),
     Layer.succeed(YesFlag, opts.yes ?? false),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
   );
   return { layer, out, api };
 }
@@ -131,15 +133,14 @@ describe("secrets unset integration", () => {
   });
 
   describe("unsetting named secrets", () => {
-    it.effect("sends one DELETE with the names and echoes the prompt for --yes", () => {
+    it.effect("sends one DELETE with the names and echoes the confirmation for --yes", () => {
       const { layer, out, api } = setup({ yes: true });
       return Effect.gen(function* () {
         yield* unset({ names: ["FOO", "BAR"] });
         expect(methods(api)).toEqual(["DELETE"]);
         expect(api.requests[0]?.body).toEqual(["FOO", "BAR"]);
         expect(out.stderrText).toBe(
-          unverifiedTargetBanner() +
-            `Do you want to unset these function secrets from project ${VALID_REF}?\n • FOO\n • BAR\n\n [y/N] y\n`,
+          `${unverifiedTargetBanner()}Confirmed by --yes: unset 2 secrets on ${ON_TARGET}\n`,
         );
         expect(out.stdoutText).toBe("Finished supabase secrets unset.\n");
       }).pipe(Effect.provide(layer));
@@ -152,7 +153,9 @@ describe("secrets unset integration", () => {
         { SUPABASE_YES: "1" },
         Effect.gen(function* () {
           yield* unset({ names: ["FOO"] });
-          expect(out.stderrText).toBe(`${unverifiedTargetBanner()}${FOO_PROMPT} [y/N] y\n`);
+          expect(out.stderrText).toBe(
+            `${unverifiedTargetBanner()}Confirmed by --yes: unset 1 secret on ${ON_TARGET}\n`,
+          );
           expect(methods(api)).toEqual(["DELETE"]);
         }).pipe(Effect.provide(layer)),
       );
@@ -163,8 +166,9 @@ describe("secrets unset integration", () => {
       return Effect.gen(function* () {
         yield* unset({ names: ["FOO"] });
         expect(out.promptConfirmCalls).toEqual([
-          { message: FOO_PROMPT, opts: { defaultValue: false } },
+          { message: `unset 1 secret on ${ON_TARGET}?`, opts: { defaultValue: false } },
         ]);
+        expect(out.stderrText).toContain("Secrets to unset:\n • FOO\n");
         expect(methods(api)).toEqual(["DELETE"]);
         expect(api.requests[0]?.body).toEqual(["FOO"]);
         expect(out.stdoutText).toBe("Finished supabase secrets unset.\n");
@@ -172,12 +176,12 @@ describe("secrets unset integration", () => {
     });
 
     it.effect(
-      "fails with SecretsUnsetCancelledError and sends no DELETE when the user declines",
+      "fails with HostedMutationDeclinedError and sends no DELETE when the user declines",
       () => {
         const { layer, api } = setup({ stdinIsTty: true, confirm: false });
         return Effect.gen(function* () {
           const error = yield* unset({ names: ["FOO"] }).pipe(Effect.flip);
-          expect(error).toBeInstanceOf(SecretsUnsetCancelledError);
+          expect(error).toBeInstanceOf(HostedMutationDeclinedError);
           expect(api.requests).toEqual([]);
         }).pipe(Effect.provide(layer));
       },
@@ -192,8 +196,7 @@ describe("secrets unset integration", () => {
         expect(methods(api)).toEqual(["GET", "DELETE"]);
         expect(api.requests[1]?.body).toEqual(["FOO", "BAR"]);
         expect(out.stderrText).toBe(
-          unverifiedTargetBanner() +
-            `Do you want to unset these function secrets from project ${VALID_REF}?\n • FOO\n • BAR\n\n [y/N] y\n`,
+          `${unverifiedTargetBanner()}Confirmed by --yes: unset 2 secrets on ${ON_TARGET}\n`,
         );
       }).pipe(Effect.provide(layer));
     });
@@ -216,27 +219,30 @@ describe("secrets unset integration", () => {
 
   describe("consent gate", () => {
     it.effect.each([
-      { name: "named secrets", flags: { names: ["FOO"] } },
-      { name: "--all", flags: { all: true } },
-    ])("refuses $name on a non-TTY run without --yes before any API call", ({ flags }) => {
-      const { layer, out, api } = setup({ list: MIXED_SECRETS });
-      return Effect.gen(function* () {
-        const error = yield* unset(flags).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(SecretsUnsetConfirmationRequiredError);
-        expect(error).toMatchObject({
-          message: expect.stringContaining(VALID_REF),
-          suggestion: expect.stringMatching(/--yes.*--dry-run/u),
-        });
-        expect(api.requests).toEqual([]);
-        expect(out.stderrText).toBe(unverifiedTargetBanner());
-      }).pipe(Effect.provide(layer));
-    });
+      { name: "named secrets", flags: { names: ["FOO"] }, expectedMethods: [] },
+      { name: "--all", flags: { all: true }, expectedMethods: ["GET"] },
+    ])(
+      "refuses $name on a non-TTY run without --yes and sends no DELETE",
+      ({ flags, expectedMethods }) => {
+        const { layer, out, api } = setup({ list: MIXED_SECRETS });
+        return Effect.gen(function* () {
+          const error = yield* unset(flags).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
+          expect(error).toMatchObject({
+            message: expect.stringContaining(VALID_REF),
+            suggestion: expect.stringContaining("--yes"),
+          });
+          expect(methods(api)).toEqual(expectedMethods);
+          expect(out.stderrText).toBe(unverifiedTargetBanner());
+        }).pipe(Effect.provide(layer));
+      },
+    );
 
     it.effect("still refuses a piped `y` without --yes and sends no DELETE", () => {
       const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "y\n" });
       return Effect.gen(function* () {
         const error = yield* unset({ names: ["FOO"] }).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(SecretsUnsetConfirmationRequiredError);
+        expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
         expect(api.requests).toEqual([]);
         expect(out.stderrText).toBe(unverifiedTargetBanner());
       }).pipe(Effect.provide(layer));
@@ -248,7 +254,7 @@ describe("secrets unset integration", () => {
         const { layer, out, api } = setup({ format, stdinIsTty: true });
         return Effect.gen(function* () {
           const error = yield* unset({ names: ["FOO"] }).pipe(Effect.flip);
-          expect(error).toBeInstanceOf(SecretsUnsetConfirmationRequiredError);
+          expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
           expect(api.requests).toEqual([]);
           expect(out.promptConfirmCalls).toEqual([]);
         }).pipe(Effect.provide(layer));
@@ -259,9 +265,18 @@ describe("secrets unset integration", () => {
       const { layer, out, api } = setup({ stdinIsTty: true, interactive: false });
       return Effect.gen(function* () {
         const error = yield* unset({ names: ["FOO"] }).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(SecretsUnsetConfirmationRequiredError);
+        expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
         expect(api.requests).toEqual([]);
         expect(out.promptConfirmCalls).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("lists every secret --all will unset before asking", () => {
+      const { layer, out } = setup({ stdinIsTty: true, confirm: false, list: MIXED_SECRETS });
+      return Effect.gen(function* () {
+        yield* unset({ all: true }).pipe(Effect.flip);
+        expect(out.stderrText).toContain("Secrets to unset:\n • FOO\n • BAR\n");
+        expect(out.stderrText).not.toContain("SUPABASE_AUTH_TOKEN");
       }).pipe(Effect.provide(layer));
     });
   });
@@ -423,4 +438,11 @@ describe("secrets unset integration", () => {
       }).pipe(Effect.provide(layer));
     });
   });
+});
+
+describeHostedConsent("secrets unset", {
+  api: { response: { status: 200, body: null } },
+  invoke: () => ({
+    run: secretsUnset({ projectRef: Option.none(), names: ["FOO"], all: false, dryRun: false }),
+  }),
 });

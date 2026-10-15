@@ -576,7 +576,6 @@ describe("pushSummaryMessage", () => {
     secrets: [],
     authWriteRan: false,
     secretsSent: [],
-    declinedAddons: [],
     remoteOnly: 0,
     scope: { present: [], missing: [] },
   };
@@ -767,24 +766,6 @@ describe("pushSummaryMessage", () => {
     );
   });
 
-  test("caveat: skipped services, singular and plural", () => {
-    expect(
-      pushSummaryMessage({
-        ...EMPTY_SUMMARY_INPUT,
-        services: [{ service: "auth", status: "skipped", changes: [["auth", "site_url"]] }],
-      }),
-    ).toBe("Nothing was pushed. 1 service was skipped at the prompt.");
-    expect(
-      pushSummaryMessage({
-        ...EMPTY_SUMMARY_INPUT,
-        services: [
-          { service: "auth", status: "skipped", changes: [["auth", "site_url"]] },
-          { service: "storage", status: "skipped", changes: [["storage", "file_size_limit"]] },
-        ],
-      }),
-    ).toBe("Nothing was pushed. 2 services were skipped at the prompt.");
-  });
-
   test("caveat: not-set credentials, singular and plural", () => {
     expect(pushSummaryMessage({ ...EMPTY_SUMMARY_INPUT, secrets: [NOT_SET_SECRET] })).toBe(
       "Nothing to push: the project already matches the declared properties. 1 credential value was not pushed.",
@@ -799,28 +780,11 @@ describe("pushSummaryMessage", () => {
     );
   });
 
-  test("caveat: declined add-on prompts, singular and plural", () => {
-    expect(pushSummaryMessage({ ...EMPTY_SUMMARY_INPUT, declinedAddons: ["auth_mfa_phone"] })).toBe(
-      "Nothing to push: the project already matches the declared properties. 1 add-on prompt declined.",
-    );
-    expect(
-      pushSummaryMessage({
-        ...EMPTY_SUMMARY_INPUT,
-        declinedAddons: ["auth_mfa_phone", "auth_mfa_web_authn"],
-      }),
-    ).toBe(
-      "Nothing to push: the project already matches the declared properties. 2 add-on prompts declined.",
-    );
-  });
-
   test("combines every present caveat in the established order", () => {
     expect(
       pushSummaryMessage({
         projectRef: "abcdefghijklmnopqrst",
-        services: [
-          { service: "api", status: "updated", changes: [["api", "max_rows"]] },
-          { service: "auth", status: "skipped", changes: [["auth", "site_url"]] },
-        ],
+        services: [{ service: "api", status: "updated", changes: [["api", "max_rows"]] }],
         unsupported: [["db", "major_version"]],
         unencodable: [],
         forced: [],
@@ -829,7 +793,6 @@ describe("pushSummaryMessage", () => {
         secrets: [NOT_SET_SECRET],
         authWriteRan: false,
         secretsSent: [],
-        declinedAddons: ["auth_mfa_phone"],
         remoteOnly: 12,
         scope: { present: [], missing: ["auth"] },
       }),
@@ -838,9 +801,7 @@ describe("pushSummaryMessage", () => {
         "1 declared property could not be pushed. " +
         "1 declared property is not managed by config push. " +
         "1 block was not returned by the API. " +
-        "1 service was skipped at the prompt. " +
-        "1 credential value was not pushed. " +
-        "1 add-on prompt declined.",
+        "1 credential value was not pushed.",
     );
   });
 
@@ -873,7 +834,6 @@ describe("pushPayload", () => {
     secrets: [SENT_SECRET, UNCHANGED_SECRET, NOT_SET_SECRET, GATED_SECRET],
     authWriteRan: true,
     secretsSent: [["auth", "captcha", "secret"]],
-    declinedAddons: ["auth_mfa_phone"],
     remoteOnly: 12,
     scope: { present: ["api", "auth", "database", "pooler", "realtime", "storage"], missing: [] },
   };
@@ -924,7 +884,6 @@ describe("pushPayload", () => {
         unencodable: [],
         skipped: [],
       },
-      declined_addons: ["auth_mfa_phone"],
       remote_only: 12,
       scope: { present: ["api", "auth", "database", "pooler", "realtime", "storage"], missing: [] },
     });
@@ -996,7 +955,6 @@ describe("pushPayload", () => {
         secrets: [],
         authWriteRan: false,
         secretsSent: [],
-        declinedAddons: [],
         remoteOnly: 0,
         scope: { present: [], missing: [] },
       }),
@@ -1009,7 +967,6 @@ describe("pushPayload", () => {
       forced: [],
       unmanaged: [],
       secrets: { sent: [], unchanged: [], not_set: [], gated: [], unencodable: [], skipped: [] },
-      declined_addons: [],
       remote_only: 0,
       scope: { present: [], missing: [] },
     });

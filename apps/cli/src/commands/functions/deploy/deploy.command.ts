@@ -1,11 +1,9 @@
-import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { FUNCTIONS_PROJECT_REF_SAFE_FLAGS } from "../../../shared/functions/functions.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { functionsDeploy } from "./deploy.handler.ts";
@@ -78,9 +76,7 @@ export const functionsDeployCommand = Command.make("deploy", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  // `stdinLayer`: the `--prune` confirmation reads piped stdin via `promptYesNo`
-  // on a non-TTY stdin.
-  Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["functions", "deploy"]), stdinLayer)),
+  Command.provide(managementApiRuntimeLayer(["functions", "deploy"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({ group: "hosted", consent: "no" }),

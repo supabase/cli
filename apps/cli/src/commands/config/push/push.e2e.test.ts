@@ -41,9 +41,9 @@ describe("supabase config push", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     E2E_TIMEOUT_MS,
   );
-  it.live.each(["n", "y"] as const)(
-    "agent auto-detection honors piped %s through the built CLI",
-    (answer) =>
+  it.live.each([{ yes: false }, { yes: true }] as const)(
+    "agent run with yes=$yes needs --yes for consent and ignores a piped answer through the built CLI",
+    ({ yes }) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -104,10 +104,10 @@ describe("supabase config push", () => {
           `name: config-push-consent-e2e\napi_url: ${server.url.origin}\ndashboard_url: ${server.url.origin}\nproject_host: example.invalid\n`,
         );
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["config", "push", "--project-ref", TEST_PROJECT_REF],
+          ["config", "push", "--project-ref", TEST_PROJECT_REF, ...(yes ? ["--yes"] : [])],
           {
             cwd,
-            stdin: `${answer}\n`,
+            stdin: "y\n",
             env: {
               SUPABASE_PROFILE: profilePath,
               SUPABASE_ACCESS_TOKEN: TEST_TOKEN,
@@ -117,9 +117,9 @@ describe("supabase config push", () => {
             },
           },
         );
-        expect(exitCode, `${stdout}\n${stderr}`).toBe(0);
-        expect(writes).toEqual(answer === "y" ? ['{"max_rows":500}'] : []);
-        expect(stdout).toContain(`"status":"${answer === "y" ? "updated" : "skipped"}"`);
+        expect(exitCode, `${stdout}\n${stderr}`).toBe(yes ? 0 : 1);
+        expect(writes).toEqual(yes ? ['{"max_rows":500}'] : []);
+        expect(`${stdout}${stderr}`).toContain(yes ? '"status":"updated"' : "--yes");
         expect(stderr).toContain("api.max_rows [update]");
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     E2E_TIMEOUT_MS,

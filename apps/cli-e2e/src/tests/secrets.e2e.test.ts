@@ -85,7 +85,7 @@ describe("secrets", () => {
 
   describe("secrets:set", () => {
     testBehaviour("sets a single secret", async ({ run, projectRef }) => {
-      const result = await run(["secrets", "set", "FOO=bar", "--project-ref", projectRef]);
+      const result = await run(["secrets", "set", "FOO=bar", "--project-ref", projectRef, "--yes"]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Finished");
     });
@@ -98,6 +98,7 @@ describe("secrets", () => {
         "BAZ=qux",
         "--project-ref",
         projectRef,
+        "--yes",
       ]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Finished");
@@ -112,6 +113,7 @@ describe("secrets", () => {
         ".env.local",
         "--project-ref",
         projectRef,
+        "--yes",
       ]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Finished");
@@ -126,7 +128,14 @@ describe("secrets", () => {
           body: { message: "Validation failed", errors: [{ message: "Invalid secret name" }] },
         }),
       });
-      const result = await run(["secrets", "set", "FOO=bar", "--project-ref", PROJECT_REF]);
+      const result = await run([
+        "secrets",
+        "set",
+        "FOO=bar",
+        "--project-ref",
+        PROJECT_REF,
+        "--yes",
+      ]);
       expect(result.exitCode).not.toBe(0);
     });
 
@@ -138,6 +147,7 @@ describe("secrets", () => {
         "nonexistent.env",
         "--project-ref",
         PROJECT_REF,
+        "--yes",
       ]);
       expect(result.exitCode).not.toBe(0);
     });
@@ -148,7 +158,14 @@ describe("secrets", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
       });
-      const result = await run(["secrets", "set", "FOO=bar", "--project-ref", PROJECT_REF]);
+      const result = await run([
+        "secrets",
+        "set",
+        "FOO=bar",
+        "--project-ref",
+        PROJECT_REF,
+        "--yes",
+      ]);
       expect(result.exitCode).not.toBe(0);
     });
   });
@@ -161,7 +178,7 @@ describe("secrets", () => {
     });
 
     testBehaviour("removes multiple secrets", async ({ run, projectRef }) => {
-      await run(["secrets", "set", "FOO=bar", "BAR=baz", "--project-ref", projectRef]);
+      await run(["secrets", "set", "FOO=bar", "BAR=baz", "--project-ref", projectRef, "--yes"]);
       const result = await run([
         "secrets",
         "unset",

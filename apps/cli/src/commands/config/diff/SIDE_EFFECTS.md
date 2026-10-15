@@ -82,7 +82,8 @@ same as any other non-zero exit.
 
 ## Output
 
-Diagnostics on **stderr**: `Comparing against …` (resolved target + local
+Diagnostics on **stderr**: the `Target:` banner (project name, ref and, for a
+branch, the parent project), `Comparing against …` (resolved target + local
 scope, i.e. `[remotes.<name>]` or `base config`) before the fetch, then
 `Comparison scope: <blocks>` listing the blocks the response carried (missing
 blocks are called out). The payload is on **stdout**.
@@ -113,7 +114,7 @@ masked/unmanaged caveats too, so echoing it never claims "in sync" on a
 partial response (e.g. a scoped token returning `auth: {}`) or while masked
 values may have drifted. The payload contains `schema_version` (integer
 version of THIS payload contract, currently `1`), `config_schema` (the file's
-`$schema` URL), `target` (`project_ref`, optional `branch`, `local_scope`),
+`$schema` URL), `target` (`kind: "linked"`, `project_ref`, `project_name` and `environment` (`production`, `branch` or `unverified`) when known, `parent_project_ref` for a branch, optional `branch`, and `local_scope`),
 `scope` (`{present, missing}` block lists — the block set is owned by
 `@supabase/config`), `changes[]` (`path` as a SEGMENT ARRAY — a record key may
 contain a `.` — plus `class`, `declared`, `local`, `remote`, optional
@@ -145,6 +146,7 @@ and emit nothing.
 
 ## Notes
 
+- Never asks for confirmation: the command reads and compares only, so `--yes` and `SUPABASE_YES` have no effect.
 - Run from the project root (or pass `--workdir`); `config.toml` is read relative to it.
   An explicit `--workdir`/`SUPABASE_WORKDIR` is never climbed past — see the `SUPABASE_WORKDIR` row above.
 - **Local operand per target (ADR 0018/0022):** when the resolved target ref matches a

@@ -2,9 +2,10 @@ import { describe, expect, test } from "vitest";
 
 import type { ConfigPushTarget } from "./push.branch-target.ts";
 import {
-  configPushBranchPromptLabel,
   configPushPayloadFields,
   configPushTargetLines,
+  pushConsentAction,
+  pushCostLine,
 } from "./push.format.ts";
 
 const REF = "abcdefghijklmnopqrst";
@@ -98,29 +99,27 @@ describe("configPushTargetLines", () => {
   });
 });
 
-describe("configPushBranchPromptLabel", () => {
-  const skipHint = " (skip this check with --yes)";
-
-  test("a branch with no known name prompts against the bare ref", () => {
-    expect(configPushBranchPromptLabel({ kind: "branch", ref: REF })).toBe(
-      `Do you want to push config to branch ${REF}?${skipHint}`,
-    );
+describe("pushConsentAction", () => {
+  test("names a single service", () => {
+    expect(pushConsentAction(["auth"])).toBe("push config changes to Auth");
   });
 
-  test("a branch with a known name quotes it alongside the ref", () => {
-    expect(configPushBranchPromptLabel({ kind: "branch", ref: REF, branch: "feat-x" })).toBe(
-      `Do you want to push config to branch "feat-x" (${REF})?${skipHint}`,
-    );
+  test("joins two services with and", () => {
+    expect(pushConsentAction(["api", "storage"])).toBe("push config changes to API and Storage");
   });
 
-  test("a hostile branch name cannot inject control characters into the prompt label", () => {
-    expect(
-      configPushBranchPromptLabel({
-        kind: "branch",
-        ref: REF,
-        branch: "evil\x1b[31m\nname",
-      }),
-    ).toBe(`Do you want to push config to branch "evil[31m name" (${REF})?${skipHint}`);
+  test("joins three or more with commas and a final and, including webhooks", () => {
+    expect(pushConsentAction(["api", "db.settings", "experimental.webhooks"])).toBe(
+      "push config changes to API, DB and Webhooks",
+    );
+  });
+});
+
+describe("pushCostLine", () => {
+  test("states the addon and its price", () => {
+    expect(pushCostLine({ name: "Phone MFA", price: "$75.00/ month" })).toBe(
+      "Enabling Phone MFA will cost you $75.00/ month.\n",
+    );
   });
 });
 
