@@ -2,6 +2,14 @@ import { Effect, Layer, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withDbTarget,
+} from "../../../command-internal/command-permissions/model.ts";
+import { dbConfig, dbConfigPoolerFallback } from "../../../command-internal/db-config.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { removedFlag } from "../../../command-internal/removed-command.ts";
@@ -113,6 +121,26 @@ export const dbPullCommand = Command.make("pull", config).pipe(
     "Migration mode compares supabase/migrations with the selected live database (--linked by default), writes the complete difference as migration files, and may record them in that database's migration history. --declarative instead replaces the declarative schema tree and does not create migrations or update migration history.",
   ),
   Command.withShortDescription("Pull schema from the remote database"),
+  withPermissions(
+    withDbTarget(
+      compose(
+        {
+          operations: [],
+          noApiEffectFlags: [
+            "declarative",
+            "use-pg-delta",
+            "diff-engine",
+            "strict-coverage",
+            "schema",
+          ],
+        },
+        dbConfig,
+        dbConfigPoolerFallback,
+        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      ),
+      { default: "linked" },
+    ),
+  ),
   Command.withHandler((flags) =>
     Option.isSome(flags.usePgDelta)
       ? removedFlag("--use-pg-delta", DECLARATIVE_SUGGESTION).pipe(

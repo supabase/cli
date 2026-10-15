@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option } from "effect";
+import { Effect, FileSystem, Option, Ref } from "effect";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -36,7 +36,7 @@ export const seedBuckets = Effect.fn("seed.buckets")(function* (
   // Set once --linked resolves a ref; drives the post-run linked-project cache
   // write and org/project group identify. Empty on the local path, so the
   // cache is never written there.
-  let linkedRef = "";
+  const linkedRef = yield* Ref.make("");
 
   yield* Effect.gen(function* () {
     yield* validateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
@@ -70,7 +70,7 @@ export const seedBuckets = Effect.fn("seed.buckets")(function* (
 
     const projectRefResolver = yield* ProjectRefResolver;
     const projectRef = isLinked ? yield* projectRefResolver.loadProjectRef(flags.projectRef) : "";
-    linkedRef = projectRef;
+    yield* Ref.set(linkedRef, projectRef);
 
     yield* Effect.annotateCurrentSpan({ "db.conn_type": isLinked ? "linked" : "local" });
     yield* seedBucketsRun({ projectRef, emitSummary: true });
@@ -78,7 +78,9 @@ export const seedBuckets = Effect.fn("seed.buckets")(function* (
     // Caches the linked project and fires org/project group identify — only
     // on the --linked path, when `linkedRef` is set.
     Effect.ensuring(
-      Effect.suspend(() => (linkedRef === "" ? Effect.void : linkedProjectCache.cache(linkedRef))),
+      Effect.flatMap(Ref.get(linkedRef), (ref) =>
+        ref === "" ? Effect.void : linkedProjectCache.cache(ref),
+      ),
     ),
     Effect.ensuring(telemetryState.flush),
   );

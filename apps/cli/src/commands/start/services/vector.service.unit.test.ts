@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from "@effect/vitest";
-import { Deferred, Effect, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/process";
+import { Effect, Sink, Stream } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   buildVectorContainerSpec,
@@ -22,13 +22,10 @@ function mockSpawner(
   const spawned: Array<ReadonlyArray<string>> = [];
 
   const spawner = ChildProcessSpawner.make((command) =>
-    Effect.gen(function* () {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+    Effect.sync(() => {
+      const args = ChildProcess.isStandardCommand(command) ? command.args : [];
       spawned.push(args);
       const result = handler(args);
-
-      const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-      yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(result.exitCode));
 
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
@@ -39,7 +36,7 @@ function mockSpawner(
           result.stderr !== undefined ? [encoder.encode(result.stderr)] : [],
         ),
         all: Stream.empty,
-        exitCode: Deferred.await(exitDeferred),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
         isRunning: Effect.succeed(false),
         stdin: Sink.drain,
         kill: () => Effect.void,
@@ -304,7 +301,7 @@ describe("buildVectorContainerSpec", () => {
 });
 
 describe("resolveDockerDaemonHost", () => {
-  it.live("prefers an explicit DOCKER_HOST env var over any context inspection", () => {
+  it.effect("prefers an explicit DOCKER_HOST env var over any context inspection", () => {
     const mock = mockSpawner(() => ({ exitCode: 1 }));
     return resolveDockerDaemonHost(
       mock.spawner,
@@ -318,7 +315,7 @@ describe("resolveDockerDaemonHost", () => {
     );
   });
 
-  it.live("falls back to the current docker context's endpoint when DOCKER_HOST is unset", () => {
+  it.effect("falls back to the current docker context's endpoint when DOCKER_HOST is unset", () => {
     const mock = mockSpawner((args) => {
       if (args[0] === "context" && args[1] === "inspect") {
         return { exitCode: 0, stdout: "unix:///Users/me/.colima/default/docker.sock\n" };
@@ -332,7 +329,7 @@ describe("resolveDockerDaemonHost", () => {
     );
   });
 
-  it.live("falls back to the platform default when docker context inspect fails", () => {
+  it.effect("falls back to the platform default when docker context inspect fails", () => {
     const mock = mockSpawner(() => ({ exitCode: 1 }));
     return resolveDockerDaemonHost(mock.spawner, {}, "darwin").pipe(
       Effect.map((host) => {
@@ -341,7 +338,7 @@ describe("resolveDockerDaemonHost", () => {
     );
   });
 
-  it.live(
+  it.effect(
     "falls back to the platform default when docker context inspect returns an empty host",
     () => {
       const mock = mockSpawner(() => ({ exitCode: 0, stdout: "\n" }));
@@ -353,7 +350,7 @@ describe("resolveDockerDaemonHost", () => {
     },
   );
 
-  it.live(
+  it.effect(
     "treats an empty DOCKER_HOST value as unset, falling through to context inspection",
     () => {
       const mock = mockSpawner((args) => {

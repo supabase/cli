@@ -4,6 +4,14 @@ import { Command, Flag } from "effect/cli";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withDbTarget,
+} from "../../../command-internal/command-permissions/model.ts";
+import { storageCredentials } from "../../../command-internal/storage-credentials.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { SeedLinkedFlag, SeedLocalFlag } from "../seed.flags.ts";
@@ -31,6 +39,15 @@ export type BucketsFlags = {
 export const bucketsCommand = Command.make("buckets", config).pipe(
   Command.withDescription("Seed buckets declared in [storage.buckets]."),
   Command.withShortDescription("Seed buckets declared in [storage.buckets]"),
+  withPermissions(
+    withDbTarget(
+      compose(
+        { operations: [], noApiEffectFlags: ["project-ref"] },
+        withCondition(compose(storageCredentials, linkedProjectCache), { dbTarget: ["linked"] }),
+      ),
+      { default: "local" },
+    ),
+  ),
   Command.withHandler((leafFlags) =>
     Effect.gen(function* () {
       // Enforce --local/--linked mutual exclusivity before instrumentation, so a

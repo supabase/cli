@@ -69,7 +69,7 @@ const setup = () =>
   });
 
 describe("stack command telemetry", () => {
-  it.live("records the canonical list command identity", () => {
+  it.effect("records the canonical list command identity", () => {
     return setup().pipe(
       Effect.flatMap((fixture) => {
         const command = stackCommand.pipe(Command.provide(fixture.layer));
@@ -91,7 +91,7 @@ describe("stack command telemetry", () => {
     );
   });
 
-  it.live("records canonical and top-level stop paths with distinct run ids", () => {
+  it.effect("records canonical and top-level stop paths with distinct run ids", () => {
     return setup().pipe(
       Effect.flatMap((fixture) => {
         const canonical = stackCommand.pipe(Command.provide(fixture.layer));
@@ -120,7 +120,7 @@ describe("stack command telemetry", () => {
     );
   });
 
-  it.live("records the destroy command identity on invalid target input", () => {
+  it.effect("records the destroy command identity on invalid target input", () => {
     return setup().pipe(
       Effect.flatMap((fixture) => {
         const command = stackCommand.pipe(Command.provide(fixture.layer));
@@ -140,7 +140,7 @@ describe("stack command telemetry", () => {
     );
   });
 
-  it.live("records the prepare command identity on invalid target input", () => {
+  it.effect("records the prepare command identity on invalid target input", () => {
     return setup().pipe(
       Effect.flatMap((fixture) => {
         const command = stackCommand.pipe(Command.provide(fixture.layer));
@@ -160,7 +160,7 @@ describe("stack command telemetry", () => {
     );
   });
 
-  it.live("records the logs command identity when no stack exists", () => {
+  it.effect("records the logs command identity when no stack exists", () => {
     return setup().pipe(
       Effect.flatMap((fixture) => {
         const command = stackCommand.pipe(Command.provide(fixture.layer));
@@ -176,7 +176,7 @@ describe("stack command telemetry", () => {
     );
   });
 
-  it.live("records the restart command identity on invalid target input", () => {
+  it.effect("records the restart command identity on invalid target input", () => {
     return setup().pipe(
       Effect.flatMap((fixture) => {
         const command = stackCommand.pipe(Command.provide(fixture.layer));

@@ -111,13 +111,15 @@ at all, so nothing is cached for it.
 
 ## API Routes / DB
 
-| Method | Path / SQL                                          | Auth   | Purpose                          |
-| ------ | --------------------------------------------------- | ------ | -------------------------------- |
-| POST   | `/v1/projects/{ref}/roles`                          | Bearer | Temp login role when no password |
-| GET    | `/v1/projects/{ref}/pooler/config`                  | Bearer | IPv4 pooler fallback             |
-| GET    | `/v1/projects/{ref}`                                | Bearer | Linked-project cache (post-run)  |
-| SQL    | `SELECT version FROM …schema_migrations`            | —      | history reconciliation (remote)  |
-| SQL    | `INSERT … ON CONFLICT … schema_migrations` (UPSERT) | —      | history update (on confirmation) |
+| Method | Path / SQL                                          | Auth   | Purpose                             |
+| ------ | --------------------------------------------------- | ------ | ----------------------------------- |
+| POST   | `/v1/projects/{ref}/cli/login-role`                 | Bearer | Temp login role when no password    |
+| GET    | `/v1/projects/{ref}/config/database/pooler`         | Bearer | IPv4 pooler fallback                |
+| POST   | `/v1/projects/{ref}/network-bans/retrieve`          | Bearer | List bans during pooler login retry |
+| DELETE | `/v1/projects/{ref}/network-bans`                   | Bearer | Unban during pooler login retry     |
+| GET    | `/v1/projects/{ref}`                                | Bearer | Linked-project cache (post-run)     |
+| SQL    | `SELECT version FROM …schema_migrations`            | —      | history reconciliation (remote)     |
+| SQL    | `INSERT … ON CONFLICT … schema_migrations` (UPSERT) | —      | history update (on confirmation)    |
 
 ## Environment Variables
 
@@ -171,7 +173,7 @@ Progress strings still go to stderr; stdout carries a single structured envelope
 
 ## Notes
 
-- **Config value precedence** (ADR 0031): explicit flag > shell env > project `.env*` > config
+- **Config value precedence** (ADR 0032): explicit flag > shell env > project `.env*` > config
   (`config.json` over `config.toml`) > default. The whole config is decoded up front, so an
   invalid value fails the command. A `--linked` target also applies a matching `[remotes.*]`
   block. The linked-database password env is withheld when the target differs from

@@ -24,10 +24,11 @@ image), to stdout or `--file`.
 
 ## API Routes
 
-| Method | Path                                         | Auth   | When                                                         |
-| ------ | -------------------------------------------- | ------ | ------------------------------------------------------------ |
-| POST   | `/v1/projects/{ref}/cli/login-role`          | Bearer | `--linked` with no `DB_PASSWORD` (mint a temp postgres role) |
-| GET    | `/v1/projects/{ref}/network-bans` (+ DELETE) | Bearer | `--linked` pooler temp-role retry (clear self ban)           |
+| Method | Path                                       | Auth   | When                                                         |
+| ------ | ------------------------------------------ | ------ | ------------------------------------------------------------ |
+| POST   | `/v1/projects/{ref}/cli/login-role`        | Bearer | `--linked` with no `DB_PASSWORD` (mint a temp postgres role) |
+| POST   | `/v1/projects/{ref}/network-bans/retrieve` | Bearer | `--linked` pooler temp-role retry (list bans)                |
+| DELETE | `/v1/projects/{ref}/network-bans`          | Bearer | `--linked` pooler temp-role retry (clear self ban)           |
 
 (All via the shared `DbConfigResolver` `--linked` path.)
 
@@ -82,7 +83,7 @@ shell inherits the suppressing variables and is missed.
 
 ## Notes
 
-- **Config value precedence** (ADR 0031): explicit flag > shell env > project `.env*` > config
+- **Config value precedence** (ADR 0032): explicit flag > shell env > project `.env*` > config
   (`config.json` over `config.toml`; a matched `[remotes.*]` block over the base document on
   `--linked`) > default. The linked-database password env is withheld when the target differs
   from `.temp/project-ref`: stderr gets `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.` and a temporary login role is minted. `--password` is rejected with

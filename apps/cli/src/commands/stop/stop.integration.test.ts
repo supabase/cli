@@ -5,6 +5,7 @@ import {
   Deferred,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Layer,
   Option,
@@ -14,6 +15,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { TestClock } from "effect/testing";
 import { vi } from "vitest";
 
 import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
@@ -123,13 +125,11 @@ function mockRoutedContainerCliSpawner(
         const result = route(args);
         const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
         yield* Effect.forkDetach(
-          Effect.gen(function* () {
-            yield* Effect.sleep("5 millis");
-            yield* Deferred.succeed(
-              exitDeferred,
-              ChildProcessSpawner.ExitCode(result.exitCode ?? 0),
-            );
-          }),
+          Effect.yieldNow.pipe(
+            Effect.andThen(
+              Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(result.exitCode ?? 0)),
+            ),
+          ),
         );
         const stdoutBytes = (result.stdout ?? []).map((line) => encoder.encode(`${line}\n`));
         const stderrBytes = (result.stderr ?? []).map((line) => encoder.encode(`${line}\n`));
@@ -226,7 +226,7 @@ const setup = (opts: SetupOpts = {}) =>
   });
 
 describe("stop integration", () => {
-  it.live(
+  it.effect(
     "stops the current project's containers with backup and suggests the volume command",
     () =>
       Effect.gen(function* () {
@@ -261,7 +261,7 @@ describe("stop integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "reclaims staged-secret directories for containers it tears down, leaving unrelated ones alone",
     () =>
       Effect.gen(function* () {
@@ -284,7 +284,7 @@ describe("stop integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "reclaims a container's staged-secret directory at its OWN labeled workdir, not this invocation's cwd",
     () =>
       Effect.gen(function* () {
@@ -328,26 +328,28 @@ describe("stop integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("sanitizes a dirty config.toml project_id before filtering, matching start's label", () =>
-    Effect.gen(function* () {
-      const { layer, child } = yield* setup({
-        configuredProjectId: "My App!!",
-        route: defaultRoute(),
-      });
-      yield* stop(flags()).pipe(Effect.provide(layer));
-      const psCall = child.spawned.find((s) => s.args[0] === "ps");
-      expect(psCall?.args).toEqual([
-        "ps",
-        "--filter",
-        "label=com.supabase.cli.project=My_App_",
-        "--all",
-        "--format",
-        '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
-      ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+  it.effect(
+    "sanitizes a dirty config.toml project_id before filtering, matching start's label",
+    () =>
+      Effect.gen(function* () {
+        const { layer, child } = yield* setup({
+          configuredProjectId: "My App!!",
+          route: defaultRoute(),
+        });
+        yield* stop(flags()).pipe(Effect.provide(layer));
+        const psCall = child.spawned.find((s) => s.args[0] === "ps");
+        expect(psCall?.args).toEqual([
+          "ps",
+          "--filter",
+          "label=com.supabase.cli.project=My_App_",
+          "--all",
+          "--format",
+          '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
+        ]);
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("keeps an explicit --project-id raw, unsanitized", () =>
+  it.effect("keeps an explicit --project-id raw, unsanitized", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({ skipConfig: true, route: defaultRoute() });
       yield* stop(flags({ projectId: Option.some("Raw Value!!") })).pipe(Effect.provide(layer));
@@ -363,7 +365,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("stops every project's containers with --all without reading config.toml", () =>
+  it.effect("stops every project's containers with --all without reading config.toml", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({ skipConfig: true, route: defaultRoute() });
       yield* stop(flags({ all: Option.some(true) })).pipe(Effect.provide(layer));
@@ -389,7 +391,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("suggests the bare-label volume command with --all when volumes remain", () =>
+  it.effect("suggests the bare-label volume command with --all when volumes remain", () =>
     Effect.gen(function* () {
       const { layer, out } = yield* setup({
         skipConfig: true,
@@ -404,7 +406,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("stops a named project with --project-id without reading config.toml", () =>
+  it.effect("stops a named project with --project-id without reading config.toml", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({ skipConfig: true, route: defaultRoute() });
       yield* stop(flags({ projectId: Option.some("other-project") })).pipe(Effect.provide(layer));
@@ -420,7 +422,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("falls back to config.toml when --project-id is an empty string", () =>
+  it.effect("falls back to config.toml when --project-id is an empty string", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({
         configuredProjectId: "demo",
@@ -439,7 +441,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("resolves SUPABASE_PROJECT_ID from supabase/.env over config.toml", () =>
+  it.effect("resolves SUPABASE_PROJECT_ID from supabase/.env over config.toml", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({
         configuredProjectId: "toml-project",
@@ -459,7 +461,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("prefers ambient SUPABASE_PROJECT_ID over supabase/.env", () =>
+  it.effect("prefers ambient SUPABASE_PROJECT_ID over supabase/.env", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({
         configuredProjectId: "toml-project",
@@ -483,7 +485,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "does not climb to an ancestor project's config.toml when workdir has none of its own",
     () =>
       Effect.gen(function* () {
@@ -511,7 +513,7 @@ describe("stop integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("resolves SUPABASE_PROJECT_ID from supabase/.env even when config.toml is absent", () =>
+  it.effect("resolves SUPABASE_PROJECT_ID from supabase/.env even when config.toml is absent", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({ skipConfig: true, route: defaultRoute() });
       yield* writeSupabaseFile(tempRoot.current, ".env", "SUPABASE_PROJECT_ID=no-config-project\n");
@@ -528,7 +530,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("resolves SUPABASE_PROJECT_ID from a project-root .env file", () =>
+  it.effect("resolves SUPABASE_PROJECT_ID from a project-root .env file", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({
         configuredProjectId: "toml-project",
@@ -548,7 +550,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails when --workdir/SUPABASE_WORKDIR points at a missing path", () =>
+  it.effect("fails when --workdir/SUPABASE_WORKDIR points at a missing path", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       // Must fail before falling through to the workdir-basename default.
@@ -567,7 +569,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails when --workdir/SUPABASE_WORKDIR points at a file, not a directory", () =>
+  it.effect("fails when --workdir/SUPABASE_WORKDIR points at a file, not a directory", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const filePath = path.join(tempRoot.current, "not-a-directory");
@@ -584,7 +586,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects --project-id together with --all", () =>
+  it.effect("rejects --project-id together with --all", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({ skipConfig: true, route: defaultRoute() });
       const exit = yield* Effect.exit(
@@ -602,7 +604,7 @@ describe("stop integration", () => {
 
   // Presence-based, not value-based: `--all=false` still counts as "set" alongside
   // `--project-id`, so this must reject too, not just `--all=true`.
-  it.live("rejects --project-id together with an explicit --all=false", () =>
+  it.effect("rejects --project-id together with an explicit --all=false", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({ skipConfig: true, route: defaultRoute() });
       const exit = yield* Effect.exit(
@@ -618,7 +620,77 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("deletes data volumes with --no-backup", () =>
+  const PRUNE_RUNNING = "Error response from daemon: a prune operation is already running";
+
+  const networkPruneRoute = (failures: number, stderr: string) => {
+    const route = defaultRoute();
+    let remaining = failures;
+    return (args: ReadonlyArray<string>): RouteResult => {
+      if (args[0] === "network" && args[1] === "prune" && remaining > 0) {
+        remaining -= 1;
+        return { exitCode: 1, stderr: [stderr] };
+      }
+      return route(args);
+    };
+  };
+
+  /** Each retry sleeps only after the previous attempt, so the clock steps until `stop` settles. */
+  const joinAdvancingClock = <A, E>(fiber: Fiber.Fiber<A, E>) =>
+    TestClock.adjust("100 millis").pipe(
+      Effect.repeat({ while: () => fiber.pollUnsafe() === undefined }),
+      Effect.andThen(Fiber.join(fiber)),
+    );
+
+  const networkPrunes = (spawned: ReadonlyArray<SpawnRecord>) =>
+    spawned.filter((s) => s.args[0] === "network" && s.args[1] === "prune");
+
+  it.effect("waits for another stack's prune instead of failing", () =>
+    Effect.gen(function* () {
+      const { layer, child } = yield* setup({
+        configuredProjectId: "demo",
+        route: networkPruneRoute(2, PRUNE_RUNNING),
+      });
+      const fiber = yield* stop(flags()).pipe(Effect.provide(layer), Effect.forkChild);
+      yield* joinAdvancingClock(fiber);
+      expect(networkPrunes(child.spawned)).toHaveLength(3);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("fails once another stack's prune outlasts the retry budget", () =>
+    Effect.gen(function* () {
+      const { layer, child } = yield* setup({
+        configuredProjectId: "demo",
+        route: networkPruneRoute(Number.POSITIVE_INFINITY, PRUNE_RUNNING),
+      });
+      const fiber = yield* stop(flags()).pipe(Effect.provide(layer), Effect.exit, Effect.forkChild);
+      const exit = yield* joinAdvancingClock(fiber);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("StopNetworkPruneError");
+        expect(Cause.pretty(exit.cause)).toContain("a prune operation is already running");
+      }
+      expect(networkPrunes(child.spawned)).toHaveLength(41);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("fails on the first unrelated prune error", () =>
+    Effect.gen(function* () {
+      const { layer, child } = yield* setup({
+        configuredProjectId: "demo",
+        route: networkPruneRoute(1, "Error response from daemon: permission denied"),
+      });
+      const exit = yield* Effect.exit(stop(flags()).pipe(Effect.provide(layer)));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain(
+          "failed to prune networks: Error response from daemon: permission denied",
+        );
+      }
+      expect(networkPrunes(child.spawned)).toHaveLength(1);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("deletes data volumes with --no-backup", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({
         configuredProjectId: "demo",
@@ -639,7 +711,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("omits --all from docker's volume prune on a pre-1.42 API host", () =>
+  it.effect("omits --all from docker's volume prune on a pre-1.42 API host", () =>
     Effect.gen(function* () {
       // Docker's own `volume prune --all` requires API >= 1.42 and hard-fails (pruning
       // nothing) on an older daemon.
@@ -661,7 +733,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("includes --all in docker's volume prune when the API is exactly 1.42", () =>
+  it.effect("includes --all in docker's volume prune when the API is exactly 1.42", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({
         configuredProjectId: "demo",
@@ -682,7 +754,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("--backup=false alone does not delete data volumes", () =>
+  it.effect("--backup=false alone does not delete data volumes", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({
         configuredProjectId: "demo",
@@ -696,7 +768,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("--no-backup still deletes data volumes even when --backup stays true", () =>
+  it.effect("--no-backup still deletes data volumes even when --backup stays true", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({
         configuredProjectId: "demo",
@@ -717,7 +789,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("keeps data volumes by default (no volume prune call)", () =>
+  it.effect("keeps data volumes by default (no volume prune call)", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({
         configuredProjectId: "demo",
@@ -731,7 +803,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails when config.toml is malformed", () =>
+  it.effect("fails when config.toml is malformed", () =>
     Effect.gen(function* () {
       yield* writeSupabaseFile(tempRoot.current, "config.toml", "not valid toml =====");
       const { layer, child } = yield* setup({ skipConfig: true, route: defaultRoute() });
@@ -744,7 +816,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails naming the source when a config value is invalid", () =>
+  it.effect("fails naming the source when a config value is invalid", () =>
     Effect.gen(function* () {
       yield* writeSupabaseFile(tempRoot.current, ".env", "SUPABASE_API_PORT=notaport\n");
       const { layer, child } = yield* setup({ route: defaultRoute() });
@@ -760,7 +832,7 @@ describe("stop integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails when [remotes.*] has a duplicate project_id, even with no projectRef", () =>
+  it.effect("fails when [remotes.*] has a duplicate project_id, even with no projectRef", () =>
     Effect.gen(function* () {
       yield* writeSupabaseFile(
         tempRoot.current,
@@ -784,7 +856,7 @@ project_id = "aaaaaaaaaaaaaaaaaaaa"
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails when a [remotes.*] project_id is not a valid 20-letter ref", () =>
+  it.effect("fails when a [remotes.*] project_id is not a valid 20-letter ref", () =>
     Effect.gen(function* () {
       yield* writeSupabaseFile(
         tempRoot.current,
@@ -805,7 +877,7 @@ project_id = "short"
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "decodes a comma-separated string into an array field ([]string) for stop to proceed",
     () =>
       Effect.gen(function* () {
@@ -832,7 +904,7 @@ additional_redirect_urls = "http://a,http://b"
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("warns on stderr for a deprecated auth.external provider", () =>
+  it.effect("warns on stderr for a deprecated auth.external provider", () =>
     Effect.gen(function* () {
       // `normalizeDeprecatedExternalProviders` (packages/config/src/io.ts) emits this warning via
       // `Console.error` only under the CLI's config-loading semantics.
@@ -868,7 +940,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "fails and never spawns docker when config.toml has an unsupported db.major_version",
     () =>
       Effect.gen(function* () {
@@ -889,7 +961,7 @@ enabled = true
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("does not run config Validate for --all (bypasses config entirely)", () =>
+  it.effect("does not run config Validate for --all (bypasses config entirely)", () =>
     Effect.gen(function* () {
       yield* writeSupabaseFile(
         tempRoot.current,
@@ -906,7 +978,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("does not run config Validate for --project-id (bypasses config entirely)", () =>
+  it.effect("does not run config Validate for --project-id (bypasses config entirely)", () =>
     Effect.gen(function* () {
       yield* writeSupabaseFile(
         tempRoot.current,
@@ -923,7 +995,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails when stopping a container errors", () =>
+  it.effect("fails when stopping a container errors", () =>
     Effect.gen(function* () {
       const { layer } = yield* setup({
         configuredProjectId: "demo",
@@ -941,38 +1013,40 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("preserves a container's staged-secret directory when the stop stage itself fails", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      // The stop stage failing means container prune never runs, so `onContainersRemoved` never
-      // fires and `cleanupStartSecrets` must not delete anything.
-      const { layer, workdir } = yield* setup({
-        configuredProjectId: "demo",
-        route: (args) => {
-          if (args[0] === "ps") return { stdout: ["c1\tsupabase_kong_demo"] };
-          if (args[0] === "stop") return { exitCode: 1, stderr: ["boom"] };
-          return { exitCode: 0 };
-        },
-      });
-      const stagedDir = path.join(
-        workdir,
-        "supabase",
-        ".temp",
-        "start-secrets",
-        "supabase_kong_demo",
-      );
-      yield* writeFileIn(stagedDir, "secret-0", "kong.yml contents");
-      const exit = yield* Effect.exit(stop(flags()).pipe(Effect.provide(layer)));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("StopContainerError");
-      }
-      expect(yield* fs.exists(stagedDir)).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+  it.effect(
+    "preserves a container's staged-secret directory when the stop stage itself fails",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // The stop stage failing means container prune never runs, so `onContainersRemoved` never
+        // fires and `cleanupStartSecrets` must not delete anything.
+        const { layer, workdir } = yield* setup({
+          configuredProjectId: "demo",
+          route: (args) => {
+            if (args[0] === "ps") return { stdout: ["c1\tsupabase_kong_demo"] };
+            if (args[0] === "stop") return { exitCode: 1, stderr: ["boom"] };
+            return { exitCode: 0 };
+          },
+        });
+        const stagedDir = path.join(
+          workdir,
+          "supabase",
+          ".temp",
+          "start-secrets",
+          "supabase_kong_demo",
+        );
+        yield* writeFileIn(stagedDir, "secret-0", "kong.yml contents");
+        const exit = yield* Effect.exit(stop(flags()).pipe(Effect.provide(layer)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("StopContainerError");
+        }
+        expect(yield* fs.exists(stagedDir)).toBe(true);
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails when a container cannot be spawned to stop it at all", () =>
+  it.effect("fails when a container cannot be spawned to stop it at all", () =>
     Effect.gen(function* () {
       // Distinct from a spawned `docker stop` exiting non-zero: here docker and podman both
       // fail to spawn.
@@ -989,26 +1063,28 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails the same way in json mode, where 'Stopping containers...' is never printed", () =>
-    Effect.gen(function* () {
-      const { layer } = yield* setup({
-        format: "json",
-        configuredProjectId: "demo",
-        route: (args) => {
-          if (args[0] === "ps") return { stdout: ["c1"] };
-          if (args[0] === "stop") return { exitCode: 1, stderr: ["boom"] };
-          return { exitCode: 0 };
-        },
-      });
-      const exit = yield* Effect.exit(stop(flags()).pipe(Effect.provide(layer)));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("StopContainerError");
-      }
-    }).pipe(Effect.provide(BunServices.layer)),
+  it.effect(
+    "fails the same way in json mode, where 'Stopping containers...' is never printed",
+    () =>
+      Effect.gen(function* () {
+        const { layer } = yield* setup({
+          format: "json",
+          configuredProjectId: "demo",
+          route: (args) => {
+            if (args[0] === "ps") return { stdout: ["c1"] };
+            if (args[0] === "stop") return { exitCode: 1, stderr: ["boom"] };
+            return { exitCode: 0 };
+          },
+        });
+        const exit = yield* Effect.exit(stop(flags()).pipe(Effect.provide(layer)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("StopContainerError");
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails when container prune errors", () =>
+  it.effect("fails when container prune errors", () =>
     Effect.gen(function* () {
       const { layer } = yield* setup({
         configuredProjectId: "demo",
@@ -1025,7 +1101,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails when volume prune errors", () =>
+  it.effect("fails when volume prune errors", () =>
     Effect.gen(function* () {
       const { layer } = yield* setup({
         configuredProjectId: "demo",
@@ -1042,7 +1118,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails when network prune errors", () =>
+  it.effect("fails when network prune errors", () =>
     Effect.gen(function* () {
       const { layer } = yield* setup({
         configuredProjectId: "demo",
@@ -1062,7 +1138,7 @@ enabled = true
   // By the time a later prune stage fails, container-prune has already removed the containers;
   // a subsequent `stop` could no longer rediscover them via `docker ps`, so this cleanup must
   // still run (see the `Effect.ensuring` finalizer above).
-  it.live("still reclaims staged-secret directories when a later prune stage fails", () =>
+  it.effect("still reclaims staged-secret directories when a later prune stage fails", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -1087,7 +1163,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails when the container list errors", () =>
+  it.effect("fails when the container list errors", () =>
     Effect.gen(function* () {
       const { layer } = yield* setup({
         configuredProjectId: "demo",
@@ -1104,7 +1180,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("falls back to podman when docker is absent", () =>
+  it.effect("falls back to podman when docker is absent", () =>
     Effect.gen(function* () {
       const { layer, child } = yield* setup({
         configuredProjectId: "demo",
@@ -1120,7 +1196,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("omits --all from podman's volume prune (not a real Podman flag)", () =>
+  it.effect("omits --all from podman's volume prune (not a real Podman flag)", () =>
     Effect.gen(function* () {
       // Podman's `volume prune` has no `--all` flag; passing Docker's argv through would
       // hard-fail after containers are already stopped. Podman prunes every unused volume by
@@ -1145,7 +1221,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("emits a machine result in json mode without spinner text", () =>
+  it.effect("emits a machine result in json mode without spinner text", () =>
     Effect.gen(function* () {
       const { layer, out } = yield* setup({
         format: "json",
@@ -1161,7 +1237,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("shows no volume suggestion when no volumes remain", () =>
+  it.effect("shows no volume suggestion when no volumes remain", () =>
     Effect.gen(function* () {
       const { layer, out } = yield* setup({
         configuredProjectId: "demo",
@@ -1172,7 +1248,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("flushes telemetry via ensuring even on failure", () =>
+  it.effect("flushes telemetry via ensuring even on failure", () =>
     Effect.gen(function* () {
       const { layer, telemetry } = yield* setup({
         configuredProjectId: "demo",
@@ -1183,7 +1259,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails when container prune cannot spawn any container runtime", () =>
+  it.effect("fails when container prune cannot spawn any container runtime", () =>
     Effect.gen(function* () {
       const { layer } = yield* setup({
         configuredProjectId: "demo",
@@ -1198,7 +1274,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails when volume prune cannot spawn any container runtime", () =>
+  it.effect("fails when volume prune cannot spawn any container runtime", () =>
     Effect.gen(function* () {
       const { layer } = yield* setup({
         configuredProjectId: "demo",
@@ -1213,7 +1289,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails when network prune cannot spawn any container runtime", () =>
+  it.effect("fails when network prune cannot spawn any container runtime", () =>
     Effect.gen(function* () {
       const { layer } = yield* setup({
         configuredProjectId: "demo",
@@ -1228,7 +1304,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("still reports success when the post-run volume listing fails", () =>
+  it.effect("still reports success when the post-run volume listing fails", () =>
     Effect.gen(function* () {
       // Best-effort (`Effect.orElseSucceed`): a listing error here is silently ignored, never
       // surfaced.
@@ -1263,7 +1339,7 @@ enabled = true
     vi.spyOn(process.stderr, "write").mockImplementation(() => true),
   );
 
-  it.live("reports the --debug Pruned lines to stderr, in stage order", () =>
+  it.effect("reports the --debug Pruned lines to stderr, in stage order", () =>
     Effect.gen(function* () {
       const { layer } = yield* setup({
         debug: true,
@@ -1294,7 +1370,7 @@ enabled = true
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("never writes the Pruned lines to stderr without --debug", () =>
+  it.effect("never writes the Pruned lines to stderr without --debug", () =>
     Effect.gen(function* () {
       const { layer } = yield* setup({
         configuredProjectId: "demo",

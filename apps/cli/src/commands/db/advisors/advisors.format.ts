@@ -6,6 +6,8 @@
  * byte-for-byte. The only `omitempty` field is `metadata`.
  */
 
+import { Predicate } from "effect";
+
 import { encodeHtmlSafeJsonIndented } from "../../../command-internal/html-safe-json.ts";
 import { makeLevelEnum } from "../../../command-internal/fail-on.ts";
 
@@ -132,16 +134,15 @@ export function scanAdvisorLintRow(row: Record<string, unknown>): AdvisorLint {
  */
 function projectApiMetadata(value: unknown): Record<string, unknown> | undefined {
   if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) {
+  if (!Predicate.isObject(value)) {
     throw new TypeError("invalid advisor metadata: expected an object");
   }
-  const record = value as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   // Each string subfield decodes absent/null to omitted and a present
   // non-string throws. Add in the established output-contract order: entity,
   // fkey_columns, fkey_name, name, schema, type.
   const optString = (key: string) => {
-    const field = record[key];
+    const field = value[key];
     if (field === undefined || field === null) return;
     if (typeof field !== "string") {
       throw new TypeError(`invalid advisor metadata.${key}: expected a string`);
@@ -150,7 +151,7 @@ function projectApiMetadata(value: unknown): Record<string, unknown> | undefined
   };
 
   optString("entity");
-  const fkeyColumns = record["fkey_columns"];
+  const fkeyColumns = value["fkey_columns"];
   if (fkeyColumns !== undefined && fkeyColumns !== null) {
     if (!Array.isArray(fkeyColumns)) {
       throw new TypeError("invalid advisor metadata.fkey_columns: expected an array of numbers");
@@ -190,10 +191,10 @@ function projectApiMetadata(value: unknown): Record<string, unknown> | undefined
  */
 export function apiResponseToAdvisorLints(parsed: unknown): ReadonlyArray<AdvisorLint> {
   if (parsed === null) return [];
-  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!Predicate.isObject(parsed)) {
     throw new TypeError("invalid advisors response: expected an object");
   }
-  const lintsRaw = (parsed as { lints?: unknown }).lints;
+  const lintsRaw = parsed["lints"];
   if (lintsRaw === undefined || lintsRaw === null) return [];
   if (!Array.isArray(lintsRaw)) {
     throw new TypeError("invalid advisors lints: expected an array");
@@ -216,22 +217,21 @@ export function apiResponseToAdvisorLints(parsed: unknown): ReadonlyArray<Adviso
       });
       continue;
     }
-    if (typeof entry !== "object" || Array.isArray(entry)) {
+    if (!Predicate.isObject(entry)) {
       throw new TypeError("invalid advisor lint: expected an object");
     }
-    const record = entry as Record<string, unknown>;
-    const metadata = projectApiMetadata(record["metadata"]);
+    const metadata = projectApiMetadata(entry["metadata"]);
     lints.push({
-      name: requireApiString(record["name"], "name"),
-      title: requireApiString(record["title"], "title"),
-      level: requireApiString(record["level"], "level"),
-      facing: requireApiString(record["facing"], "facing"),
-      categories: requireApiStringArray(record["categories"]),
-      description: requireApiString(record["description"], "description"),
-      detail: requireApiString(record["detail"], "detail"),
-      remediation: requireApiString(record["remediation"], "remediation"),
+      name: requireApiString(entry["name"], "name"),
+      title: requireApiString(entry["title"], "title"),
+      level: requireApiString(entry["level"], "level"),
+      facing: requireApiString(entry["facing"], "facing"),
+      categories: requireApiStringArray(entry["categories"]),
+      description: requireApiString(entry["description"], "description"),
+      detail: requireApiString(entry["detail"], "detail"),
+      remediation: requireApiString(entry["remediation"], "remediation"),
       ...(metadata !== undefined ? { metadata } : {}),
-      cacheKey: requireApiString(record["cache_key"], "cache_key"),
+      cacheKey: requireApiString(entry["cache_key"], "cache_key"),
     });
   }
   return lints;

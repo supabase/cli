@@ -338,7 +338,7 @@ describe("bootstrap integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "scratch scaffolding fails closed on an invalid SUPABASE_EXPERIMENTAL_STACK before writing config",
     () =>
       Effect.gen(function* () {
@@ -391,7 +391,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects an unknown template argument", () =>
+  it.effect("rejects an unknown template argument", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const s = setup(path, { samples: [NEXTJS_TEMPLATE] });
@@ -453,7 +453,7 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("aborts when the user declines to overwrite a non-empty workdir", () =>
+  it.effect("aborts when the user declines to overwrite a non-empty workdir", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;

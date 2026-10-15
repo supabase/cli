@@ -1,13 +1,36 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
+import { vi } from "vitest";
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
+);
 
 import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
+  VALID_TOKEN,
+  mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
   sequentialExecBatch,
+  useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -174,6 +197,8 @@ interface SetupOpts {
   listFails?: boolean;
   /** Raw CLI args for `CliArgs` — drives DB target selection (Changed-based). */
   args?: ReadonlyArray<string>;
+  /** Runs the real `DbConfigResolver` and linked-project cache against the temp `workdir`. */
+  realLayers?: { readonly workdir: string };
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -191,18 +216,30 @@ function setup(opts: SetupOpts = {}) {
   const processControl = mockProcessControl();
   const projectRef = mockProjectRef();
   const cache = mockLinkedProjectCacheTracked();
+  const http = recordingProjectHttpClient(VALID_REF);
   const layer = Layer.mergeAll(
     out.layer,
-    resolver.layer,
+    opts.realLayers === undefined
+      ? resolver.layer
+      : realDbConfigResolver({
+          workdir: opts.realLayers.workdir,
+          dbConnection: connection.layer,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        }),
     connection.layer,
     telemetry.layer,
     processControl.layer,
     projectRef.layer,
-    cache.layer,
+    opts.realLayers === undefined
+      ? cache.layer
+      : realLinkedProjectCache({
+          httpClient: http.layer,
+          cliSettings: mockCommandSettings({ workdir: opts.realLayers.workdir }),
+        }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
   );
-  return { layer, out, resolver, connection, telemetry, processControl, projectRef, cache };
+  return { layer, out, resolver, connection, telemetry, processControl, projectRef, cache, http };
 }
 
 const flags = (over: Partial<DbLintFlags> = {}): DbLintFlags => ({
@@ -216,7 +253,9 @@ const flags = (over: Partial<DbLintFlags> = {}): DbLintFlags => ({
 });
 
 describe("db lint", () => {
-  it.live("lints the named schema and prints parsed issues to stdout", () => {
+  const tempRoot = useTempWorkdir("supabase-db-lint-int-");
+
+  it.effect("lints the named schema and prints parsed issues to stdout", () => {
     const { layer, out, connection } = setup({
       schemas: [],
       checkRows: { public: [checkRow("f1", [ERROR_ISSUE])] },
@@ -238,7 +277,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("lints every user schema when --schema is omitted", () => {
+  it.effect("lints every user schema when --schema is omitted", () => {
     const { layer, out, connection } = setup({
       schemas: ["public", "private"],
       checkRows: { public: [checkRow("f1", [ERROR_ISSUE])], private: [] },
@@ -251,7 +290,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when the plpgsql_check extension cannot be enabled", () => {
+  it.effect("fails when the plpgsql_check extension cannot be enabled", () => {
     const { layer } = setup({ schemas: [], enableFails: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
@@ -263,7 +302,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails on malformed plpgsql_check json", () => {
+  it.effect("fails on malformed plpgsql_check json", () => {
     const { layer } = setup({ malformed: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
@@ -275,7 +314,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("surfaces a query failure from plpgsql_check", () => {
+  it.effect("surfaces a query failure from plpgsql_check", () => {
     const { layer } = setup({ queryFails: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
@@ -287,7 +326,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("surfaces a list-schemas failure", () => {
+  it.effect("surfaces a list-schemas failure", () => {
     const { layer } = setup({ listFails: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbLint(flags()));
@@ -299,7 +338,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("prints 'No schema errors found' to stderr and nothing to stdout when clean", () => {
+  it.effect("prints 'No schema errors found' to stderr and nothing to stdout when clean", () => {
     const { layer, out } = setup({ checkRows: { public: [] } });
     return Effect.gen(function* () {
       yield* dbLint(flags({ schema: ["public"] }));
@@ -308,7 +347,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits nothing on stdout when all issues are below --level (no clean message)", () => {
+  it.effect("emits nothing on stdout when all issues are below --level (no clean message)", () => {
     const { layer, out } = setup({ checkRows: { public: [checkRow("f1", [WARNING_ISSUE])] } });
     return Effect.gen(function* () {
       yield* dbLint(flags({ schema: ["public"], level: Option.some("error") }));
@@ -317,7 +356,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("exits non-zero when --fail-on warning and a warning exists", () => {
+  it.effect("exits non-zero when --fail-on warning and a warning exists", () => {
     const { layer, out } = setup({ checkRows: { public: [checkRow("f1", [WARNING_ISSUE])] } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -329,16 +368,14 @@ describe("db lint", () => {
         expect(Option.isSome(failure)).toBe(true);
         if (Option.isSome(failure)) {
           expect(failure.value).toBeInstanceOf(DbLintFailOnError);
-          expect((failure.value as DbLintFailOnError).message).toBe(
-            "fail-on is set to warning, non-zero exit",
-          );
+          expect(failure.value.message).toBe("fail-on is set to warning, non-zero exit");
         }
       }
       expect(out.stdoutText).toContain("never read variable");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("exits non-zero when --fail-on error and an error exists", () => {
+  it.effect("exits non-zero when --fail-on error and an error exists", () => {
     const { layer } = setup({ checkRows: { public: [checkRow("f1", [ERROR_ISSUE])] } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -352,7 +389,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not exit non-zero when --fail-on is none", () => {
+  it.effect("does not exit non-zero when --fail-on is none", () => {
     const { layer } = setup({ checkRows: { public: [checkRow("f1", [ERROR_ISSUE])] } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
@@ -360,7 +397,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not trigger --fail-on warning when --level error filters the warning out", () => {
+  it.effect("does not trigger --fail-on warning when --level error filters the warning out", () => {
     const { layer, out } = setup({ checkRows: { public: [checkRow("f1", [WARNING_ISSUE])] } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -377,7 +414,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --db-url together with --linked (via args Changed detection)", () => {
+  it.effect("rejects --db-url together with --linked (via args Changed detection)", () => {
     const { layer } = setup({ args: ["--db-url=postgres://x", "--linked"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbLint(flags({ dbUrl: Option.some("postgres://x") })));
@@ -391,7 +428,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a standard success envelope in json mode", () => {
+  it.effect("emits a standard success envelope in json mode", () => {
     const { layer, out } = setup({
       format: "json",
       checkRows: { public: [checkRow("f1", [ERROR_ISSUE])] },
@@ -409,7 +446,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits an empty result envelope in json mode when clean", () => {
+  it.effect("emits an empty result envelope in json mode when clean", () => {
     const { layer, out } = setup({ format: "json", checkRows: { public: [] } });
     return Effect.gen(function* () {
       yield* dbLint(flags({ schema: ["public"] }));
@@ -419,7 +456,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a result event in stream-json mode", () => {
+  it.effect("emits a result event in stream-json mode", () => {
     const { layer, out } = setup({
       format: "stream-json",
       checkRows: { public: [checkRow("f1", [ERROR_ISSUE])] },
@@ -432,7 +469,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sets exit code 1 without failing the effect on fail-on in json mode", () => {
+  it.effect("sets exit code 1 without failing the effect on fail-on in json mode", () => {
     const { layer, processControl } = setup({
       format: "json",
       checkRows: { public: [checkRow("f1", [ERROR_ISSUE])] },
@@ -446,7 +483,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("labels the diagnostic 'remote' for a non-local connection", () => {
+  it.effect("labels the diagnostic 'remote' for a non-local connection", () => {
     const { layer, out } = setup({
       isLocal: false,
       checkRows: { public: [] },
@@ -458,7 +495,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("lints multiple pre-parsed schemas from a comma-separated --schema value", () => {
+  it.effect("lints multiple pre-parsed schemas from a comma-separated --schema value", () => {
     // CSV parsing happens at `Flag.mapTryCatch` parse time; the handler receives the
     // already-split list directly.
     const { layer, connection } = setup({
@@ -470,7 +507,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes the linked-project cache for --linked", () => {
+  it.effect("writes the linked-project cache for --linked", () => {
     const { layer, projectRef, cache } = setup({
       isLocal: false,
       checkRows: { public: [] },
@@ -483,7 +520,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("lints the project given via --project-ref, overriding the workdir's own ref", () => {
+  it.effect("lints the project given via --project-ref, overriding the workdir's own ref", () => {
     // `VALID_REF` stands in for whatever the workdir would resolve to absent the
     // flag; the flag must win.
     const FLAG_REF = "flagflagflagflagflag";
@@ -500,7 +537,129 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not write the linked-project cache for a local run", () => {
+  it.effect("mints a login role and fills the cache through the real resolver and cache", () => {
+    const { layer, http } = setup({
+      isLocal: false,
+      checkRows: { public: [] },
+      args: ["db", "lint", "--linked", "--project-ref", VALID_REF],
+      realLayers: { workdir: tempRoot.current },
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbLint(
+        flags({ schema: ["public"], linked: true, projectRef: Option.some(VALID_REF) }),
+      );
+      expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+        `POST /v1/projects/${VALID_REF}/cli/login-role`,
+      ]);
+      expect(http.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "db lint",
+        activeFlags: { linked: true, "project-ref": VALID_REF, schema: true },
+        requests: [...asRecordedRequests(requests), ...http.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect(
+    "makes no Management API request for --local through the real resolver and cache",
+    () => {
+      const { layer, http } = setup({
+        checkRows: { public: [] },
+        args: ["db", "lint", "--local"],
+        realLayers: { workdir: tempRoot.current },
+      });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* stubManagementApi(requests, () => undefined);
+        yield* dbLint(flags({ schema: ["public"], local: true }));
+        expect(requests).toEqual([]);
+        expect(http.calls).toEqual([]);
+        expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(
+          false,
+        );
+        assertPermissionDrift({
+          command: "db lint",
+          activeFlags: { local: true, schema: true },
+          requests: [],
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    },
+  );
+
+  it.effect("defaults to the local target and makes no Management API request", () => {
+    const { layer, http } = setup({
+      checkRows: { public: [] },
+      args: ["db", "lint"],
+      realLayers: { workdir: tempRoot.current },
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, () => undefined);
+      yield* dbLint(flags({ schema: ["public"] }));
+      expect(requests).toEqual([]);
+      expect(http.calls).toEqual([]);
+      assertPermissionDrift({
+        command: "db lint",
+        activeFlags: { schema: true },
+        requests: [],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("--linked=false still reaches the linked database through the real resolver", () => {
+    const { layer, http } = setup({
+      isLocal: false,
+      checkRows: { public: [] },
+      args: ["db", "lint", "--linked=false", "--project-ref", VALID_REF],
+      realLayers: { workdir: tempRoot.current },
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbLint(flags({ schema: ["public"], projectRef: Option.some(VALID_REF) }));
+      expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+        `POST /v1/projects/${VALID_REF}/cli/login-role`,
+      ]);
+      expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "db lint",
+        activeFlags: { linked: false, "project-ref": VALID_REF, schema: true },
+        requests: [...asRecordedRequests(requests), ...http.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("does not write the linked-project cache for a local run", () => {
     const { layer, cache } = setup({ checkRows: { public: [] } });
     return Effect.gen(function* () {
       yield* dbLint(flags({ schema: ["public"] }));
@@ -508,7 +667,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --project-ref on the default local target", () => {
+  it.effect("rejects --project-ref on the default local target", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, connection, cache } = setup({ checkRows: { public: [] } });
     return Effect.gen(function* () {
@@ -527,7 +686,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry on success and on failure", () => {
+  it.effect("flushes telemetry on success and on failure", () => {
     const success = setup({ checkRows: { public: [] } });
     const failure = setup({ enableFails: true });
     return Effect.gen(function* () {
@@ -538,7 +697,7 @@ describe("db lint", () => {
     });
   });
 
-  it.live("--linked=false routes to the linked branch (Changed, not value)", () => {
+  it.effect("--linked=false routes to the linked branch (Changed, not value)", () => {
     const { layer, projectRef, cache } = setup({
       isLocal: false,
       checkRows: { public: [] },
@@ -551,7 +710,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--no-linked routes to the linked branch (boolean negation is still Changed)", () => {
+  it.effect("--no-linked routes to the linked branch (boolean negation is still Changed)", () => {
     const { layer, projectRef, cache } = setup({
       isLocal: false,
       checkRows: { public: [] },
@@ -564,26 +723,32 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("--local=false --linked fails with mutual-exclusion (sorted set [linked local])", () => {
-    const { layer } = setup({ args: ["--local=false", "--linked"] });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain(
-          "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
-        );
-      }
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "--local=false --linked fails with mutual-exclusion (sorted set [linked local])",
+    () => {
+      const { layer } = setup({ args: ["--local=false", "--linked"] });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain(
+            "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
-  it.live("--local=false alone routes to the local branch (Changed local, connType=local)", () => {
-    const { layer, out, cache } = setup({ checkRows: { public: [] }, args: ["--local=false"] });
-    return Effect.gen(function* () {
-      yield* dbLint(flags({ schema: ["public"] }));
-      expect(out.stderrText).toContain("Connecting to local database...");
-      expect(cache.cached).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "--local=false alone routes to the local branch (Changed local, connType=local)",
+    () => {
+      const { layer, out, cache } = setup({ checkRows: { public: [] }, args: ["--local=false"] });
+      return Effect.gen(function* () {
+        yield* dbLint(flags({ schema: ["public"] }));
+        expect(out.stderrText).toContain("Connecting to local database...");
+        expect(cache.cached).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });

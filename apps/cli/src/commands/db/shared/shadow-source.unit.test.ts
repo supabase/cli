@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
 
 import { cleanSchemaPath, loadDeclaredSchemas } from "./shadow-source.ts";
 import type { PgDeltaTomlConfig } from "../../../command-internal/db-config.toml-read.ts";
@@ -494,15 +494,11 @@ describe("loadDeclaredSchemas", () => {
         const locked = path.join(workdir, "supabase", "locked");
         yield* fs.makeDirectory(locked, { recursive: true });
         yield* lockDirectory(locked);
-        const exit = yield* loadDeclaredSchemas(fs, path, workdir, ["locked"], pgDelta()).pipe(
-          Effect.exit,
+        const error = yield* loadDeclaredSchemas(fs, path, workdir, ["locked"], pgDelta()).pipe(
+          Effect.flip,
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const causeText = Cause.pretty(exit.cause);
-          expect(causeText).toContain("failed to walk matched directory:");
-          expect(causeText).not.toContain("failed to walk matched directory: locked");
-        }
+        expect(error.message).toContain("failed to walk matched directory:");
+        expect(error.message).not.toContain("failed to walk matched directory: locked");
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
@@ -522,15 +518,11 @@ describe("loadDeclaredSchemas", () => {
         yield* fs.makeDirectory(byteOrderFirst, { recursive: true });
         yield* lockDirectory(utf16First);
         yield* lockDirectory(byteOrderFirst);
-        const exit = yield* loadDeclaredSchemas(fs, path, workdir, ["custom"], pgDelta()).pipe(
-          Effect.exit,
+        const error = yield* loadDeclaredSchemas(fs, path, workdir, ["custom"], pgDelta()).pipe(
+          Effect.flip,
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const causeText = Cause.pretty(exit.cause);
-          expect(causeText).toContain(byteOrderFirst);
-          expect(causeText).not.toContain(utf16First);
-        }
+        expect(error.message).toContain(byteOrderFirst);
+        expect(error.message).not.toContain(utf16First);
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
@@ -544,7 +536,7 @@ describe("loadDeclaredSchemas", () => {
         const declDir = path.join(workdir, "supabase", "database");
         yield* fs.makeDirectory(declDir, { recursive: true });
         yield* lockDirectory(declDir);
-        const exit = yield* loadDeclaredSchemas(
+        const error = yield* loadDeclaredSchemas(
           fs,
           path,
           workdir,
@@ -553,13 +545,9 @@ describe("loadDeclaredSchemas", () => {
             enabled: true,
             declarativeSchemaPath: Option.some("supabase/database"),
           }),
-        ).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const causeText = Cause.pretty(exit.cause);
-          expect(causeText).toContain("failed to walk declarative dir:");
-          expect(causeText).not.toContain("failed to walk dir:");
-        }
+        ).pipe(Effect.flip);
+        expect(error.message).toContain("failed to walk declarative dir:");
+        expect(error.message).not.toContain("failed to walk dir:");
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
@@ -573,13 +561,11 @@ describe("loadDeclaredSchemas", () => {
         const schemasDir = path.join(workdir, "supabase", "schemas");
         yield* fs.makeDirectory(schemasDir, { recursive: true });
         yield* lockDirectory(schemasDir);
-        const exit = yield* loadDeclaredSchemas(fs, path, workdir, [], pgDelta()).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const causeText = Cause.pretty(exit.cause);
-          expect(causeText).toContain("failed to walk dir:");
-          expect(causeText).not.toContain("failed to walk declarative dir:");
-        }
+        const error = yield* loadDeclaredSchemas(fs, path, workdir, [], pgDelta()).pipe(
+          Effect.flip,
+        );
+        expect(error.message).toContain("failed to walk dir:");
+        expect(error.message).not.toContain("failed to walk declarative dir:");
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 });

@@ -503,7 +503,7 @@ const handleVectorError = Effect.fnUntraced(function* (
     summary.vector_skipped = true;
     return;
   }
-  return yield* Effect.fail(error);
+  return yield* error;
 });
 
 const uploadObjects = Effect.fnUntraced(function* (
@@ -603,7 +603,7 @@ const collectDir = (
       // has no `lstat`.
       const isSymlink = yield* fs.readLink(absChild).pipe(
         Effect.as(true),
-        Effect.catch(() => Effect.succeed(false)),
+        Effect.orElseSucceed(() => false),
       );
       if (isSymlink) {
         // Opens the target then stats the handle, so an unreadable target is caught now
@@ -614,7 +614,7 @@ const collectDir = (
             const targetInfo = yield* handle.stat;
             return targetInfo.type;
           }),
-        ).pipe(Effect.catch(() => Effect.succeed("Unknown" as const)));
+        ).pipe(Effect.orElseSucceed(() => "Unknown" as const));
         if (targetType === "File") {
           collected.push({ absPath: absChild, displayPath: displayChild });
         } else {

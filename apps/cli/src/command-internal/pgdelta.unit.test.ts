@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { ConfigProvider, Effect } from "effect";
 
-import { withConfigEnv } from "../../tests/helpers/command-mocks.ts";
+import { withConfigEnv, withEmptyConfigEnv } from "../../tests/helpers/command-mocks.ts";
 import { edgeRuntimeId, isPgDeltaDebugEnabled, isPostgresURL } from "./pgdelta.ts";
 
 describe("isPostgresURL", () => {
@@ -32,6 +32,21 @@ describe("isPgDeltaDebugEnabled", () => {
   it.effect("is false otherwise", () =>
     Effect.gen(function* () {
       expect(yield* withConfigEnv({ PGDELTA_DEBUG: "0" }, isPgDeltaDebugEnabled)).toBe(false);
+      expect(yield* withEmptyConfigEnv(isPgDeltaDebugEnabled)).toBe(false);
     }),
+  );
+
+  it.effect("is false when PGDELTA_DEBUG cannot be resolved", () =>
+    Effect.gen(function* () {
+      expect(yield* isPgDeltaDebugEnabled).toBe(false);
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.make(() =>
+            Effect.fail(new ConfigProvider.SourceError({ message: "injected" })),
+          ),
+        ),
+      ),
+    ),
   );
 });

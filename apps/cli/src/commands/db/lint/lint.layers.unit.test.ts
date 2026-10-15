@@ -116,7 +116,7 @@ function ambientStubs() {
 }
 
 describe("dbLintRuntimeLayer — IdentityStitch exposure", () => {
-  it.live(
+  it.effect(
     "exposes IdentityStitch at top level so withCommandTelemetry can read stitchedDistinctId()",
     () => {
       return Effect.gen(function* () {
@@ -128,7 +128,7 @@ describe("dbLintRuntimeLayer — IdentityStitch exposure", () => {
 });
 
 describe("dbAdvisorsRuntimeLayer — IdentityStitch exposure (regression guard)", () => {
-  it.live(
+  it.effect(
     "exposes IdentityStitch at top level so withCommandTelemetry can read stitchedDistinctId()",
     () => {
       return Effect.gen(function* () {

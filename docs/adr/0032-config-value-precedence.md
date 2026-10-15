@@ -1,4 +1,4 @@
-# 0031. Config value precedence
+# 0032. Config value precedence
 
 **Status**: proposed
 **Date**: 2026-10-08

@@ -57,7 +57,11 @@ const toml: DbTomlValues = {
 };
 
 function setup() {
-  const state = { migrations: 0, plan: 0, planBypassCache: undefined as boolean | undefined };
+  const state: { migrations: number; plan: number; planBypassCache: boolean | undefined } = {
+    migrations: 0,
+    plan: 0,
+    planBypassCache: undefined,
+  };
   const shadow = Layer.succeed(PgDeltaNextShadow, {
     provisionMigrations: () =>
       Effect.sync(() => {

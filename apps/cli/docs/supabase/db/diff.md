@@ -18,8 +18,7 @@ With pg-delta, `[db.migrations] schema_paths` and declarative schema files (such
 
 With the bundled pg-delta engine, diff SQL defaults to uppercase keywords, indent 2, a maximum width of 180, trailing commas, and column/key alignment, matching its declarative export. When `-f` writes migrations, execution-aware transaction semantics are preserved as ordered per-unit files; non-transactional units carry a directive that the CLI apply path honors. Flattened review output retains the rendered SQL and preambles, but not the unit boundaries supplied to a migration runner. Configure overrides with `[experimental.pgdelta] format_options`, or set `format_options = "null"` to emit raw, unformatted statements.
 
-While the diff command is able to capture most schema changes, there are cases where it is known to fail. Currently, this could happen if you schema contains:
+Storage buckets are data, not schema, so no diff engine captures them. Under the legacy migra engine, the diff can also miss:
 
 - Changes to publication
-- Changes to storage buckets
 - Views with `security_invoker` attributes

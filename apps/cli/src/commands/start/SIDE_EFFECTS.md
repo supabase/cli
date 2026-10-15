@@ -6,7 +6,7 @@ uses the new [`supabase stack start` implementation](../experimental/stack/start
 `SUPABASE_EXPERIMENTAL_STACK=0` forces the legacy backend. See [backend selection](../../../docs/stack-commands.md).
 Backend routing and the legacy handler both read `supabase/config.json` when present, otherwise
 `supabase/config.toml`. Config values resolve as flag > shell env > project `.env*` > config >
-default (ADR 0031); `start` applies no `[remotes.*]` block. Backend selection happens before command parsing. When the
+default (ADR 0032); `start` applies no `[remotes.*]` block. Backend selection happens before command parsing. When the
 environment override is unset or empty, an unreadable, malformed, or invalid project configuration
 falls back to the legacy backend; an invalid environment override remains an error.
 

@@ -104,16 +104,14 @@ const captureOwnerPid = (capture: (pid: number) => void) =>
   );
 
 const ownerHasExited = (pid: number) =>
-  Effect.sync(() => {
-    try {
-      process.kill(pid, 0);
-      return false;
-    } catch (cause) {
-      if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ESRCH")
-        return true;
-      throw cause;
-    }
-  });
+  Effect.try(() => process.kill(pid, 0)).pipe(
+    Effect.as(false),
+    Effect.catchIf(
+      ({ cause }) =>
+        typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ESRCH",
+      () => Effect.succeed(true),
+    ),
+  );
 
 const projectConfig = `
 project_id = "stack-start-native-integration"
@@ -383,6 +381,10 @@ describe("experimental stack start native lifecycle", () => {
             server.listen(0, "127.0.0.1", () => {
               server.removeListener("error", onError);
               resume(Effect.succeed(server));
+            });
+            return Effect.sync(() => {
+              server.removeListener("error", onError);
+              if (server.listening) server.close();
             });
           }),
           (listeningServer) =>

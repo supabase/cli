@@ -1,4 +1,4 @@
-import { Config, Effect, FileSystem, Option, Path, Predicate } from "effect";
+import { Config, Effect, FileSystem, Option, Path, Predicate, Ref } from "effect";
 import type { Stack } from "@supabase/stack/effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -53,7 +53,6 @@ import {
 } from "../../../command-internal/stack-local-database.ts";
 import { resolveBundledPostgresRuntime } from "../../../command-internal/bundled-postgres-client.ts";
 import { supabaseEnvStringWithProjectFallback } from "../../../command-internal/supabase-env.ts";
-import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { runWithPoolerFallback } from "../shared/pooler-fallback.ts";
 import {
   dumpDataScript,
@@ -95,7 +94,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
 
   // Captured so the post-run finalizer can cache the project after the command's
   // own API calls.
-  let linkedRefForCache: string | undefined;
+  const linkedRefForCache = yield* Ref.make<string | undefined>(undefined);
 
   yield* Effect.gen(function* () {
     const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
@@ -117,7 +116,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     // 2. Mutually-exclusive flag groups. "Set" means explicitly set: an
     //    Option is set when `Some`, a boolean when explicitly `true`, a
     //    string-slice when non-empty.
-    const isSet = (name: string): boolean => {
+    const isSet = (name: (typeof DUMP_EXCLUSIVE_GROUPS)[number][number]): boolean => {
       switch (name) {
         case "db-url":
           return Option.isSome(flags.dbUrl);
@@ -133,8 +132,6 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
           return Option.isSome(flags.keepComments);
         case "schema":
           return flags.schema.length > 0;
-        default:
-          return false;
       }
     };
     for (const group of DUMP_EXCLUSIVE_GROUPS) {
@@ -168,7 +165,8 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     // unvalidated raw `--project-ref` is never stored for the cache finalizer.
     if (connType === "linked") {
       const refResolver = yield* ProjectRefResolver;
-      linkedRefForCache = yield* refResolver.loadProjectRef(flags.projectRef);
+      const ref = yield* refResolver.loadProjectRef(flags.projectRef);
+      yield* Ref.set(linkedRefForCache, ref);
     }
     const {
       conn,
@@ -187,7 +185,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     const linkedRef = Option.getOrUndefined(resolvedRef ?? Option.none());
     // Guards a `None` from a non-linked path from clobbering the up-front capture.
     if (linkedRef !== undefined) {
-      linkedRefForCache = linkedRef;
+      yield* Ref.set(linkedRefForCache, linkedRef);
     }
 
     // Read before the dry-run print so an invalid merged config fails rather than
@@ -445,7 +443,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       ),
       Effect.withSpan("db.dump.run"),
       Effect.catchIf(
-        (error): error is DockerRunError =>
+        (error) =>
           Predicate.isTagged(error, "DockerRunError") &&
           stackRuntime === "native" &&
           runtimeInfo.platform === "win32",
@@ -491,8 +489,8 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     // command's own API calls, then flush telemetry. The cache layer no-ops
     // when the file exists / no token / non-200.
     Effect.ensuring(
-      Effect.suspend(() =>
-        linkedRefForCache !== undefined ? linkedProjectCache.cache(linkedRefForCache) : Effect.void,
+      Effect.flatMap(Ref.get(linkedRefForCache), (ref) =>
+        ref !== undefined ? linkedProjectCache.cache(ref) : Effect.void,
       ),
     ),
     Effect.ensuring(telemetryState.flush),

@@ -3,9 +3,9 @@ import { FileSystem, Path } from "effect";
 import { expect, layer } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { edgeRuntimeNofileUlimit } from "../../../shared/stack-constants.ts";
-import { ConfigProvider, Deferred, Effect, Exit, Sink, Stream } from "effect";
-import { type ChildProcess, ChildProcessSpawner } from "effect/process";
-import { afterEach, beforeEach, vi } from "vitest";
+import { ConfigProvider, Effect, Exit, Sink, Stream } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { afterEach, assert, beforeEach, vi } from "vitest";
 
 import { useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -32,23 +32,22 @@ function mockDockerSpawner(
   const encoder = new TextEncoder();
 
   const spawner = ChildProcessSpawner.make((command) =>
-    Effect.gen(function* () {
-      const args = command._tag === "StandardCommand" ? command.args : [];
+    Effect.sync(() => {
+      const standard = ChildProcess.isStandardCommand(command);
+      const args = standard ? command.args : [];
       calls.push({
         args,
-        stdin: command._tag === "StandardCommand" ? command.options.stdin : undefined,
+        stdin: standard ? command.options.stdin : undefined,
       });
       const result = handler?.(args) ?? { exitCode: 0 };
 
-      const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-      yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(result.exitCode));
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
         stdout: Stream.empty,
         stderr:
           result.stderr === undefined ? Stream.empty : Stream.make(encoder.encode(result.stderr)),
         all: Stream.empty,
-        exitCode: Deferred.await(exitDeferred),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
         isRunning: Effect.succeed(false),
         stdin: Sink.drain,
         kill: () => Effect.void,
@@ -66,7 +65,9 @@ function mockDockerSpawner(
     },
     get runCall() {
       // Excludes `docker volume create`, whose first arg is "volume", not "create".
-      return calls.find((call) => call.args[0] === "create");
+      const runCall = calls.find((call) => call.args[0] === "create");
+      assert(runCall !== undefined, "docker create was never spawned");
+      return runCall;
     },
   };
 }
@@ -107,8 +108,8 @@ const envEntries = Effect.fnUntraced(function* (runCall: {
   const fs = yield* FileSystem.FileSystem;
   const envFileArgIndex = runCall.args.indexOf("--env-file");
   const envFilePath = runCall.args[envFileArgIndex + 1];
-  expect(envFilePath).toBeDefined();
-  return (yield* fs.readFileString(envFilePath!)).split("\n").filter((line) => line.length > 0);
+  assert(envFilePath !== undefined, "docker create has no --env-file value");
+  return (yield* fs.readFileString(envFilePath)).split("\n").filter((line) => line.length > 0);
 });
 
 layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
@@ -145,8 +146,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         Effect.provide(out.layer),
         Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnvRecord({})),
       );
-      expect(mock.runCall).toBeDefined();
-      expect(mock.runCall!.args.join(" ")).not.toContain(":/root/.cache/deno");
+      expect(mock.runCall.args.join(" ")).not.toContain(":/root/.cache/deno");
       expect(mock.calls.some((call) => call.args[0] === "volume")).toBe(false);
     }),
   );
@@ -163,7 +163,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
           Effect.provide(out.layer),
         );
 
-        const entries = yield* envEntries(mock.runCall!);
+        const entries = yield* envEntries(mock.runCall);
         expect(entries).toContain(
           "SUPABASE_DB_URL=postgresql://postgres:postgres@supabase_db_proj:5432/postgres",
         );
@@ -180,7 +180,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         Effect.provide(out.layer),
       );
 
-      const entries = yield* envEntries(mock.runCall!);
+      const entries = yield* envEntries(mock.runCall);
       expect(entries).toContain("SUPABASE_ANON_KEY=anon.jwt.value");
       expect(entries).toContain("SUPABASE_SERVICE_ROLE_KEY=service-role.jwt.value");
       expect(entries).toContain(
@@ -205,7 +205,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
           Effect.provide(out.layer),
         );
 
-        const runCall = mock.runCall!;
+        const runCall = mock.runCall;
         expect(runCall.args).not.toContain("-p");
         expect(runCall.args.join(" ")).not.toContain("--inspect");
       }),
@@ -223,7 +223,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
           Effect.provide(out.layer),
         );
 
-        const runCall = mock.runCall!;
+        const runCall = mock.runCall;
         const ulimitIndex = runCall.args.indexOf("--ulimit");
         expect(runCall.args[ulimitIndex + 1]).toBe(edgeRuntimeNofileUlimit("darwin").arg);
         expect(out.messages.filter((message) => message.type === "warn")).toEqual([]);
@@ -263,7 +263,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         Effect.provide(out.layer),
       );
 
-      const args = mock.runCall!.args;
+      const args = mock.runCall.args;
       expect(args[args.indexOf("--workdir") + 1]).toBe(tempWorkdir.current);
     }),
   );
@@ -278,7 +278,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
         Effect.provide(out.layer),
       );
 
-      expect(mock.runCall!.args).not.toContain("--workdir");
+      expect(mock.runCall.args).not.toContain("--workdir");
     }),
   );
 
@@ -294,7 +294,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
           Effect.provide(out.layer),
         );
 
-        const runCall = mock.runCall!;
+        const runCall = mock.runCall;
         expect(runCall.args).toContain(`com.supabase.cli.workdir=${tempWorkdir.current}`);
       }),
   );
@@ -316,7 +316,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
           Effect.provide(out.layer),
         );
 
-        const runCall = mock.runCall!;
+        const runCall = mock.runCall;
         const networkIndex = runCall.args.indexOf("--network");
         expect(runCall.args[networkIndex + 1]).toBe("custom_network_override");
         expect(runCall.args).toContain("registry.example.com/supabase/edge-runtime:v1.99.9");
@@ -340,7 +340,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
           .filter((step) => step === "create" || step === "cp" || step === "start");
         expect(containerSteps).toEqual(["create", "cp", "start"]);
 
-        const createArgs = mock.runCall!.args;
+        const createArgs = mock.runCall.args;
         const bindValues = createArgs.flatMap((arg, index) =>
           createArgs[index - 1] === "-v" ? [arg] : [],
         );
@@ -386,7 +386,7 @@ layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
           Effect.provide(out.layer),
         );
 
-        const createArgs = mock.runCall!.args;
+        const createArgs = mock.runCall.args;
         expect(createArgs).toContain("--entrypoint");
         expect(createArgs).toContain("sh");
         const script = createArgs.at(-1);

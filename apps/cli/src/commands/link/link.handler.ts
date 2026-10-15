@@ -1,5 +1,5 @@
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
-import { Duration, Effect, FileSystem, Option, Path, Schema } from "effect";
+import { Duration, Effect, FileSystem, Option, Path, Ref, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
@@ -214,7 +214,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
 
   // Captured once ref/branch resolution succeeds; `undefined` means no ref was ever resolved,
   // so the post-run cache fill below stays a no-op.
-  let resolvedRef: string | undefined;
+  const resolvedRef = yield* Ref.make<string | undefined>(undefined);
 
   // Persists the linked-project cache and telemetry state whether the link succeeds or fails.
   // `link` itself writes `linked-project.json` on success (below), so `cache` only fires for
@@ -246,7 +246,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       : requested;
 
     const ref = yield* resolver.resolveForLink(resolvedRefOrBranch);
-    resolvedRef = ref;
+    yield* Ref.set(resolvedRef, ref);
     yield* Effect.annotateCurrentSpan({
       "project.ref": ref,
       "link.via_branch": Option.isSome(branchResolution),
@@ -438,8 +438,8 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
     }
   }).pipe(
     Effect.ensuring(
-      Effect.suspend(() =>
-        resolvedRef === undefined ? Effect.void : linkedProjectCache.cache(resolvedRef),
+      Effect.flatMap(Ref.get(resolvedRef), (ref) =>
+        ref === undefined ? Effect.void : linkedProjectCache.cache(ref),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

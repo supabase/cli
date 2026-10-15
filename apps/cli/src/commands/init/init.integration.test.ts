@@ -11,6 +11,8 @@ import {
   Layer,
   Option,
   Path,
+  Predicate,
+  Schema,
   Stdio,
 } from "effect";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
@@ -24,6 +26,12 @@ import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { init } from "./init.handler.ts";
 
 const tempRoot = useTempWorkdir("supabase-init-");
+
+const decodeOrioleDbConfig = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    db: Schema.Struct({ major_version: Schema.Finite, orioledb_version: Schema.String }),
+  }),
+);
 
 const readTextFile = (...segments: Array<string>) =>
   Effect.gen(function* () {
@@ -69,15 +77,15 @@ function setup(
   };
 }
 
-function findFailure(exit: Exit.Exit<unknown, unknown>): Record<string, unknown> {
+function findFailure(exit: Exit.Exit<unknown, unknown>): unknown {
   expect(Exit.isFailure(exit)).toBe(true);
   if (!Exit.isFailure(exit)) {
-    return {};
+    return undefined;
   }
 
   const failure = Cause.findErrorOption(exit.cause);
   expect(Option.isSome(failure)).toBe(true);
-  return Option.isSome(failure) ? (failure.value as Record<string, unknown>) : {};
+  return Option.getOrUndefined(failure);
 }
 
 /**
@@ -118,7 +126,7 @@ function renderFailureToStderr(exit: Exit.Exit<unknown, unknown>) {
 }
 
 describe("init", () => {
-  it.live("creates config.toml natively", () => {
+  it.effect("creates config.toml natively", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -141,7 +149,7 @@ describe("init", () => {
     });
   });
 
-  it.live.each([
+  it.effect.each([
     { experimental: false, label: "without --experimental" },
     { experimental: true, label: "with --experimental" },
   ])("writes OrioleDB config $label", ({ experimental }) => {
@@ -160,14 +168,14 @@ describe("init", () => {
       }).pipe(Effect.provide(layer));
 
       const content = yield* readTextFile(tempDir, "supabase", "config.toml");
-      const db = (SmolToml.parse(content) as { db?: Record<string, unknown> }).db;
-      expect(db?.["major_version"]).toBe(17);
-      expect(orioledbVersions()).toContain(db?.["orioledb_version"]);
+      const { db } = yield* decodeOrioleDbConfig(SmolToml.parse(content));
+      expect(db.major_version).toBe(17);
+      expect(orioledbVersions()).toContain(db.orioledb_version);
       expect(out.stdoutText).toBe("Finished supabase init.\n");
     });
   });
 
-  it.live("fails with the exact error when config.toml already exists", () => {
+  it.effect("fails with the exact error when config.toml already exists", () => {
     const tempDir = tempRoot.current;
 
     const initFlags = {
@@ -186,13 +194,11 @@ describe("init", () => {
       const exit = yield* init(initFlags).pipe(Effect.provide(layer), Effect.exit);
 
       const error = findFailure(exit);
-      expect(error["_tag"]).toBe("InitConfigExistsError");
-      expect(error["message"]).toBe(
-        "failed to create config file: open supabase/config.toml: file exists",
-      );
-      expect(error["suggestion"]).toBe(
-        "Run supabase init --force to overwrite existing config file.",
-      );
+      expect(Predicate.isTagged(error, "InitConfigExistsError")).toBe(true);
+      expect(error).toMatchObject({
+        message: "failed to create config file: open supabase/config.toml: file exists",
+        suggestion: "Run supabase init --force to overwrite existing config file.",
+      });
 
       expect(yield* renderFailureToStderr(exit)).toEqual([
         "failed to create config file: open supabase/config.toml: file exists\n",
@@ -201,7 +207,7 @@ describe("init", () => {
     });
   });
 
-  it.live("renders the Windows form of the already-exists error on win32", () => {
+  it.effect("renders the Windows form of the already-exists error on win32", () => {
     const tempDir = tempRoot.current;
 
     const initFlags = {
@@ -220,13 +226,11 @@ describe("init", () => {
       const exit = yield* init(initFlags).pipe(Effect.provide(layer), Effect.exit);
 
       const error = findFailure(exit);
-      expect(error["_tag"]).toBe("InitConfigExistsError");
-      expect(error["message"]).toBe(
-        "failed to create config file: open supabase\\config.toml: The file exists.",
-      );
-      expect(error["suggestion"]).toBe(
-        "Run supabase init --force to overwrite existing config file.",
-      );
+      expect(Predicate.isTagged(error, "InitConfigExistsError")).toBe(true);
+      expect(error).toMatchObject({
+        message: "failed to create config file: open supabase\\config.toml: The file exists.",
+        suggestion: "Run supabase init --force to overwrite existing config file.",
+      });
 
       expect(yield* renderFailureToStderr(exit)).toEqual([
         "failed to create config file: open supabase\\config.toml: The file exists.\n",
@@ -235,7 +239,7 @@ describe("init", () => {
     });
   });
 
-  it.live("supports the hidden IDE flags natively", () => {
+  it.effect("supports the hidden IDE flags natively", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -264,7 +268,7 @@ describe("init", () => {
     });
   });
 
-  it.live("respects the legacy --workdir global flag", () => {
+  it.effect("respects the legacy --workdir global flag", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -292,7 +296,7 @@ describe("init", () => {
     withIntellijSettings: false,
   } as const;
 
-  it.live("init -i --yes writes VS Code settings instead of prompting", () => {
+  it.effect("init -i --yes writes VS Code settings instead of prompting", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -309,7 +313,7 @@ describe("init", () => {
     });
   });
 
-  it.live("init -i with SUPABASE_YES=1 auto-accepts the VS Code prompt like --yes", () => {
+  it.effect("init -i with SUPABASE_YES=1 auto-accepts the VS Code prompt like --yes", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -329,7 +333,7 @@ describe("init", () => {
     });
   });
 
-  it.live("init -i --yes writes VS Code settings even when stdout is piped", () => {
+  it.effect("init -i --yes writes VS Code settings even when stdout is piped", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -344,7 +348,7 @@ describe("init", () => {
     });
   });
 
-  it.live("writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK=1", () => {
+  it.effect("writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK=1", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -361,7 +365,7 @@ describe("init", () => {
     });
   });
 
-  it.live("keeps the established template when SUPABASE_EXPERIMENTAL_STACK=0", () => {
+  it.effect("keeps the established template when SUPABASE_EXPERIMENTAL_STACK=0", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -375,7 +379,7 @@ describe("init", () => {
     });
   });
 
-  it.live("fails closed when SUPABASE_EXPERIMENTAL_STACK is not a boolean", () => {
+  it.effect("fails closed when SUPABASE_EXPERIMENTAL_STACK is not a boolean", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -387,10 +391,11 @@ describe("init", () => {
       );
 
       const error = findFailure(exit);
-      expect(error["_tag"]).toBe("ExperimentalFeatureFlagError");
-      expect(error["message"]).toBe(
-        'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.',
-      );
+      expect(Predicate.isTagged(error, "ExperimentalFeatureFlagError")).toBe(true);
+      expect(error).toMatchObject({
+        message:
+          'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.',
+      });
 
       expect(yield* renderFailureToStderr(exit)).toEqual([
         'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.\n',

@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import { badArgument } from "effect/PlatformError";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
@@ -83,7 +83,7 @@ const listMigrations = Effect.fnUntraced(function* (workdir: string) {
 const onlyMigration = Effect.fnUntraced(function* (workdir: string) {
   const files = yield* listMigrations(workdir);
   expect(files).toHaveLength(1);
-  return files[0]!;
+  return yield* Effect.fromNullishOr(files[0]);
 });
 
 const readMigration = Effect.fnUntraced(function* (workdir: string, file: string) {
@@ -102,7 +102,7 @@ const projectPath = Effect.fnUntraced(function* (workdir: string) {
 });
 
 describe("migration new", () => {
-  it.live("creates a timestamped migration file and prints its relative path", () => {
+  it.effect("creates a timestamped migration file and prints its relative path", () => {
     const { layer, out, telemetry } = setup(tmp.current);
     return Effect.gen(function* () {
       yield* migrationNew({ migrationName: "create_widgets" });
@@ -117,7 +117,7 @@ describe("migration new", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("writes piped stdin into the new migration verbatim", () => {
+  it.effect("writes piped stdin into the new migration verbatim", () => {
     const script = "create table pet;\ndrop table pet;\n";
     const { layer, out } = setup(tmp.current, { isTTY: false, piped: script });
     return Effect.gen(function* () {
@@ -129,7 +129,7 @@ describe("migration new", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("creates an empty migration when stdin is piped but empty", () => {
+  it.effect("creates an empty migration when stdin is piped but empty", () => {
     const { layer } = setup(tmp.current, { isTTY: false });
     return Effect.gen(function* () {
       yield* migrationNew({ migrationName: "empty_pipe" });
@@ -138,7 +138,7 @@ describe("migration new", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("materializes the migration without relying on an open handle", () => {
+  it.effect("materializes the migration without relying on an open handle", () => {
     const { layer } = setup(tmp.current, { openDoesNotMaterialize: true });
     return Effect.gen(function* () {
       yield* migrationNew({ migrationName: "windows_open" });
@@ -147,31 +147,22 @@ describe("migration new", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not report success when the migration is not materialized", () => {
+  it.effect("does not report success when the migration is not materialized", () => {
     const { layer, out, telemetry } = setup(tmp.current, {
       openDoesNotMaterialize: true,
       writeDoesNotMaterialize: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* migrationNew({ migrationName: "missing" }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure)).toBe(true);
-        if (Option.isSome(failure)) {
-          expect(failure.value).toBeInstanceOf(MigrationNewWriteError);
-          if (failure.value instanceof MigrationNewWriteError) {
-            expect(failure.value.message).toContain("failed to verify migration file");
-          }
-        }
-      }
+      const error = yield* migrationNew({ migrationName: "missing" }).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(MigrationNewWriteError);
+      expect(error.message).toContain("failed to verify migration file");
       expect(yield* listMigrations(tmp.current)).toEqual([]);
       expect(out.stdoutText).toBe("");
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured result with the absolute path in json", () => {
+  it.effect("emits a structured result with the absolute path in json", () => {
     const { layer, out } = setup(tmp.current, { format: "json" });
     return Effect.gen(function* () {
       yield* migrationNew({ migrationName: "as_json" });
@@ -188,7 +179,7 @@ describe("migration new", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured result in stream-json", () => {
+  it.effect("emits a structured result in stream-json", () => {
     const { layer, out } = setup(tmp.current, { format: "stream-json" });
     return Effect.gen(function* () {
       yield* migrationNew({ migrationName: "as_stream" });
@@ -198,82 +189,60 @@ describe("migration new", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("reports a write failure and still flushes telemetry", () => {
+  it.effect("reports a write failure and still flushes telemetry", () => {
     const { layer, telemetry } = setup(tmp.current);
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       // A file at <workdir>/supabase makes `makeDirectory(supabase/migrations)` fail.
       yield* fs.writeFileString(yield* projectPath(tmp.current), "not a directory");
-      const exit = yield* migrationNew({ migrationName: "doomed" }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure)).toBe(true);
-        if (Option.isSome(failure)) {
-          expect(failure.value).toBeInstanceOf(MigrationNewWriteError);
-        }
-      }
+      const error = yield* migrationNew({ migrationName: "doomed" }).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(MigrationNewWriteError);
       expect(yield* pathExists(yield* migrationsDir(tmp.current))).toBe(false);
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a name that escapes the migrations directory and writes nothing", () => {
+  it.effect("rejects a name that escapes the migrations directory and writes nothing", () => {
     const { layer, telemetry } = setup(tmp.current, { isTTY: false, piped: "DROP DATABASE;\n" });
     return Effect.gen(function* () {
-      const exit = yield* migrationNew({
-        migrationName: "../../../escapes",
-      }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure)).toBe(true);
-        if (Option.isSome(failure)) {
-          expect(failure.value).toBeInstanceOf(MigrationNewWriteError);
-        }
-      }
+      const error = yield* migrationNew({ migrationName: "../../../escapes" }).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(MigrationNewWriteError);
       expect(yield* pathExists(yield* projectPath(tmp.current))).toBe(false);
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails the command when piped stdin errors mid-copy (failed to copy from stdin)", () => {
-    // The Created line is already scheduled by the time the copy fails, so it still
-    // prints to stdout before the error propagates to stderr.
-    const failingStdin = Layer.succeed(Stdin, {
-      isTTY: false,
-      readPipedBytes: Effect.succeed(Option.none()),
-      pipedBytesStream: Stream.fail(badArgument({ module: "Stdin", method: "read" })),
-      readPipedText: Effect.succeed(Option.none()),
-      readLine: () => Effect.succeed(Option.none()),
-    });
-    const out = mockOutput();
-    const telemetry = mockTelemetryStateTracked();
-    const layer = Layer.mergeAll(
-      out.layer,
-      telemetry.layer,
-      failingStdin,
-      mockCommandSettings({ workdir: tmp.current }),
-      BunServices.layer,
-    );
-    return Effect.gen(function* () {
-      const exit = yield* migrationNew({ migrationName: "stdin_boom" }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure)).toBe(true);
-        if (Option.isSome(failure)) {
-          expect(failure.value).toBeInstanceOf(MigrationNewWriteError);
-          if (failure.value instanceof MigrationNewWriteError) {
-            expect(failure.value.message).toContain("failed to copy from stdin");
-          }
-        }
-      }
-      const file = yield* onlyMigration(tmp.current);
-      expect(stripAnsi(out.stdoutText)).toBe(
-        `Created new migration at supabase/migrations/${file}\n`,
+  it.effect(
+    "fails the command when piped stdin errors mid-copy (failed to copy from stdin)",
+    () => {
+      // The Created line is already scheduled by the time the copy fails, so it still
+      // prints to stdout before the error propagates to stderr.
+      const failingStdin = Layer.succeed(Stdin, {
+        isTTY: false,
+        readPipedBytes: Effect.succeed(Option.none()),
+        pipedBytesStream: Stream.fail(badArgument({ module: "Stdin", method: "read" })),
+        readPipedText: Effect.succeed(Option.none()),
+        readLine: () => Effect.succeed(Option.none()),
+      });
+      const out = mockOutput();
+      const telemetry = mockTelemetryStateTracked();
+      const layer = Layer.mergeAll(
+        out.layer,
+        telemetry.layer,
+        failingStdin,
+        mockCommandSettings({ workdir: tmp.current }),
+        BunServices.layer,
       );
-      expect(telemetry.flushed).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
+      return Effect.gen(function* () {
+        const error = yield* migrationNew({ migrationName: "stdin_boom" }).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(MigrationNewWriteError);
+        expect(error.message).toContain("failed to copy from stdin");
+        const file = yield* onlyMigration(tmp.current);
+        expect(stripAnsi(out.stdoutText)).toBe(
+          `Created new migration at supabase/migrations/${file}\n`,
+        );
+        expect(telemetry.flushed).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });

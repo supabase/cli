@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { assert, describe, expect, test } from "vitest";
 
 import {
   buildGotrueContainerSpec,
@@ -635,7 +635,9 @@ describe("buildGotrueEnv", () => {
   describe("JWT signing keys", () => {
     test("defaults to the hardcoded ES256 signing key when unset", () => {
       const env = buildGotrueEnv(baseEnvInput);
-      const keys = JSON.parse(env["GOTRUE_JWT_KEYS"] as string);
+      const jwtKeys = env["GOTRUE_JWT_KEYS"];
+      assert(jwtKeys !== undefined);
+      const keys = JSON.parse(jwtKeys);
       expect(keys).toEqual([
         {
           kty: "EC",
@@ -660,9 +662,9 @@ describe("buildGotrueEnv", () => {
         ...baseEnvInput,
         signingKeys: [rsaKey],
       });
-      expect(JSON.parse(env["GOTRUE_JWT_KEYS"] as string)).toEqual([
-        { kty: "RSA", alg: "RS256", n: "modulus", e: "AQAB" },
-      ]);
+      const jwtKeys = env["GOTRUE_JWT_KEYS"];
+      assert(jwtKeys !== undefined);
+      expect(JSON.parse(jwtKeys)).toEqual([{ kty: "RSA", alg: "RS256", n: "modulus", e: "AQAB" }]);
     });
   });
 });

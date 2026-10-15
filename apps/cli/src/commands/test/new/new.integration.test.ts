@@ -10,7 +10,11 @@ import {
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
-import { TestNewInvalidNameError } from "./new.errors.ts";
+import {
+  TestNewFileExistsError,
+  TestNewInvalidNameError,
+  TestNewWriteError,
+} from "./new.errors.ts";
 import { PGTAP_TEMPLATE } from "./new.template.ts";
 import { testNew } from "./new.handler.ts";
 
@@ -70,7 +74,7 @@ const flags = (name: string, template?: "pgtap") => ({
 });
 
 describe("test new integration", () => {
-  it.live("creates a pgtap test file and prints the created path", () => {
+  it.effect("creates a pgtap test file and prints the created path", () => {
     const { layer, out, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -84,7 +88,7 @@ describe("test new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("pins the created test file to the exact 0644 mode under a permissive umask", () => {
+  it.effect("pins the created test file to the exact 0644 mode under a permissive umask", () => {
     const { layer, workdir } = setup();
     return Effect.acquireUseRelease(
       Effect.sync(() => process.umask(0)),
@@ -104,7 +108,7 @@ describe("test new integration", () => {
     );
   });
 
-  it.live("defaults the template to pgtap when --template is omitted", () => {
+  it.effect("defaults the template to pgtap when --template is omitted", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -115,7 +119,7 @@ describe("test new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("honors an explicit --template pgtap", () => {
+  it.effect("honors an explicit --template pgtap", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -127,7 +131,7 @@ describe("test new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured success in json mode (no human text)", () => {
+  it.effect("emits a structured success in json mode (no human text)", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* testNew(flags("petjson"));
@@ -140,7 +144,7 @@ describe("test new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a structured success in stream-json mode", () => {
+  it.effect("emits a structured success in stream-json mode", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* testNew(flags("petstream"));
@@ -149,7 +153,7 @@ describe("test new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with TestNewFileExistsError when the file already exists", () => {
+  it.effect("fails with TestNewFileExistsError when the file already exists", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -159,39 +163,29 @@ describe("test new integration", () => {
         path.join(workdir, "supabase", "tests", "dupe_test.sql"),
         "-- existing\n",
       );
-      const exit = yield* Effect.exit(testNew(flags("dupe")));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("TestNewFileExistsError");
-        expect(causeText).toContain("supabase/tests/dupe_test.sql already exists.");
-      }
+      const error = yield* testNew(flags("dupe")).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(TestNewFileExistsError);
+      expect(error.message).toContain("supabase/tests/dupe_test.sql already exists.");
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with TestNewWriteError when the write fails", () => {
+  it.effect("fails with TestNewWriteError when the write fails", () => {
     const { layer } = setup({ writeFails: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(testNew(flags("nowrite")));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("TestNewWriteError");
-      }
+      const error = yield* testNew(flags("nowrite")).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(TestNewWriteError);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with TestNewWriteError when the tests dir cannot be created", () => {
+  it.effect("fails with TestNewWriteError when the tests dir cannot be created", () => {
     const { layer } = setup({ mkdirFails: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(testNew(flags("nomkdir")));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("TestNewWriteError");
-      }
+      const error = yield* testNew(flags("nomkdir")).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(TestNewWriteError);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("creates test files under subdirectories that stay inside the tests directory", () => {
+  it.effect("creates test files under subdirectories that stay inside the tests directory", () => {
     const { layer, out, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -207,7 +201,7 @@ describe("test new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a name that escapes the tests directory and writes nothing", () => {
+  it.effect("rejects a name that escapes the tests directory and writes nothing", () => {
     const { layer, telemetry, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -235,7 +229,7 @@ describe("test new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("follows an existing symlink to a shared test directory", () => {
+  it.effect("follows an existing symlink to a shared test directory", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -252,7 +246,7 @@ describe("test new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects a name that escapes into a sibling directory sharing the tests prefix", () => {
+  it.effect("rejects a name that escapes into a sibling directory sharing the tests prefix", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -264,7 +258,7 @@ describe("test new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("sanitizes control characters in an invalid-name diagnostic", () => {
+  it.effect("sanitizes control characters in an invalid-name diagnostic", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const error = yield* testNew(flags("../../\u001b[2Jbad\r\n\t\u009bname")).pipe(Effect.flip);
@@ -273,7 +267,7 @@ describe("test new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("flushes telemetry via ensuring", () => {
+  it.effect("flushes telemetry via ensuring", () => {
     const { layer, telemetry } = setup();
     return Effect.gen(function* () {
       yield* testNew(flags("petflush"));

@@ -75,7 +75,7 @@ describe("start --exclude flag", () => {
   ];
 
   for (const { name, flag } of spellings) {
-    it.live(
+    it.effect(
       `${name}: malformed CSV fails at parse time with the shorthand-framed diagnostic`,
       () => {
         const { layer } = setup();

@@ -72,7 +72,7 @@ const fixture = Effect.fn("StackDestroyRuntimeUnavailableTest.fixture")(function
 });
 
 for (const format of ["text", "json"] as const)
-  it.live(
+  it.effect(
     `fails with the exact --yes retry command and keeps the stack registered when its engine is unreachable (${format})`,
     () =>
       Effect.gen(function* () {

@@ -73,6 +73,7 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0029 | [Native Postgres Privilege Step-Down](0029-native-postgres-privilege-step-down.md)                             | proposed   |
 | 0030 | [Hotfix Releases](0030-hotfix-releases.md)                                                                     | accepted   |
 | 0031 | [Go CLI Removal](0031-go-cli-removal.md)                                                                       | accepted   |
+| 0032 | [Config Value Precedence](0032-config-value-precedence.md)                                                     | proposed   |
 
 ## Template
 
@@ -118,4 +119,3 @@ Why did we choose this approach?
 ```
 
 > **Note**: Additional sections (Implementation Notes, Open Questions, Verification Checklist) may be added as needed.
-> | 0031 | [Config Value Precedence](0031-config-value-precedence.md) | proposed |

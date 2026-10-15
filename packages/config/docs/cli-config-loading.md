@@ -362,7 +362,7 @@ distinct from the `CliConfig` document.
 ## CLI value precedence
 
 The CLI resolves every config value, whether from `CliConfig` or from a `SUPABASE_*` variable, with
-one order (ADR 0031):
+one order (ADR 0032):
 
 1. an explicit flag
 2. shell environment

@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit } from "effect";
+import { Effect, Exit } from "effect";
 import { describe, expect, it } from "@effect/vitest";
 
 import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
@@ -42,22 +42,16 @@ describe("requirePgDelta", () => {
 
   it.effect("fails with DeclarativeNotEnabledError when the gate is closed", () =>
     Effect.gen(function* () {
-      const exit = yield* requirePgDelta({
+      const error = yield* requirePgDelta({
         experimental: false,
         pgDeltaEnabled: false,
         configPath: "supabase/config.toml",
-      }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const error = exit.cause.reasons.find(Cause.isFailReason)?.error;
-        expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
-        expect(error?.message).toBe(
-          "declarative commands require --experimental flag or pg-delta enabled in config",
-        );
-        expect(stripAnsi((error as DeclarativeNotEnabledError).suggestion)).toBe(
-          EXPECTED_SUGGESTION,
-        );
-      }
+      }).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
+      expect(error.message).toBe(
+        "declarative commands require --experimental flag or pg-delta enabled in config",
+      );
+      expect(stripAnsi(error.suggestion)).toBe(EXPECTED_SUGGESTION);
     }),
   );
 });

@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Ref } from "effect";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
@@ -45,7 +45,7 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
   // with that project env, as `db pull` does.
   const projectEnv = yield* loadProjectEnvValues(fs, path, workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
-  let linkedRefForCache: string | undefined;
+  const linkedRefForCache = yield* Ref.make<string | undefined>(undefined);
 
   const body = Effect.gen(function* () {
     const target = resolveDbTargetFlags(cliArgs.args);
@@ -77,7 +77,7 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
     if (connType === "linked") {
       const refResolver = yield* ProjectRefResolver;
       projectRef = yield* refResolver.loadProjectRef(flags.projectRef);
-      linkedRefForCache = projectRef;
+      yield* Ref.set(linkedRefForCache, projectRef);
     }
 
     // Single config load (except `--skip-vault`, which omits `[db.vault]` secret
@@ -137,10 +137,8 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
 
   yield* body.pipe(
     Effect.ensuring(
-      Effect.suspend(() =>
-        linkedRefForCache !== undefined && linkedRefForCache !== ""
-          ? linkedProjectCache.cache(linkedRefForCache)
-          : Effect.void,
+      Effect.flatMap(Ref.get(linkedRefForCache), (ref) =>
+        ref !== undefined && ref !== "" ? linkedProjectCache.cache(ref) : Effect.void,
       ),
     ),
     Effect.ensuring(telemetryState.flush),

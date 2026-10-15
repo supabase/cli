@@ -90,12 +90,13 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 
 ## API Routes (linked path, via the db-config resolver)
 
-| Method     | Path                               | Auth   | Purpose                          |
-| ---------- | ---------------------------------- | ------ | -------------------------------- |
-| POST       | `/v1/projects/{ref}/roles`         | Bearer | Temp login role when no password |
-| GET        | `/v1/projects/{ref}/pooler/config` | Bearer | IPv4 pooler fallback             |
-| GET/DELETE | `/v1/projects/{ref}/network-bans`  | Bearer | Unban during pooler login retry  |
-| GET        | `/v1/projects/{ref}`               | Bearer | Linked-project cache (post-run)  |
+| Method | Path                                        | Auth   | Purpose                             |
+| ------ | ------------------------------------------- | ------ | ----------------------------------- |
+| POST   | `/v1/projects/{ref}/cli/login-role`         | Bearer | Temp login role when no password    |
+| GET    | `/v1/projects/{ref}/config/database/pooler` | Bearer | IPv4 pooler fallback                |
+| POST   | `/v1/projects/{ref}/network-bans/retrieve`  | Bearer | List bans during pooler login retry |
+| DELETE | `/v1/projects/{ref}/network-bans`           | Bearer | Unban during pooler login retry     |
+| GET    | `/v1/projects/{ref}`                        | Bearer | Linked-project cache (post-run)     |
 
 `--use-pgadmin --linked` performs every one of these calls natively (CLI-1968), as part
 of this command's own target resolve, ahead of the differ container.
@@ -208,7 +209,7 @@ transaction metadata.
 
 ## Notes / Delegation
 
-- **Config value precedence** (ADR 0031): explicit flag > shell env > project `.env*` > config
+- **Config value precedence** (ADR 0032): explicit flag > shell env > project `.env*` > config
   (`config.json` over `config.toml`) > default. The whole config is decoded up front, so an
   invalid value fails the command. A `--linked` target also applies a matching `[remotes.*]`
   block. The linked-database password env is withheld when the target differs from

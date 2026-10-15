@@ -1,4 +1,4 @@
-import { Data, Effect, Result } from "effect";
+import { Data, Effect, Result, Schedule } from "effect";
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import {
@@ -8,7 +8,7 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 import {
   containerCliExitCode,
-  containerCliExitCodeAndStdout,
+  containerCliOutput,
   describeContainerCliFailure,
   dockerSupportsVolumePruneAllFlag,
 } from "./container-cli.ts";
@@ -91,6 +91,42 @@ const reportPruned = (debug: boolean, label: string, stdout: string) =>
     process.stderr.write(`${label} [${parsePrunedNames(stdout).join(" ")}]\n`);
   });
 
+/**
+ * Docker runs one prune at a time per daemon and rejects concurrent ones, even with different
+ * label filters, so stacks stopping at the same moment wait for each other's prune.
+ */
+const pruneWaitingForConcurrentPrune = Effect.fn("DockerRemoveAll.prune")(function* (
+  spawner: Spawner,
+  args: ReadonlyArray<string>,
+  podmanArgs?: ReadonlyArray<string>,
+) {
+  let attempts = 0;
+  const result = yield* containerCliOutput(spawner, args, podmanArgs).pipe(
+    Effect.tap(() =>
+      Effect.sync(() => {
+        attempts += 1;
+      }),
+    ),
+    Effect.repeat({
+      while: (output) =>
+        output.exitCode !== 0 && /a prune operation is already running/iu.test(output.stderr),
+      schedule: Schedule.spaced("250 millis").pipe(Schedule.jittered),
+      times: 40,
+    }),
+  );
+  yield* Effect.annotateCurrentSpan({
+    "docker.prune.kind": args[0] ?? "",
+    "docker.prune.attempts": attempts,
+    "docker.prune.exit_code": result.exitCode,
+  });
+  return result;
+});
+
+const pruneFailureMessage = (kind: string, stderr: string) => {
+  const detail = stderr.trim();
+  return detail.length > 0 ? `failed to prune ${kind}: ${detail}` : `failed to prune ${kind}`;
+};
+
 /** Every failure {@link dockerRemoveAll} can produce. */
 export type DockerRemoveAllError =
   | DockerRemoveAllListError
@@ -152,7 +188,7 @@ export const dockerRemoveAll = (
 
     // Collects stdout instead of ignoring it — reading the pipe avoids the same hang, and the
     // report backs the `--debug` output below.
-    const containerPrune = yield* containerCliExitCodeAndStdout(spawner, [
+    const containerPrune = yield* pruneWaitingForConcurrentPrune(spawner, [
       "container",
       "prune",
       "--force",
@@ -168,7 +204,7 @@ export const dockerRemoveAll = (
     );
     if (containerPrune.exitCode !== 0) {
       return yield* new DockerRemoveAllContainerPruneError({
-        message: "failed to prune containers",
+        message: pruneFailureMessage("containers", containerPrune.stderr),
       });
     }
     yield* reportPruned(debug, "Pruned containers:", containerPrune.stdout);
@@ -182,7 +218,7 @@ export const dockerRemoveAll = (
       // Podman has no `--all` flag on `volume prune` at all, but already prunes every unused
       // volume by default, so omitting `--all` there is a lossless fallback.
       const dockerSupportsAll = yield* dockerSupportsVolumePruneAllFlag(spawner);
-      const volumePrune = yield* containerCliExitCodeAndStdout(
+      const volumePrune = yield* pruneWaitingForConcurrentPrune(
         spawner,
         [
           "volume",
@@ -202,12 +238,14 @@ export const dockerRemoveAll = (
         ),
       );
       if (volumePrune.exitCode !== 0) {
-        return yield* new DockerRemoveAllVolumePruneError({ message: "failed to prune volumes" });
+        return yield* new DockerRemoveAllVolumePruneError({
+          message: pruneFailureMessage("volumes", volumePrune.stderr),
+        });
       }
       yield* reportPruned(debug, "Pruned volumes:", volumePrune.stdout);
     }
 
-    const networkPrune = yield* containerCliExitCodeAndStdout(spawner, [
+    const networkPrune = yield* pruneWaitingForConcurrentPrune(spawner, [
       "network",
       "prune",
       "--force",
@@ -222,7 +260,9 @@ export const dockerRemoveAll = (
       ),
     );
     if (networkPrune.exitCode !== 0) {
-      return yield* new DockerRemoveAllNetworkPruneError({ message: "failed to prune networks" });
+      return yield* new DockerRemoveAllNetworkPruneError({
+        message: pruneFailureMessage("networks", networkPrune.stderr),
+      });
     }
     // Established output text: singular "network", unlike the container/volume reports.
     yield* reportPruned(debug, "Pruned network:", networkPrune.stdout);

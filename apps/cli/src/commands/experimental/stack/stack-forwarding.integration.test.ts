@@ -16,7 +16,7 @@ import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-value
 const layer = Layer.mergeAll(BunServices.layer, runtimeInfoLayer, cliConfigValuesTestLayer);
 
 describe("stack service configuration", () => {
-  it.live("carries editable TOML settings into native and container service environments", () =>
+  it.effect("carries editable TOML settings into native and container service environments", () =>
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(`project_id = "forwarding"
 [auth]
@@ -111,7 +111,7 @@ max_indexes = 2
     }).pipe(Effect.provide(layer)),
   );
 
-  it.live(
+  it.effect(
     "resolves per-function configuration and shared secrets without enabling the inspector",
     () =>
       Effect.gen(function* () {
@@ -160,7 +160,7 @@ enabled = false
         expect(functions?.endpoints?.inspector?.port).toBe(59229);
       }).pipe(Effect.provide(layer)),
   );
-  it.live("decrypts a configured signing secret before forwarding it to the stack", () =>
+  it.effect("decrypts a configured signing secret before forwarding it to the stack", () =>
     Effect.gen(function* () {
       const plaintext = "test-jwt-secret-with-more-than-32-characters";
       const root = yield* createStackConfigProject(
@@ -181,7 +181,7 @@ jwt_secret = "encrypted:BOsrXIZY2BNTW43BeRhMbfvlOIUjwI7GCyFHxJD/Ik+UQ4mqkgVl2+61
     }).pipe(Effect.provide(layer)),
   );
 
-  it.live("decrypts edge runtime secrets before forwarding them to the functions service", () =>
+  it.effect("decrypts edge runtime secrets before forwarding them to the functions service", () =>
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(
         `project_id = "encrypted-functions-env"
@@ -203,7 +203,7 @@ PLAIN = "plain-value"
     }).pipe(Effect.provide(layer)),
   );
 
-  it.live("fails the stack config when an edge runtime secret cannot be decrypted", () =>
+  it.effect("fails the stack config when an edge runtime secret cannot be decrypted", () =>
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(`project_id = "undecryptable-functions-env"
 [edge_runtime.secrets]
@@ -215,7 +215,7 @@ SHARED = "encrypted:BOsrXIZY2BNTW43BeRhMbfvlOIUjwI7GCyFHxJD/Ik+UQ4mqkgVl2+61WWhE
     }).pipe(Effect.provide(layer)),
   );
 
-  it.live("leaves empty configured secrets for the stack to normalize", () =>
+  it.effect("leaves empty configured secrets for the stack to normalize", () =>
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(`project_id = "empty-secrets"
 [auth]
@@ -236,7 +236,7 @@ root_key = ""
     }).pipe(Effect.provide(layer)),
   );
 
-  it.live("forwards Auth policies, providers and custom SMTP ahead of local mail", () =>
+  it.effect("forwards Auth policies, providers and custom SMTP ahead of local mail", () =>
     Effect.gen(function* () {
       const root = yield* createStackConfigProject(
         `project_id = "auth-forwarding"

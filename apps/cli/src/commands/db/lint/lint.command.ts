@@ -1,5 +1,13 @@
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withDbTarget,
+} from "../../../command-internal/command-permissions/model.ts";
+import { dbConfig } from "../../../command-internal/db-config.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
@@ -52,6 +60,16 @@ export type DbLintFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const dbLintCommand = Command.make("lint", config).pipe(
   Command.withDescription("Checks local database for typing error."),
   Command.withShortDescription("Checks local database for typing error"),
+  withPermissions(
+    withDbTarget(
+      compose(
+        { operations: [], noApiEffectFlags: ["schema", "level", "fail-on"] },
+        dbConfig,
+        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      ),
+      { default: "local" },
+    ),
+  ),
   Command.withHandler((flags) =>
     dbLint(flags).pipe(
       withCommandTelemetry({

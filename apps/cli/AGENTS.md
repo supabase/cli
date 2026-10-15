@@ -152,7 +152,7 @@ the command tree), and `tsc` (a command that reads config without `withCliConfig
 
 **Exceptions**
 
-They live in [ADR 0031](../../docs/adr/0031-config-value-precedence.md) and nowhere else. Do not add a
+They live in [ADR 0032](../../docs/adr/0032-config-value-precedence.md) and nowhere else. Do not add a
 per-command exception without updating the ADR and the guard's exemption list together.
 
 ## Experimental feature registration

@@ -1,4 +1,4 @@
-import { Crypto, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Crypto, Effect, FileSystem, Layer, Option, Path, Schedule } from "effect";
 import * as Net from "node:net";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
@@ -61,11 +61,16 @@ import { stackCatalogSetupLayer } from "../../../command-internal/stack-catalog-
 
 const allocateFreeHostPort = Effect.callback<Option.Option<number>>((resume) => {
   const server = Net.createServer();
-  server.once("error", () => resume(Effect.succeed(Option.none())));
+  const onError = () => resume(Effect.succeed(Option.none()));
+  server.once("error", onError);
   server.listen(0, "127.0.0.1", () => {
     const address = server.address();
     const port = typeof address === "object" && address !== null ? address.port : 0;
     server.close(() => resume(Effect.succeed(port > 0 ? Option.some(port) : Option.none())));
+  });
+  return Effect.sync(() => {
+    server.removeListener("error", onError);
+    if (server.listening) server.close();
   });
 });
 
@@ -165,29 +170,31 @@ export const pgDeltaNextShadowLayer = Layer.effect(
         Layer.succeed(DockerRun, docker),
         Layer.succeed(DbConnection, dbConnection),
         Layer.succeed(HttpClient.HttpClient, httpClient),
-        Layer.succeed(Crypto.Crypto, crypto),
         Layer.succeed(CommandSettings, cliSettings),
         Layer.succeed(StackApi, stackApi),
         Layer.succeed(CliConfigValues, cliConfigValues),
         Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
-      return Layer.mergeAll(deps, stackCatalogSetupLayer.pipe(Layer.provide(deps)));
+      return stackCatalogSetupLayer.pipe(Layer.provideMerge(deps));
     };
     const runtime = runtimeWith(output);
 
     const nextPort = (excluded?: number) =>
-      Effect.gen(function* () {
-        for (let attempt = 0; attempt < 10; attempt++) {
-          const candidate = yield* allocateFreeHostPort;
-          if (Option.isSome(candidate) && candidate.value !== excluded) return candidate.value;
-        }
-        return yield* new DeclarativeShadowDbError({
-          message:
-            excluded === undefined
-              ? "failed to allocate a host port for pg-delta shadow database"
-              : `failed to allocate a host port distinct from ${excluded}`,
-        });
-      });
+      allocateFreeHostPort.pipe(
+        Effect.flatMap((candidate) =>
+          Option.isSome(candidate) && candidate.value !== excluded
+            ? Effect.succeed(candidate.value)
+            : Effect.fail(
+                new DeclarativeShadowDbError({
+                  message:
+                    excluded === undefined
+                      ? "failed to allocate a host port for pg-delta shadow database"
+                      : `failed to allocate a host port distinct from ${excluded}`,
+                }),
+              ),
+        ),
+        Effect.retry(Schedule.recurs(9)),
+      );
 
     const buildNativeBase = (request: PgDeltaNextShadowInput) =>
       Effect.gen(function* () {
@@ -387,7 +394,8 @@ export const pgDeltaNextShadowLayer = Layer.effect(
           strategy === "parallel"
             ? withPeek(cacheOpts(opts, "disabled"), declarativePeek)
             : cacheOpts(opts, "disabled");
-        const buffered = strategy === "sequential" ? undefined : bufferedShadowOutput(output);
+        const buffered =
+          strategy === "sequential" ? undefined : yield* bufferedShadowOutput(output);
         const provisions = runPlanShadowProvisions({
           strategy,
           provisionMigrations: (onBaselineSeam) =>

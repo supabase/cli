@@ -3,11 +3,31 @@ import { createHash } from "node:crypto";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { vi } from "vitest";
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
+);
 
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { configValuesLayer, flagInput } from "../../../../tests/helpers/config-values-layer.ts";
 import {
   VALID_REF,
+  VALID_TOKEN,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
@@ -31,6 +51,7 @@ import {
 } from "../../../command-internal/db-connection.service.ts";
 import { dbPush } from "./push.handler.ts";
 import type { DbPushFlags } from "./push.command.ts";
+import { DbPushApplyError } from "./push.errors.ts";
 
 const LIST_MIGRATIONS =
   "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
@@ -176,6 +197,8 @@ function setup(
     // fired as part of `resolve()`'s own connection work, strictly before `dbPushCore`
     // runs; `mockResolver` is otherwise silent, so tests pin output ordering against it.
     simulateInitialisingLoginRole?: boolean;
+    /** Runs the real `DbConfigResolver` and linked-project cache against `workdir`. */
+    realLayers?: boolean;
   },
 ) {
   const workdirLayer = Layer.effectDiscard(
@@ -227,6 +250,7 @@ function setup(
           }
         : undefined,
   });
+  const projectHttp = recordingProjectHttpClient(VALID_REF);
   const layer = Layer.mergeAll(
     workdirLayer,
     out.layer,
@@ -236,7 +260,13 @@ function setup(
       env: opts.env,
     }),
     conn.layer,
-    resolver.layer,
+    opts.realLayers === true
+      ? realDbConfigResolver({
+          workdir,
+          dbConnection: conn.layer,
+          env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        })
+      : resolver.layer,
     mockCommandSettings({
       workdir,
       ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
@@ -251,7 +281,12 @@ function setup(
     Layer.succeed(DnsResolverFlag, "native"),
     projectRefLayer,
     telemetry.layer,
-    linkedCache.layer,
+    opts.realLayers === true
+      ? realLinkedProjectCache({
+          httpClient: projectHttp.layer,
+          cliSettings: mockCommandSettings({ workdir }),
+        })
+      : linkedCache.layer,
   );
   return {
     layer,
@@ -260,6 +295,7 @@ function setup(
     telemetry,
     linkedCache,
     resolver,
+    projectHttp,
   };
 }
 
@@ -282,7 +318,7 @@ const migrationFile = (version: string, body = "create table t ();") => ({
 describe("db push", () => {
   const tmp = useTempWorkdir("supabase-db-push-");
 
-  it.live("reports up to date when nothing is pending (text)", () => {
+  it.effect("reports up to date when nothing is pending (text)", () => {
     const { layer, out, conn } = setup(tmp.current, { toml: 'project_id = "test"\n' });
     return Effect.gen(function* () {
       const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
@@ -292,21 +328,24 @@ describe("db push", () => {
     });
   });
 
-  it.live("reports up to date when an 8-digit and 14-digit version share a prefix (#6036)", () => {
-    const { layer, out, conn } = setup(tmp.current, {
-      toml: 'project_id = "test"\n',
-      files: { ...migrationFile("20260420"), ...migrationFile("20260420010000") },
-      remoteMigrations: ["20260420", "20260420010000"],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(out.stdoutText).toBe("Local database is up to date.\n");
-      expect(conn.execs).not.toContain("BEGIN");
-    });
-  });
+  it.effect(
+    "reports up to date when an 8-digit and 14-digit version share a prefix (#6036)",
+    () => {
+      const { layer, out, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: { ...migrationFile("20260420"), ...migrationFile("20260420010000") },
+        remoteMigrations: ["20260420", "20260420010000"],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stdoutText).toBe("Local database is up to date.\n");
+        expect(conn.execs).not.toContain("BEGIN");
+      });
+    },
+  );
 
-  it.live("emits a json result for an up-to-date run", () => {
+  it.effect("emits a json result for an up-to-date run", () => {
     const { layer, out } = setup(tmp.current, { toml: 'project_id = "test"\n', format: "json" });
     return Effect.gen(function* () {
       yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
@@ -316,7 +355,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("rejects mutually exclusive target flags", () => {
+  it.effect("rejects mutually exclusive target flags", () => {
     const { layer } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       args: ["db", "push", "--local", "--linked"],
@@ -327,7 +366,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("applies a pending migration after confirmation", () => {
+  it.effect("applies a pending migration after confirmation", () => {
     const { layer, out, conn } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
@@ -346,7 +385,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("honors pg-delta's no-transaction migration header", () => {
+  it.effect("honors pg-delta's no-transaction migration header", () => {
     const set = "SET check_function_bodies = off";
     const action = "DROP SUBSCRIPTION app_events";
     const { layer, conn } = setup(tmp.current, {
@@ -375,7 +414,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("returns context canceled when the migration prompt is declined", () => {
+  it.effect("returns context canceled when the migration prompt is declined", () => {
     const { layer, conn } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
@@ -391,7 +430,7 @@ describe("db push", () => {
     });
   });
 
-  it.live.each(["u", "yess", "nope", "   ", "n", "no"])(
+  it.effect.each(["u", "yess", "nope", "   ", "n", "no"])(
     "applies nothing when the piped answer is %j",
     (answer) => {
       const { layer, conn } = setup(tmp.current, {
@@ -407,7 +446,7 @@ describe("db push", () => {
     },
   );
 
-  it.live.each(["y\n", "yes\n", "\n", ""])(
+  it.effect.each(["y\n", "yes\n", "\n", ""])(
     "applies migrations when the piped answer is %j",
     (piped) => {
       const { layer, conn } = setup(tmp.current, {
@@ -422,7 +461,7 @@ describe("db push", () => {
     },
   );
 
-  it.live("prints the plan without applying in dry-run mode", () => {
+  it.effect("prints the plan without applying in dry-run mode", () => {
     const { layer, out, conn } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
@@ -436,7 +475,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("skips vault decryption in dry-run mode with --skip-vault", () => {
+  it.effect("skips vault decryption in dry-run mode with --skip-vault", () => {
     const { layer, out, conn } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.vault]\nmy_secret = "encrypted:not-valid"\n',
       files: migrationFile("20240101000000"),
@@ -451,7 +490,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("prints the DRY RUN heads-up line after the connection resolves, not before", () => {
+  it.effect("prints the DRY RUN heads-up line after the connection resolves, not before", () => {
     // `simulateInitialisingLoginRole` stands in for the real resolver's stderr line
     // (the fake resolver is otherwise silent), so this asserts on actual stderr
     // ordering, not internal call timing.
@@ -473,7 +512,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("fails with a repair suggestion when remote has versions missing locally", () => {
+  it.effect("fails with a repair suggestion when remote has versions missing locally", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       remoteMigrations: ["20240101000000"],
@@ -492,7 +531,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("keeps repair suggestions targetless for an explicit local database URL", () => {
+  it.effect("keeps repair suggestions targetless for an explicit local database URL", () => {
     const dbUrl = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
     const { layer } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -512,7 +551,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("fails with an --include-all suggestion for out-of-order local migrations", () => {
+  it.effect("fails with an --include-all suggestion for out-of-order local migrations", () => {
     const { layer } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       // 0101 is local-only and ordered before the already-applied remote 0202.
@@ -528,7 +567,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("pushes out-of-order migrations with --include-all", () => {
+  it.effect("pushes out-of-order migrations with --include-all", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: { ...migrationFile("20240101000000"), ...migrationFile("20240202000000") },
@@ -541,7 +580,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("skips migrations when disabled in config and reports up to date", () => {
+  it.effect("skips migrations when disabled in config and reports up to date", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.migrations]\nenabled = false\n',
       files: migrationFile("20240101000000"),
@@ -555,7 +594,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("seeds a new file with --include-seed", () => {
+  it.effect("seeds a new file with --include-seed", () => {
     const { layer, out, conn } = setup(tmp.current, {
       includeSeed: true,
       toml: 'project_id = "test"\n',
@@ -573,7 +612,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("expands a directory in [db.seed].sql_paths to its sorted .sql children", () => {
+  it.effect("expands a directory in [db.seed].sql_paths to its sorted .sql children", () => {
     // Directories are walked recursively; without expansion the path would reach
     // `readFileString(<dir>)` and fail.
     const { layer, out } = setup(tmp.current, {
@@ -596,7 +635,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("reports seed files up to date when hash matches remote", () => {
+  it.effect("reports seed files up to date when hash matches remote", () => {
     // sha256 of the seed body must match the remote hash to be skipped.
     const body = "insert into t values (1);";
     const hash = createHash("sha256").update(body).digest("hex");
@@ -614,7 +653,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("hashes a non-UTF-8 seed file by its raw bytes", () => {
+  it.effect("hashes a non-UTF-8 seed file by its raw bytes", () => {
     // Writing invalid UTF-8 and pre-seeding the remote with the raw-byte sha256 proves
     // the push hashes bytes, not a UTF-8 decode (which would replace invalid bytes and
     // mark the seed dirty).
@@ -637,7 +676,7 @@ describe("db push", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.live("seeds despite db.seed.enabled = false when --include-seed is passed", () => {
+  it.effect("seeds despite db.seed.enabled = false when --include-seed is passed", () => {
     const { layer, conn } = setup(tmp.current, {
       includeSeed: true,
       toml: 'project_id = "test"\n\n[db.seed]\nenabled = false\n',
@@ -654,7 +693,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("does not seed without --include-seed even when SUPABASE_DB_SEED_ENABLED=true", () => {
+  it.effect("does not seed without --include-seed even when SUPABASE_DB_SEED_ENABLED=true", () => {
     const { layer, conn } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: { "supabase/seed.sql": "insert into t values (1);" },
@@ -702,7 +741,7 @@ describe("db push", () => {
     const seeded = (conn: ReturnType<typeof mockConnection>) =>
       conn.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files"));
 
-    it.live("asks first, naming the ref, the remote and the files, defaulting to no", () => {
+    it.effect("asks first, naming the ref, the remote and the files, defaulting to no", () => {
       const { layer, out, conn } = remoteSeed({ confirm: [true] });
       return Effect.gen(function* () {
         yield* dbPush(flags).pipe(Effect.provide(layer));
@@ -714,7 +753,7 @@ describe("db push", () => {
       });
     });
 
-    it.live("asks about seeding once after the matched-remote consent is given", () => {
+    it.effect("asks about seeding once after the matched-remote consent is given", () => {
       const { layer, out, conn } = remoteSeed({ confirm: [true] });
       return Effect.gen(function* () {
         yield* dbPush(flags).pipe(Effect.provide(layer));
@@ -723,7 +762,7 @@ describe("db push", () => {
       });
     });
 
-    it.live("cancels without a bare context canceled before any write when declined", () => {
+    it.effect("cancels without a bare context canceled before any write when declined", () => {
       const { layer, out, conn } = remoteSeed({ confirm: [false], migrations: true });
       return Effect.gen(function* () {
         const exit = yield* dbPush(flags).pipe(Effect.provide(layer), Effect.exit);
@@ -738,7 +777,7 @@ describe("db push", () => {
       });
     });
 
-    it.live("proceeds without asking when --yes is passed, naming what enabled seeding", () => {
+    it.effect("proceeds without asking when --yes is passed, naming what enabled seeding", () => {
       const { layer, out, conn } = remoteSeed({ yes: true });
       return Effect.gen(function* () {
         yield* dbPush(flags).pipe(Effect.provide(layer));
@@ -750,7 +789,7 @@ describe("db push", () => {
       });
     });
 
-    it.live("fails with SeedConsentRequiredError before any write when non-interactive", () => {
+    it.effect("fails with SeedConsentRequiredError before any write when non-interactive", () => {
       const { layer, out, conn } = remoteSeed({ format: "json", migrations: true });
       return Effect.gen(function* () {
         const exit = yield* dbPush(flags).pipe(Effect.provide(layer), Effect.exit);
@@ -766,7 +805,7 @@ describe("db push", () => {
       });
     });
 
-    it.live("fails with SeedConsentRequiredError when piped stdin ends without an answer", () => {
+    it.effect("fails with SeedConsentRequiredError when piped stdin ends without an answer", () => {
       const { layer, conn } = remoteSeed({ piped: "" });
       return Effect.gen(function* () {
         const exit = yield* dbPush(flags).pipe(Effect.provide(layer), Effect.exit);
@@ -795,7 +834,7 @@ describe("db push", () => {
       });
     });
 
-    it.live("seeds when a piped y answers the prompt", () => {
+    it.effect("seeds when a piped y answers the prompt", () => {
       const { layer, conn } = remoteSeed({ piped: "y\n" });
       return Effect.gen(function* () {
         yield* dbPush(flags).pipe(Effect.provide(layer));
@@ -803,7 +842,7 @@ describe("db push", () => {
       });
     });
 
-    it.live("does not ask when the matched remote block itself enables seeding", () => {
+    it.effect("does not ask when the matched remote block itself enables seeding", () => {
       const { layer, out, conn } = remoteSeed({
         format: "json",
         remoteBlock: "\n[remotes.preview.db.seed]\nenabled = true\n",
@@ -815,7 +854,7 @@ describe("db push", () => {
       });
     });
 
-    it.live("does not ask when the matched remote block enables seeding with a number", () => {
+    it.effect("does not ask when the matched remote block enables seeding with a number", () => {
       const { layer, out, conn } = remoteSeed({
         format: "json",
         remoteBlock: "\n[remotes.preview.db.seed]\nenabled = 1\n",
@@ -827,7 +866,7 @@ describe("db push", () => {
       });
     });
 
-    it.live("--dry-run says a real run will ask, without prompting or writing", () => {
+    it.effect("--dry-run says a real run will ask, without prompting or writing", () => {
       const { layer, out, conn } = remoteSeed({ migrations: true });
       return Effect.gen(function* () {
         yield* dbPush({ ...flags, dryRun: true }).pipe(Effect.provide(layer));
@@ -839,7 +878,7 @@ describe("db push", () => {
       });
     });
 
-    it.live("--dry-run says a real run needs --yes when nothing can prompt", () => {
+    it.effect("--dry-run says a real run needs --yes when nothing can prompt", () => {
       const { layer, out } = remoteSeed({ format: "json", migrations: true });
       return Effect.gen(function* () {
         yield* dbPush({ ...flags, dryRun: true }).pipe(Effect.provide(layer));
@@ -849,7 +888,7 @@ describe("db push", () => {
       });
     });
 
-    it.live("does not ask when the target matched no remote block", () => {
+    it.effect("does not ask when the target matched no remote block", () => {
       const { layer, out, conn } = setup(tmp.current, {
         includeSeed: true,
         toml: 'project_id = "test"\n',
@@ -868,7 +907,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("creates custom roles with --include-roles", () => {
+  it.effect("creates custom roles with --include-roles", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: { "supabase/roles.sql": "create role app;" },
@@ -880,7 +919,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("--include-roles without a roles.sql pushes migrations and skips globals", () => {
+  it.effect("--include-roles without a roles.sql pushes migrations and skips globals", () => {
     // An absent roles.sql is silently skipped (no error, no "Seeding globals" line).
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -894,7 +933,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("emits the seeded file paths in the json success payload", () => {
+  it.effect("emits the seeded file paths in the json success payload", () => {
     const { layer, out } = setup(tmp.current, {
       includeSeed: true,
       toml: 'project_id = "test"\n',
@@ -915,7 +954,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("reports schema migrations up to date when only roles are pushed", () => {
+  it.effect("reports schema migrations up to date when only roles are pushed", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: { "supabase/roles.sql": "create role app;" },
@@ -927,7 +966,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("returns context canceled when the roles prompt is declined", () => {
+  it.effect("returns context canceled when the roles prompt is declined", () => {
     const { layer } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: { "supabase/roles.sql": "create role app;" },
@@ -943,7 +982,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("returns context canceled when the seed prompt is declined", () => {
+  it.effect("returns context canceled when the seed prompt is declined", () => {
     const { layer } = setup(tmp.current, {
       includeSeed: true,
       toml: 'project_id = "test"\n',
@@ -960,7 +999,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("re-hashes a dirty seed without re-running its statements", () => {
+  it.effect("re-hashes a dirty seed without re-running its statements", () => {
     const { layer, out, conn } = setup(tmp.current, {
       includeSeed: true,
       toml: 'project_id = "test"\n',
@@ -978,7 +1017,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("treats every seed as pending when the seed_files table is absent", () => {
+  it.effect("treats every seed as pending when the seed_files table is absent", () => {
     const { layer, out } = setup(tmp.current, {
       includeSeed: true,
       toml: 'project_id = "test"\n',
@@ -994,7 +1033,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("warns and reports up to date when no seed files match", () => {
+  it.effect("warns and reports up to date when no seed files match", () => {
     const { layer, out } = setup(tmp.current, {
       includeSeed: true,
       toml: 'project_id = "test"\n\n[db.seed]\nsql_paths = ["missing.sql"]\n',
@@ -1008,7 +1047,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("reports seed files up to date when migrations push but no seeds match", () => {
+  it.effect("reports seed files up to date when migrations push but no seeds match", () => {
     const { layer, out } = setup(tmp.current, {
       includeSeed: true,
       toml: 'project_id = "test"\n\n[db.seed]\nsql_paths = ["missing.sql"]\n',
@@ -1023,7 +1062,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("upserts vault secrets (update existing, create new) before migrating", () => {
+  it.effect("upserts vault secrets (update existing, create new) before migrating", () => {
     const { layer, out, conn, resolver } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.vault]\nexisting = "v1"\nfresh = "v2"\n',
       files: migrationFile("20240101000000"),
@@ -1041,7 +1080,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("applies migrations without touching vault when --skip-vault is set", () => {
+  it.effect("applies migrations without touching vault when --skip-vault is set", () => {
     const { layer, out, conn, resolver } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.vault]\nexisting = "v1"\nfresh = "v2"\n',
       files: migrationFile("20240101000000"),
@@ -1059,7 +1098,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("does not decrypt vault secrets skipped by --skip-vault", () => {
+  it.effect("does not decrypt vault secrets skipped by --skip-vault", () => {
     const { layer, out, conn } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.vault]\nmy_secret = "encrypted:not-valid"\n',
       files: migrationFile("20240101000000"),
@@ -1076,7 +1115,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("still validates non-vault secrets with --skip-vault", () => {
+  it.effect("still validates non-vault secrets with --skip-vault", () => {
     const { layer, out, conn } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db]\nroot_key = "encrypted:not-valid"\n',
       files: migrationFile("20240101000000"),
@@ -1094,30 +1133,33 @@ describe("db push", () => {
     });
   });
 
-  it.live("decrypts an encrypted vault secret keyed by the project .env (not process.env)", () => {
-    // `DOTENV_PRIVATE_KEY` present only in the project .env must still decrypt — the
-    // config load merges the project .env into the key set (`checkDbToml`).
-    const PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
-    const ENCRYPTED =
-      "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
-    const { layer, out, conn } = setup(tmp.current, {
-      toml: `project_id = "test"\n\n[db.vault]\nmy_secret = "${ENCRYPTED}"\n`,
-      files: {
-        ...migrationFile("20240101000000"),
-        "supabase/.env": `DOTENV_PRIVATE_KEY=${PRIVATE_KEY}\n`,
-      },
-      confirm: [true],
-    });
-    return Effect.gen(function* () {
-      yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-      expect(out.stderrText).toContain("Updating vault secrets...");
-      // The decrypted plaintext ("value") is written, proving the project-.env key was used.
-      const create = conn.queries.find((q) => q.sql === "SELECT vault.create_secret($1, $2)");
-      expect(create?.params).toEqual(["value", "my_secret"]);
-    });
-  });
+  it.effect(
+    "decrypts an encrypted vault secret keyed by the project .env (not process.env)",
+    () => {
+      // `DOTENV_PRIVATE_KEY` present only in the project .env must still decrypt — the
+      // config load merges the project .env into the key set (`checkDbToml`).
+      const PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
+      const ENCRYPTED =
+        "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
+      const { layer, out, conn } = setup(tmp.current, {
+        toml: `project_id = "test"\n\n[db.vault]\nmy_secret = "${ENCRYPTED}"\n`,
+        files: {
+          ...migrationFile("20240101000000"),
+          "supabase/.env": `DOTENV_PRIVATE_KEY=${PRIVATE_KEY}\n`,
+        },
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Updating vault secrets...");
+        // The decrypted plaintext ("value") is written, proving the project-.env key was used.
+        const create = conn.queries.find((q) => q.sql === "SELECT vault.create_secret($1, $2)");
+        expect(create?.params).toEqual(["value", "my_secret"]);
+      });
+    },
+  );
 
-  it.live("defaults to the linked target when no target flag is set", () => {
+  it.effect("defaults to the linked target when no target flag is set", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       args: ["db", "push"],
@@ -1131,7 +1173,108 @@ describe("db push", () => {
     });
   });
 
-  it.live("surfaces an apply error with statement context", () => {
+  it.effect("mints a login role and fills the cache through the real resolver and cache", () => {
+    // No target flag: push defaults to the linked project.
+    const { layer, projectHttp } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      args: ["db", "push", "--project-ref", VALID_REF],
+      isLocal: false,
+      realLayers: true,
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbPush({
+        ...DEFAULT_FLAGS,
+        local: false,
+        projectRef: Option.some(VALID_REF),
+      }).pipe(Effect.provide(layer));
+      expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+        `POST /v1/projects/${VALID_REF}/cli/login-role`,
+      ]);
+      expect(projectHttp.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({
+        command: "db push",
+        activeFlags: { "project-ref": VALID_REF },
+        requests: [...asRecordedRequests(requests), ...projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("does not mint a login role when --password is given", () => {
+    const { layer, projectHttp } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      args: ["db", "push", "--linked", "--project-ref", VALID_REF, "--password", "secret"],
+      isLocal: false,
+      realLayers: true,
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbPush({
+        ...DEFAULT_FLAGS,
+        local: false,
+        linked: true,
+        projectRef: Option.some(VALID_REF),
+        password: Option.some("secret"),
+      }).pipe(Effect.provide(layer));
+      expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+      ]);
+      assertPermissionDrift({
+        command: "db push",
+        activeFlags: { linked: true, "project-ref": VALID_REF, password: true },
+        requests: [...asRecordedRequests(requests), ...projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect(
+    "makes no Management API request for --local through the real resolver and cache",
+    () => {
+      const { layer, projectHttp } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "push", "--local"],
+        realLayers: true,
+      });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* stubManagementApi(requests, () => undefined);
+        yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(requests).toEqual([]);
+        expect(projectHttp.calls).toEqual([]);
+        expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(false);
+        assertPermissionDrift({
+          command: "db push",
+          activeFlags: { local: true },
+          requests: [],
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    },
+  );
+
+  it.effect("surfaces an apply error with statement context", () => {
     const { layer } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000", "BOOM;"),
@@ -1141,46 +1284,49 @@ describe("db push", () => {
     return Effect.gen(function* () {
       const error = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
       // A server error without position/detail keeps the plain error layout.
-      expect(error._tag).toBe("DbPushApplyError");
+      expect(error).toBeInstanceOf(DbPushApplyError);
       expect(error.message).toBe("ERROR: boom (SQLSTATE 42601)\nAt statement: 0\nBOOM");
     });
   });
 
-  it.live("renders the caret, Detail line, and 42704 extension hint on a failed migration", () => {
-    // Established failure-rendering format: caret under the error position, Detail
-    // line, and undefined-object extension hint.
-    const stat = "CREATE TABLE test (path ltree NOT NULL)";
-    const { layer } = setup(tmp.current, {
-      toml: 'project_id = "test"\n',
-      files: migrationFile("20240101000000", `${stat};`),
-      failExec: stat,
-      failExecWith: {
-        message: 'ERROR: type "ltree" does not exist (SQLSTATE 42704)',
-        code: "42704",
-        detail: "Detail from the server.",
-        position: 25,
-      },
-      confirm: [true],
-    });
-    return Effect.gen(function* () {
-      const error = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
-      expect(error._tag).toBe("DbPushApplyError");
-      expect(error.message).toBe(
-        'ERROR: type "ltree" does not exist (SQLSTATE 42704)\n' +
-          "Detail from the server.\n" +
-          "\n" +
-          "Hint: This type may be defined in a schema that's not in your search_path.\n" +
-          "      Use schema-qualified type references to avoid this error:\n" +
-          "        CREATE TABLE example (col extensions.ltree);\n" +
-          "      Learn more: supabase migration new --help\n" +
-          "At statement: 0\n" +
-          "CREATE TABLE test (path ltree NOT NULL)\n" +
-          "                        ^",
-      );
-    });
-  });
+  it.effect(
+    "renders the caret, Detail line, and 42704 extension hint on a failed migration",
+    () => {
+      // Established failure-rendering format: caret under the error position, Detail
+      // line, and undefined-object extension hint.
+      const stat = "CREATE TABLE test (path ltree NOT NULL)";
+      const { layer } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: migrationFile("20240101000000", `${stat};`),
+        failExec: stat,
+        failExecWith: {
+          message: 'ERROR: type "ltree" does not exist (SQLSTATE 42704)',
+          code: "42704",
+          detail: "Detail from the server.",
+          position: 25,
+        },
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        const error = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+        expect(error).toBeInstanceOf(DbPushApplyError);
+        expect(error.message).toBe(
+          'ERROR: type "ltree" does not exist (SQLSTATE 42704)\n' +
+            "Detail from the server.\n" +
+            "\n" +
+            "Hint: This type may be defined in a schema that's not in your search_path.\n" +
+            "      Use schema-qualified type references to avoid this error:\n" +
+            "        CREATE TABLE example (col extensions.ltree);\n" +
+            "      Learn more: supabase migration new --help\n" +
+            "At statement: 0\n" +
+            "CREATE TABLE test (path ltree NOT NULL)\n" +
+            "                        ^",
+        );
+      });
+    },
+  );
 
-  it.live("dry-run lists roles, migrations and seeds without applying", () => {
+  it.effect("dry-run lists roles, migrations and seeds without applying", () => {
     const { layer, out, conn } = setup(tmp.current, {
       includeSeed: true,
       toml: 'project_id = "test"\n',
@@ -1205,7 +1351,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("dry-run with only custom roles lists them without a migration section", () => {
+  it.effect("dry-run with only custom roles lists them without a migration section", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: { "supabase/roles.sql": "create role app;" },
@@ -1219,7 +1365,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("uses embedded defaults when no config file is present", () => {
+  it.effect("uses embedded defaults when no config file is present", () => {
     const { layer, out } = setup(tmp.current, {
       files: migrationFile("20240101000000"),
       confirm: [true],
@@ -1232,22 +1378,25 @@ describe("db push", () => {
     });
   });
 
-  it.live("auto-confirms pending migrations via SUPABASE_YES set only in the project .env", () => {
-    // The project `.env` is applied before the history prompt reads
-    // `SUPABASE_YES`, so a `SUPABASE_YES` in supabase/.env auto-confirms without
-    // any interactive answer.
-    const { layer, out } = setup(tmp.current, {
-      toml: 'project_id = "test"\n',
-      files: { ...migrationFile("20240101000000"), "supabase/.env": "SUPABASE_YES=true\n" },
-      // No `confirm` responses; the prompt must be auto-confirmed.
-    });
-    return Effect.gen(function* () {
-      yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-      expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
-    });
-  });
+  it.effect(
+    "auto-confirms pending migrations via SUPABASE_YES set only in the project .env",
+    () => {
+      // The project `.env` is applied before the history prompt reads
+      // `SUPABASE_YES`, so a `SUPABASE_YES` in supabase/.env auto-confirms without
+      // any interactive answer.
+      const { layer, out } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: { ...migrationFile("20240101000000"), "supabase/.env": "SUPABASE_YES=true\n" },
+        // No `confirm` responses; the prompt must be auto-confirmed.
+      });
+      return Effect.gen(function* () {
+        yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
+      });
+    },
+  );
 
-  it.live("fails when config.toml cannot be parsed", () => {
+  it.effect("fails when config.toml cannot be parsed", () => {
     const { layer } = setup(tmp.current, { toml: "this is = = not [[[ valid toml" });
     return Effect.gen(function* () {
       const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
@@ -1260,7 +1409,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("loads an env() boolean in config (no CliConfigParseError)", () => {
+  it.effect("loads an env() boolean in config (no CliConfigParseError)", () => {
     // env-expansion + boolean parsing must resolve `env(VAR)` so the config loads and
     // the migration proceeds.
     const { layer, out } = setup(tmp.current, {
@@ -1278,7 +1427,7 @@ describe("db push", () => {
     );
   });
 
-  it.live("the shell env override beats a matched remote block's migrations.enabled", () => {
+  it.effect("the shell env override beats a matched remote block's migrations.enabled", () => {
     const { layer, out } = setup(tmp.current, {
       toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n\n[remotes.preview.db.migrations]\nenabled = false\n`,
       files: migrationFile("20240101000000"),
@@ -1294,7 +1443,7 @@ describe("db push", () => {
     }).pipe((body) => withEnvVar("SUPABASE_DB_MIGRATIONS_ENABLED", "true", body));
   });
 
-  it.live("announces a matching [remotes.*] override on the linked path", () => {
+  it.effect("announces a matching [remotes.*] override on the linked path", () => {
     const { layer, out } = setup(tmp.current, {
       toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n`,
       args: ["db", "push", "--linked"],
@@ -1307,7 +1456,7 @@ describe("db push", () => {
     });
   });
 
-  it.live(
+  it.effect(
     "selects a [remotes.*] block whose project_id is overridden by SUPABASE_REMOTES_<NAME>_PROJECT_ID",
     () => {
       const { layer, out } = setup(tmp.current, {
@@ -1324,7 +1473,7 @@ describe("db push", () => {
     },
   );
 
-  it.live("leaves a [remotes.*] block unselected when its project_id is not the target", () => {
+  it.effect("leaves a [remotes.*] block unselected when its project_id is not the target", () => {
     const { layer, out } = setup(tmp.current, {
       toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${FLAG_PROJECT_REF}"\n`,
       args: ["db", "push", "--linked"],
@@ -1337,7 +1486,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("pushes to the linked project and caches the project ref (json)", () => {
+  it.effect("pushes to the linked project and caches the project ref (json)", () => {
     const { layer, out, linkedCache } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
@@ -1357,7 +1506,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("pushes to the project given via --project-ref without a linked workdir", () => {
+  it.effect("pushes to the project given via --project-ref without a linked workdir", () => {
     // `linkedFails: true` simulates an unlinked workdir; only the flag can resolve a ref.
     const { layer, out, linkedCache, resolver } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -1384,7 +1533,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("--project-ref drives which [remotes.<ref>] block merges into config", () => {
+  it.effect("--project-ref drives which [remotes.<ref>] block merges into config", () => {
     // `[remotes.staging]`'s `project_id` matches the flag ref, not the resolver's own
     // `VALID_REF` fallback, so the override only announces if the flag resolved it.
     const { layer, out } = setup(tmp.current, {
@@ -1403,7 +1552,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("--project-ref overrides an already-linked workdir's project ref", () => {
+  it.effect("--project-ref overrides an already-linked workdir's project ref", () => {
     const { layer, linkedCache } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
@@ -1426,7 +1575,7 @@ describe("db push", () => {
     });
   });
 
-  it.live("rejects --project-ref combined with an explicit --local target", () => {
+  it.effect("rejects --project-ref combined with an explicit --local target", () => {
     const { layer, conn, resolver, linkedCache } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),

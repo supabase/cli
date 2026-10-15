@@ -486,12 +486,14 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
       // Reads each member's live creation the same way `plan()` does: a member's own `restart`
       // can hold a newer creation (e.g. a changed artifact version) in its own closure, which
       // `memberCreations` never sees again after construction.
-      const liveCreations = new Map(
-        members.map((member) => [member.id, Effect.runSync(member.status).config]),
-      );
+      const instances = members.map((member) => ({
+        id: member.id,
+        creation: Effect.runSync(member.status).config,
+      }));
+      const liveCreations = new Map(instances.map(({ id, creation }) => [id, creation]));
       const planned = planSupabaseComposition(
         {
-          instances: members.map(({ id }) => ({ id, creation: liveCreations.get(id)! })),
+          instances,
           composition: {
             members: members.map(({ id }) => ({ id, activation: activations.get(id) ?? "eager" })),
             dependencies: [],
@@ -585,7 +587,7 @@ const layers = (
   );
 };
 
-const machineEnvelope = Schema.decodeEffect(
+const machineEnvelope = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
 
@@ -657,7 +659,7 @@ const liveIdleOwner = (root: string, fixture: ReturnType<typeof fakeStack>) =>
   );
 
 describe("experimental stack start", () => {
-  it.live("rejects incompatible Functions env before changing composition", () =>
+  it.effect("rejects incompatible Functions env before changing composition", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-functions-env-" });
@@ -680,7 +682,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects malformed configuration before creating a stack", () =>
+  it.effect("rejects malformed configuration before creating a stack", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-invalid-" });
@@ -709,7 +711,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "rejects --runtime native on a platform with no native artifacts before creating a stack",
     () =>
       Effect.gen(function* () {
@@ -752,7 +754,7 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "creates and reports a Podman stack when automatic selection skips a stopped Docker",
     () =>
       Effect.gen(function* () {
@@ -808,7 +810,7 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("applies capability selection across repeated starts", () =>
+  it.effect("applies capability selection across repeated starts", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-db-" });
@@ -889,7 +891,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("reports connection details and lazy services once the stack is ready", () =>
+  it.effect("reports connection details and lazy services once the stack is ready", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-summary-" });
@@ -902,9 +904,7 @@ describe("experimental stack start", () => {
       const fixture = fakeStack();
       const json = mockOutput({ format: "json" });
       yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture, json)));
-      const data = json.messages.find(({ data }) => data !== undefined)?.data as {
-        endpoints: Readonly<Record<string, unknown>>;
-      };
+      const data = json.messages.find(({ data }) => data !== undefined)?.data;
       expect(data).toMatchObject({
         runtime: "native",
         endpoints: {
@@ -923,7 +923,7 @@ describe("experimental stack start", () => {
           SERVICE_ROLE_KEY: "service-token",
         },
       });
-      expect(data.endpoints).not.toHaveProperty("studio.mcp");
+      expect(data?.endpoints).not.toHaveProperty("studio.mcp");
 
       yield* fixture.stack.composition.stop;
       const text = mockOutput();
@@ -953,7 +953,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("returns the connection env for an already-running stack in JSON", () =>
+  it.effect("returns the connection env for an already-running stack in JSON", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-already-running-" });
@@ -968,10 +968,8 @@ describe("experimental stack start", () => {
       const json = mockOutput({ format: "json" });
       yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture, json)));
       expect(fixture.composed).toBe(1);
-      const data = json.messages.find(({ data }) => data !== undefined)?.data as {
-        env: Readonly<Record<string, string>>;
-      };
-      expect(data.env).toMatchObject({
+      const data = json.messages.find(({ data }) => data !== undefined)?.data;
+      expect(data?.env).toMatchObject({
         API_URL: "http://127.0.0.1:23457",
         MCP_URL: "http://127.0.0.1:23457/mcp",
         DB_URL: "postgresql://postgres:postgres@127.0.0.1:23456/postgres",
@@ -979,7 +977,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("returns the connection env for a resumed stack in JSON", () =>
+  it.effect("returns the connection env for a resumed stack in JSON", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-resumed-env-" });
@@ -1000,15 +998,15 @@ describe("experimental stack start", () => {
       yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture, json)));
       expect(fixture.compositionStarts).toBe(2);
       expect(fixture.composed).toBe(1);
-      const data = json.messages.find(({ data }) => data !== undefined)?.data as {
-        env: Readonly<Record<string, string>>;
-      };
-      expect(data.env.DB_URL).toBe("postgresql://postgres:postgres@127.0.0.1:23456/postgres");
-      expect(data.env.API_URL).toBe("http://127.0.0.1:23457");
+      const data = json.messages.find(({ data }) => data !== undefined)?.data;
+      expect(data?.env).toMatchObject({
+        DB_URL: "postgresql://postgres:postgres@127.0.0.1:23456/postgres",
+        API_URL: "http://127.0.0.1:23457",
+      });
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("names the services that failed when the composition start fails", () =>
+  it.effect("names the services that failed when the composition start fails", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-outcomes-" });
@@ -1040,7 +1038,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("loads Functions env only when Functions are selected", () =>
+  it.effect("loads Functions env only when Functions are selected", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-functions-env-" });
@@ -1109,7 +1107,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects Studio without REST before changing the composition", () =>
+  it.effect("rejects Studio without REST before changing the composition", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-studio-" });
@@ -1127,7 +1125,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("applies signing-key file changes only after the stack is stopped", () =>
+  it.effect("applies signing-key file changes only after the stack is stopped", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-key-rotation-" });
@@ -1163,29 +1161,34 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("recomposes a stopped stack with its existing IDs without rerunning catalog setup", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-stopped-restart-" });
-      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "stopped-restart"\n');
-      const fixture = fakeStack();
+  it.effect(
+    "recomposes a stopped stack with its existing IDs without rerunning catalog setup",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-stopped-restart-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "stopped-restart"\n',
+        );
+        const fixture = fakeStack();
 
-      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-      const firstIds = fixture.members.map(({ id }) => id);
-      expect(fixture.composed).toBe(1);
-      expect(fixture.catalogApplied).toBe(1);
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        const firstIds = fixture.members.map(({ id }) => id);
+        expect(fixture.composed).toBe(1);
+        expect(fixture.catalogApplied).toBe(1);
 
-      yield* fixture.stack.composition.stop;
-      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        yield* fixture.stack.composition.stop;
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
 
-      expect(fixture.composed).toBe(2);
-      expect(fixture.members.map(({ id }) => id)).toEqual(firstIds);
-      expect(fixture.catalogApplied).toBe(1);
-    }).pipe(Effect.provide(BunServices.layer)),
+        expect(fixture.composed).toBe(2);
+        expect(fixture.members.map(({ id }) => id)).toEqual(firstIds);
+        expect(fixture.catalogApplied).toBe(1);
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("creates the supabase_functions schema once when restarting a stack without it", () =>
+  it.effect("creates the supabase_functions schema once when restarting a stack without it", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-webhook-schema-" });
@@ -1213,7 +1216,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("skips invalid config while running and reports it after stop", () =>
+  it.effect("skips invalid config while running and reports it after stop", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({
@@ -1246,7 +1249,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects a partially active stack before reading changed config", () =>
+  it.effect("rejects a partially active stack before reading changed config", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-partial-state-" });
@@ -1278,7 +1281,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects a stack whose database alone was started before reading changed config", () =>
+  it.effect("rejects a stack whose database alone was started before reading changed config", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-db-only-" });
@@ -1310,7 +1313,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "reports a resumed stack ready only after its unhealthy and booting members are ready",
     () =>
       Effect.gen(function* () {
@@ -1372,70 +1375,77 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("fails a start while a woken lazy member is still booting and never becomes ready", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-booting-" });
-      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "booting"\n');
-      const fixture = fakeStack();
-      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-      const auth = fixture.members.find(({ service }) => service === "auth");
-      if (auth === undefined) return yield* Effect.die("Expected an Auth member");
-      fixture.setMemberStatus(auth.id, { lifecycle: "starting", health: "starting" });
-      fixture.setMemberReadiness(
-        auth.id,
-        Effect.fail(
-          new StackError({ operation: "service.ready", message: "auth HTTP readiness timed out" }),
-        ),
-      );
-      const output = mockOutput();
-
-      const error = yield* stackStart(flags()).pipe(
-        Effect.provide(layers(root, fixture, output)),
-        Effect.flip,
-      );
-
-      expect(error).toBeInstanceOf(StackCommandStartError);
-      expect(error).toMatchObject({ message: "auth HTTP readiness timed out" });
-      expect(output.messages.map(({ message }) => message)).not.toContain("Stack is ready.");
-      expect(output.messages.map(({ message }) => message)).not.toContain(
-        "Stack is already running with its current services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
-      );
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.live("rejects changed Postgres root keys and database versions after stopping the stack", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      for (const [name, changed] of [
-        ["root-key", '[db]\nroot_key = "a-different-postgres-root-key"\n'],
-        ["version", "[db]\nmajor_version = 15\n"],
-      ] as const) {
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-start-${name}-` });
+  it.effect(
+    "fails a start while a woken lazy member is still booting and never becomes ready",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-booting-" });
         yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-        yield* fs.writeFileString(`${root}/supabase/config.toml`, `project_id = "${name}"\n`);
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "booting"\n');
         const fixture = fakeStack();
         yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-        expect(fixture.composed).toBe(1);
-
-        yield* fs.writeFileString(
-          `${root}/supabase/config.toml`,
-          `project_id = "${name}"\n${changed}`,
+        const auth = fixture.members.find(({ service }) => service === "auth");
+        if (auth === undefined) return yield* Effect.die("Expected an Auth member");
+        fixture.setMemberStatus(auth.id, { lifecycle: "starting", health: "starting" });
+        fixture.setMemberReadiness(
+          auth.id,
+          Effect.fail(
+            new StackError({
+              operation: "service.ready",
+              message: "auth HTTP readiness timed out",
+            }),
+          ),
         );
-        yield* fixture.stack.composition.stop;
-        const error = yield* stackStart(flags(["studio"])).pipe(
-          Effect.provide(layers(root, fixture)),
+        const output = mockOutput();
+
+        const error = yield* stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture, output)),
           Effect.flip,
         );
-        expect(error).toMatchObject({ reason: "invalid-config" });
-        expect(fixture.stopped).toBe(1);
-        expect(fixture.composed).toBe(1);
-      }
-    }).pipe(Effect.provide(BunServices.layer)),
+
+        expect(error).toBeInstanceOf(StackCommandStartError);
+        expect(error).toMatchObject({ message: "auth HTTP readiness timed out" });
+        expect(output.messages.map(({ message }) => message)).not.toContain("Stack is ready.");
+        expect(output.messages.map(({ message }) => message)).not.toContain(
+          "Stack is already running with its current services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("applies changed service configuration after the stack is stopped", () =>
+  it.effect(
+    "rejects changed Postgres root keys and database versions after stopping the stack",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        for (const [name, changed] of [
+          ["root-key", '[db]\nroot_key = "a-different-postgres-root-key"\n'],
+          ["version", "[db]\nmajor_version = 15\n"],
+        ] as const) {
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-start-${name}-` });
+          yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+          yield* fs.writeFileString(`${root}/supabase/config.toml`, `project_id = "${name}"\n`);
+          const fixture = fakeStack();
+          yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+          expect(fixture.composed).toBe(1);
+
+          yield* fs.writeFileString(
+            `${root}/supabase/config.toml`,
+            `project_id = "${name}"\n${changed}`,
+          );
+          yield* fixture.stack.composition.stop;
+          const error = yield* stackStart(flags(["studio"])).pipe(
+            Effect.provide(layers(root, fixture)),
+            Effect.flip,
+          );
+          expect(error).toMatchObject({ reason: "invalid-config" });
+          expect(fixture.stopped).toBe(1);
+          expect(fixture.composed).toBe(1);
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("applies changed service configuration after the stack is stopped", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-changed-config-" });
@@ -1460,7 +1470,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "re-plans a changed endpoint on a stopped stack instead of rejecting it, prints the change, and reports none on the next unchanged restart",
     () =>
       Effect.gen(function* () {
@@ -1506,7 +1516,7 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("passes requested creations to a live owner, which ignores them", () =>
+  it.effect("passes requested creations to a live owner, which ignores them", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-running-no-replan-" });
@@ -1544,7 +1554,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("re-plans when the owner it observed running is gone by the time the stack opens", () =>
+  it.effect("re-plans when the owner it observed running is gone by the time the stack opens", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-owner-gone-" });
@@ -1588,7 +1598,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("adds endpoint_changes to the json and stream-json success payloads", () =>
+  it.effect("adds endpoint_changes to the json and stream-json success payloads", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const onlyRest = [
@@ -1629,12 +1639,12 @@ describe("experimental stack start", () => {
       const stream = yield* prepare("stack-start-changes-stream-json-");
       const { layer, stdio } = jsonErrorLayers(stream.root, stream.fixture, "stream-json");
       yield* stackStart(flags(onlyRest)).pipe(Effect.provide(layer));
-      const event = yield* machineEnvelope(stdio.stdout.at(-1)!);
+      const event = yield* machineEnvelope(stdio.stdout.at(-1));
       expect(event.data).toMatchObject({ endpoint_changes: expected });
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "lists every endpoints key the shared API listener serves for a re-planned API port",
     () =>
       Effect.gen(function* () {
@@ -1684,97 +1694,103 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("advises stop then start, not destroy, when a live idle owner meets a changed port", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-idle-owner-" });
-      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "idle-owner"\n');
-      const fixture = fakeStack();
-      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-      yield* fs.writeFileString(
-        `${root}/supabase/config.toml`,
-        'project_id = "idle-owner"\n[api]\nport = 54999\n',
-      );
-      yield* fixture.stack.composition.stop;
+  it.effect(
+    "advises stop then start, not destroy, when a live idle owner meets a changed port",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-idle-owner-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "idle-owner"\n');
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "idle-owner"\n[api]\nport = 54999\n',
+        );
+        yield* fixture.stack.composition.stop;
 
-      // A live owner keeps its startup state, so `open` never re-plans the requested creations.
-      const liveOwner = liveIdleOwner(root, fixture);
-      const error = yield* stackStart(flags()).pipe(
-        Effect.provide(Layer.merge(layers(root, fixture), liveOwner)),
-        Effect.flip,
-      );
+        // A live owner keeps its startup state, so `open` never re-plans the requested creations.
+        const liveOwner = liveIdleOwner(root, fixture);
+        const error = yield* stackStart(flags()).pipe(
+          Effect.provide(Layer.merge(layers(root, fixture), liveOwner)),
+          Effect.flip,
+        );
 
-      expect(error).toMatchObject({
-        reason: "invalid-config",
-        message: expect.stringContaining("[api] port: saved"),
-        suggestion: `Run \`supabase stack stop --stack-id ${fixture.stack.id}\`, then \`supabase stack start --stack-id ${fixture.stack.id}\` to apply the new ports.`,
-      });
-    }).pipe(Effect.provide(BunServices.layer)),
+        expect(error).toMatchObject({
+          reason: "invalid-config",
+          message: expect.stringContaining("[api] port: saved"),
+          suggestion: `Run \`supabase stack stop --stack-id ${fixture.stack.id}\`, then \`supabase stack start --stack-id ${fixture.stack.id}\` to apply the new ports.`,
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("omits recreate_command from the JSON envelope when a live idle owner meets a port", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-idle-json-" });
-      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "idle-json"\n');
-      const fixture = fakeStack();
-      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-      yield* fs.writeFileString(
-        `${root}/supabase/config.toml`,
-        'project_id = "idle-json"\n[api]\nport = 54999\n',
-      );
-      yield* fixture.stack.composition.stop;
+  it.effect(
+    "omits recreate_command from the JSON envelope when a live idle owner meets a port",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-idle-json-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "idle-json"\n');
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "idle-json"\n[api]\nport = 54999\n',
+        );
+        yield* fixture.stack.composition.stop;
 
-      const { layer, stdio } = jsonErrorLayers(root, fixture, "json");
-      yield* stackStart(flags()).pipe(
-        withJsonErrorHandling,
-        Effect.provide(Layer.merge(layer, liveIdleOwner(root, fixture))),
-      );
+        const { layer, stdio } = jsonErrorLayers(root, fixture, "json");
+        yield* stackStart(flags()).pipe(
+          withJsonErrorHandling,
+          Effect.provide(Layer.merge(layer, liveIdleOwner(root, fixture))),
+        );
 
-      const envelope = yield* machineEnvelope(stdio.stdout[0]!);
-      expect(envelope._tag).toBe("Error");
-      expect(envelope.stack_changes).toEqual(
-        expect.arrayContaining([expect.objectContaining({ key: "[api] port" })]),
-      );
-      expect(envelope).not.toHaveProperty("recreate_command");
-    }).pipe(Effect.provide(BunServices.layer)),
+        const envelope = yield* machineEnvelope(stdio.stdout[0]);
+        expect(envelope._tag).toBe("Error");
+        expect(envelope.stack_changes).toEqual(
+          expect.arrayContaining([expect.objectContaining({ key: "[api] port" })]),
+        );
+        expect(envelope).not.toHaveProperty("recreate_command");
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("advises destroy and keeps recreate_command when a live idle owner meets a version", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-idle-version-" });
-      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "idle-version"\n');
-      const fixture = fakeStack();
-      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-      yield* fs.writeFileString(
-        `${root}/supabase/config.toml`,
-        'project_id = "idle-version"\n[db]\nmajor_version = 15\n[api]\nport = 54999\n',
-      );
-      yield* fixture.stack.composition.stop;
+  it.effect(
+    "advises destroy and keeps recreate_command when a live idle owner meets a version",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-idle-version-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "idle-version"\n');
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "idle-version"\n[db]\nmajor_version = 15\n[api]\nport = 54999\n',
+        );
+        yield* fixture.stack.composition.stop;
 
-      const { layer, stdio } = jsonErrorLayers(root, fixture, "json");
-      yield* stackStart(flags()).pipe(
-        withJsonErrorHandling,
-        Effect.provide(Layer.merge(layer, liveIdleOwner(root, fixture))),
-      );
+        const { layer, stdio } = jsonErrorLayers(root, fixture, "json");
+        yield* stackStart(flags()).pipe(
+          withJsonErrorHandling,
+          Effect.provide(Layer.merge(layer, liveIdleOwner(root, fixture))),
+        );
 
-      const envelope = yield* machineEnvelope(stdio.stdout[0]!);
-      expect(envelope.error).toMatchObject({
-        suggestion: expect.stringContaining(
+        const envelope = yield* machineEnvelope(stdio.stdout[0]);
+        expect(envelope.error).toMatchObject({
+          suggestion: expect.stringContaining(
+            `supabase stack destroy --stack-id ${fixture.stack.id}`,
+          ),
+        });
+        expect(envelope.recreate_command).toBe(
           `supabase stack destroy --stack-id ${fixture.stack.id}`,
-        ),
-      });
-      expect(envelope.recreate_command).toBe(
-        `supabase stack destroy --stack-id ${fixture.stack.id}`,
-      );
-    }).pipe(Effect.provide(BunServices.layer)),
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "names the config key and the saved port when the owner's startup claim hits a port conflict",
     () =>
       Effect.gen(function* () {
@@ -1819,7 +1835,7 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "names the config key and both values when a saved port changes alongside a database version",
     () =>
       Effect.gen(function* () {
@@ -1852,7 +1868,7 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "names a dedicated (non-shared) port's own config key alongside a database version change",
     () =>
       Effect.gen(function* () {
@@ -1889,7 +1905,7 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "reports a shared API port transitioning from automatic to fixed alongside a database version change",
     () =>
       Effect.gen(function* () {
@@ -1923,7 +1939,7 @@ describe("experimental stack start", () => {
   // any other changed port, since every sibling sharing that port reports it; this locks down
   // that it re-plans successfully rather than rejecting the start, the way a single service's own
   // port change does.
-  it.live("accepts a shared API port going from fixed back to automatic by re-planning it", () =>
+  it.effect("accepts a shared API port going from fixed back to automatic by re-planning it", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-api-to-auto-" });
@@ -1943,7 +1959,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "collects simultaneous database-version and port changes into one error with plural revert wording",
     () =>
       Effect.gen(function* () {
@@ -1979,7 +1995,7 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "names the env var override when SUPABASE_*_PORT set the saved port alongside a database version change",
     () =>
       Effect.gen(function* () {
@@ -2014,7 +2030,7 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "names [db] major_version and the destroy command when the saved Postgres version changes",
     () =>
       Effect.gen(function* () {
@@ -2046,7 +2062,7 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "names the full Postgres build, not major_version, when only the pinned build differs",
     () =>
       Effect.gen(function* () {
@@ -2115,7 +2131,7 @@ describe("experimental stack start", () => {
       revert: "Revert SUPABASE_DB_ORIOLEDB_VERSION to its saved value",
     },
   ])
-    it.live(`names ${target.name}`, () =>
+    it.effect(`names ${target.name}`, () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-orioledb-" });
@@ -2145,7 +2161,7 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-  it.live("offers no revert to an OrioleDB build the catalog no longer pins", () =>
+  it.effect("offers no revert to an OrioleDB build the catalog no longer pins", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-retired-orioledb-" });
@@ -2179,7 +2195,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "drops the revert sentence for an artifact-version-only mismatch and explains the fix in plain language",
     () =>
       Effect.gen(function* () {
@@ -2220,7 +2236,7 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "uses the destroy-only wording when a non-editable change accompanies an editable one",
     () =>
       Effect.gen(function* () {
@@ -2268,7 +2284,7 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("emits structured stack_changes and recreate_command on the JSON error envelope", () =>
+  it.effect("emits structured stack_changes and recreate_command on the JSON error envelope", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-json-envelope-" });
@@ -2286,7 +2302,7 @@ describe("experimental stack start", () => {
       yield* stackStart(flags()).pipe(withJsonErrorHandling, Effect.provide(layer));
 
       expect(stdio.stdout).toHaveLength(1);
-      const envelope = yield* machineEnvelope(stdio.stdout[0]!);
+      const envelope = yield* machineEnvelope(stdio.stdout[0]);
       expect(envelope._tag).toBe("Error");
       expect(envelope.error).toMatchObject({
         code: "ExperimentalStackStartError",
@@ -2308,7 +2324,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("emits the same structured error fields on the stream-json terminal event", () =>
+  it.effect("emits the same structured error fields on the stream-json terminal event", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-stream-json-" });
@@ -2325,7 +2341,7 @@ describe("experimental stack start", () => {
       const { layer, stdio } = jsonErrorLayers(root, fixture, "stream-json");
       yield* stackStart(flags()).pipe(withJsonErrorHandling, Effect.provide(layer));
 
-      const event = yield* machineEnvelope(stdio.stdout.at(-1)!);
+      const event = yield* machineEnvelope(stdio.stdout.at(-1));
       expect(event.type).toBe("error");
       expect(event.error).toMatchObject({
         code: "ExperimentalStackStartError",
@@ -2345,7 +2361,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("always suggests --stack-id for a named stack, naming the stack as plain text", () =>
+  it.effect("always suggests --stack-id for a named stack, naming the stack as plain text", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-named-destroy-" });
@@ -2387,7 +2403,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("matches a Postgres major alias to the saved pinned database version", () =>
+  it.effect("matches a Postgres major alias to the saved pinned database version", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-postgres-alias-" });
@@ -2506,7 +2522,7 @@ describe("experimental stack start", () => {
     );
   }
 
-  it.live(
+  it.effect(
     "stops, without destroying, the owner when startup fails after the stack is acquired",
     () =>
       Effect.gen(function* () {

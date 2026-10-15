@@ -138,7 +138,7 @@ Not applicable.
   shell and nested dotenv overrides, matching the CLI. The database password is the `[db].password`
   value (default `postgres`); `SUPABASE_DB_PASSWORD` has no effect, and the command has no
   `--password` flag.
-- **Config value precedence** (ADR 0031): explicit flag > shell env > project `.env*` > config
+- **Config value precedence** (ADR 0032): explicit flag > shell env > project `.env*` > config
   (`config.json` over `config.toml`; a matched `[remotes.*]` block over the base document on
   `--linked`/`--project-id`) > default. The whole config is decoded up front where it is loaded,
   so an invalid value fails the command.

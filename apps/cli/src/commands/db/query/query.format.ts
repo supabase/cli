@@ -1,4 +1,4 @@
-import { DateTime, Option } from "effect";
+import { DateTime, Option, Predicate } from "effect";
 
 import { formatGeneralFloat } from "../../../command-internal/format-float.ts";
 import { stringWidth } from "../../../command-internal/string-width.ts";
@@ -31,10 +31,9 @@ function formatJsonValue(value: unknown): string {
   // `Buffer` (`Uint8Array`), which would otherwise fall into the object branch below.
   if (value instanceof Uint8Array) return `[${Array.from(value).join(" ")}]`;
   if (Array.isArray(value)) return `[${value.map(formatJsonValue).join(" ")}]`;
-  if (typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    const keys = Object.keys(obj).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-    return `map[${keys.map((k) => `${k}:${formatJsonValue(obj[k])}`).join(" ")}]`;
+  if (Predicate.isObject(value)) {
+    const keys = Object.keys(value).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    return `map[${keys.map((k) => `${k}:${formatJsonValue(value[k])}`).join(" ")}]`;
   }
   return String(value);
 }
@@ -269,12 +268,17 @@ export function renderTablewriter(
     return width;
   });
 
-  const segment = (i: number) => "─".repeat(widths[i]! + 2);
-  const top = `┌${widths.map((_, i) => segment(i)).join("┬")}┐`;
-  const sep = `├${widths.map((_, i) => segment(i)).join("┼")}┤`;
-  const bottom = `└${widths.map((_, i) => segment(i)).join("┴")}┘`;
+  const segment = (width: number) => "─".repeat(width + 2);
+  const top = `┌${widths.map(segment).join("┬")}┐`;
+  const sep = `├${widths.map(segment).join("┼")}┤`;
+  const bottom = `└${widths.map(segment).join("┴")}┘`;
   const renderLine = (cells: ReadonlyArray<string>) =>
-    `│${cells.map((cell, i) => ` ${cell}${" ".repeat(widths[i]! - displayWidth(cell))} `).join("│")}│`;
+    `│${cells
+      .map((cell, i) => {
+        const width = widths[i];
+        return ` ${cell}${width === undefined ? "" : " ".repeat(width - displayWidth(cell))} `;
+      })
+      .join("│")}│`;
   // A multiline cell splits across stacked bordered lines within the same
   // logical row (other columns blank on continuation lines), no per-row separator.
   const renderRow = (cells: ReadonlyArray<string>): string => {
@@ -296,8 +300,7 @@ function csvFieldNeedsQuotes(field: string): boolean {
   if (field === "") return false;
   if (field === "\\.") return true;
   if (/[\n\r",]/.test(field)) return true;
-  const first = field[0]!;
-  return /\s/u.test(first);
+  return /\s/u.test(field[0] ?? "");
 }
 
 function csvField(field: string): string {
@@ -490,7 +493,7 @@ export function orderedKeys(body: string): ReadonlyArray<string> {
   }
   if (!Array.isArray(parsed) || parsed.length === 0) return [];
   const first = parsed[0];
-  if (typeof first !== "object" || first === null || Array.isArray(first)) return [];
+  if (!Predicate.isObject(first)) return [];
 
   const keys: string[] = [];
   const open = body.indexOf("{");
@@ -498,11 +501,11 @@ export function orderedKeys(body: string): ReadonlyArray<string> {
   let i = open + 1;
   let depth = 1;
   while (i < body.length && depth > 0) {
-    const ch = body[i]!;
+    const ch = body[i] ?? "";
     if (ch === '"') {
       const { value, end } = readJsonStringToken(body, i);
       i = end;
-      while (i < body.length && /\s/.test(body[i]!)) i++;
+      while (i < body.length && /\s/.test(body[i] ?? "")) i++;
       // A string immediately followed by `:` at the first object's top level is a key.
       if (depth === 1 && body[i] === ":") keys.push(value);
       continue;

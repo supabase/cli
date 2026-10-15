@@ -7,6 +7,7 @@ import {
   buildStudioContainerSpec,
   buildStudioEnv,
   type BuildStudioEnvInput,
+  type StudioContainerInput,
 } from "./studio.service.ts";
 
 const baseEnvInput: BuildStudioEnvInput = {
@@ -141,12 +142,12 @@ describe("buildStudioEnv", () => {
 });
 
 describe("buildStudioContainerSpec", () => {
-  const baseSpecInput = {
+  const baseSpecInput: StudioContainerInput = {
     image: "supabase/studio:2026.07.07-sha-a6a04f2",
     containerName: "supabase_studio_proj",
     networkId: "supabase_network_proj",
     port: 54323,
-    functionBinds: [] as ReadonlyArray<string>,
+    functionBinds: [],
     env: baseEnvInput,
   };
 

@@ -17,7 +17,7 @@ const readFixture = Effect.fnUntraced(function* (name: string) {
 });
 
 describe("squashLineByLineDiff", () => {
-  it.live("diffs real pg_dump output into the exact diff.sql bytes", () =>
+  it.effect("diffs real pg_dump output into the exact diff.sql bytes", () =>
     Effect.gen(function* () {
       const before = yield* readFixture("before.sql");
       const after = yield* readFixture("after.sql");

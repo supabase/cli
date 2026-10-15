@@ -63,7 +63,7 @@ Same structured `migrations` result delivered as an NDJSON `result` event.
   exit 1. For `--linked` the password resolves as flag > shell `SUPABASE_DB_PASSWORD` > project
   `.env*` > config; the env value is withheld when the target differs from `.temp/project-ref`
   (stderr `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.`), and a
-  temporary login role is minted instead (ADR 0031).
+  temporary login role is minted instead (ADR 0032).
 - `--db-url`, `--linked`, and `--local` are mutually exclusive.
 - **`--project-ref`** overrides ONLY the linked-ref resolution used for the connection (flag >
   `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies `--linked`:

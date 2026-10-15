@@ -375,7 +375,7 @@ may itself contain a `.`.
 - **Only properties your file declares, and whose value differs from the project, are written.** Fields the API requires together ship as a group; undeclared members of that group are sent with the project's CURRENT value, read in the same run — so they do not change. Only when the read did not return a member's current value is it sent at the config schema default, and that is always disclosed (a `[group-write]` block in the confirmation output, a `forced` entry in the JSON payload, and a summary `Note:` line) — never applied silently.
 - **`db.ssl_enforcement`'s presence, not its decoded default, decides the gate.** `@supabase/config`'s projection recovers whether `[db.ssl_enforcement]` (and `storage.image_transformation`/`storage.s3_protocol`) were actually declared, as opposed to decoding to a schema default; an undeclared `[db.ssl_enforcement]` is treated as `disabled` — no read is needed for this any more, since row 1's single response already carries the remote value.
 - Optional `*pointer` sections (`db.ssl_enforcement`, `storage.image_transformation`, `storage.s3_protocol`) follow that same presence rule end to end — declared-but-absent is never confused with explicitly-disabled.
-- **Config value precedence** (ADR 0031): explicit flag > shell env > project `.env*` > config
+- **Config value precedence** (ADR 0032): explicit flag > shell env > project `.env*` > config
   (`config.json` over `config.toml`; matched `[remotes.*]` over base) > default. The pushed
   config is the declared document with these overrides applied, so a `SUPABASE_*` variable that
   overrides a declared key changes what is pushed. An unparsable `SUPABASE_*` value fails the
