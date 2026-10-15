@@ -375,6 +375,22 @@ Tiers are named `flag`, `shell`, `projectEnv`, `config` and `default`. `pickCliC
 (`apps/cli/src/config/cli-config-key.ts`) is the single implementation; commands read through the
 `CliConfigValues` service rather than calling it.
 
+### The workspace `target`
+
+`target` (`local` or `remote`, default `local`) picks the default instance for commands that can run
+against the local stack or the linked project, such as `db reset`, `db query`, `inspect`,
+`migration list`, `gen types` and `storage`. `remote` means the linked project. Its order is:
+
+1. `--local`, `--linked` or `--db-url`, or `--project-ref`, which implies linked
+2. `SUPABASE_TARGET`
+3. `target` in config
+4. `local`
+
+The selector flags are its flag tier. It applies only to those selectable-instance commands; `db push`,
+`db pull` and `migration fetch` default to the linked project, and the hosted-only and local-only
+commands have no target to choose. It is a `CliConfig` key only: `ProjectConfig` and `[remotes.*]`
+do not carry it. See [ADR 0033](../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md).
+
 ### `env()` references and `SUPABASE_*` overrides
 
 These are different mechanisms and both apply:
