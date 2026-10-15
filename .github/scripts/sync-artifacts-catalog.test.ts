@@ -340,6 +340,42 @@ describe("planSlimUpdates", () => {
     ]);
   });
 
+  test("a held service skips the upgrade with a warning but still takes the pinned upstream's hotfix", () => {
+    const analyticsFixture = `const workloadCatalog = {
+  analytics: definition(
+    "analytics",
+    {
+      upstreamVersion: "v1.50.15",
+      revision: 1,
+      image: "ghcr.io/supabase/cli/analytics:v1.50.15-r1@sha256:4444444444444444444444444444444444444444444444444444444444444",
+      natives: {},
+    },
+    "bin/analytics",
+  ),
+};
+`;
+
+    const { updates, warnings } = planSlimUpdates(analyticsFixture, "analytics", [
+      "analytics-v1.50.15-r2",
+      "analytics-v1.53.1-r0",
+    ]);
+
+    expect(updates).toEqual([
+      {
+        kind: "hotfix",
+        line: undefined,
+        branch: "slim-hotfix/analytics",
+        title: "chore(stack): pin analytics v1.50.15-r2",
+        fromRelease: "v1.50.15-r1",
+        toUpstream: "v1.50.15",
+        toRelease: "v1.50.15-r2",
+      },
+    ]);
+    expect(warnings).toEqual([
+      "::warning ::analytics upgrade to v1.53.1-r0 held at v1.50.15: Logflare 1.52+ breaks Postgres-backend endpoint queries (https://github.com/Logflare/logflare/issues/4158).",
+    ]);
+  });
+
   test("an older committed upstream is a backlog republish: it plans nothing", () => {
     const { updates, warnings } = planSlimUpdates(plannerFixture, "postgrest", [
       "postgrest-v16.1-r0",
