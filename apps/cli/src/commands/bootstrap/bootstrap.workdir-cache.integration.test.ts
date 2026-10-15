@@ -333,7 +333,7 @@ describe("bootstrap linked-project cache location", () => {
         // requests are mapped.
         expect(
           api.requests
-            .filter(({ url }) => url.startsWith("https://api.supabase.com"))
+            .filter(({ url }) => new URL(url).origin === "https://api.supabase.com")
             .map(({ method, url }) => `${method} ${url.slice("https://api.supabase.com".length)}`),
         ).toEqual([
           "GET /v1/organizations",
