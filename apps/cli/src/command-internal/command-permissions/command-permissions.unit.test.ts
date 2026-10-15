@@ -32,7 +32,12 @@ const GO_DELEGATED_PATHS: ReadonlySet<string> = new Set([
  * keyed by `operationId` with the reason. A missing extension otherwise fails the test, since it
  * doesn't say whether a scoped token can call the operation.
  */
-const OPERATIONS_WITHOUT_FGA: ReadonlyMap<string, string> = new Map<string, string>([]);
+const OPERATIONS_WITHOUT_FGA: ReadonlyMap<string, string> = new Map<string, string>([
+  [
+    "v1-get-profile",
+    "returns the caller's own profile; the spec declares no FGA permission for it",
+  ],
+]);
 
 const VARIANTS: ReadonlyArray<{ readonly name: string; readonly variant: PermissionVariant }> = [
   { name: "default backend", variant: undefined },

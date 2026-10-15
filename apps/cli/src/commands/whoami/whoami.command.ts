@@ -6,6 +6,7 @@ import { managementApiRuntimeLayer } from "../../command-internal/management-api
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { whoami } from "./whoami.handler.ts";
+import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {};
 export type WhoamiFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -32,6 +33,7 @@ export const whoamiCommand = Command.make("whoami", config).pipe(
       description: "Show the current user as JSON",
     },
   ]),
+  withPermissions({ operations: [{ operationId: "v1-get-profile", kind: "required" }] }),
   Command.withHandler(whoamiHandler),
   Command.provide(managementApiRuntimeLayer(["whoami"])),
 );

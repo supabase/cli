@@ -17,6 +17,7 @@ function mockSpawner(
     readonly bothMissing?: boolean;
     readonly exitCode?: number;
     readonly stdout?: string;
+    readonly apiVersions?: { readonly client: string; readonly server: string };
   } = {},
 ) {
   const spawned: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
@@ -36,14 +37,21 @@ function mockSpawner(
         });
       }
 
+      const stdout =
+        opts.apiVersions !== undefined && args[0] === "version"
+          ? (args[args.indexOf("--format") + 1] ?? "")
+              .replaceAll("{{.Client.APIVersion}}", opts.apiVersions.client)
+              .replaceAll("{{.Server.APIVersion}}", opts.apiVersions.server)
+          : opts.stdout;
+
       const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
       yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(opts.exitCode ?? 0));
 
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
         stdout:
-          opts.stdout !== undefined
-            ? Stream.fromIterable([new TextEncoder().encode(opts.stdout)])
+          stdout !== undefined
+            ? Stream.fromIterable([new TextEncoder().encode(stdout)])
             : Stream.empty,
         stderr: Stream.empty,
         all: Stream.empty,
@@ -222,29 +230,26 @@ describe("container CLI process spans", () => {
 });
 
 describe("dockerSupportsVolumePruneAllFlag", () => {
-  it.live("returns true when the daemon reports an API version at or above 1.42", () => {
-    const mock = mockSpawner({ stdout: "1.42" });
-    return dockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
-      Effect.map((supportsAll) => {
-        expect(supportsAll).toBe(true);
-        expect(mock.spawned).toEqual([
-          { command: "docker", args: ["version", "--format", "{{.Server.APIVersion}}"] },
-        ]);
-      }),
-    );
-  });
+  it.live(
+    "returns true when the client and daemon both report an API version at or above 1.42",
+    () => {
+      const mock = mockSpawner({ apiVersions: { client: "1.42", server: "1.51" } });
+      return dockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
+        Effect.map((supportsAll) => {
+          expect(supportsAll).toBe(true);
+          expect(mock.spawned).toEqual([
+            {
+              command: "docker",
+              args: ["version", "--format", "{{.Client.APIVersion}} {{.Server.APIVersion}}"],
+            },
+          ]);
+        }),
+      );
+    },
+  );
 
-  it.live("returns true for a version comfortably above 1.42", () => {
-    const mock = mockSpawner({ stdout: "1.51" });
-    return dockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
-      Effect.map((supportsAll) => {
-        expect(supportsAll).toBe(true);
-      }),
-    );
-  });
-
-  it.live("returns false when the daemon reports an API version below 1.42", () => {
-    const mock = mockSpawner({ stdout: "1.41" });
+  it.live("returns false for an old client against a new daemon", () => {
+    const mock = mockSpawner({ apiVersions: { client: "1.41", server: "1.44" } });
     return dockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
       Effect.map((supportsAll) => {
         expect(supportsAll).toBe(false);
@@ -252,10 +257,20 @@ describe("dockerSupportsVolumePruneAllFlag", () => {
     );
   });
 
-  it.live("compares version components numerically, not lexicographically", () => {
-    // A naive string compare would misorder "1.9" as greater than "1.42" — this
-    // guards the numeric, component-by-component comparison instead.
-    const mock = mockSpawner({ stdout: "1.9" });
+  it.live.each([
+    {
+      name: "a new client against an old daemon",
+      options: { apiVersions: { client: "1.44", server: "1.41" } },
+    },
+    {
+      name: "versions that only compare above 1.42 lexicographically",
+      options: { apiVersions: { client: "1.9", server: "1.9" } },
+    },
+    { name: "a single version instead of a client and daemon pair", options: { stdout: "1.51" } },
+    { name: "more than two versions", options: { stdout: "1.51 1.51 1.51" } },
+    { name: "empty output", options: { stdout: "" } },
+  ])("returns false for $name", ({ options }) => {
+    const mock = mockSpawner(options);
     return dockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
       Effect.map((supportsAll) => {
         expect(supportsAll).toBe(false);
@@ -264,16 +279,7 @@ describe("dockerSupportsVolumePruneAllFlag", () => {
   });
 
   it.live("returns false when the version command exits non-zero", () => {
-    const mock = mockSpawner({ exitCode: 1, stdout: "1.51" });
-    return dockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
-      Effect.map((supportsAll) => {
-        expect(supportsAll).toBe(false);
-      }),
-    );
-  });
-
-  it.live("returns false when the reported version is empty", () => {
-    const mock = mockSpawner({ stdout: "" });
+    const mock = mockSpawner({ exitCode: 1, apiVersions: { client: "1.51", server: "1.51" } });
     return dockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
       Effect.map((supportsAll) => {
         expect(supportsAll).toBe(false);
