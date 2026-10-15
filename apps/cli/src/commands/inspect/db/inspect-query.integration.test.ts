@@ -1,8 +1,16 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, ConfigProvider, Effect, Exit, Layer, Option, Redacted } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+} from "effect";
 import { vi } from "vitest";
 
 vi.mock("node:net", (importOriginal) =>
@@ -351,14 +359,19 @@ describe("inspect db query runner", () => {
   });
 
   it.effect("follows a workspace target of remote to the linked project", () => {
-    mkdirSync(join(workdir.current, "supabase"), { recursive: true });
-    writeFileSync(join(workdir.current, "supabase", "config.toml"), 'target = "remote"\n');
     const { layer, resolver, out } = setup({
       rows: [DB_STATS_ROW],
       workdir: workdir.current,
       projectId: VALID_REF,
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(workdir.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workdir.current, "supabase", "config.toml"),
+        'target = "remote"\n',
+      );
       yield* inspectDbDbStats(flags());
       expect(resolver.connectionInput?.target).toMatchObject({ kind: "linked", ref: VALID_REF });
       expect(out.stderrText).toContain(unverifiedTargetBanner());

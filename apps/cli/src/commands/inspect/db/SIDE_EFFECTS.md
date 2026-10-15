@@ -10,14 +10,14 @@ hosted-mutation consent.
 
 ## Files Read
 
-| Path                             | Format     | When                                                                                |
-| -------------------------------- | ---------- | ----------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml` | TOML       | always, for the workspace `target` when no selector flag is given; local db host/port/password |
-| `<workdir>/supabase/.temp/project-ref` | plain text | linked target without `--project-ref` or `SUPABASE_PROJECT_ID`                  |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON | linked target, for the `Target:` banner (no API call)                          |
-| `~/.supabase/access-token`       | plain text | linked target only, lazily, when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
-| `.pgpass` / `pg_service.conf`    | libpq      | only if referenced by a `--db-url` connection string                                |
-| `$PGSSLROOTCERT` CA bundle       | PEM        | only if a `--db-url` sets `sslrootcert` / `PGSSLROOTCERT`                           |
+| Path                                           | Format     | When                                                                                           |
+| ---------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`               | TOML       | always, for the workspace `target` when no selector flag is given; local db host/port/password |
+| `<workdir>/supabase/.temp/project-ref`         | plain text | linked target without `--project-ref` or `SUPABASE_PROJECT_ID`                                 |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON       | linked target, for the `Target:` banner (no API call)                                          |
+| `~/.supabase/access-token`                     | plain text | linked target only, lazily, when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable         |
+| `.pgpass` / `pg_service.conf`                  | libpq      | only if referenced by a `--db-url` connection string                                           |
+| `$PGSSLROOTCERT` CA bundle                     | PEM        | only if a `--db-url` sets `sslrootcert` / `PGSSLROOTCERT`                                      |
 
 Connection resolution and all of the above are handled inside
 `DbConfigResolver` (`command-internal/db-config.layer.ts`); the command adds
@@ -31,12 +31,12 @@ no new config reads.
 
 ## API Routes (MAY fire on a linked target, inside the resolver)
 
-| Method   | Path                                        | Auth         | When                                                                                 |
-| -------- | ------------------------------------------- | ------------ | ------------------------------------------------------------------------------------ |
-| `GET`    | `/v1/projects`                              | Bearer token | linked target with no ref from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref`, interactive terminal only (project picker) |
-| `POST`   | `/v1/projects/{ref}/cli/login-role`         | Bearer token | linked target with no database password, to create a temp login role                  |
-| `GET`    | `/v1/projects/{ref}/config/database/pooler` | Bearer token | linked target from `--project-ref`, direct host unreachable, no usable saved pooler URL |
-| `POST`   | `/v1/projects/{ref}/network-bans/retrieve`  | Bearer token | linked target, from the 3rd failed temp-role connect (list bans)                      |
+| Method   | Path                                        | Auth         | When                                                                                                                                                                    |
+| -------- | ------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/v1/projects`                              | Bearer token | linked target with no ref from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref`, interactive terminal only (project picker)                                |
+| `POST`   | `/v1/projects/{ref}/cli/login-role`         | Bearer token | linked target with no database password, to create a temp login role                                                                                                    |
+| `GET`    | `/v1/projects/{ref}/config/database/pooler` | Bearer token | linked target from `--project-ref`, direct host unreachable, no usable saved pooler URL                                                                                 |
+| `POST`   | `/v1/projects/{ref}/network-bans/retrieve`  | Bearer token | linked target, from the 3rd failed temp-role connect (list bans)                                                                                                        |
 | `DELETE` | `/v1/projects/{ref}/network-bans`           | Bearer token | linked target, only when bans are listed and `--yes` or a shell `SUPABASE_YES` is set (clear a self-ban); otherwise the command fails with `LinkedDbNetworkBannedError` |
 
 ## Environment Variables
@@ -86,11 +86,11 @@ flags, run no query and open no connection, and exit 1 with
 
 ## Exit Codes
 
-| Code | Condition                                                                |
-| ---- | ------------------------------------------------------------------------ |
-| `0`  | success                                                                  |
+| Code | Condition                                                                                            |
+| ---- | ---------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                              |
 | `1`  | conflicting target flags, empty `--db-url`/`--project-ref`, resolution, connection, or query failure |
-| `1`  | `--project-ref` combined with `--local` or `--db-url`                    |
+| `1`  | `--project-ref` combined with `--local` or `--db-url`                                                |
 
 ## Telemetry Events Fired
 

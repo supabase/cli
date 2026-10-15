@@ -26,7 +26,10 @@ import { poolerConfigFromConnectionString } from "../../../command-internal/db-c
 import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
-import { resolveTarget, type ResolvedTarget } from "../../../command-internal/target/resolve-target.ts";
+import {
+  resolveTarget,
+  type ResolvedTarget,
+} from "../../../command-internal/target/resolve-target.ts";
 import { renderLocalTarget } from "../../../command-internal/target/target-identity.ts";
 import { TargetSelectorConflictError } from "../../../command-internal/target/target.errors.ts";
 import type { DbConnectError } from "../../../command-internal/db-connection.errors.ts";

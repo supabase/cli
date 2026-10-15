@@ -372,24 +372,21 @@ describe("inspect report", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "prints running + saved progress to stderr and the rules table to stdout",
-    () => {
-      const { layer, out } = setupReport({ csvs: DEFAULT_RULE_CSVS, isLocal: true });
-      return Effect.gen(function* () {
-        const base = yield* tempDir("supabase-report-out-");
-        yield* inspectReport(flags({ outputDir: base }));
-        expect(out.stderrText).not.toContain("Connecting to");
-        expect(out.stderrText).toContain("Running queries...");
-        expect(out.stderrText).toContain("Reports saved to ");
-        expect(out.stderrText).toContain("Loading default rules...");
-        expect(out.stdoutText).toContain("RULE");
-        expect(out.stdoutText).toContain("STATUS");
-        expect(out.stdoutText).toContain("MATCHES");
-        expect(out.stdoutText).toContain("No old locks");
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("prints running + saved progress to stderr and the rules table to stdout", () => {
+    const { layer, out } = setupReport({ csvs: DEFAULT_RULE_CSVS, isLocal: true });
+    return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
+      yield* inspectReport(flags({ outputDir: base }));
+      expect(out.stderrText).not.toContain("Connecting to");
+      expect(out.stderrText).toContain("Running queries...");
+      expect(out.stderrText).toContain("Reports saved to ");
+      expect(out.stderrText).toContain("Loading default rules...");
+      expect(out.stdoutText).toContain("RULE");
+      expect(out.stdoutText).toContain("STATUS");
+      expect(out.stdoutText).toContain("MATCHES");
+      expect(out.stdoutText).toContain("No old locks");
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("shows a passing rule as ✔/- and a failing rule with its message and matches", () => {
     const { layer, out } = setupReport({ csvs: DEFAULT_RULE_CSVS });

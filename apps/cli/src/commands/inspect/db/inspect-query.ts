@@ -41,6 +41,11 @@ export interface InspectQuerySpec {
   readonly project: (row: Record<string, unknown>, cfg: ResolvedDbConfig) => ReadonlyArray<string>;
 }
 
+/**
+ * Retained for its telemetry tag; the shared target selector now rejects conflicting target flags.
+ *
+ * @public
+ */
 export class InspectMutuallyExclusiveFlagsError extends Data.TaggedError(
   "InspectMutuallyExclusiveFlagsError",
 )<{ readonly message: string }> {

@@ -158,9 +158,7 @@ function localResolvedConfig(conn: PgConnInput): ResolvedDbConfig {
 
 function mockDbConfigResolver(
   opts: {
-    readonly resolve?: (
-      input: DbConnectionInput,
-    ) => Effect.Effect<ResolvedDbConfig, DbConfigError>;
+    readonly resolve?: (input: DbConnectionInput) => Effect.Effect<ResolvedDbConfig, DbConfigError>;
     readonly poolerFallback?: Option.Option<PgConnInput>;
     readonly poolerFallbackFails?: boolean;
   } = {},
@@ -641,27 +639,25 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect(
-    "uses configured api schemas for --linked generation when --schema is unset",
-    () =>
-      Effect.gen(function* () {
-        const workdir = yield* makeWorkdir("supabase-gen-types-linked-");
-        yield* writeConfig(
-          workdir,
-          ['project_id = "demo"', "", "[api]", 'schemas = ["auth", "storage"]'].join("\n"),
-        );
-        const { layer, api } = yield* setup({
-          workdir,
-          projectId: Option.some(VALID_REF),
-          projectTypes: "ok",
-        });
-        yield* genTypes(defaultFlags({ linked: true })).pipe(Effect.provide(layer));
+  it.effect("uses configured api schemas for --linked generation when --schema is unset", () =>
+    Effect.gen(function* () {
+      const workdir = yield* makeWorkdir("supabase-gen-types-linked-");
+      yield* writeConfig(
+        workdir,
+        ['project_id = "demo"', "", "[api]", 'schemas = ["auth", "storage"]'].join("\n"),
+      );
+      const { layer, api } = yield* setup({
+        workdir,
+        projectId: Option.some(VALID_REF),
+        projectTypes: "ok",
+      });
+      yield* genTypes(defaultFlags({ linked: true })).pipe(Effect.provide(layer));
 
-        expect(api.requests[0]).toEqual({
-          method: "generateTypescriptTypes",
-          input: { ref: VALID_REF, included_schemas: "public,auth,storage" },
-        });
-      }).pipe(Effect.provide(BunServices.layer)),
+      expect(api.requests[0]).toEqual({
+        method: "generateTypescriptTypes",
+        input: { ref: VALID_REF, included_schemas: "public,auth,storage" },
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect(
@@ -1306,9 +1302,9 @@ describe("gen types", () => {
           args: ["gen", "types", "--linked=false", "--project-ref", VALID_REF],
           projectTypes: "ok",
         });
-        yield* genTypes(
-          defaultFlags({ linked: false, projectRef: Option.some(VALID_REF) }),
-        ).pipe(Effect.provide(layer));
+        yield* genTypes(defaultFlags({ linked: false, projectRef: Option.some(VALID_REF) })).pipe(
+          Effect.provide(layer),
+        );
 
         expect(api.requests).toContainEqual({
           method: "generateTypescriptTypes",
