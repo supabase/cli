@@ -5,6 +5,7 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryEnable } from "./enable.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {};
 export type TelemetryEnableFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -12,6 +13,7 @@ export type TelemetryEnableFlags = CliCommand.Command.Config.Infer<typeof config
 export const telemetryEnableCommand = Command.make("enable", config).pipe(
   Command.withDescription("Enable CLI telemetry."),
   Command.withShortDescription("Enable telemetry"),
+  withPermissions({ operations: [] }),
   Command.withHandler((flags) =>
     // `cli_command_executed` fires based on the consent value read at layer-construction
     // time: silent when enabling from a disabled state, since the snapshot is `false`.

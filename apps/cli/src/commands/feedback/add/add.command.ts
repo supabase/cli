@@ -10,6 +10,7 @@ import { commandFeedbackClientLayer, feedbackCliConfigLayer } from "../feedback.
 import { FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import { feedbackAdd } from "./add.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {
   message: Argument.String("message").pipe(
@@ -58,6 +59,7 @@ export const feedbackAddCommand = Command.make("add", config).pipe(
       description: "Attribute the feedback to a project from an unlinked directory",
     },
   ]),
+  withPermissions({ operations: [], noApiEffectFlags: ["project-ref"] }),
   Command.withHandler(feedbackAddHandler),
   Command.provide(commandRuntimeLayer(["feedback", "add"])),
   Command.provide(telemetryStateLayer),

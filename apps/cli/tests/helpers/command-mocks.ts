@@ -598,11 +598,15 @@ export function mockCommandPlatformApi(
 
   const layer = Layer.effect(
     CommandPlatformApi,
-    makeApiClient({
-      baseUrl: opts.apiUrl ?? DEFAULT_API_URL,
-      accessToken: opts.accessToken ?? VALID_TOKEN,
-      userAgent: opts.userAgent ?? DEFAULT_USER_AGENT,
-    }),
+    // Retry backoff is covered in `@supabase/api`; stubbed failures must surface without waiting.
+    makeApiClient(
+      {
+        baseUrl: opts.apiUrl ?? DEFAULT_API_URL,
+        accessToken: opts.accessToken ?? VALID_TOKEN,
+        userAgent: opts.userAgent ?? DEFAULT_USER_AGENT,
+      },
+      { retry: { maxRetries: 0 } },
+    ),
   ).pipe(Layer.provide(httpClientLayer));
 
   const factoryLayer = Layer.succeed(CommandPlatformApiFactory, {

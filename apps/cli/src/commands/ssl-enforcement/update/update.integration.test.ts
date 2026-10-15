@@ -1,14 +1,14 @@
 import { BunServices } from "@effect/platform-bun";
 import { type V1GetSslEnforcementConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
-
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
@@ -17,7 +17,14 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { sslEnforcementUpdate } from "./update.handler.ts";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const SSL_ENFORCED: typeof V1GetSslEnforcementConfigOutput.Type = {
   currentConfig: { database: true },
@@ -142,6 +149,18 @@ describe("ssl-enforcement update integration", () => {
         }),
       );
       expect(api.requests).toHaveLength(0);
+      expect(() =>
+        assertPermissionDrift({
+          command: "ssl-enforcement update",
+          activeFlags: { "enable-db-ssl-enforcement": false, "disable-db-ssl-enforcement": false },
+          requests: [
+            {
+              method: "PUT",
+              url: `https://api.supabase.com/v1/projects/${VALID_REF}/ssl-enforcement`,
+            },
+          ],
+        }),
+      ).toThrow(/condition doesn't hold/);
     }).pipe(Effect.provide(layer));
   });
 
@@ -172,6 +191,73 @@ describe("ssl-enforcement update integration", () => {
       expect(api.requests[0]?.body).toMatchObject({
         requestedConfig: { database: true },
       });
+      assertPermissionDrift({
+        command: "ssl-enforcement update",
+        activeFlags: { "enable-db-ssl-enforcement": true, "disable-db-ssl-enforcement": false },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists projects for the picker and fills the real linked-project cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        const path = new URL(request.url).pathname;
+        if (path === "/v1/projects") {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (path === `/v1/projects/${VALID_REF}`) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        if (path === `/v1/projects/${VALID_REF}/ssl-enforcement`) {
+          return Effect.succeed(jsonResponse(request, 200, SSL_ENFORCED));
+        }
+        return Effect.succeed(jsonResponse(request, 404, { message: "unexpected request" }));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      consentApproved,
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* sslEnforcementUpdate({
+        projectRef: Option.none(),
+        enableDbSslEnforcement: true,
+        disableDbSslEnforcement: false,
+      });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `PUT https://api.supabase.com/v1/projects/${VALID_REF}/ssl-enforcement`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(api.requests[1]?.body).toMatchObject({ requestedConfig: { database: true } });
+      expect(out.stdoutText).toBe("SSL is being enforced.\n");
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "ssl-enforcement update",
+        activeFlags: { "enable-db-ssl-enforcement": true, "disable-db-ssl-enforcement": false },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -188,6 +274,12 @@ describe("ssl-enforcement update integration", () => {
         expect(api.requests).toHaveLength(1);
         expect(api.requests[0]?.body).toMatchObject({
           requestedConfig: { database: false },
+        });
+        assertPermissionDrift({
+          command: "ssl-enforcement update",
+          activeFlags: { "enable-db-ssl-enforcement": false, "disable-db-ssl-enforcement": true },
+          requests: api.requests,
+          exact: true,
         });
       }).pipe(Effect.provide(layer));
     },

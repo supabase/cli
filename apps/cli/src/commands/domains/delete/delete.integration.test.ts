@@ -1,10 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
 
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
@@ -13,6 +14,11 @@ import {
   unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { domainsDelete } from "./delete.handler.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
@@ -36,6 +42,7 @@ const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
   );
 
 const confirmed = `Confirmed by --yes: Delete the custom hostname config on project ${VALID_REF} · identity unverified\n`;
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
@@ -71,6 +78,7 @@ describe("domains delete integration", () => {
       expect(api.requests[0]?.method).toBe("DELETE");
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cached).toBe(true);
+      assertPermissionDrift({ command: "domains delete", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -134,6 +142,60 @@ describe("domains delete integration", () => {
       expect(out.progressEvents).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "picks the project, deletes the hostname config and fills the linked-project cache through the real layers",
+    () => {
+      const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          const route = `${request.method} ${request.url}`;
+          if (route === "GET https://api.supabase.com/v1/projects") {
+            return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+          }
+          if (route === `GET https://api.supabase.com/v1/projects/${VALID_REF}`) {
+            return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+          }
+          if (
+            route === `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname`
+          ) {
+            return Effect.succeed(jsonResponse(request, 200, {}));
+          }
+          return Effect.succeed(jsonResponse(request, 404, { message: "unexpected request" }));
+        },
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+        yield* domainsDelete(baseFlags);
+        expect(out.stderrText).toBe("Deleted custom hostname config successfully.\n");
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/v1/projects",
+          `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname`,
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "domains delete", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });
 
 describeHostedConsent("domains delete", {

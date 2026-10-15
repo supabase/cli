@@ -158,12 +158,13 @@ Same payload as `json`, delivered as a `result` NDJSON event.
   `--backup`: `deleteVolumes =
 flags.noBackup`. `--backup=false` alone does **not** delete volumes; only
   `--no-backup` does.
-- Volume prune gates `--all` on the Docker daemon's API version (`container-cli.ts`'s
+- Volume prune gates `--all` on the Docker client and daemon API versions (`container-cli.ts`'s
   `dockerSupportsVolumePruneAllFlag`, checked via `docker version --format
-'{{.Server.APIVersion}}'`) — Docker requires server API version >= 1.42. This isn't
-  cosmetic: Docker CLI's own `--all` flag on `volume prune` is annotated `version: "1.42"`
-  and enforced before pruning runs, so sending it unconditionally on a pre-1.42 daemon
-  hard-fails the whole call instead of just pruning a narrower set. On the Podman fallback,
+'{{.Client.APIVersion}} {{.Server.APIVersion}}'`) — Docker requires both to be >= 1.42. This
+  isn't cosmetic: a pre-23.0 Docker CLI doesn't know `--all` on `volume prune`, and a newer
+  CLI annotates it `version: "1.42"` and rejects it when the daemon is below 1.42, before
+  pruning runs, so sending it unconditionally hard-fails the whole call instead of just
+  pruning a narrower set. On the Podman fallback,
   `--all` is omitted unconditionally instead: no released Podman `volume prune` (checked
   v4.3 through the current v5.7) accepts that flag, and Podman already prunes every unused
   volume by default, so dropping it there is lossless. Podman is a fallback runtime reached by

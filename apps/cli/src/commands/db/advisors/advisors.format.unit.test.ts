@@ -1,8 +1,7 @@
-import { Predicate } from "effect";
-import { assert, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
-  apiResponseToAdvisorLints,
+  apiLintsToAdvisorLints,
   encodeAdvisorLints,
   filterAdvisorLints,
   ADVISORS_LEVEL_ENUM,
@@ -108,172 +107,39 @@ describe("scanAdvisorLintRow", () => {
   });
 });
 
-describe("apiResponseToAdvisorLints", () => {
-  it("coerces API fields to strings and projects metadata to the known fields", () => {
-    const lints = apiResponseToAdvisorLints({
-      lints: [
-        {
-          name: "rls_disabled_in_public",
-          title: "RLS disabled in public",
-          level: "ERROR",
-          facing: "EXTERNAL",
-          categories: ["SECURITY"],
-          description: "Tables without RLS",
-          detail: "Table public.users",
-          remediation: "https://supabase.com/docs",
-          cache_key: "test_key",
-          metadata: { schema: "public", entity: "public.users", type: "table", unknown: "x" },
-        },
-      ],
-    });
-    expect(lints).toHaveLength(1);
-    expect(lints[0]?.name).toBe("rls_disabled_in_public");
-    expect(lints[0]?.level).toBe("ERROR");
-    expect(lints[0]?.categories).toEqual(["SECURITY"]);
-    const metadata = lints[0]?.metadata;
-    assert(Predicate.isObject(metadata));
-    expect(Object.keys(metadata)).toEqual(["entity", "schema", "type"]);
+describe("apiLintsToAdvisorLints", () => {
+  const apiLint = {
+    name: "rls_disabled_in_public",
+    title: "RLS disabled in public",
+    level: "ERROR",
+    facing: "EXTERNAL",
+    categories: ["SECURITY"],
+    description: "Tables without RLS",
+    detail: "Table public.users",
+    remediation: "https://supabase.com/docs",
+    cache_key: "test_key",
+  };
+
+  it("orders metadata keys by the output contract and omits absent fields", () => {
+    const [mapped] = apiLintsToAdvisorLints([
+      {
+        ...apiLint,
+        metadata: { type: "table", schema: "public", fkey_columns: [1, 2], entity: "public.users" },
+      },
+    ]);
+    expect(Object.keys(mapped?.metadata as Record<string, unknown>)).toEqual([
+      "entity",
+      "fkey_columns",
+      "schema",
+      "type",
+    ]);
+    expect(mapped?.cacheKey).toBe("test_key");
   });
 
-  it("accepts an unknown advisor name (closed-enum divergence guard)", () => {
-    const lints = apiResponseToAdvisorLints({
-      lints: [{ name: "some_brand_new_advisor", level: "WARN", categories: ["SECURITY"] }],
-    });
-    expect(lints[0]?.name).toBe("some_brand_new_advisor");
-  });
-
-  it("returns an empty array for zero-value shapes (null, missing/null lints)", () => {
-    expect(apiResponseToAdvisorLints(null)).toEqual([]);
-    expect(apiResponseToAdvisorLints({})).toEqual([]);
-    expect(apiResponseToAdvisorLints({ lints: null })).toEqual([]);
-  });
-
-  it("null lints element becomes zero-value lint", () => {
-    const result = apiResponseToAdvisorLints({
-      lints: [
-        null,
-        {
-          name: "rls_disabled",
-          level: "ERROR",
-          facing: "EXTERNAL",
-          categories: ["SECURITY"],
-          cache_key: "ck",
-        },
-      ],
-    });
-    expect(result).toHaveLength(2);
-    expect(result[0]).toEqual({
-      name: "",
-      title: "",
-      level: "",
-      facing: "",
-      categories: null,
-      description: "",
-      detail: "",
-      remediation: "",
-      cacheKey: "",
-    });
-    expect(result[1]?.name).toBe("rls_disabled");
-    expect(result[1]?.level).toBe("ERROR");
-  });
-
-  it("null categories element becomes empty string", () => {
-    const result = apiResponseToAdvisorLints({
-      lints: [{ name: "x", categories: [null, "SECURITY"] }],
-    });
-    expect(result[0]?.categories).toEqual(["", "SECURITY"]);
-  });
-
-  it("throws on invalid structural shapes", () => {
-    expect(() => apiResponseToAdvisorLints("nope")).toThrow();
-    expect(() => apiResponseToAdvisorLints([])).toThrow();
-    expect(() => apiResponseToAdvisorLints({ lints: "nope" })).toThrow();
-    expect(() => apiResponseToAdvisorLints({ lints: ["not-an-object"] })).toThrow();
-    expect(() =>
-      apiResponseToAdvisorLints({ lints: [{ name: "x", categories: "SECURITY" }] }),
-    ).toThrow();
-    expect(() => apiResponseToAdvisorLints({ lints: [{ name: "x", metadata: "nope" }] })).toThrow();
-    expect(() =>
-      apiResponseToAdvisorLints({
-        lints: [{ name: "x", metadata: { fkey_columns: "nope" } }],
-      }),
-    ).toThrow();
-  });
-
-  it("throws on scalar fields with the wrong JSON type", () => {
-    expect(() => apiResponseToAdvisorLints({ lints: [{ name: 123 }] })).toThrow();
-    expect(() => apiResponseToAdvisorLints({ lints: [{ name: "x", level: true }] })).toThrow();
-    expect(() => apiResponseToAdvisorLints({ lints: [{ name: "x", categories: [1] }] })).toThrow();
-    expect(() =>
-      apiResponseToAdvisorLints({ lints: [{ name: "x", metadata: { schema: 5 } }] }),
-    ).toThrow();
-  });
-
-  it("treats absent scalar fields as the empty-string zero value", () => {
-    // `categories` absent encodes as `null` too (no omitempty on the field).
-    const lints = apiResponseToAdvisorLints({ lints: [{ name: "only_name" }] });
-    expect(lints[0]).toEqual({
-      name: "only_name",
-      title: "",
-      level: "",
-      facing: "",
-      categories: null,
-      description: "",
-      detail: "",
-      remediation: "",
-      cacheKey: "",
-    });
-  });
-
-  it("collapses null and empty categories to null", () => {
-    const fromNull = apiResponseToAdvisorLints({
-      lints: [{ name: "x", categories: null }],
-    });
-    expect(fromNull[0]?.categories).toBeNull();
-    const fromEmpty = apiResponseToAdvisorLints({
-      lints: [{ name: "x", categories: [] }],
-    });
-    expect(fromEmpty[0]?.categories).toBeNull();
-    const fromPopulated = apiResponseToAdvisorLints({
-      lints: [{ name: "x", categories: ["SECURITY"] }],
-    });
-    expect(fromPopulated[0]?.categories).toEqual(["SECURITY"]);
-  });
-
-  it("normalizes null fkey_columns elements to 0", () => {
-    const result = apiResponseToAdvisorLints({
-      lints: [{ name: "x", metadata: { fkey_columns: [null, 2] } }],
-    });
-    expect(result[0]?.metadata).toMatchObject({ fkey_columns: [0, 2] });
-  });
-
-  it("normalizes a fully-null fkey_columns array to all zeros", () => {
-    const result = apiResponseToAdvisorLints({
-      lints: [{ name: "x", metadata: { fkey_columns: [null, null] } }],
-    });
-    expect(result[0]?.metadata).toMatchObject({ fkey_columns: [0, 0] });
-  });
-
-  it("still throws on non-number, non-null fkey_columns elements", () => {
-    expect(() =>
-      apiResponseToAdvisorLints({
-        lints: [{ name: "x", metadata: { fkey_columns: [1, "x"] } }],
-      }),
-    ).toThrow("invalid advisor metadata.fkey_columns element: expected a number");
-
-    expect(() =>
-      apiResponseToAdvisorLints({
-        lints: [{ name: "x", metadata: { fkey_columns: [1, true] } }],
-      }),
-    ).toThrow();
-  });
-
-  it("still throws on a non-array fkey_columns", () => {
-    expect(() =>
-      apiResponseToAdvisorLints({
-        lints: [{ name: "x", metadata: { fkey_columns: "nope" } }],
-      }),
-    ).toThrow("invalid advisor metadata.fkey_columns: expected an array of numbers");
+  it("collapses empty categories to null and omits metadata when absent", () => {
+    const [mapped] = apiLintsToAdvisorLints([{ ...apiLint, categories: [] }]);
+    expect(mapped?.categories).toBeNull();
+    expect("metadata" in (mapped ?? {})).toBe(false);
   });
 });
 

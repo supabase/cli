@@ -1,5 +1,9 @@
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { FUNCTIONS_PROJECT_REF_SAFE_FLAGS } from "../../../shared/functions/functions.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
@@ -42,6 +46,13 @@ export const functionsDeleteCommand = Command.make("delete", config).pipe(
       description: "Delete a deployed function from a specific project",
     },
   ]),
+  withPermissions(
+    compose(
+      { operations: [{ operationId: "v1-delete-a-function", kind: "required" }] },
+      projectRefPicker,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler(functionsDeleteHandler),
   Command.provide(managementApiRuntimeLayer(["functions", "delete"])),
   withTargetPolicy({ group: "hosted", consent: "no" }),

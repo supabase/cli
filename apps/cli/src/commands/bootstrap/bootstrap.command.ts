@@ -2,6 +2,12 @@ import { Layer } from "effect";
 import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../command-internal/command-permissions/model.ts";
+import { projectApiKeys } from "../../command-internal/get-api-keys.ts";
+import { linkServices } from "../../command-internal/link-services-core.ts";
+import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
+import { organizationPicker } from "../../command-internal/organization-picker.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
@@ -29,6 +35,27 @@ export type BootstrapFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const bootstrapCommand = Command.make("bootstrap", config).pipe(
   Command.withDescription("Bootstrap a Supabase project from a starter template."),
   Command.withShortDescription("Bootstrap a Supabase project from a starter template"),
+  withPermissions(
+    compose(
+      {
+        operations: [
+          { operationId: "v1-create-a-project", kind: "required" },
+          { operationId: "v1-get-services-health", kind: "required" },
+          {
+            operationId: "v1-get-pooler-config",
+            kind: "required",
+            context:
+              "the new project's direct database host is unreachable (IPv4-only network): the migration push connects through the pooler URL this call saves, and without it fails",
+          },
+        ],
+        noApiEffectFlags: ["password"],
+      },
+      organizationPicker,
+      projectApiKeys,
+      linkServices,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     // No bootstrap flag is telemetry-safe, so no `safeFlags`.
     bootstrap(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),

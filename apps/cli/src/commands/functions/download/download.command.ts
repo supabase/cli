@@ -1,8 +1,13 @@
 import { Effect, Layer, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
+import { functionsDownload as functionsDownloadCalls } from "../../../shared/functions/download.ts";
 import { FUNCTIONS_PROJECT_REF_SAFE_FLAGS } from "../../../shared/functions/functions.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -83,6 +88,17 @@ export const functionsDownloadCommand = Command.make("download", config).pipe(
       description: "Download all functions from a specific project",
     },
   ]),
+  withPermissions(
+    compose(
+      {
+        operations: [],
+        noApiEffectFlags: ["use-api", "use-docker", "legacy-bundle"],
+      },
+      functionsDownloadCalls,
+      projectRefPicker,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     Option.isSome(flags.legacyBundle)
       ? functionsDownloadLegacyBundleHandler(flags)

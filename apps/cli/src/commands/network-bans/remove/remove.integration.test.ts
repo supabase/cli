@@ -1,13 +1,13 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
-
+import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
@@ -18,8 +18,15 @@ import {
 import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { networkBansRemoveDbUnbanIpFlag } from "./remove.command.ts";
 import { networkBansRemove } from "./remove.handler.ts";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 // Runs the real --db-unban-ip flag pipeline so these scenarios cover raw CLI values
 // through to the request body.
@@ -97,6 +104,63 @@ describe("network-bans remove integration", () => {
       expect(api.requests[0]?.method).toBe("DELETE");
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/network-bans`);
       expect(api.requests[0]?.body).toEqual({ ipv4_addresses: [], requester_ip: true });
+      assertPermissionDrift({
+        command: "network-bans remove",
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists the picker's projects, removes the bans and fills the real cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.url === "https://api.supabase.com/v1/projects") {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (request.url === `https://api.supabase.com/v1/projects/${VALID_REF}`) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        return Effect.succeed(jsonResponse(request, 200, null));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      consentApproved,
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* networkBansRemove({ projectRef: Option.none(), dbUnbanIp: [] });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/network-bans`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toBe("Successfully removed network bans.\n");
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "network-bans remove",
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -110,6 +174,11 @@ describe("network-bans remove integration", () => {
       expect(api.requests[0]?.body).toEqual({
         ipv4_addresses: ["12.3.4.5", "2001:db8:abcd:0012::0"],
         requester_ip: false,
+      });
+      assertPermissionDrift({
+        command: "network-bans remove",
+        activeFlags: { "db-unban-ip": true },
+        requests: api.requests,
       });
     }).pipe(Effect.provide(layer));
   });

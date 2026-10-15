@@ -1,12 +1,13 @@
 import type {
   V1ActivateVanitySubdomainConfigOutput,
   V1CheckVanitySubdomainAvailabilityOutput,
+  V1GetProjectOutput,
   V1GetVanitySubdomainConfigOutput,
 } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 
-import { mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, mockTty } from "../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
@@ -19,6 +20,11 @@ import {
   unverifiedTargetBanner,
 } from "../../../tests/helpers/command-mocks.ts";
 import { describeHostedConsent } from "../../../tests/helpers/hosted-consent.ts";
+import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../tests/helpers/permission-real-layers.ts";
 import { vanitySubdomainsActivate } from "./activate/activate.handler.ts";
 import { vanitySubdomainsCheckAvailability } from "./check-availability/check-availability.handler.ts";
 import { vanitySubdomainsDelete } from "./delete/delete.handler.ts";
@@ -29,6 +35,7 @@ import { TargetPolicy } from "../../command-internal/target/target-policy.ts";
 type VanityConfig = typeof V1GetVanitySubdomainConfigOutput.Type;
 type AvailabilityResponse = typeof V1CheckVanitySubdomainAvailabilityOutput.Type;
 type ActivateResponse = typeof V1ActivateVanitySubdomainConfigOutput.Type;
+type ProjectResponse = typeof V1GetProjectOutput.Type;
 
 const tempRoot = useTempWorkdir("supabase-vanity-int-");
 
@@ -40,6 +47,12 @@ const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
   );
 
 const confirmedDelete = `Confirmed by --yes: Delete the vanity subdomain on project ${VALID_REF} · identity unverified\n`;
+const API_URL = "https://api.supabase.com";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const requestLines = (api: ReturnType<typeof mockCommandPlatformApi>) =>
+  api.requests.map(({ method, url }) => `${method} ${url}`);
 
 const SAMPLE_GET: VanityConfig = {
   status: "custom-domain-used",
@@ -57,6 +70,24 @@ const SAMPLE_CHECK: AvailabilityResponse = {
 
 const SAMPLE_ACTIVATE: ActivateResponse = {
   custom_domain: "example.com",
+};
+
+// Schema-valid project body: the upgrade-suggest fallback decodes it with the typed client.
+const SAMPLE_PROJECT: ProjectResponse = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org-123",
+  organization_slug: "supabase",
+  name: "Test Project",
+  region: "us-east-1",
+  created_at: "2026-01-01T00:00:00Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.example.com",
+    version: "15",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
 };
 
 type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
@@ -90,7 +121,7 @@ function gatedApi(matchWrite: (url: string) => boolean) {
           return jsonResponse(request, 402, {});
         }
         if (request.method === "GET" && request.url.endsWith(`/v1/projects/${VALID_REF}`)) {
-          return jsonResponse(request, 200, { organization_slug: "supabase" });
+          return jsonResponse(request, 200, SAMPLE_PROJECT);
         }
         if (request.method === "GET" && request.url.includes("/entitlements")) {
           return jsonResponse(request, 200, {
@@ -109,6 +140,34 @@ function gatedApi(matchWrite: (url: string) => boolean) {
   });
 }
 
+// No project is configured: the picker lists projects, the command makes its own call, and the
+// real linked-project cache then looks the project up.
+function pickerComposition(own: { readonly status: number; readonly body: unknown }) {
+  const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+  const api = mockCommandPlatformApi({
+    handler: (request) => {
+      if (request.method === "GET" && request.url === `${API_URL}/v1/projects`) {
+        return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+      }
+      if (request.method === "GET" && request.url === `${API_URL}/v1/projects/${VALID_REF}`) {
+        return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+      }
+      return Effect.succeed(jsonResponse(request, own.status, own.body));
+    },
+  });
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current, projectId: Option.none() });
+  const layer = buildRuntime({
+    out,
+    api,
+    cliSettings,
+    tty: mockTty({ stdinIsTty: true }),
+    linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+  });
+  return { out, api, layer };
+}
+
+const linkedProjectCachePath = () => `${tempRoot.current}/supabase/.temp/linked-project.json`;
+
 describe("vanity-subdomains get", () => {
   it.effect("prints status and subdomain in text mode", () => {
     const out = mockOutput({ format: "text" });
@@ -120,6 +179,35 @@ describe("vanity-subdomains get", () => {
       expect(out.stdoutText).toBe("Status: custom-domain-used\nVanity subdomain: example.com\n");
       expect(api.requests[0]?.method).toBe("GET");
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/vanity-subdomain`);
+      assertPermissionDrift({
+        command: "vanity-subdomains get",
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists the picker's projects, reads the config and fills the real cache", () => {
+    const { out, api, layer } = pickerComposition({ status: 200, body: SAMPLE_GET });
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.exists(linkedProjectCachePath())).toBe(false);
+      yield* vanitySubdomainsGet({ projectRef: Option.none() });
+      expect(requestLines(api)).toEqual([
+        `GET ${API_URL}/v1/projects`,
+        `GET ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain`,
+        `GET ${API_URL}/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toBe("Status: custom-domain-used\nVanity subdomain: example.com\n");
+      expect(yield* decodeJson(yield* fs.readFileString(linkedProjectCachePath()))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "vanity-subdomains get",
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -145,6 +233,7 @@ describe("vanity-subdomains get", () => {
       const exit = yield* Effect.exit(vanitySubdomainsGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(1);
+      assertPermissionDrift({ command: "vanity-subdomains get", requests: api.requests });
       expect(out.stderrText).toContain("Upgrade your plan:");
       expect(out.stderrText).toContain("/org/env-org/billing");
       expect(analytics.captured).toEqual([
@@ -319,6 +408,40 @@ describe("vanity-subdomains check-availability", () => {
         `/v1/projects/${VALID_REF}/vanity-subdomain/check-availability`,
       );
       expect(api.requests[0]?.body).toEqual({ vanity_subdomain: "example.com" });
+      assertPermissionDrift({
+        command: "vanity-subdomains check-availability",
+        activeFlags: { "desired-subdomain": "example.com" },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists the picker's projects, checks availability and fills the real cache", () => {
+    const { out, api, layer } = pickerComposition({ status: 201, body: SAMPLE_CHECK });
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.exists(linkedProjectCachePath())).toBe(false);
+      yield* vanitySubdomainsCheckAvailability({
+        projectRef: Option.none(),
+        desiredSubdomain: Option.some("example.com"),
+      });
+      expect(requestLines(api)).toEqual([
+        `GET ${API_URL}/v1/projects`,
+        `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/check-availability`,
+        `GET ${API_URL}/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toBe("Subdomain example.com available: true\n");
+      expect(yield* decodeJson(yield* fs.readFileString(linkedProjectCachePath()))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "vanity-subdomains check-availability",
+        activeFlags: { "desired-subdomain": "example.com" },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -409,6 +532,16 @@ describe("vanity-subdomains check-availability", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(out.stderrText).toContain("Upgrade your plan:");
       expect(analytics.captured).toHaveLength(0);
+      expect(requestLines(api)).toEqual([
+        `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/check-availability`,
+        `GET ${API_URL}/v1/projects/${VALID_REF}`,
+        `GET ${API_URL}/v1/organizations/supabase/entitlements`,
+      ]);
+      assertPermissionDrift({
+        command: "vanity-subdomains check-availability",
+        activeFlags: { "desired-subdomain": "example.com" },
+        requests: api.requests,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -449,6 +582,18 @@ describe("vanity-subdomains check-availability", () => {
       expect(error._tag).toBe("DesiredSubdomainRequiredError");
       expect(error.message).toBe('required flag(s) "desired-subdomain" not set');
       expect(api.requests).toHaveLength(0);
+      expect(() =>
+        assertPermissionDrift({
+          command: "vanity-subdomains check-availability",
+          activeFlags: {},
+          requests: [
+            {
+              method: "POST",
+              url: `${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/check-availability`,
+            },
+          ],
+        }),
+      ).toThrow(/condition doesn't hold/);
     }).pipe(Effect.provide(layer));
   });
 
@@ -464,6 +609,12 @@ describe("vanity-subdomains check-availability", () => {
       });
       expect(api.requests[0]?.body).toEqual({ vanity_subdomain: "" });
       expect(out.stdoutText).toBe("Subdomain  available: true\n");
+      assertPermissionDrift({
+        command: "vanity-subdomains check-availability",
+        activeFlags: { "desired-subdomain": "" },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 });
@@ -483,6 +634,40 @@ describe("vanity-subdomains activate", () => {
       expect(api.requests[0]?.method).toBe("POST");
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/vanity-subdomain/activate`);
       expect(api.requests[0]?.body).toEqual({ vanity_subdomain: "example.com" });
+      assertPermissionDrift({
+        command: "vanity-subdomains activate",
+        activeFlags: { "desired-subdomain": "example.com" },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists the picker's projects, activates the subdomain and fills the real cache", () => {
+    const { out, api, layer } = pickerComposition({ status: 201, body: SAMPLE_ACTIVATE });
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.exists(linkedProjectCachePath())).toBe(false);
+      yield* vanitySubdomainsActivate({
+        projectRef: Option.none(),
+        desiredSubdomain: Option.some("example.com"),
+      });
+      expect(requestLines(api)).toEqual([
+        `GET ${API_URL}/v1/projects`,
+        `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/activate`,
+        `GET ${API_URL}/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toBe("Activated vanity subdomain at example.com\n");
+      expect(yield* decodeJson(yield* fs.readFileString(linkedProjectCachePath()))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "vanity-subdomains activate",
+        activeFlags: { "desired-subdomain": "example.com" },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -579,6 +764,16 @@ describe("vanity-subdomains activate", () => {
           properties: { feature_key: "vanity_subdomain", org_slug: "supabase" },
         },
       ]);
+      expect(requestLines(api)).toEqual([
+        `POST ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/activate`,
+        `GET ${API_URL}/v1/projects/${VALID_REF}`,
+        `GET ${API_URL}/v1/organizations/supabase/entitlements`,
+      ]);
+      assertPermissionDrift({
+        command: "vanity-subdomains activate",
+        activeFlags: { "desired-subdomain": "example.com" },
+        requests: api.requests,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -621,6 +816,18 @@ describe("vanity-subdomains activate", () => {
       expect(error._tag).toBe("DesiredSubdomainRequiredError");
       expect(error.message).toBe('required flag(s) "desired-subdomain" not set');
       expect(api.requests).toHaveLength(0);
+      expect(() =>
+        assertPermissionDrift({
+          command: "vanity-subdomains activate",
+          activeFlags: {},
+          requests: [
+            {
+              method: "POST",
+              url: `${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain/activate`,
+            },
+          ],
+        }),
+      ).toThrow(/condition doesn't hold/);
     }).pipe(Effect.provide(layer));
   });
 
@@ -635,6 +842,12 @@ describe("vanity-subdomains activate", () => {
         desiredSubdomain: Option.some(""),
       });
       expect(api.requests[0]?.body).toEqual({ vanity_subdomain: "" });
+      assertPermissionDrift({
+        command: "vanity-subdomains activate",
+        activeFlags: { "desired-subdomain": "" },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 });
@@ -652,6 +865,35 @@ describe("vanity-subdomains delete", () => {
       );
       expect(api.requests[0]?.method).toBe("DELETE");
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/vanity-subdomain`);
+      assertPermissionDrift({
+        command: "vanity-subdomains delete",
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists the picker's projects, deletes the subdomain and fills the real cache", () => {
+    const { out, api, layer } = pickerComposition({ status: 200, body: null });
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.exists(linkedProjectCachePath())).toBe(false);
+      yield* vanitySubdomainsDelete({ projectRef: Option.none() });
+      expect(requestLines(api)).toEqual([
+        `GET ${API_URL}/v1/projects`,
+        `DELETE ${API_URL}/v1/projects/${VALID_REF}/vanity-subdomain`,
+        `GET ${API_URL}/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stderrText).toContain("Deleted vanity subdomain successfully.\n");
+      expect(yield* decodeJson(yield* fs.readFileString(linkedProjectCachePath()))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "vanity-subdomains delete",
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 

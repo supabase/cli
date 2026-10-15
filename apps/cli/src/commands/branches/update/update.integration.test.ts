@@ -1,9 +1,13 @@
-import { type V1UpdateABranchConfigOutput } from "@supabase/api/effect";
-import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
-
-import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
+  type V1UpdateABranchConfigOutput,
+  type V1ListAllProjectsOutput,
+} from "@supabase/api/effect";
+import { describe, expect, it } from "@effect/vitest";
+import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
+import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
+
+import {
+  VALID_REF,
   buildTestRuntime,
   jsonResponse,
   mockCommandSettings,
@@ -14,6 +18,8 @@ import {
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import type { BranchesUpdateFlags } from "./update.command.ts";
 import { branchesUpdate } from "./update.handler.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
@@ -80,6 +86,28 @@ const BRANCH_CONFIG = {
   db_port: 5432,
 };
 
+const OTHER_BRANCH_REF = "dddddddddddddddddddd";
+const API = "https://api.supabase.com";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org-123",
+  organization_slug: "acme",
+  name: "alpha",
+  region: "us-east-1",
+  created_at: "2026-05-27T01:02:03Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.alpha.supabase.co",
+    version: "15.1",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
+};
+
 const tempRoot = useTempWorkdir("supabase-branches-update-int-");
 
 const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
@@ -88,6 +116,8 @@ const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
     Layer.succeed(YesFlag, true),
     Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
   );
+const sequence = (requests: ReadonlyArray<{ method: string; url: string }>) =>
+  requests.map(({ method, url }) => `${method} ${url}`);
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
@@ -160,7 +190,7 @@ const baseFlags: BranchesUpdateFlags = {
 
 describe("branches update integration", () => {
   it.effect("updates a branch with --name and emits 'Updated preview branch:' to stderr", () => {
-    const { layer, out } = setup();
+    const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* branchesUpdate({
         ...baseFlags,
@@ -169,6 +199,16 @@ describe("branches update integration", () => {
       });
       expect(out.stderrText).toContain("Updated preview branch:");
       expect(out.stdoutText).toContain("renamed");
+      expect(sequence(api.requests)).toEqual([
+        `GET ${API}/v1/branches/${BRANCH_UUID}`,
+        `PATCH ${API}/v1/branches/${BRANCH_UUID}`,
+      ]);
+      assertPermissionDrift({
+        command: "branches update",
+        activeFlags: { name: true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -189,6 +229,11 @@ describe("branches update integration", () => {
         git_branch: "git-x",
         persistent: true,
         notify_url: "https://hook.example.com",
+      });
+      assertPermissionDrift({
+        command: "branches update",
+        activeFlags: { name: true, "git-branch": true, persistent: true, "notify-url": true },
+        requests: api.requests,
       });
     }).pipe(Effect.provide(layer));
   });
@@ -279,9 +324,8 @@ describe("branches update integration", () => {
       const analytics = mockAnalytics();
       const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
 
-      // suggestUpgrade bypasses the typed API client (so cli-e2e replay fixtures with
-      // `__PROJECT_REF__` placeholders don't trip strict schema decode), so all three URLs
-      // route through the same mockCommandPlatformApi handler the production HttpClient uses.
+      // The gate's follow-up project and entitlements GETs share the PATCH's
+      // mockCommandPlatformApi handler.
       const apiMock = mockCommandPlatformApi({
         handler: (request) =>
           Effect.sync(() => {
@@ -331,6 +375,16 @@ describe("branches update integration", () => {
           r.url.endsWith(`/v1/organizations/${ORG_SLUG}/entitlements`),
         );
         expect(entitlementsCall).toBeDefined();
+        expect(sequence(apiMock.requests)).toEqual([
+          `PATCH ${API}/v1/branches/${BRANCH_REF}`,
+          `GET ${API}/v1/projects/${BRANCH_REF}`,
+          `GET ${API}/v1/organizations/${ORG_SLUG}/entitlements`,
+        ]);
+        assertPermissionDrift({
+          command: "branches update",
+          activeFlags: { persistent: true },
+          requests: apiMock.requests,
+        });
         expect(analytics.captured).toEqual([
           {
             event: "cli_upgrade_suggested",
@@ -338,6 +392,76 @@ describe("branches update integration", () => {
           },
         ]);
         expect(out.stderrText).toContain("Upgrade your plan:");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "updates the branch chosen from the pickers and fills the real linked-project cache",
+    () => {
+      const out = mockOutput({ format: "text", promptSelectResponses: [VALID_REF, BRANCH_REF] });
+      const api = mockCommandPlatformApi({
+        handler: (request) =>
+          Effect.sync(() => {
+            if (request.method === "GET" && request.url === `${API}/v1/projects`) {
+              return jsonResponse(request, 200, [PROJECT]);
+            }
+            if (request.method === "GET" && request.url === `${API}/v1/projects/${VALID_REF}`) {
+              return jsonResponse(request, 200, PROJECT);
+            }
+            if (
+              request.method === "GET" &&
+              request.url === `${API}/v1/projects/${VALID_REF}/branches`
+            ) {
+              return jsonResponse(request, 200, [
+                { ...UPDATED, name: "other", project_ref: OTHER_BRANCH_REF },
+                { ...UPDATED, name: "feat-x" },
+              ]);
+            }
+            if (request.method === "PATCH" && request.url === `${API}/v1/branches/${BRANCH_REF}`) {
+              return jsonResponse(request, 200, UPDATED);
+            }
+            return jsonResponse(request, 404, { message: "unexpected request" });
+          }),
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+
+        yield* branchesUpdate({ ...baseFlags, name: Option.some("renamed") });
+
+        expect(sequence(api.requests)).toEqual([
+          `GET ${API}/v1/projects`,
+          `GET ${API}/v1/projects/${VALID_REF}/branches`,
+          `PATCH ${API}/v1/branches/${BRANCH_REF}`,
+          `GET ${API}/v1/projects/${VALID_REF}`,
+        ]);
+        expect(out.stderrText).toContain("Updated preview branch:");
+        expect(out.stdoutText).toContain("renamed");
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({
+          command: "branches update",
+          activeFlags: { name: true },
+          requests: api.requests,
+          exact: true,
+        });
       }).pipe(Effect.provide(layer));
     },
   );

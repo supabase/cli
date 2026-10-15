@@ -2,6 +2,10 @@ import { Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
@@ -37,6 +41,26 @@ export type SslEnforcementUpdateFlags = CliCommand.Command.Config.Infer<typeof c
 export const sslEnforcementUpdateCommand = Command.make("update", config).pipe(
   Command.withDescription("Update SSL enforcement configuration."),
   Command.withShortDescription("Update SSL enforcement configuration"),
+  withPermissions(
+    compose(
+      {
+        operations: [
+          {
+            operationId: "v1-update-ssl-enforcement-config",
+            kind: "required",
+            when: [{ flag: "enable-db-ssl-enforcement", is: true }],
+          },
+          {
+            operationId: "v1-update-ssl-enforcement-config",
+            kind: "required",
+            when: [{ flag: "disable-db-ssl-enforcement", is: true }],
+          },
+        ],
+      },
+      projectRefPicker,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // An invalid `-o` value must be rejected before the missing

@@ -1,6 +1,7 @@
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { cliConfigProviderLayer } from "../../shared/config/cli-config-provider.layer.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
@@ -45,6 +46,17 @@ export type InitFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const initCommand = Command.make("init", config).pipe(
   Command.withDescription("Initialize a local project."),
   Command.withShortDescription("Initialize a local project"),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: [
+      "interactive",
+      "use-orioledb",
+      "force",
+      "with-vscode-workspace",
+      "with-vscode-settings",
+      "with-intellij-settings",
+    ],
+  }),
   Command.withHandler((flags) =>
     init(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),

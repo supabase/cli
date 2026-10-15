@@ -41,16 +41,17 @@ staying in effect.
 
 ## API Routes
 
-| Method          | Path                                                                                      | Auth                           | Notes                                                                                        |
-| --------------- | ----------------------------------------------------------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------- |
-| `GET`           | `api.github.com/repos/supabase-community/supabase-samples/contents/samples.json?ref=main` | optional `Bearer GITHUB_TOKEN` | base64 `content` → `{samples:[…]}`                                                           |
-| `GET`           | `api.github.com/repos/<owner>/<repo>/contents/<path>?ref=<ref>` + raw `download_url`      | optional `Bearer GITHUB_TOKEN` | template download (BFS, concurrency 5)                                                       |
-| `GET`           | `/v1/organizations`                                                                       | Bearer                         | interactive org picker (create core)                                                         |
-| `POST`          | `/v1/projects`                                                                            | Bearer                         | `{name, organization_slug, db_pass, region?, desired_instance_size?, template_url?}` → `201` |
-| `GET`           | `/v1/projects/{ref}/api-keys`                                                             | Bearer                         | retried with exponential backoff (no `reveal`)                                               |
-| `GET`           | `/v1/projects/{ref}` + storage/pooler config + tenant version probes                      | Bearer / service key           | `link.LinkServices` (best-effort)                                                            |
-| `GET`           | `/v1/projects/{ref}/health?services=db`                                                   | Bearer                         | retried with exponential backoff                                                             |
-| login endpoints | —                                                                                         | —                              | ensure-login browser flow (token miss)                                                       |
+| Method          | Path                                                                                                     | Auth                              | Notes                                                                                |
+| --------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------ |
+| `GET`           | `api.github.com/repos/supabase-community/supabase-samples/contents/samples.json?ref=main`                | optional `Bearer GITHUB_TOKEN`    | base64 `content` → `{samples:[…]}`                                                   |
+| `GET`           | `api.github.com/repos/<owner>/<repo>/contents/<path>?ref=<ref>` + raw `download_url`                     | optional `Bearer GITHUB_TOKEN`    | template download (BFS, concurrency 5)                                               |
+| `GET`           | `/v1/organizations`                                                                                      | Bearer                            | organization listing, always made before the org prompt (bootstrap passes no org ID) |
+| `POST`          | `/v1/projects`                                                                                           | Bearer                            | `{name, organization_slug, db_pass, region, template_url?}` → `201`                  |
+| `GET`           | `/v1/projects/{ref}/api-keys`                                                                            | Bearer                            | retried with exponential backoff (no `reveal`)                                       |
+| `GET`           | `/v1/projects/{ref}/config/storage`, `/v1/projects/{ref}/config/database/pooler` + tenant version probes | Bearer / anon key (tenant probes) | `link.LinkServices` (best-effort)                                                    |
+| `GET`           | `/v1/projects/{ref}`                                                                                     | Bearer                            | linked-project cache fill (`Effect.ensuring`, best-effort)                           |
+| `GET`           | `/v1/projects/{ref}/health?services=db`                                                                  | Bearer                            | retried with exponential backoff                                                     |
+| login endpoints | —                                                                                                        | —                                 | ensure-login browser flow (token miss)                                               |
 
 The native push step fires **no Management API routes of its own**. Its connection is resolved
 separately from (not reused from) the naive one written to `.env` above: `resolveLinkedConn`
@@ -83,8 +84,9 @@ neither branch ever reaches the temp-login-role/Management-API path a passwordle
 - `cli_command_executed` — once (via `withCommandTelemetry`).
 - `cli_login_completed` — once, **only** on the browser-login path (token miss).
 - **No `cli_project_linked`** — bootstrap only links services (not a full `link` run), so it
-  deliberately skips the project-linked telemetry, status check, and the `linked-project.json`
-  temp write that the standalone `link` command performs.
+  deliberately skips the project-linked telemetry and the status check that the standalone `link`
+  command performs. Its `linked-project.json` comes only from the post-run cache fill (see Files
+  Written), not from a link step.
 - `create` fires no custom event.
 - The native push step (`dbPushCore`) fires **no telemetry of its own** — it is the bare
   handler function, not `db push`'s own `push.command.ts` wrapper (the thing that fires

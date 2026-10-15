@@ -4,11 +4,13 @@ import type * as CliCommand from "effect/cli/Command";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
-import { storageTargetFlags } from "../storage.flags.ts";
+import { STORAGE_PERMISSIONS, storageTargetFlags } from "../storage.flags.ts";
 import { storageLs } from "./ls.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
@@ -36,6 +38,7 @@ export const storageLsCommand = Command.make("ls", config).pipe(
       description: "List objects at a storage path",
     },
   ]),
+  withPermissions(STORAGE_PERMISSIONS),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       yield* requireExperimental;

@@ -1,3 +1,4 @@
+import { makeApiClient } from "@supabase/api/effect";
 import { Effect, Layer, Option } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -35,7 +36,8 @@ export const loginApiLayer = Layer.effect(
     return LoginApi.of({
       fetchLoginSession: (apiHost: string, sessionId: string, deviceCode: string) =>
         Effect.gen(function* () {
-          const url = `${apiHost}/platform/cli/login/${sessionId}?device_code=${deviceCode}`;
+          // oxlint-disable-next-line supabase/no-raw-management-api-url -- not in the Management API OpenAPI spec, so no typed operation exists
+          const url = `${apiHost}/platform/cli/login/${encodeURIComponent(sessionId)}?device_code=${encodeURIComponent(deviceCode)}`;
           const request = HttpClientRequest.get(url).pipe(
             HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
           );
@@ -82,18 +84,23 @@ export const loginApiLayer = Layer.effect(
           }),
         ),
 
+      // No client is configured yet at login (the token was just obtained), so build one for this
+      // host and token.
       fetchGotrueId: (apiHost: string, token: string) =>
         Effect.gen(function* () {
-          const request = HttpClientRequest.get(`${apiHost}/v1/profile`).pipe(
-            HttpClientRequest.setHeader("Authorization", `Bearer ${token}`),
-            HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
-          );
-          const response = yield* httpClient.execute(request);
-          if (response.status !== 200) return Option.none<string>();
-          const body = yield* response.json;
-          const gotrueId = readString(body, "gotrue_id");
-          return gotrueId.length > 0 ? Option.some(gotrueId) : Option.none<string>();
-        }).pipe(Effect.orElseSucceed(() => Option.none<string>())),
+          const api = yield* makeApiClient({
+            baseUrl: apiHost,
+            accessToken: token,
+            userAgent: cliSettings.userAgent,
+          });
+          const profile = yield* api.v1.getProfile();
+          return profile.gotrue_id.length > 0
+            ? Option.some(profile.gotrue_id)
+            : Option.none<string>();
+        }).pipe(
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.orElseSucceed(() => Option.none<string>()),
+        ),
     });
   }),
 );

@@ -1,5 +1,6 @@
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackRestart } from "./restart.handler.ts";
@@ -29,6 +30,7 @@ export const stackRestartCommand = Command.make("restart", config).pipe(
       description: "Restart the current project stack",
     },
   ]),
+  withPermissions({ operations: [], noApiEffectFlags: ["stack", "stack-id"] }),
   Command.withHandler((flags) =>
     stackRestart(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),

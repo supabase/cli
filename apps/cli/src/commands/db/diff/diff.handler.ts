@@ -180,6 +180,9 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       let migrationsToml: DbTomlValues | undefined;
       // The linked project resolves once, so `--from linked --to linked` announces it once.
       let linkedTarget: ResolvedTarget | undefined;
+      // Each linked resolution mints a temporary login role that invalidates the previous one,
+      // so every `linked` ref shares a single connection.
+      let linkedEndpoint: PgDeltaDatabaseEndpoint | undefined;
       // A target flag validates the selection and, for the linked project, merges
       // `[remotes.<ref>]` so the explicit `local`/`migrations` refs below see that override.
       if (
@@ -260,6 +263,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
               } satisfies PgDeltaDatabaseEndpoint;
             }
             case "linked": {
+              if (linkedEndpoint !== undefined) return linkedEndpoint;
               linkedTarget ??= yield* resolveTarget({
                 local: false,
                 linked: true,
@@ -278,12 +282,13 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                 mergedLinkedRef = ref2;
                 cfg = yield* readDbToml(fs, path, cliSettings.workdir, ref2);
               }
-              return {
+              linkedEndpoint = {
                 kind: "database",
                 ref: toPostgresURL(resolved.conn),
                 connection: resolved.conn,
                 connectOptions: { isLocal: resolved.isLocal, dnsResolver },
-              } satisfies PgDeltaDatabaseEndpoint;
+              };
+              return linkedEndpoint;
             }
             case "migrations":
               // Preserve resolution order: the migrations shadow/catalog config must reflect

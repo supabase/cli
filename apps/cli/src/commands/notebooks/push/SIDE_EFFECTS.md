@@ -8,12 +8,14 @@ notebook, and one with no match creates a new notebook.
 
 ## Files Read
 
-| Path                                       | Format     | When                                                                                                        |
-| ------------------------------------------ | ---------- | ----------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/notebooks/`            | dir        | always — the file names are the notebook names; missing means empty, while any other read failure aborts    |
-| `<workdir>/supabase/notebooks/<name>.json` | JSON       | one per notebook being pushed; all of them are read and decoded before the first call                       |
-| `<SUPABASE_HOME or ~/.supabase>/profile`   | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`        |
-| `<SUPABASE_PROFILE>` (YAML)                | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command |
+| Path                                           | Format     | When                                                                                                        |
+| ---------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/notebooks/`                | dir        | always — the file names are the notebook names; missing means empty, while any other read failure aborts    |
+| `<workdir>/supabase/notebooks/<name>.json`     | JSON       | one per notebook being pushed; all of them are read and decoded before the first call                       |
+| `<workdir>/supabase/.temp/project-ref`         | plain text | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset                                               |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON       | existence check before the cache fill, once the project ref resolves                                        |
+| `<SUPABASE_HOME or ~/.supabase>/profile`       | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`        |
+| `<SUPABASE_PROFILE>` (YAML)                    | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command |
 
 Every file is read and decoded **before** the first write, so a directory holding
 one unreadable notebook fails without having half-pushed the rest.
@@ -25,11 +27,12 @@ kept or deleted remotely. All selected downloads are read before uploads begin.
 
 ## Files Written
 
-| Path                                                       | Format | When                                                                        |
-| ---------------------------------------------------------- | ------ | --------------------------------------------------------------------------- |
-| `<workdir>/supabase/notebooks/.notebook-<random>/<random>` | JSON   | scoped temporary file; atomically linked to `<name>.json`, then cleaned     |
-| `<workdir>/supabase/notebooks/<name>.json`                 | JSON   | only for a project-only notebook the user chose to write into the directory |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json`            | JSON   | whenever the handler runs — flushed on success and on failure               |
+| Path                                                       | Format | When                                                                                                                                                                                             |
+| ---------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/notebooks/.notebook-<random>/<random>` | JSON   | scoped temporary file; atomically linked to `<name>.json`, then cleaned                                                                                                                          |
+| `<workdir>/supabase/notebooks/<name>.json`                 | JSON   | only for a project-only notebook the user chose to write into the directory                                                                                                                      |
+| `<workdir>/supabase/.temp/linked-project.json`             | JSON   | after the project ref resolves, success or failure — only when no cached file exists, `.temp/project-ref` is absent or names the same ref, a token is available, and the project lookup succeeds |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json`            | JSON   | whenever the handler runs — flushed on success and on failure                                                                                                                                    |
 
 Nothing local is ever removed by `push`.
 
@@ -60,13 +63,15 @@ entry are canonicalized and refused when they resolve outside the project root.
 
 ## API Routes
 
-| Method | Path                                | Auth   | Request body                           | Response (used fields)                              |
-| ------ | ----------------------------------- | ------ | -------------------------------------- | --------------------------------------------------- |
-| GET    | `/v2/projects/{ref}/notebooks`      | Bearer | —                                      | `data[].id`, `data[].attributes.name`, `links.next` |
-| POST   | `/v2/projects/{ref}/notebooks`      | Bearer | `data.attributes` — name plus the file | —                                                   |
-| PATCH  | `/v2/projects/{ref}/notebooks/{id}` | Bearer | `data.attributes` — name plus the file | —                                                   |
-| DELETE | `/v2/projects/{ref}/notebooks/{id}` | Bearer | —                                      | — (only for the delete answer)                      |
-| GET    | `/v2/projects/{ref}/notebooks/{id}` | Bearer | —                                      | — (only for the write-locally answer)               |
+| Method | Path                                | Auth   | Request body                           | Response (used fields)                                                                                                                                                                            |
+| ------ | ----------------------------------- | ------ | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/v2/projects/{ref}/notebooks`      | Bearer | —                                      | `data[].id`, `data[].attributes.name`, `links.next`                                                                                                                                               |
+| POST   | `/v2/projects/{ref}/notebooks`      | Bearer | `data.attributes` — name plus the file | —                                                                                                                                                                                                 |
+| PATCH  | `/v2/projects/{ref}/notebooks/{id}` | Bearer | `data.attributes` — name plus the file | —                                                                                                                                                                                                 |
+| DELETE | `/v2/projects/{ref}/notebooks/{id}` | Bearer | —                                      | — (only for the delete answer)                                                                                                                                                                    |
+| GET    | `/v2/projects/{ref}/notebooks/{id}` | Bearer | —                                      | — (only for the write-locally answer)                                                                                                                                                             |
+| GET    | `/v1/projects`                      | Bearer | —                                      | `id`, `name`, `organization_slug`, `region` — project picker; only when no ref comes from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref`, stdin is a TTY and output is interactive |
+| GET    | `/v1/projects/{ref}`                | Bearer | —                                      | linked-project cache fill — best-effort, only when `.temp/linked-project.json` is absent, `.temp/project-ref` is absent or names the same ref, and a token is available; failures are ignored     |
 
 `content` replaces the whole notebook body, and a cell keeps its identity by
 echoing back its `id` — which is why a pulled file carries cell ids and a push
@@ -93,13 +98,14 @@ never mentions `favorite` keeps whatever the dashboard set.
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                               | Required?                                              |
-| ----------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `SUPABASE_ACCESS_TOKEN` | Management API bearer token                                                                           | no (falls back to the stored login)                    |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                               | no (falls back to `~/.supabase/profile` -> `supabase`) |
-| `SUPABASE_WORKDIR`      | project directory the command acts on                                                                 | no (falls back to `--workdir`, then the ancestor walk) |
-| `SUPABASE_HOME`         | directory holding `telemetry.json`                                                                    | no (falls back to `~/.supabase`)                       |
-| `SUPABASE_YES`          | confirms the hosted mutation without asking; only the shell environment counts, never `supabase/.env` | no (falls back to the interactive prompt)              |
+| Variable                | Purpose                                                                                               | Required?                                                                 |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | Management API bearer token                                                                           | no (falls back to the stored login)                                       |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                               | no (falls back to `~/.supabase/profile` -> `supabase`)                    |
+| `SUPABASE_PROJECT_ID`   | project ref when `--project-ref` is unset                                                             | no (falls back to `supabase/.temp/project-ref`, then the picker on a TTY) |
+| `SUPABASE_WORKDIR`      | project directory the command acts on                                                                 | no (falls back to `--workdir`, then the ancestor walk)                    |
+| `SUPABASE_HOME`         | directory holding `telemetry.json`                                                                    | no (falls back to `~/.supabase`)                                          |
+| `SUPABASE_YES`          | confirms the hosted mutation without asking; only the shell environment counts, never `supabase/.env` | no (falls back to the interactive prompt)                                 |
 
 ## Telemetry Events Fired
 

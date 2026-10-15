@@ -13,7 +13,9 @@ import {
 } from "./parent-project-ref.ts";
 import { announceTarget } from "../shared/output/command-target.service.ts";
 import { Output } from "../shared/output/output.service.ts";
-import { resolveBranchProjectRef } from "./branch-ref.resolver.ts";
+import { projectRefPicker } from "../config/project-ref.layer.ts";
+import { branchRef, resolveBranchProjectRef } from "./branch-ref.resolver.ts";
+import { compose, withCondition } from "./command-permissions/model.ts";
 import { sanitizeInlineName } from "./http-errors.ts";
 import { BRANCH_PROJECT_REF_PATTERN, BRANCH_UUID_PATTERN } from "./ref-patterns.ts";
 import type { ResolvedTarget } from "./target/resolve-target.ts";
@@ -152,6 +154,12 @@ function reclassifyBranchNotFoundError<E extends ConfigTargetResolveFailure, C>(
 ): Effect.Effect<never, C | E> {
   return cause.status === 404 ? Effect.fail(notFoundError) : Effect.fail(cause);
 }
+
+/** The calls `resolveConfigTarget` makes: a branch lookup for a non-ref `--project-ref`, the project picker when no ref is given or linked. */
+export const configTarget = compose(
+  withCondition(branchRef, { flag: "project-ref", present: true }),
+  projectRefPicker,
+);
 
 /**
  * Resolves `--project-ref` to a {@link ConfigTarget}: a project ref, or the name/UUID of a

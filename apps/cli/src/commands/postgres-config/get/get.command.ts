@@ -2,6 +2,11 @@ import { Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
+import { postgresConfigRead } from "../postgres-config.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
@@ -25,6 +30,9 @@ export type PostgresConfigGetFlags = CliCommand.Command.Config.Infer<typeof conf
 export const postgresConfigGetCommand = Command.make("get", config).pipe(
   Command.withDescription("Get the current Postgres database config overrides."),
   Command.withShortDescription("Get Postgres database config"),
+  withPermissions(
+    compose({ operations: [] }, postgresConfigRead, projectRefPicker, linkedProjectCache),
+  ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // Validate the -o value before the --experimental gate, so an invalid value is

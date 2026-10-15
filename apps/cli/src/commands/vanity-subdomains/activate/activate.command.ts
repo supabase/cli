@@ -2,6 +2,11 @@ import { Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
+import { upgradeSuggestion } from "../../../command-internal/upgrade-suggest.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
@@ -34,6 +39,27 @@ export const vanitySubdomainsActivateCommand = Command.make("activate", config).
     "Activate a vanity subdomain for your Supabase project. This reconfigures your Supabase project to respond to requests on your vanity subdomain. After the vanity subdomain is activated, your project's auth services will no longer function on the {project-ref}.{supabase-domain} hostname.",
   ),
   Command.withShortDescription("Activate a vanity subdomain"),
+  withPermissions(
+    compose(
+      {
+        operations: [
+          {
+            operationId: "v1-activate-vanity-subdomain-config",
+            kind: "required",
+            when: [{ flag: "desired-subdomain", present: true }],
+          },
+          {
+            operationId: "v1-activate-vanity-subdomain-config",
+            kind: "required",
+            when: [{ flag: "desired-subdomain", oneOf: [""] }],
+          },
+        ],
+      },
+      upgradeSuggestion,
+      projectRefPicker,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // An invalid `-o` value must win over a missing `--experimental` flag, so this

@@ -1,15 +1,18 @@
-import type { V1GetProjectApiKeysOutput } from "@supabase/api/effect";
+import type { V1GetProjectApiKeysOutput, V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockCommandPlatformApi,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { projectsApiKeys } from "./api-keys.handler.ts";
 
 type ApiKeys = typeof V1GetProjectApiKeysOutput.Type;
@@ -25,6 +28,26 @@ const REVEALED_KEYS: ApiKeys = [
 ];
 
 const FLAG_REF = "qrstuvwxyzabcdefghij";
+const API = "https://api.supabase.com";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org-123",
+  organization_slug: "acme",
+  name: "alpha",
+  region: "us-east-1",
+  created_at: "2026-05-27T01:02:03Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.alpha.supabase.co",
+    version: "15.1",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
+};
 
 const tempRoot = useTempWorkdir("supabase-projects-apikeys-int-");
 
@@ -89,6 +112,12 @@ describe("projects api-keys integration", () => {
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
       expect(api.requests[0]?.urlWithParams).not.toContain("reveal");
+      assertPermissionDrift({
+        command: "projects api-keys",
+        activeFlags: { reveal: false },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -97,6 +126,12 @@ describe("projects api-keys integration", () => {
     return Effect.gen(function* () {
       yield* projectsApiKeys({ projectRef: Option.none(), reveal: true });
       expect(api.requests[0]?.urlWithParams).toContain("reveal=true");
+      assertPermissionDrift({
+        command: "projects api-keys",
+        activeFlags: { reveal: true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -225,6 +260,59 @@ describe("projects api-keys integration", () => {
         expect(causeText).toContain("ProjectsApiKeysUnexpectedStatusError");
         expect(causeText).toContain("unexpected get api keys status 503");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists the keys of the project chosen in the picker and fills the real cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.sync(() => {
+          if (request.method === "GET" && request.url === `${API}/v1/projects`) {
+            return jsonResponse(request, 200, [PROJECT]);
+          }
+          if (request.method === "GET" && request.url === `${API}/v1/projects/${VALID_REF}`) {
+            return jsonResponse(request, 200, PROJECT);
+          }
+          if (request.url === `${API}/v1/projects/${VALID_REF}/api-keys`) {
+            return jsonResponse(request, 200, SAMPLE_KEYS);
+          }
+          return jsonResponse(request, 404, { message: "unexpected request" });
+        }),
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      tty: mockTty({ stdinIsTty: true }),
+      linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+
+      yield* projectsApiKeys({ projectRef: Option.none(), reveal: false });
+
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET ${API}/v1/projects`,
+        `GET ${API}/v1/projects/${VALID_REF}/api-keys`,
+        `GET ${API}/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toContain("anon-secret");
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "projects api-keys",
+        activeFlags: { reveal: false },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 });

@@ -114,6 +114,10 @@ over a reservation whose stack has no running owner; that stack's next start all
 automatic port. A reservation whose owning stack's `state.json` is confirmed gone (`ENOENT`, for example
 after deleting its state root) is reclaimed lazily by the next stack that needs its port.
 
+Native backend ports (10000–19999) are claimed in the same registry from before the backend binds
+until its process stops, so concurrent stacks never pick the same backend port. A claim is not kept
+across stop, and a claim whose stack has no running owner is taken over.
+
 Known limitations: on macOS, BSD, and Windows, where the kernel allows overlapping binds, a loopback
 probe before the real bind narrows but cannot close the race with a foreign process binding in the
 same window; two of this user's stacks can never collide, because the registry excludes them. An

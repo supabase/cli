@@ -1,16 +1,22 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
-import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
   VALID_REF,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { ssoShow } from "./show.handler.ts";
 
@@ -27,6 +33,8 @@ const PROVIDER = {
   created_at: "2023-03-28T13:50:14.464Z",
   updated_at: "2023-03-28T13:50:14.464Z",
 };
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const tempRoot = useTempWorkdir("supabase-sso-show-int-");
 
@@ -261,7 +269,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
   });
 
   it.effect("--metadata short-circuits and prints raw XML", () => {
-    const { layer, out } = setup();
+    const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* ssoShow({
         projectRef: Option.none(),
@@ -269,6 +277,15 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
         metadata: true,
       });
       expect(out.stdoutText).toBe('<?xml version="2.0"?>\n');
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
+      ]);
+      assertPermissionDrift({
+        command: "sso show",
+        activeFlags: { metadata: true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -324,6 +341,53 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
       expect(req?.url).toContain(
         `/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
       );
+      assertPermissionDrift({ command: "sso show", requests: api.requests, exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists the picker's projects, shows the provider and fills the real cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.url === "https://api.supabase.com/v1/projects") {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (request.url === `https://api.supabase.com/v1/projects/${VALID_REF}`) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        return Effect.succeed(jsonResponse(request, 200, PROVIDER));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      tty: mockTty({ stdinIsTty: true }),
+      linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* ssoShow({
+        projectRef: Option.none(),
+        providerId: VALID_PROVIDER_ID,
+        metadata: false,
+      });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({ command: "sso show", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 });

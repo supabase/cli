@@ -1,17 +1,39 @@
-import { type V1ListAllBackupsOutput } from "@supabase/api/effect";
+import { type V1ListAllBackupsOutput, type V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path, Schema } from "effect";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockCommandPlatformApi,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { backupsList } from "./list.handler.ts";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org-123",
+  organization_slug: "acme",
+  name: "alpha",
+  region: "us-east-1",
+  created_at: "2026-05-27T01:02:03Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.alpha.supabase.co",
+    version: "15.1",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
+};
 
 const PITR_RESPONSE: typeof V1ListAllBackupsOutput.Type = {
   region: "ap-southeast-1",
@@ -214,6 +236,7 @@ WalgEnabled = true
       yield* backupsList({ projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/database/backups`);
+      assertPermissionDrift({ command: "backups list", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -223,8 +246,62 @@ WalgEnabled = true
     return Effect.gen(function* () {
       yield* backupsList({ projectRef: Option.some(flagRef) });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${flagRef}/`);
+      assertPermissionDrift({
+        command: "backups list",
+        activeFlags: { "project-ref": true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "lists projects for the picker, then the backups, then fills the linked-project cache",
+    () => {
+      const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          if (request.url === "https://api.supabase.com/v1/projects") {
+            return Effect.succeed(jsonResponse(request, 200, [PROJECT]));
+          }
+          if (request.url === `https://api.supabase.com/v1/projects/${VALID_REF}`) {
+            return Effect.succeed(jsonResponse(request, 200, PROJECT));
+          }
+          return Effect.succeed(jsonResponse(request, 200, PITR_RESPONSE));
+        },
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+        yield* backupsList({ projectRef: Option.none() });
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/v1/projects",
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}/database/backups`,
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(out.stdoutText).toContain("Southeast Asia (Singapore)");
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "backups list", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("reads supabase/.temp/project-ref when env and flag are unset", () => {
     const fileRef = "filerefabcdefghijklm";

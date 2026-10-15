@@ -5,6 +5,7 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryStatus } from "./status.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {};
 export type TelemetryStatusFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -12,6 +13,7 @@ export type TelemetryStatusFlags = CliCommand.Command.Config.Infer<typeof config
 export const telemetryStatusCommand = Command.make("status", config).pipe(
   Command.withDescription("Show CLI telemetry status."),
   Command.withShortDescription("Show telemetry status"),
+  withPermissions({ operations: [] }),
   Command.withHandler((flags) =>
     telemetryStatus(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),

@@ -1,6 +1,7 @@
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -62,6 +63,7 @@ export const genSigningKeyCommand = Command.make("signing-key", config).pipe(
       description: "Append a new key to the configured signing key file",
     },
   ]),
+  withPermissions({ operations: [], noApiEffectFlags: ["algorithm", "append"] }),
   Command.withHandler((flags) =>
     genSigningKey(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),

@@ -7,6 +7,7 @@ import {
   type ApiClient,
 } from "@supabase/api/effect";
 import { Effect, Option, Schedule } from "effect";
+import { block } from "../../command-internal/command-permissions/model.ts";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import {
@@ -48,6 +49,10 @@ import {
  * so the caller can read it as "not deployed".
  */
 
+type ComputeResourceData = typeof V2GetAComputeInstanceOutput.Type extends { data: infer D }
+  ? D
+  : never;
+
 /** The compute shape the API returns, flattened out of its JSON:API envelope. */
 export interface ComputeRecord {
   readonly name: string;
@@ -58,7 +63,7 @@ export interface ComputeRecord {
     readonly instances: number;
     readonly backend?: string;
   };
-  readonly buildState: "building" | "active" | "failed";
+  readonly buildState: ComputeResourceData["attributes"]["build_state"];
   readonly stateReason?: string;
   readonly imageVersion?: string;
   readonly deleting?: boolean;
@@ -87,10 +92,6 @@ export interface ComputeDeploySpec {
   readonly exposure: string;
   readonly instances: number;
 }
-
-type ComputeResourceData = typeof V2GetAComputeInstanceOutput.Type extends { data: infer D }
-  ? D
-  : never;
 
 function toComputeRecord(data: ComputeResourceData): ComputeRecord {
   return {
@@ -166,6 +167,11 @@ export const listCompute = Effect.fnUntraced(function* (api: ApiClient, projectR
   return decoded.data.map(toComputeRecord);
 });
 
+/** The Management API call `getCompute` makes. */
+export const computeRead = block("compute-read", [
+  { operationId: "v2-get-a-compute-instance", kind: "required" },
+]);
+
 /** One compute, or `None` when this project has no record of it — see the 404 notes above. */
 export const getCompute = Effect.fnUntraced(function* (
   api: ApiClient,
@@ -216,7 +222,7 @@ export const createComputeUpload = Effect.fnUntraced(function* (
 });
 
 /**
- * PUTs the archive straight at the presigned slot, with no Supabase credentials attached — the
+ * Sends the archive straight to the presigned slot (POST or PUT, as the slot says), with no Supabase credentials attached — the
  * signature in the URL is the authorization. That's also why `httpClientLayer` redacts query
  * strings before logging: under `--debug` this URL is a write-capable credential.
  */

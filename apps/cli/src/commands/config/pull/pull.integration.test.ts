@@ -1,4 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
+import { type V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -38,6 +39,12 @@ import {
   useTempWorkdir,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import {
+  assertBlockDrift,
+  assertPermissionDrift,
+} from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
+import { configPullRun } from "../../../command-internal/config-pull-run.ts";
 import { GLOBAL_OUTPUT_FORMATS, YesFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
@@ -56,6 +63,7 @@ const tempRoot = useTempWorkdir("supabase-config-pull-int-");
 const jsonRecord = Schema.Record(Schema.String, Schema.Unknown);
 const asJsonRecord = Schema.decodeUnknownSync(jsonRecord);
 const decodeJsonRecord = Schema.decodeUnknownEffect(jsonRecord);
+const decodeJsonText = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeJsonRecords = Schema.decodeUnknownEffect(Schema.Array(jsonRecord));
 const decodeChanges = Schema.decodeUnknownEffect(
   Schema.Array(
@@ -66,8 +74,26 @@ const decodeChanges = Schema.decodeUnknownEffect(
 // A past mtime for "untouched file" checks, so a rewrite within the same millisecond still shows.
 const BACKDATED_MTIME_SECONDS = 1_577_836_800;
 
+const API = "https://api.supabase.com";
 const BRANCH_REF = "cccccccccccccccccccc";
 const BRANCH_UUID = "11111111-1111-4111-8111-111111111111";
+
+const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org-123",
+  organization_slug: "acme",
+  name: "alpha",
+  region: "us-east-1",
+  created_at: "2026-05-27T01:02:03Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.alpha.supabase.co",
+    version: "15.1",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
+};
 
 const projectFilePath = Effect.fnUntraced(function* (name: string) {
   const path = yield* Path.Path;
@@ -348,6 +374,9 @@ interface SetupOpts {
   readonly linked?: boolean;
   /** Overrides `cliSettings.projectId` directly — takes precedence over `linked`. */
   readonly projectId?: Option.Option<string>;
+  /** Serves the project list and project lookup, answers the project picker with `VALID_REF`, and
+   *  writes the linked-project cache through the real cache layer. */
+  readonly pickerAndRealCache?: boolean;
   readonly yes?: boolean;
   readonly stdinIsTty?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
@@ -369,7 +398,11 @@ function setup(opts: SetupOpts = {}) {
       opts.dotenv === undefined ? Effect.void : writeProjectFile(".env", opts.dotenv),
     ]),
   ).pipe(Layer.provide(BunServices.layer));
-  const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
+  const out = mockOutput({
+    format: opts.format ?? "text",
+    promptConfirmResponses: opts.confirm,
+    ...(opts.pickerAndRealCache === true ? { promptSelectResponses: [VALID_REF] } : {}),
+  });
   const outputLayer =
     opts.confirmSideEffect === undefined
       ? out.layer
@@ -377,6 +410,13 @@ function setup(opts: SetupOpts = {}) {
   const api = mockCommandPlatformApi({
     handler: (request) => {
       const url = request.url;
+      if (opts.pickerAndRealCache === true && request.method === "GET") {
+        if (url === `${API}/v1/projects`)
+          return Effect.succeed(jsonResponse(request, 200, [PROJECT]));
+        if (url === `${API}/v1/projects/${VALID_REF}`) {
+          return Effect.succeed(jsonResponse(request, 200, PROJECT));
+        }
+      }
       if (url.includes("/v2/projects/")) {
         if (opts.v2 === "fail") {
           return Effect.fail(transportFailure(request));
@@ -412,6 +452,15 @@ function setup(opts: SetupOpts = {}) {
   const telemetry = mockTelemetryStateTracked();
   const linkedProjectCache = mockLinkedProjectCacheTracked();
   const processControl = mockProcessControl();
+  const cliSettings = mockCommandSettings({
+    workdir: opts.workdir ?? tempRoot.current,
+    explicitWorkdir: opts.explicitWorkdir ?? false,
+    ...(opts.projectId !== undefined
+      ? { projectId: opts.projectId }
+      : opts.linked === false
+        ? { projectId: Option.none<string>() }
+        : {}),
+  });
   const gitStatus = mockGitStatusSpawner({
     dirty: opts.gitDirty,
     spawnFails: opts.gitSpawnFails,
@@ -420,18 +469,13 @@ function setup(opts: SetupOpts = {}) {
     buildTestRuntime({
       out: { layer: outputLayer },
       api,
-      cliSettings: mockCommandSettings({
-        workdir: opts.workdir ?? tempRoot.current,
-        explicitWorkdir: opts.explicitWorkdir ?? false,
-        ...(opts.projectId !== undefined
-          ? { projectId: opts.projectId }
-          : opts.linked === false
-            ? { projectId: Option.none<string>() }
-            : {}),
-      }),
+      cliSettings,
       runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       telemetry: telemetry.layer,
-      linkedProjectCache: linkedProjectCache.layer,
+      linkedProjectCache:
+        opts.pickerAndRealCache === true
+          ? realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings })
+          : linkedProjectCache.layer,
       processControl,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
       outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
@@ -467,7 +511,10 @@ describe("config pull integration", () => {
     "root-target single-property update writes the file with exactly one changed line",
     () => {
       const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
-      const { layer, out, telemetry, linkedProjectCache } = setup({ toml: before, yes: true });
+      const { layer, out, telemetry, linkedProjectCache, api } = setup({
+        toml: before,
+        yes: true,
+      });
       return Effect.gen(function* () {
         yield* configPull(noFlags);
         const after = yield* readConfig;
@@ -477,13 +524,48 @@ describe("config pull integration", () => {
         expect(out.stdoutText).toContain("1 change written.");
         expect(telemetry.flushed).toBe(true);
         expect(linkedProjectCache.cachedRef).toBe(VALID_REF);
+        assertPermissionDrift({ command: "config pull", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "pulls from the project chosen in the picker and fills the real linked-project cache",
+    () => {
+      const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
+      const { layer, out, api } = setup({
+        toml: before,
+        yes: true,
+        linked: false,
+        stdinIsTty: true,
+        pickerAndRealCache: true,
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+
+        yield* configPull(noFlags);
+
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          `GET ${API}/v1/projects`,
+          `GET ${API}/v2/projects/${VALID_REF}/config`,
+          `GET ${API}/v1/projects/${VALID_REF}`,
+        ]);
+        expect(yield* readConfig).toContain("max_rows = 1000");
+        expect(out.stdoutText).toContain("1 change written.");
+        expect(yield* decodeJsonText(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "config pull", requests: api.requests, exact: true });
+        assertBlockDrift(configPullRun, { requests: api.requests.slice(1, 2), exact: true });
       }).pipe(Effect.provide(layer));
     },
   );
 
   it.effect("--dry-run leaves the file untouched and reports dry_run in the payload", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
-    const { layer, out } = setup({ toml: before, format: "json", yes: true });
+    const { layer, out, api } = setup({ toml: before, format: "json", yes: true });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* projectFilePath("config.toml");
@@ -498,6 +580,12 @@ describe("config pull integration", () => {
       expect(data["wrote"]).toBe(false);
       const changes = yield* decodeJsonRecords(data["changes"]);
       expect(changes.every((change) => change["written"] === false)).toBe(true);
+      assertPermissionDrift({
+        command: "config pull",
+        activeFlags: { "dry-run": true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1673,6 +1761,11 @@ describe("config pull integration", () => {
         true,
       );
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
+      assertPermissionDrift({
+        command: "config pull",
+        activeFlags: { "project-ref": true },
+        requests: api.requests,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1703,6 +1796,11 @@ describe("config pull integration", () => {
       // A UUID target creates a new `[remotes.*]` block falling back to the
       // resolved project ref as the label (no branch name to use instead).
       expect(yield* readConfig).toContain(`[remotes.${BRANCH_REF}]`);
+      assertPermissionDrift({
+        command: "config pull",
+        activeFlags: { "project-ref": true },
+        requests: api.requests,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1717,6 +1815,12 @@ describe("config pull integration", () => {
       const urls = api.requests.map((request) => request.url);
       expect(urls.some((url) => url.includes("/branches/"))).toBe(false);
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
+      assertPermissionDrift({
+        command: "config pull",
+        activeFlags: { "project-ref": true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1904,7 +2008,7 @@ describe("config pull integration", () => {
   });
 
   it.effect("a 403 on the config read names the sanitized ref", () => {
-    const { layer } = setup({
+    const { layer, api } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 403, body: { message: "forbidden" } },
     });
@@ -1917,6 +2021,7 @@ describe("config pull integration", () => {
         expect(causeText).toContain("Access denied");
         expect(causeText).toContain(VALID_REF);
       }
+      assertPermissionDrift({ command: "config pull", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 

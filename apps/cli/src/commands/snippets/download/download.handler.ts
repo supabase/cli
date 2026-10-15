@@ -1,13 +1,11 @@
-import { Effect, Option, Predicate, Result, Schema } from "effect";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import { operationDefinitions } from "@supabase/api/effect";
+import { Effect, Predicate, Result, Schema } from "effect";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
-import { requestWithAuth } from "../../../command-internal/raw-http.ts";
-import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { quoteBytes } from "../../../command-internal/byte-quote.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -106,23 +104,23 @@ export function parseSnippetUuid(input: string): Result.Result<string, string> {
   return Result.succeed(canonicalFromHex(segments.join("")));
 }
 
-// Tolerant body parse — see `list.handler.ts` for the rationale. The real
-// `/v1/snippets/{id}` payload omits `description`, which the generated schema
-// requires, so routing through the typed client fails on real responses.
-function asRecord(obj: unknown): Record<string, unknown> {
-  return Predicate.isObjectOrArray(obj) ? { ...obj } : {};
-}
+const asRecord = (value: unknown): Record<string, unknown> =>
+  Predicate.isObjectOrArray(value) ? { ...value } : {};
 
-const decodeSnippetSql = Schema.decodeUnknownOption(
-  Schema.Struct({ content: Schema.Struct({ sql: Schema.String }) }),
-);
+const decodeSnippet = Schema.decodeUnknownEffect(operationDefinitions.v1GetASnippet.outputSchema);
+
+const mapDownloadError = mapHttpError({
+  networkError: SnippetsDownloadNetworkError,
+  statusError: SnippetsDownloadUnexpectedStatusError,
+  networkMessage: (cause) => `failed to download snippet: ${cause}`,
+  statusMessage: (status, body) => `unexpected download snippet status ${status}: ${body}`,
+});
 
 export const snippetsDownload = Effect.fn("snippets.download")(function* (
   flags: SnippetsDownloadFlags,
 ) {
   const output = yield* Output;
-  const httpClient = yield* HttpClient.HttpClient;
-  const cliSettings = yield* CommandSettings;
+  const api = yield* CommandPlatformApi;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
@@ -137,46 +135,30 @@ export const snippetsDownload = Effect.fn("snippets.download")(function* (
         ),
       );
 
-      const tokenOpt = yield* resolveAccessToken;
-      const request = requestWithAuth(
-        HttpClientRequest.get(`${cliSettings.apiUrl}/v1/snippets/${snippetId}`),
-        tokenOpt,
-        cliSettings.userAgent,
-      );
-
       const fetching =
         output.format === "text" ? yield* output.task("Downloading snippet...") : undefined;
-      const response = yield* httpClient.execute(request).pipe(
-        Effect.tapError(() => fetching?.fail() ?? Effect.void),
-        Effect.mapError(
-          (cause) =>
-            new SnippetsDownloadNetworkError({
-              message: `failed to download snippet: ${cause.reason.description ?? cause.reason._tag}`,
-            }),
-        ),
-      );
-
-      if (response.status !== 200) {
-        yield* fetching?.fail() ?? Effect.void;
-        const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-        const body = sanitizeErrorBody(rawBody);
-        return yield* new SnippetsDownloadUnexpectedStatusError({
-          status: response.status,
-          body,
-          message: `unexpected download snippet status ${response.status}: ${body}`,
-        });
-      }
-
+      // `executeRaw` keeps the response body intact so JSON output emits it as the API returned
+      // it; the typed schema decodes a copy for the SQL.
+      const response = yield* api
+        .executeRaw(operationDefinitions.v1GetASnippet, { id: snippetId })
+        .pipe(
+          Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.catch(mapDownloadError),
+          Effect.tapError(() => fetching?.fail() ?? Effect.void),
+        );
       const rawBody = yield* response.json.pipe(
         Effect.mapError(
           (cause) =>
             new SnippetsDownloadNetworkError({
               message: `failed to download snippet: ${String(cause)}`,
-              // 200-response body decode failure — an API-response problem, not
-              // a transport/network failure.
               decode: true,
             }),
         ),
+        Effect.tapError(() => fetching?.fail() ?? Effect.void),
+      );
+      const snippet = yield* decodeSnippet(rawBody).pipe(
+        Effect.catch(mapDownloadError),
+        Effect.tapError(() => fetching?.fail() ?? Effect.void),
       );
       yield* fetching?.clear ?? Effect.void;
 
@@ -190,10 +172,7 @@ export const snippetsDownload = Effect.fn("snippets.download")(function* (
 
       // `-o`/`--output` is ignored entirely; this always prints the raw SQL —
       // no branching on `OutputFlag`.
-      const sql = Option.match(decodeSnippetSql(rawBody), {
-        onNone: () => "",
-        onSome: ({ content }) => content.sql,
-      });
+      const sql = snippet.content?.sql ?? "";
       yield* output.raw(sql + "\n");
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));

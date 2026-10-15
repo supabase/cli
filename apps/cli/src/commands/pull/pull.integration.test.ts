@@ -17,8 +17,33 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { TestClock } from "effect/testing";
+import { vi } from "vitest";
+
+const fixtureNet = vi.hoisted(() => ({ directHostReachable: false }));
+
+vi.mock("node:net", (importOriginal) =>
+  Promise.all([
+    import("../../../tests/helpers/refuse-invalid-db-hosts.ts"),
+    importOriginal<typeof import("node:net")>(),
+  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net, fixtureNet)),
+);
+
+const reachableDirectHost = withReachableDirectHost(fixtureNet);
 
 import { v2ProjectConfigResponse } from "../../../tests/helpers/config-fixtures.ts";
+import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
+import {
+  asRecordedRequests,
+  projectResponse,
+  provideEnv,
+  realDbConfigResolver,
+  realLinkedProjectCache,
+  recordingProjectHttpClient,
+  serveLinkedDatabase,
+  stubManagementApi,
+  type StubbedRequest,
+} from "../../../tests/helpers/permission-real-layers.ts";
+import { withReachableDirectHost } from "../../../tests/helpers/refuse-invalid-db-hosts.ts";
 import {
   mockContextualAnalytics,
   mockOutput,
@@ -32,6 +57,7 @@ import {
   buildTestRuntime,
   VALID_REF,
   type ApiHandler,
+  VALID_TOKEN,
   jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
@@ -87,6 +113,9 @@ import { pullHandler } from "./pull.command.ts";
  */
 
 const tempRoot = useTempWorkdir("supabase-pull-int-");
+
+/** The effective values of `pull`'s three switches when none is named. */
+const STEP_SWITCHES = { "dry-run": false, force: false, "with-migration-history": false };
 
 const BRANCH_REF = "cccccccccccccccccccc";
 
@@ -374,6 +403,7 @@ function makeDbConfigLayers(
   historyUpdateFails = false,
 ): {
   readonly layer: Layer.Layer<DbConfigResolver | DbConnection>;
+  readonly dbConnection: Layer.Layer<DbConnection>;
   readonly historyUpserts: ReadonlyArray<ReadonlyArray<unknown>>;
   readonly connectedPorts: ReadonlyArray<number>;
 } {
@@ -408,6 +438,7 @@ function makeDbConfigLayers(
 
   return {
     layer: Layer.mergeAll(dbConnection, resolver),
+    dbConnection,
     historyUpserts: target.historyUpserts,
     connectedPorts,
   };
@@ -492,11 +523,16 @@ interface ApiOpts {
   /** Fails only this slug's `/body` download with a 500; every other slug still downloads
    *  normally, proving a partial functions-step download reports earlier slugs as written. */
   readonly functionBodyFailsForSlug?: string;
+  /** Serves `GET /v1/projects`, which the project picker reads. */
+  readonly projectList?: boolean;
 }
 
 function apiHandlerFor(opts: ApiOpts): ApiHandler {
   return (request) => {
     const url = request.url;
+    if (opts.projectList === true && request.method === "GET" && url.endsWith("/v1/projects")) {
+      return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+    }
     if (url.includes("/v2/projects/") && url.endsWith("/config")) {
       return Effect.succeed(
         jsonResponse(request, 200, opts.configResponse ?? v2ProjectConfigResponse()),
@@ -618,6 +654,13 @@ interface SetupOpts {
   readonly workdir?: string;
   /** Overrides the global `--experimental` flag — defaults to `false`. */
   readonly experimental?: boolean;
+  /** Runs the real database config resolver and linked-project cache, so their Management API
+   *  calls are recorded. The direct database host is unreachable unless a test opts in. */
+  readonly realLayers?: boolean;
+  /** Overrides the linked project ref in settings — defaults to `Some(VALID_REF)`. */
+  readonly projectId?: Option.Option<string>;
+  /** Serves `GET /v1/projects` and answers the project picker with `VALID_REF`. */
+  readonly picksProject?: boolean;
 }
 
 interface MachineSetupOpts extends SetupOpts {
@@ -625,7 +668,11 @@ interface MachineSetupOpts extends SetupOpts {
 }
 
 function setup(opts: SetupOpts = {}) {
-  const out = mockOutput({ format: "text", promptConfirmResponses: opts.confirm });
+  const out = mockOutput({
+    format: "text",
+    promptConfirmResponses: opts.confirm,
+    ...(opts.picksProject === true ? { promptSelectResponses: [VALID_REF] } : {}),
+  });
   const outputLayer =
     opts.confirmSideEffect === undefined
       ? out.layer
@@ -663,12 +710,23 @@ function setupSubstrate(
   );
   const pgDelta = makePgDeltaEngine(opts.diffOutcome ?? (() => ({ changes: false })));
 
+  const workdir = opts.workdir ?? tempRoot.current;
+
   const layer = Layer.mergeAll(
     configValuesLayer({ output: outputLayer }),
     machineErrorContextLayer,
     commandRuntimeLayer(["pull"]).pipe(Layer.provide(BunServices.layer)),
     stdioLayer,
-    dbConfig.layer,
+    opts.realLayers === true
+      ? Layer.mergeAll(
+          dbConfig.dbConnection,
+          realDbConfigResolver({
+            workdir,
+            dbConnection: dbConfig.dbConnection,
+            env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+          }),
+        )
+      : dbConfig.layer,
     pgDelta.layer,
     Layer.succeed(EdgeRuntimeScript, {
       run: () => Effect.die("migra edge runtime unused — every db step forces pg-delta"),
@@ -710,12 +768,18 @@ function setupRuntime(
   const processControl = mockProcessControl();
   const analytics = mockContextualAnalytics();
 
-  const api = makeApiMock(opts.api ?? {});
+  const api = makeApiMock({
+    ...opts.api,
+    ...(opts.picksProject === true ? { projectList: true } : {}),
+  });
+  const projectHttp = recordingProjectHttpClient(VALID_REF);
   const substrate = setupSubstrate(opts, outputLayer, stdioLayer);
 
+  const workdir = opts.workdir ?? tempRoot.current;
   const cliSettings = mockCommandSettings({
-    workdir: opts.workdir ?? tempRoot.current,
-    projectId: Option.some(VALID_REF),
+    workdir,
+    projectId: opts.projectId ?? Option.some(VALID_REF),
+    ...(opts.realLayers === true ? { projectHost: "invalid" } : {}),
   });
 
   const layer = Layer.mergeAll(
@@ -727,7 +791,13 @@ function setupRuntime(
       stdin: mockStdin(opts.stdinIsTty ?? false),
       runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       telemetry: telemetry.layer,
-      linkedProjectCache: linkedProjectCache.layer,
+      linkedProjectCache:
+        opts.realLayers === true
+          ? realLinkedProjectCache({
+              httpClient: projectHttp.layer,
+              cliSettings: mockCommandSettings({ workdir }),
+            })
+          : linkedProjectCache.layer,
       processControl: { layer: processControl.layer },
       analytics: { layer: analytics.layer },
       outputFlag: opts.outputFlag ?? Option.none(),
@@ -751,6 +821,7 @@ function setupRuntime(
     dbConfig: substrate.dbConfig,
     pgDelta: substrate.pgDelta,
     callOrder: substrate.callOrder,
+    projectHttp,
   };
 }
 
@@ -926,6 +997,11 @@ describe("pull integration", () => {
         const configLookups = api.requests.filter((request) => request.url.endsWith("/config"));
         expect(configLookups).toHaveLength(1);
         expect(out.promptSelectCalls).toHaveLength(0);
+        assertPermissionDrift({
+          command: "pull",
+          activeFlags: { ...STEP_SWITCHES, "project-ref": "staging" },
+          requests: api.requests,
+        });
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1009,6 +1085,11 @@ describe("pull integration", () => {
       expect(yield* readConfigFile).toBe(before);
       expect(yield* projectFileExists("supabase", "migrations")).toBe(false);
       expect(api.requests.some((request) => request.method !== "GET")).toBe(false);
+      assertPermissionDrift({
+        command: "pull",
+        activeFlags: { ...STEP_SWITCHES, "dry-run": true },
+        requests: api.requests,
+      });
 
       expect(stepLine(out.stdoutText, "config")).toContain("planned");
       expect(stepLine(out.stdoutText, "migration_history")).toContain("planned");
@@ -2220,4 +2301,227 @@ describeHostedConsent("pull", {
       mutations: () => substrate.dbConfig.historyUpserts.length,
     };
   },
+});
+
+describe("pull permissions through the real layers", () => {
+  const asLines = (requests: ReadonlyArray<StubbedRequest>) =>
+    requests.map(({ method, path }) => `${method} ${path}`);
+  const poolerRequest = `GET /v1/projects/${VALID_REF}/config/database/pooler`;
+  const loginRoleRequest = `POST /v1/projects/${VALID_REF}/cli/login-role`;
+  const cacheRequest = `GET https://api.supabase.com/v1/projects/${VALID_REF}`;
+  const configRequest = `GET https://api.supabase.com/v2/projects/${VALID_REF}/config`;
+  const asApiLines = (requests: ReadonlyArray<{ readonly method: string; readonly url: string }>) =>
+    requests.map(({ method, url }) => `${method} ${url}`);
+
+  const bootstrapSetup = () =>
+    setup({
+      yes: true,
+      realLayers: true,
+      api: { functionSlugs: ["hello"] },
+      remoteMigrations: [
+        { version: "20260101000000", name: "init", statements: ["create table foo ();"] },
+      ],
+      diffOutcome: () => ({
+        changes: true,
+        files: [{ name: "pull", sql: "alter table foo add column bar text;" }],
+      }),
+    });
+
+  // No `.temp/pooler-url` is saved between steps, so each database step resolves it again.
+  const FULL_RUN_SEQUENCE: ReadonlyArray<string> = [
+    poolerRequest,
+    loginRoleRequest,
+    poolerRequest,
+    loginRoleRequest,
+  ];
+
+  const REF_SCENARIOS: ReadonlyArray<{
+    readonly name: string;
+    readonly projectRef: Option.Option<string>;
+    readonly flag: Readonly<Record<string, string>>;
+  }> = [
+    { name: "no --project-ref", projectRef: Option.none(), flag: {} },
+    {
+      name: "--project-ref with the ref",
+      projectRef: Option.some(VALID_REF),
+      flag: { "project-ref": VALID_REF },
+    },
+    {
+      name: "an empty --project-ref, which resolves from settings",
+      projectRef: Option.some(""),
+      flag: { "project-ref": "" },
+    },
+  ];
+
+  for (const scenario of REF_SCENARIOS) {
+    it.effect(
+      `reads the config, fetches the history, pulls the schema and downloads functions for ${scenario.name}`,
+      () => {
+        const { layer, api, projectHttp } = bootstrapSetup();
+        const stubbed: Array<StubbedRequest> = [];
+        return Effect.gen(function* () {
+          yield* TestClock.setTime(AFTER_SEEDED_MIGRATIONS);
+          yield* stubManagementApi(stubbed, serveLinkedDatabase(VALID_REF));
+          yield* writeConfig("[api]\nmax_rows = 500\n");
+          yield* runPull(pullFlags({ projectRef: scenario.projectRef }));
+
+          expect(asLines(stubbed)).toEqual(FULL_RUN_SEQUENCE);
+          expect(asApiLines(api.requests)).toEqual([
+            configRequest,
+            `GET https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
+            `GET https://api.supabase.com/v1/projects/${VALID_REF}/functions/hello/body`,
+          ]);
+          expect(asApiLines(projectHttp.calls)).toEqual([cacheRequest]);
+          expect(yield* projectFileExists("supabase", ".temp", "linked-project.json")).toBe(true);
+          assertPermissionDrift({
+            command: "pull",
+            activeFlags: { ...STEP_SWITCHES, ...scenario.flag },
+            requests: [...api.requests, ...asRecordedRequests(stubbed), ...projectHttp.calls],
+            exact: true,
+          });
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(layer),
+          provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+        );
+      },
+    );
+  }
+
+  it.effect("--dry-run reads the config and fills the cache, and makes no other request", () => {
+    const { layer, api, projectHttp } = setup({
+      realLayers: true,
+      api: { functionSlugs: ["hello"] },
+    });
+    const stubbed: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(stubbed, serveLinkedDatabase(VALID_REF));
+      yield* writeConfig();
+      yield* runPull(pullFlags({ dryRun: true }));
+
+      expect(asLines(stubbed)).toEqual([]);
+      expect(asApiLines(api.requests)).toEqual([configRequest]);
+      expect(asApiLines(projectHttp.calls)).toEqual([cacheRequest]);
+      const flags = { ...STEP_SWITCHES, "dry-run": true };
+      assertPermissionDrift({
+        command: "pull",
+        activeFlags: flags,
+        requests: [...api.requests, ...asRecordedRequests(stubbed), ...projectHttp.calls],
+        exact: true,
+      });
+      expect(() =>
+        assertPermissionDrift({
+          command: "pull",
+          activeFlags: flags,
+          requests: [
+            {
+              method: "POST",
+              url: `https://api.supabase.com/v1/projects/${VALID_REF}/cli/login-role`,
+            },
+          ],
+        }),
+      ).toThrow(/condition doesn't hold/);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("the project picker lists projects and the run still fills the real cache", () => {
+    const { layer, api, projectHttp, out } = setup({
+      realLayers: true,
+      picksProject: true,
+      projectId: Option.none(),
+      stdinIsTty: true,
+    });
+    const stubbed: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(stubbed, serveLinkedDatabase(VALID_REF));
+      yield* writeConfig();
+      yield* runPull(pullFlags({ dryRun: true }));
+
+      expect(out.promptSelectCalls).toHaveLength(1);
+      expect(asApiLines(api.requests)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        configRequest,
+      ]);
+      expect(asApiLines(projectHttp.calls)).toEqual([cacheRequest]);
+      assertPermissionDrift({
+        command: "pull",
+        activeFlags: { ...STEP_SWITCHES, "dry-run": true },
+        requests: [...api.requests, ...asRecordedRequests(stubbed), ...projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("--with-migration-history on a populated directory resolves the database again", () => {
+    const { layer, api, projectHttp } = setup({
+      yes: true,
+      realLayers: true,
+      api: { functionSlugs: ["hello"] },
+      remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
+    });
+    const stubbed: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(stubbed, serveLinkedDatabase(VALID_REF));
+      yield* writeConfig();
+      yield* seedLocalMigration("20260101000000", "init");
+      yield* runPull(pullFlags({ withMigrationHistory: true }));
+
+      expect(asLines(stubbed)).toEqual(FULL_RUN_SEQUENCE);
+      assertPermissionDrift({
+        command: "pull",
+        activeFlags: { ...STEP_SWITCHES, "with-migration-history": true },
+        requests: [...api.requests, ...asRecordedRequests(stubbed), ...projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("retries the schema diff through the pooler after an IPv6 failure", () => {
+    let diffs = 0;
+    const { layer, api, projectHttp } = setup({
+      yes: true,
+      realLayers: true,
+      api: { functionSlugs: ["hello"] },
+      remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
+      diffOutcome: () => {
+        diffs += 1;
+        return diffs === 1
+          ? { changes: false, fail: "could not translate host name: network is unreachable" }
+          : { changes: false };
+      },
+    });
+    const stubbed: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* reachableDirectHost;
+      yield* stubManagementApi(stubbed, serveLinkedDatabase(VALID_REF));
+      yield* writeConfig();
+      yield* seedLocalMigration("20260101000000");
+      yield* runPull(pullFlags());
+
+      expect(diffs).toBe(2);
+      expect(asLines(stubbed)).toEqual([loginRoleRequest, poolerRequest, loginRoleRequest]);
+      assertPermissionDrift({
+        command: "pull",
+        activeFlags: STEP_SWITCHES,
+        requests: [...api.requests, ...asRecordedRequests(stubbed), ...projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
 });

@@ -6,8 +6,6 @@
  * byte-for-byte. The only `omitempty` field is `metadata`.
  */
 
-import { Predicate } from "effect";
-
 import { encodeHtmlSafeJsonIndented } from "../../../command-internal/html-safe-json.ts";
 import { makeLevelEnum } from "../../../command-internal/fail-on.ts";
 
@@ -43,47 +41,6 @@ const asString = (value: unknown): string =>
 
 const asStringArray = (value: unknown): ReadonlyArray<string> =>
   Array.isArray(value) ? value.map(asString) : [];
-
-/**
- * Decodes a JSON value into a plain string field: an absent or `null` value is the zero value
- * `""`; a present non-string (number/bool/object/array) throws. Any string value is accepted
- * (an intentional unknown-enum tolerance), used only on the typed-API path, not `rows.Scan`.
- */
-function requireApiString(value: unknown, field: string): string {
-  if (value === undefined || value === null) return "";
-  if (typeof value !== "string") {
-    throw new TypeError(`invalid advisor ${field}: expected a string`);
-  }
-  return value;
-}
-
-/**
- * Decodes a JSON value into the `categories` string array, matching the
- * established output contract: an empty result collapses to `null` rather
- * than `[]`, and the key is always present (no `omitempty`).
- *
- * Mapping:
- *   - absent / `null`           → `null`  (encodes as `"categories":null`)
- *   - present `[]`              → `null`  (same collapse)
- *   - present `["SECURITY",…]`  → the string array
- *   - present non-array         → throw
- *   - non-string element        → throw
- */
-function requireApiStringArray(value: unknown): ReadonlyArray<string> | null {
-  if (value === undefined || value === null) return null;
-  if (!Array.isArray(value)) {
-    throw new TypeError("invalid advisor categories: expected an array of strings");
-  }
-  if (value.length === 0) return null;
-  return value.map((element) => {
-    // A null array element decodes to the zero string "".
-    if (element === null || element === undefined) return "";
-    if (typeof element !== "string") {
-      throw new TypeError("invalid advisor categories element: expected a string");
-    }
-    return element;
-  });
-}
 
 /**
  * Normalises a local-query `metadata` (jsonb) cell: the `@effect/sql-pg` driver
@@ -124,117 +81,58 @@ export function scanAdvisorLintRow(row: Record<string, unknown>): AdvisorLint {
   };
 }
 
-/**
- * The six metadata fields kept, in the established output-contract order.
- *
- * A JSON `null`/absent `metadata` value is omitted, an object is decoded
- * (unknown fields ignored), and any other JSON type — including a
- * `fkey_columns` that isn't an array — throws, so a malformed body fails
- * rather than silently dropping the metadata.
- */
-function projectApiMetadata(value: unknown): Record<string, unknown> | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (!Predicate.isObject(value)) {
-    throw new TypeError("invalid advisor metadata: expected an object");
-  }
-  const out: Record<string, unknown> = {};
-  // Each string subfield decodes absent/null to omitted and a present
-  // non-string throws. Add in the established output-contract order: entity,
-  // fkey_columns, fkey_name, name, schema, type.
-  const optString = (key: string) => {
-    const field = value[key];
-    if (field === undefined || field === null) return;
-    if (typeof field !== "string") {
-      throw new TypeError(`invalid advisor metadata.${key}: expected a string`);
-    }
-    out[key] = field;
+/** The lint shape both advisors endpoints decode to; open enums arrive as plain strings. */
+interface ApiLint {
+  readonly name: string;
+  readonly title: string;
+  readonly level: string;
+  readonly facing: string;
+  readonly categories: ReadonlyArray<string>;
+  readonly description: string;
+  readonly detail: string;
+  readonly remediation: string;
+  readonly metadata?: {
+    readonly schema?: string;
+    readonly name?: string;
+    readonly entity?: string;
+    readonly type?: string;
+    readonly fkey_name?: string;
+    readonly fkey_columns?: ReadonlyArray<number>;
   };
-
-  optString("entity");
-  const fkeyColumns = value["fkey_columns"];
-  if (fkeyColumns !== undefined && fkeyColumns !== null) {
-    if (!Array.isArray(fkeyColumns)) {
-      throw new TypeError("invalid advisor metadata.fkey_columns: expected an array of numbers");
-    }
-    const normalized: Array<number> = [];
-    for (const element of fkeyColumns) {
-      // A null array element decodes to the zero value (0), not a throw.
-      if (element === null || element === undefined) {
-        normalized.push(0);
-        continue;
-      }
-      if (typeof element !== "number") {
-        throw new TypeError("invalid advisor metadata.fkey_columns element: expected a number");
-      }
-      normalized.push(element);
-    }
-    out["fkey_columns"] = normalized;
-  }
-  optString("fkey_name");
-  optString("name");
-  optString("schema");
-  optString("type");
-  return out;
+  readonly cache_key: string;
 }
 
 /**
- * Reads the advisors API response with plain string narrowing instead of the generated
- * closed-enum schema, which would reject advisor names/metadata types the API can add: `name` /
- * `level` / `facing` / category values pass through as raw strings.
- *
- * Structurally strict, though: a top-level non-object, a wrongly-typed `lints`/`categories`/
- * `metadata`/`fkey_columns` container, or a non-object lint entry throws — so a malformed 200
- * body fails instead of being reported as "No issues found". A top-level `null` decodes to the
- * zero value (no lints).
- *
- * @throws On structurally invalid input; the caller maps it to `failed to fetch … advisors`.
+ * Maps decoded API lints to the output shape: metadata keeps its six fields in the established
+ * order and an empty `categories` collapses to `null`.
  */
-export function apiResponseToAdvisorLints(parsed: unknown): ReadonlyArray<AdvisorLint> {
-  if (parsed === null) return [];
-  if (!Predicate.isObject(parsed)) {
-    throw new TypeError("invalid advisors response: expected an object");
-  }
-  const lintsRaw = parsed["lints"];
-  if (lintsRaw === undefined || lintsRaw === null) return [];
-  if (!Array.isArray(lintsRaw)) {
-    throw new TypeError("invalid advisors lints: expected an array");
-  }
-  const lints: Array<AdvisorLint> = [];
-  for (const entry of lintsRaw) {
-    // A null slice element decodes to the zero-value struct, not a throw; normalize
-    // null/undefined to an empty record so the field decoders produce zero values.
-    if (entry === null || entry === undefined) {
-      lints.push({
-        name: "",
-        title: "",
-        level: "",
-        facing: "",
-        categories: null,
-        description: "",
-        detail: "",
-        remediation: "",
-        cacheKey: "",
-      });
-      continue;
-    }
-    if (!Predicate.isObject(entry)) {
-      throw new TypeError("invalid advisor lint: expected an object");
-    }
-    const metadata = projectApiMetadata(entry["metadata"]);
-    lints.push({
-      name: requireApiString(entry["name"], "name"),
-      title: requireApiString(entry["title"], "title"),
-      level: requireApiString(entry["level"], "level"),
-      facing: requireApiString(entry["facing"], "facing"),
-      categories: requireApiStringArray(entry["categories"]),
-      description: requireApiString(entry["description"], "description"),
-      detail: requireApiString(entry["detail"], "detail"),
-      remediation: requireApiString(entry["remediation"], "remediation"),
+export function apiLintsToAdvisorLints(lints: ReadonlyArray<ApiLint>): ReadonlyArray<AdvisorLint> {
+  return lints.map((lint) => {
+    const m = lint.metadata;
+    const metadata =
+      m === undefined
+        ? undefined
+        : {
+            ...(m.entity !== undefined ? { entity: m.entity } : {}),
+            ...(m.fkey_columns !== undefined ? { fkey_columns: m.fkey_columns } : {}),
+            ...(m.fkey_name !== undefined ? { fkey_name: m.fkey_name } : {}),
+            ...(m.name !== undefined ? { name: m.name } : {}),
+            ...(m.schema !== undefined ? { schema: m.schema } : {}),
+            ...(m.type !== undefined ? { type: m.type } : {}),
+          };
+    return {
+      name: lint.name,
+      title: lint.title,
+      level: lint.level,
+      facing: lint.facing,
+      categories: lint.categories.length === 0 ? null : lint.categories,
+      description: lint.description,
+      detail: lint.detail,
+      remediation: lint.remediation,
       ...(metadata !== undefined ? { metadata } : {}),
-      cacheKey: requireApiString(entry["cache_key"], "cache_key"),
-    });
-  }
-  return lints;
+      cacheKey: lint.cache_key,
+    };
+  });
 }
 
 /** Advisor-type match: `all` matches every lint, otherwise checks categories. */

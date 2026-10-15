@@ -27,6 +27,7 @@ import {
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
+  projectResponse,
   provideEnv,
   realDbConfigResolver,
   realLinkedProjectCache,
@@ -43,7 +44,6 @@ import { InvalidAccessTokenError } from "../../../auth/errors.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { DbConfigIpv6Error } from "../../../command-internal/db-config.errors.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import { IdentityStitch } from "../../../command-internal/identity-stitch.ts";
 import type {
   DbConnectionInput,
   ResolvedDbConnection,
@@ -78,15 +78,6 @@ const LOCAL_CONN: PgConnInput = {
 };
 
 const [SETUP_SQL, QUERY_SQL] = splitLintsSql();
-
-function jsonParseErrorText(raw: string): string {
-  try {
-    JSON.parse(raw);
-    return "";
-  } catch (cause) {
-    return String(cause);
-  }
-}
 
 /** A local lint row keyed by the column names the `lints.sql` query aliases. */
 function lintRow(over: Partial<Record<string, unknown>> = {}) {
@@ -229,24 +220,6 @@ function mockCredentials(opts: { token?: "valid" | "none" | "invalid" } = {}) {
   return { layer };
 }
 
-/** Tracks the raw-HTTP advisor path running the identity stitch. */
-function mockIdentityStitch() {
-  let calls = 0;
-  const layer = Layer.succeed(IdentityStitch, {
-    stitch: () =>
-      Effect.sync(() => {
-        calls += 1;
-      }),
-    stitchedDistinctId: () => undefined,
-  });
-  return {
-    layer,
-    get calls() {
-      return calls;
-    },
-  };
-}
-
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   rows?: ReadonlyArray<Record<string, unknown>>;
@@ -256,8 +229,7 @@ interface SetupOpts {
   invalidToken?: boolean;
   ipv6Error?: boolean;
   securityStatus?: number;
-  securityNonJson?: boolean;
-  securityJsonBody?: string;
+  securityRawBody?: string;
   securityLints?: ReadonlyArray<Record<string, unknown>>;
   performanceLints?: ReadonlyArray<Record<string, unknown>>;
   /** Runs the real `DbConfigResolver` and linked-project cache against the temp `workdir`. */
@@ -287,23 +259,11 @@ function setup(opts: SetupOpts = {}) {
         if (status !== 200) {
           return Effect.succeed(jsonResponse(request, status, { message: "boom" }));
         }
-        if (opts.securityNonJson === true) {
-          // 200 with a non-JSON content-type (proxy/header regression).
+        if (opts.securityRawBody !== undefined) {
           return Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
-              new Response(JSON.stringify({ lints: [] }), {
-                status: 200,
-                headers: { "content-type": "text/plain" },
-              }),
-            ),
-          );
-        }
-        if (opts.securityJsonBody !== undefined) {
-          return Effect.succeed(
-            HttpClientResponse.fromWeb(
-              request,
-              new Response(opts.securityJsonBody, {
+              new Response(opts.securityRawBody, {
                 status: 200,
                 headers: { "content-type": "application/json" },
               }),
@@ -316,14 +276,7 @@ function setup(opts: SetupOpts = {}) {
         return Effect.succeed(jsonResponse(request, 200, { lints: opts.performanceLints ?? [] }));
       }
       if (request.method === "GET" && url.endsWith(`/v1/projects/${VALID_REF}`)) {
-        return Effect.succeed(
-          jsonResponse(request, 200, {
-            ref: VALID_REF,
-            name: "alpha",
-            organization_id: "org-123",
-            organization_slug: "acme",
-          }),
-        );
+        return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
       }
       return Effect.succeed(jsonResponse(request, 404, {}));
     },
@@ -336,7 +289,6 @@ function setup(opts: SetupOpts = {}) {
   const credentials = mockCredentials({
     token: opts.invalidToken === true ? "invalid" : opts.loggedIn === false ? "none" : "valid",
   });
-  const identityStitch = mockIdentityStitch();
 
   const layer = Layer.mergeAll(
     out.layer,
@@ -356,8 +308,7 @@ function setup(opts: SetupOpts = {}) {
       : realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
     cliSettings,
     credentials.layer,
-    identityStitch.layer,
-    api.httpClientLayer,
+    api.factoryLayer,
     cliConfigValuesTestLayer,
     Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
     Layer.succeed(YesFlag, false),
@@ -373,7 +324,6 @@ function setup(opts: SetupOpts = {}) {
     cache,
     api,
     projectRef,
-    identityStitch,
     resolver,
   };
 }
@@ -546,6 +496,9 @@ describe("db advisors — linked", () => {
     level: "ERROR",
     facing: "EXTERNAL",
     categories: ["SECURITY"],
+    description: "Detects tables without RLS.",
+    detail: "Table public.users has RLS disabled",
+    remediation: "https://supabase.com/docs",
     cache_key: "sec",
   };
   const performanceLint = {
@@ -554,6 +507,9 @@ describe("db advisors — linked", () => {
     level: "INFO",
     facing: "EXTERNAL",
     categories: ["PERFORMANCE"],
+    description: "Detects unindexed foreign keys.",
+    detail: "Table public.posts has an unindexed foreign key",
+    remediation: "https://supabase.com/docs",
     cache_key: "perf",
   };
 
@@ -734,19 +690,6 @@ describe("db advisors — linked", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("runs the identity stitch on each advisor response", () => {
-    // Every Management API response is wrapped in identity stitching; the raw-HTTP advisor path
-    // must run the same stitch, once per response.
-    const { layer, identityStitch } = setup({
-      securityLints: [securityLint],
-      performanceLints: [performanceLint],
-    });
-    return Effect.gen(function* () {
-      yield* dbAdvisors(linkedFlags({ level: Option.some("info") }));
-      expect(identityStitch.calls).toBe(2);
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("resolves the linked ref through the shared target chain", () => {
     const { layer, projectRef } = setup({ securityLints: [securityLint] });
     return Effect.gen(function* () {
@@ -813,31 +756,62 @@ describe("db advisors — linked", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("fails on a 200 with a non-JSON content type (a JSON content type is required)", () => {
-    // The body is only decoded when Content-Type contains "json"; otherwise this fails as a
-    // status-200 error.
-    const { layer } = setup({ securityNonJson: true });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(dbAdvisors(linkedFlags({ type: Option.some("security") })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("unexpected security advisors status 200");
-      }
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("fails with the JSON parse error when a JSON advisors body is malformed", () => {
-    const { layer } = setup({ securityJsonBody: "{ not json" });
+  it.effect("fails with a status-200 error when the advisors body is not JSON", () => {
+    const { layer } = setup({ securityRawBody: "<html>gateway</html>" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(dbAdvisors(linkedFlags({ type: Option.some("security") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
-          message: `failed to fetch security advisors: ${jsonParseErrorText("{ not json")}`,
+          _tag: "DbAdvisorsSecurityStatusError",
+          status: 200,
+        });
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails as a decode error when the advisors body has the wrong shape", () => {
+    const { layer } = setup({ securityRawBody: '{"lints":"nope"}' });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(dbAdvisors(linkedFlags({ type: Option.some("security") })));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+          _tag: "DbAdvisorsSecurityNetworkError",
           decode: true,
         });
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("renders advisors whose name and metadata type the contract does not list", () => {
+    const { layer, out } = setup({
+      format: "json",
+      securityLints: [
+        {
+          ...securityLint,
+          name: "public_bucket_allows_listing",
+          categories: ["SECURITY", "COMPLIANCE"],
+          metadata: { name: "avatars", type: "bucket", extra: "dropped" },
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* dbAdvisors(linkedFlags({ type: Option.some("security") }));
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          data: {
+            results: [
+              expect.objectContaining({
+                name: "public_bucket_allows_listing",
+                categories: ["SECURITY", "COMPLIANCE"],
+                metadata: { name: "avatars", type: "bucket" },
+              }),
+            ],
+          },
+        }),
+      );
     }).pipe(Effect.provide(layer));
   });
 

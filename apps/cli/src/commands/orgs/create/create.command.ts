@@ -1,6 +1,7 @@
 import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -17,6 +18,7 @@ export type OrgsCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const orgsCreateCommand = Command.make("create", config).pipe(
   Command.withDescription("Create an organization for the logged-in user."),
   Command.withShortDescription("Create an organization"),
+  withPermissions({ operations: [{ operationId: "v1-create-an-organization", kind: "required" }] }),
   Command.withHandler((flags) =>
     orgsCreate(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),

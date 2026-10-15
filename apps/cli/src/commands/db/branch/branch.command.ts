@@ -1,4 +1,5 @@
 import { Argument, Command } from "effect/cli";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { removedCommand } from "../../../command-internal/removed-command.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -25,6 +26,8 @@ function removedBranchLeaf(name: string, argDescription: string) {
   } as const).pipe(
     Command.withDescription("Removed: local database branches are no longer supported."),
     Command.withShortDescription("Removed: local database branches are no longer supported"),
+    // Removed: fails before any Management API call, so no flag changes what it calls.
+    withPermissions({ operations: [], noApiEffectFlags: [] }),
     Command.withHandler(() =>
       removedCommand(REMOVED_SUGGESTION).pipe(withCommandTelemetry(), withJsonErrorHandling),
     ),
@@ -41,6 +44,8 @@ const dbBranchSwitchCommand = removedBranchLeaf("switch", "Name of the branch to
 const dbBranchListCommand = Command.make("list", {}).pipe(
   Command.withDescription("Removed: local database branches are no longer supported."),
   Command.withShortDescription("Removed: local database branches are no longer supported"),
+  // Removed: fails before any Management API call, so no flag changes what it calls.
+  withPermissions({ operations: [], noApiEffectFlags: [] }),
   Command.withHandler(() =>
     removedCommand(REMOVED_SUGGESTION).pipe(withCommandTelemetry(), withJsonErrorHandling),
   ),

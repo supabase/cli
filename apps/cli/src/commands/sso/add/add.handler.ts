@@ -1,7 +1,8 @@
-import { Effect, Option, Predicate, Redacted, Stdio } from "effect";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import { operationDefinitions, type SupabaseApiError } from "@supabase/api/effect";
+import { Effect, Option, Predicate, type Redacted, Schema, Stdio, type Types } from "effect";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
@@ -13,23 +14,18 @@ import {
   scanArgvFlags,
 } from "../../../shared/cli/flag-groups.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import {
-  encodeSortedJson,
-  encodeSortedJsonBody,
-} from "../../../command-internal/output.encoders.ts";
+import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
   encodeStructToml,
   encodeStructYaml,
 } from "../../../command-internal/struct-output.encoders.ts";
 import { SSO_PROVIDER_RESPONSE_SHAPE } from "../sso.response-shape.ts";
-import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
-import { requestWithAuth } from "../../../command-internal/raw-http.ts";
-import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { accessTokenForProfile } from "../../../auth/command-credentials.layer.ts";
 import { missingAccessTokenMessage } from "../../../auth/access-token.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
+import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
 import {
   argvBoolValue,
   argvEnumValue,
@@ -51,13 +47,33 @@ import {
   SsoAccessTokenError,
   SsoTomlEncodeError,
 } from "../sso.errors.ts";
-import { renderSingleProvider, toSsoProviderView } from "../sso.format.ts";
+import { renderSingleProvider } from "../sso.format.ts";
 import { validateMetadataUrl } from "../sso.metadata-url.ts";
-import { SSO_NAME_ID_FORMATS, readAttributeMappingFile, readMetadataFile } from "../sso.saml.ts";
+import {
+  SSO_NAME_ID_FORMATS,
+  readAttributeMappingFile,
+  readMetadataFile,
+  toNameIdFormat,
+} from "../sso.saml.ts";
 import type { SsoAddFlags } from "./add.command.ts";
 
 const SAML_DISABLED_MESSAGE =
   "SAML 2.0 support is not enabled for this project. Please enable it through the dashboard";
+
+type SsoAddBody = Types.Mutable<
+  Omit<Schema.Schema.Type<typeof operationDefinitions.v1CreateASsoProvider.inputSchema>, "ref">
+>;
+
+const decodeProvider = Schema.decodeUnknownEffect(
+  operationDefinitions.v1CreateASsoProvider.outputSchema,
+);
+
+const mapStatusOrNetwork = mapHttpError({
+  networkError: SsoAddNetworkError,
+  statusError: SsoAddUnexpectedStatusError,
+  networkMessage: (cause) => `failed to create sso provider: ${cause}`,
+  statusMessage: (_status, body) => `Unexpected error adding identity provider: ${body}`,
+});
 
 const readMetadata = readMetadataFile({
   openError: (args) => new SsoAddMetadataFileError(args),
@@ -68,6 +84,43 @@ const readMetadata = readMetadataFile({
 const readAttributeMapping = readAttributeMappingFile({
   openError: (args) => new SsoAddAttributeMappingFileError(args),
 });
+
+type TokenForAux<R> = Effect.Effect<Option.Option<Redacted.Redacted<string>> | undefined, never, R>;
+
+const handleAddError = <R>(
+  ref: string,
+  apiUrl: string,
+  tokenForAux: TokenForAux<R>,
+  cause: SupabaseApiError,
+) =>
+  mapStatusOrNetwork(cause).pipe(
+    Effect.catchTag("SsoAddUnexpectedStatusError", (mapped) =>
+      Effect.gen(function* () {
+        const upgradeSuggested = yield* suggestUpgrade({
+          projectRef: ref,
+          featureKey: "auth.saml_2",
+          statusCode: mapped.status,
+          response: gateResponse(cause),
+          apiUrl,
+          ...(yield* Effect.map(tokenForAux, (token) =>
+            token !== undefined ? { accessToken: token } : {},
+          )),
+        });
+        if (mapped.status === 404) {
+          return yield* new SsoAddSamlDisabledError({
+            message: SAML_DISABLED_MESSAGE,
+            upgradeSuggested,
+          });
+        }
+        return yield* new SsoAddUnexpectedStatusError({
+          status: mapped.status,
+          body: mapped.body,
+          message: mapped.message,
+          upgradeSuggested,
+        });
+      }),
+    ),
+  );
 
 const SSO_ADD_COMMAND_PATH = ["sso", "add"] as const;
 
@@ -94,7 +147,7 @@ const SSO_ADD_SCAN_SPEC = {
 export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
-  const httpClient = yield* HttpClient.HttpClient;
+  const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
@@ -199,15 +252,13 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     });
 
     yield* Effect.gen(function* () {
-      // Posted as raw JSON, not the generated schema, so unlisted
-      // `attribute_mapping.keys.<x>` fields (e.g. `default`) survive.
-      const body: Record<string, unknown> = {
-        type: flags.type,
+      const body: SsoAddBody = {
+        type: "saml",
       };
 
       if (Option.isSome(metadataFile)) {
         const xml = yield* readMetadata(metadataFile.value);
-        body["metadata_xml"] = xml;
+        body.metadata_xml = xml;
       } else if (Option.isSome(metadataUrl)) {
         if (!skipUrlValidation) {
           yield* validateMetadataUrl(metadataUrl.value).pipe(
@@ -221,20 +272,21 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
             ),
           );
         }
-        body["metadata_url"] = metadataUrl.value;
+        body.metadata_url = metadataUrl.value;
       }
 
       if (Option.isSome(attributeMappingFile)) {
         const mapping = yield* readAttributeMapping(attributeMappingFile.value);
-        body["attribute_mapping"] = mapping;
+        body.attribute_mapping = mapping;
       }
 
       if (domains.length > 0) {
-        body["domains"] = [...domains];
+        body.domains = [...domains];
       }
 
       if (Option.isSome(nameIdFormat)) {
-        body["name_id_format"] = nameIdFormat.value;
+        const format = toNameIdFormat(nameIdFormat.value);
+        if (format !== undefined) body.name_id_format = format;
       }
 
       yield* requireHostedMutationConsent({
@@ -247,88 +299,55 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
         ],
       });
 
-      const creating =
-        output.format === "text" ? yield* output.task("Adding SSO provider...") : undefined;
-
-      const tokenOpt =
-        reconciledTokenCached !== undefined
-          ? yield* Effect.filterOrFail(
+      const reconciledToken =
+        reconciledTokenCached === undefined
+          ? undefined
+          : (yield* Effect.filterOrFail(
               reconciledTokenCached,
               Option.isSome,
               () => new SsoAccessTokenError({ message: missingAccessTokenMessage() }),
-            )
-          : yield* resolveAccessToken;
+            )).value;
 
-      // `bearerToken(Redacted)` keeps the Authorization header's redaction
-      // marker, so any future debug serialization of the request stays
-      // opaque about the token.
-      const request = requestWithAuth(
-        HttpClientRequest.post(`${apiUrl}/v1/projects/${ref}/config/auth/sso/providers`),
-        tokenOpt,
-        cliSettings.userAgent,
-      ).pipe(
-        // Alphabetical key order so the cli-e2e replay server's
-        // string-compare body match succeeds.
-        HttpClientRequest.bodyText(encodeSortedJsonBody(body), "application/json"),
-      );
+      const creating =
+        output.format === "text" ? yield* output.task("Adding SSO provider...") : undefined;
 
-      const response = yield* httpClient.execute(request).pipe(
+      // `executeRaw` keeps the response body intact so structured output emits it as the API
+      // returned it; the typed schema decodes a copy for the table view.
+      const { rawBody, provider } = yield* Effect.gen(function* () {
+        const response = yield* api
+          .executeRaw(
+            operationDefinitions.v1CreateASsoProvider,
+            { ref, ...body },
+            {
+              retry: { requestTimeoutMs: Number.POSITIVE_INFINITY },
+              ...(reconciledToken === undefined
+                ? {}
+                : { baseUrl: apiUrl, accessToken: reconciledToken }),
+            },
+          )
+          .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
+        const rawBody: unknown = yield* response.json;
+        return { rawBody, provider: yield* decodeProvider(rawBody) };
+      }).pipe(
+        Effect.catch((cause) => handleAddError(ref, apiUrl, reconciledTokenForAux, cause)),
         Effect.tapError(() => creating?.fail() ?? Effect.void),
-        Effect.mapError(
-          (cause) =>
-            new SsoAddNetworkError({
-              message: `failed to create sso provider: ${String(cause)}`,
-            }),
-        ),
       );
-
-      if (response.status !== 201) {
-        const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-        // Same cap + control-character sanitization as the typed-client
-        // error mapper (`mapHttpError`), so this raw-HTTP path doesn't skip it.
-        const bodyText = sanitizeErrorBody(rawBody);
-        const upgradeSuggested = yield* suggestUpgrade({
-          projectRef: ref,
-          featureKey: "auth.saml_2",
-          statusCode: response.status,
-          response,
-          apiUrl,
-          ...(yield* Effect.map(reconciledTokenForAux, (token) =>
-            token !== undefined ? { accessToken: token } : {},
-          )),
-        });
-        yield* creating?.fail() ?? Effect.void;
-        if (response.status === 404) {
-          return yield* new SsoAddSamlDisabledError({
-            message: SAML_DISABLED_MESSAGE,
-            upgradeSuggested,
-          });
-        }
-        return yield* new SsoAddUnexpectedStatusError({
-          status: response.status,
-          body: bodyText,
-          message: `Unexpected error adding identity provider: ${bodyText}`,
-          upgradeSuggested,
-        });
-      }
-
-      const parsedJson = yield* response.json.pipe(Effect.orElseSucceed((): unknown => ({})));
       yield* creating?.clear ?? Effect.void;
 
       const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
       if (outputFlagFormat === "json") {
-        yield* output.raw(encodeSortedJson(parsedJson));
+        yield* output.raw(encodeSortedJson(rawBody));
         return;
       }
       if (outputFlagFormat === "yaml") {
-        yield* output.raw(encodeStructYaml(parsedJson, SSO_PROVIDER_RESPONSE_SHAPE));
+        yield* output.raw(encodeStructYaml(rawBody, SSO_PROVIDER_RESPONSE_SHAPE));
         return;
       }
       if (outputFlagFormat === "toml") {
         // Same TOML-encode-failure pattern as list/show.
         const toml = yield* Effect.try({
-          try: () => encodeStructToml(parsedJson, SSO_PROVIDER_RESPONSE_SHAPE),
+          try: () => encodeStructToml(rawBody, SSO_PROVIDER_RESPONSE_SHAPE),
           catch: (cause) =>
             new SsoTomlEncodeError({
               message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -345,12 +364,12 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
       if (output.format === "json" || output.format === "stream-json") {
         yield* output.success(
           "",
-          Predicate.isObjectOrArray(parsedJson) ? { ...parsedJson } : { value: parsedJson },
+          Predicate.isObjectOrArray(rawBody) ? { ...rawBody } : { value: rawBody },
         );
         return;
       }
 
-      yield* output.raw(renderSingleProvider(toSsoProviderView(parsedJson)));
+      yield* output.raw(renderSingleProvider(provider));
     }).pipe(
       // Linked-project cache fill GETs `/v1/projects/{ref}` through the
       // reconciled host, never the config layer's.

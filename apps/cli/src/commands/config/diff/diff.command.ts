@@ -5,6 +5,10 @@ import { Command, Flag } from "effect/cli";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { configTarget } from "../../../command-internal/project-target.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { GLOBAL_OUTPUT_FORMATS } from "../../../command-internal/global-flags.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
@@ -65,6 +69,16 @@ export const configDiffCommand = Command.make("diff", config).pipe(
       description: "Diff against the 'staging' branch, exiting 2 on drift",
     },
   ]),
+  withPermissions(
+    compose(
+      configTarget,
+      {
+        operations: [{ operationId: "v2-get-project-config", kind: "required" }],
+        noApiEffectFlags: ["exit-code"],
+      },
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler(configDiffHandler),
   Command.provide(managementApiRuntimeLayer(["config", "diff"])),
   Command.provide(cliConfigValuesLayer),

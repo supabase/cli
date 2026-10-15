@@ -77,9 +77,8 @@ export const projectsList = Effect.fn("projects.list")(function* (_flags: Projec
     const fetching =
       output.format === "text" ? yield* output.task("Fetching projects...") : undefined;
 
-    // `executeRaw` skips response decoding: the generated `ref` schema requires 20+ lowercase
-    // letters, which placeholder refs in test fixtures don't satisfy. Auth, URL, and headers
-    // still go through the API client.
+    // `executeRaw` skips response decoding so projects are emitted as the API returned them,
+    // including fields the generated schema does not declare.
     const response = yield* api.executeRaw(operationDefinitions.v1ListAllProjects, {}).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.mapError(

@@ -32,6 +32,7 @@ const options = (root: string) => ({
   root,
   cacheRoot: `${root}/cache`,
   runtime: "native" as const,
+  claimNativePort: () => Effect.succeed(true),
 });
 
 const dockerOptions = (root: string) => ({
@@ -643,6 +644,7 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
           root: "C:\\Users\\dev\\stack",
           cacheRoot: "C:\\Users\\dev\\cache",
           runtime: "docker",
+          claimNativePort: () => Effect.succeed(true),
         },
         deps,
         Functions.makeSpec(fakeBootstrap, deps.path, deps.fs),

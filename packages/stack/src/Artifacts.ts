@@ -241,23 +241,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   realtime: definition(
     "realtime",
     {
-      upstreamVersion: "v2.143.4",
+      upstreamVersion: "v2.144.0",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/realtime:v2.143.4-r0@sha256:902db0b55daecaf2f0c9fa50f4c73606be267d4f1eb004185be1bc00549ca2e6",
-      upstreamImage: "supabase/realtime:v2.143.4",
+        "ghcr.io/supabase/cli/realtime:v2.144.0-r0@sha256:220bccaef542dd8200071a14cd009f749ba422ccdce45cb6cdb93f57f260675e",
+      upstreamImage: "supabase/realtime:v2.144.0",
       natives: {
         "darwin-arm64": {
-          archive: "930c58118a6146bf6836935ff54cb9ca49f6cc0dfa2949e9a16c62d572a26a74",
-          manifest: "4183263200339bd30e241df1fa31235481d4a0d85560d541360a900511c46597",
+          archive: "8da707f0b27f22bfd25244f47d4a4471e2fbec3b0d596e1d334a645f254d0dec",
+          manifest: "8cc57d995fdb59f72377d889a87318937a234fb185a5c614a2d109994ca6d2f1",
         },
         "linux-amd64": {
-          archive: "dfb1308c03a789228afdf2fd92b533efdccb08eec4c2e5801e70333ab7d78b75",
-          manifest: "caa2c5defee9dea6464fd3b818559b77a64dfec296418f33b37dc46c56682f58",
+          archive: "cb80975767fdb1a383cc518a29d63a3af5ee09f835b4ee7341c18f0be4dd6678",
+          manifest: "cc2c2ff383e22e7fe384ec4092766ea2caa380644bc7d13960b539d4b2cf7abd",
         },
         "linux-arm64": {
-          archive: "0518d38ba40e844f3a1ae07ee1adf20b06f7f5cdcfe085825a4be6ec50eb9c17",
-          manifest: "dcf4883e6b868240b2129f2ee7b0e8525518769a671881d3a097a6803d94e2b5",
+          archive: "06eee5ce268be7877a9d27dd781117d60fd1b0836d915f19033ee256e01ed058",
+          manifest: "73483a0636dff15fd7a4f83f8e751d6a86b25f8681d7efd3deb08396f0229eb6",
         },
       },
     },
@@ -267,23 +267,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   storage: definition(
     "storage",
     {
-      upstreamVersion: "v1.82.1",
+      upstreamVersion: "v1.83.3",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/storage:v1.82.1-r0@sha256:68c0f36557430219eb318df22ee817915992f2d5c976971e32574c3fe429be3c",
-      upstreamImage: "supabase/storage-api:v1.82.1",
+        "ghcr.io/supabase/cli/storage:v1.83.3-r0@sha256:ac03b8058499a192dc447cf7fc6db020f25230d12b282a49a6ba6367025354d0",
+      upstreamImage: "supabase/storage-api:v1.83.3",
       natives: {
         "darwin-arm64": {
-          archive: "69a3308f1633db400bc718ee363aaa3d0d8ae846f52af4ea3a61d4cf04064e69",
-          manifest: "37ac0f369085e88952fde5c7493e2291d9e1034ade6c763509900e4cafa7d978",
+          archive: "8208925fef22516668f700fb1fc80478fe2f80fa78452d65cda8862d7f277863",
+          manifest: "6349e482d794fb4d2aabdb347c4d6e6f62b920eef05e3da66e1b0f9826b196a4",
         },
         "linux-amd64": {
-          archive: "f8716410f5997cf2a89cd3fe13565fe21b6bb239ef0be9818be385c0b397afba",
-          manifest: "ca82ac18ccccd91ec3370d65497c7f17c938f8601d7982a5fb48893ad5c1b159",
+          archive: "eda8dc7b0da3ac7b41c52dc87daec5a1868bd9529c156b947c9a53080bd68c03",
+          manifest: "754ad2082ffac3f420094c20730c7bb58f4df25382312b2471d45b0af3368f4b",
         },
         "linux-arm64": {
-          archive: "45e623ac2913dc0aa2e11c3b58ea437227c51bc8e55a5184a2736fb1c13ab49e",
-          manifest: "024d11f58d90d54ebe62f55b88f75d5b0e541f1612211f5bf6a351472c6cb466",
+          archive: "8520036ba99639e6014a5e222fc858aaceae1aff575db392711d5cd382a227da",
+          manifest: "dcfc813c207bd501d4d2b87aa62ae8ce77ec8f3e676989ce49cb5eeee656ba78",
         },
       },
     },
@@ -418,23 +418,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   analytics: definition(
     "analytics",
     {
-      upstreamVersion: "v1.53.0",
-      revision: 0,
+      upstreamVersion: "v1.50.15",
+      revision: 1,
       image:
-        "ghcr.io/supabase/cli/analytics:v1.53.0-r0@sha256:fad27128c4d39f85545ab3300c3e4a51bec5d1519c87bb75b7ab2926bba4fe90",
-      upstreamImage: "supabase/logflare:1.53.0",
+        "ghcr.io/supabase/cli/analytics:v1.50.15-r1@sha256:2b03ec3120effe5d33c1e2ec4570a932fb60ce6a6851b4920a22388b4e8356c1",
+      upstreamImage: "supabase/logflare:1.50.15",
       natives: {
         "darwin-arm64": {
-          archive: "37f7486fd2235330cbf173ef574aabb6d17cf2c2391e12febc7a1df2911a20a5",
-          manifest: "861578b203821d65c9ff6fde5c7a32c61630331c03f4be59afd9fe3e53237508",
+          archive: "abfc9ba64e354129e8f8b0f38b43747a5dab48785fd3593d11e52cd6e0ff37bf",
+          manifest: "60647643f5521089978dc20c6966b86ed939b9751b187cbb70e0de3fbd2479ac",
         },
         "linux-amd64": {
-          archive: "ded6b2687a2eec39e1ea5175cd27f8e7bacc5af97d24b68e9468667d2ea77916",
-          manifest: "6a244ac0302231d78eb04fdc61f8aa64103f495381ee4f1d6a5bb05a6f5892c2",
+          archive: "7652456c1a1d73ac6fe10853bd8a38e79139b43fe796caec5725a3d0f225a3d8",
+          manifest: "6c465af69e26ce8a9c15988d5dcbbae069e9a92b697962bfa86c4f3e601b8409",
         },
         "linux-arm64": {
-          archive: "e9c7846f8ca37c9321fdd1e1588cba71f15bd516797d163024a929d056992a8b",
-          manifest: "6b9f3bc6cc760372ddc272e373894abacfbafeb96c044caf7cd7c51a0d8025eb",
+          archive: "a75625d7c903d70e749b5ee776e2c5c98d51ee60ff92b28bb6684121fe0f3888",
+          manifest: "ca2569304cf24e6abd4242b55dd0d20338f40532fbe6377a9accdc5d47ea47ab",
         },
       },
     },

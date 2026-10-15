@@ -2,7 +2,7 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/__PROJECT_REF__",
+      "path": "/v1/projects/replayfixtureprojref",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
@@ -22,15 +22,15 @@
         "x-ratelimit-reset": "24"
       },
       "body": {
-        "id": "__PROJECT_REF__",
-        "ref": "__PROJECT_REF__",
-        "organization_id": "__PROJECT_REF__",
-        "organization_slug": "__PROJECT_REF__",
+        "id": "replayfixtureprojref",
+        "ref": "replayfixtureprojref",
+        "organization_id": "replayfixtureprojref",
+        "organization_slug": "replayfixtureprojref",
         "name": "cli-e2e-test",
         "region": "us-east-1",
         "status": "ACTIVE_HEALTHY",
         "database": {
-          "host": "db.__PROJECT_REF__.supabase.red",
+          "host": "db.replayfixtureprojref.supabase.red",
           "version": "17.6.1.111",
           "postgres_engine": "17",
           "release_channel": "ga"
@@ -42,7 +42,7 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/__PROJECT_REF__/api-keys",
+      "path": "/v1/projects/replayfixtureprojref/api-keys",
       "query": {
         "reveal": "true"
       },
@@ -114,7 +114,7 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/__PROJECT_REF__/config/database/postgres",
+      "path": "/v1/projects/replayfixtureprojref/config/database/postgres",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
@@ -139,7 +139,7 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/__PROJECT_REF__/network-restrictions",
+      "path": "/v1/projects/replayfixtureprojref/network-restrictions",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
@@ -172,7 +172,7 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/__PROJECT_REF__/config/database/pooler",
+      "path": "/v1/projects/replayfixtureprojref/config/database/pooler",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
@@ -193,18 +193,18 @@
       },
       "body": [
         {
-          "identifier": "__PROJECT_REF__",
+          "identifier": "replayfixtureprojref",
           "database_type": "PRIMARY",
-          "db_user": "postgres.__PROJECT_REF__",
+          "db_user": "postgres.replayfixtureprojref",
           "db_host": "aws-0-us-east-1.pooler.supabase.green",
           "db_port": 6543,
           "db_name": "postgres",
-          "connection_string": "postgresql://postgres.__PROJECT_REF__:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.green:6543/postgres",
+          "connection_string": "postgresql://postgres.replayfixtureprojref:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.green:6543/postgres",
           "pool_mode": "transaction",
           "default_pool_size": null,
           "max_client_conn": null,
           "is_using_scram_auth": true,
-          "connectionString": "postgresql://postgres.__PROJECT_REF__:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.green:6543/postgres"
+          "connectionString": "postgresql://postgres.replayfixtureprojref:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.green:6543/postgres"
         }
       ]
     }
@@ -212,7 +212,7 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/__PROJECT_REF__/postgrest",
+      "path": "/v1/projects/replayfixtureprojref/postgrest",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
@@ -244,7 +244,7 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/__PROJECT_REF__/config/storage",
+      "path": "/v1/projects/replayfixtureprojref/config/storage",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
@@ -303,7 +303,7 @@
   {
     "request": {
       "method": "GET",
-      "path": "/v1/projects/__PROJECT_REF__/config/auth",
+      "path": "/v1/projects/replayfixtureprojref/config/auth",
       "query": {},
       "headers": {
         "accept-encoding": "gzip",
@@ -355,6 +355,7 @@
         "hook_before_user_created_secrets": null,
         "nimbus_oauth_client_id": null,
         "nimbus_oauth_client_secret": null,
+        "nimbus_oauth_email_optional": null,
         "external_anonymous_users_enabled": false,
         "external_apple_additional_client_ids": null,
         "external_apple_client_id": null,

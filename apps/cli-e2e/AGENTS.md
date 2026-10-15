@@ -119,23 +119,23 @@ The fixture for this test is hand-authored in `fixtures/scenarios/<slug>/interac
 
 ## Writing assertions that work in both modes
 
-In **replay mode**, fixture data contains the literal placeholder string `__PROJECT_REF__` — the CLI renders it as-is. In **record mode**, the CLI renders the real 20-char ref.
+In **replay mode**, fixture data contains one fixed, schema-valid 20-char ref (`REPLAY_PROJECT_REF` in `src/server/placeholder.ts`) in place of every project ref and org slug — the CLI renders it as-is. In **record mode**, the CLI renders the real 20-char ref.
 
-Never assert on the literal placeholder in a way that breaks in record mode:
+Never assert on the literal replay ref in a way that breaks in record mode:
 
 ```typescript
 // WRONG — fails in record mode
-expect(result.stdout).toContain("__PROJECT_REF__");
+expect(result.stdout).toContain(REPLAY_PROJECT_REF);
 
-// CORRECT — matches real ref in record mode, placeholder in replay
-expect(result.stdout).toMatch(/[a-z]{20}|__PROJECT_REF__/);
+// CORRECT — matches the real ref in record mode and the replay ref in replay
+expect(result.stdout).toMatch(/[a-z]{20}/);
 ```
 
 For JSON output assertions, use `toMatchObject` with `expect.any(String)` for ref fields so they pass regardless of whether the value is a real ref or the placeholder.
 
 ## Global setup (`tests/setup.ts`)
 
-In **replay mode**: `projectRef` and `orgId` are set to default values (`"aaaaaaaaaaaaaaaaaaaa"` and the same). No API calls are made.
+In **replay mode**: `projectRef` and `orgId` are set to `REPLAY_PROJECT_REF`. No API calls are made.
 
 In **record mode**: global setup resolves the org, deletes any orphaned test projects by name (from previous failed runs), creates a fresh `cli-e2e-test` project, and provides its ref via Vitest's `inject()` mechanism. This project is deleted in the global teardown.
 

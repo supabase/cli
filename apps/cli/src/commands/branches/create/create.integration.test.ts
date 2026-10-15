@@ -1,6 +1,6 @@
 import type { V1CreateABranchOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 import { CliError, CliOutput, Command } from "effect/cli";
 
 import {
@@ -25,12 +25,16 @@ import {
   useTempWorkdir,
   withConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { branchesCreateCommand, type BranchesCreateFlags } from "./create.command.ts";
 import { branchesCreate } from "./create.handler.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 
 type CreatedBranch = typeof V1CreateABranchOutput.Type;
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const CREATED: CreatedBranch = {
   id: "11111111-2222-4333-8444-555555555555",
@@ -191,8 +195,67 @@ describe("branches create integration", () => {
         branch_name: "feat-x",
         is_default: false,
       });
+      assertPermissionDrift({ command: "branches create", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "lists projects for the picker, creates the branch, then fills the linked-project cache",
+    () => {
+      const out = mockOutput({ format: "text", promptSelectResponses: [VALID_REF] });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          if (request.method === "POST") {
+            return Effect.succeed(jsonResponse(request, 201, CREATED));
+          }
+          return Effect.succeed(
+            jsonResponse(
+              request,
+              200,
+              request.url === "https://api.supabase.com/v1/projects"
+                ? [projectResponse()]
+                : projectResponse(),
+            ),
+          );
+        },
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings,
+          tty: mockTty({ stdinIsTty: true }),
+          linkedProjectCache: realLinkedProjectCache({
+            httpClient: api.httpClientLayer,
+            cliSettings,
+          }),
+        }),
+        Layer.succeed(YesFlag, true),
+        hostedCreatePolicy,
+      );
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+        yield* branchesCreate({ ...baseFlags, name: Option.some("feat-x") });
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/v1/projects",
+          `POST https://api.supabase.com/v1/projects/${VALID_REF}/branches`,
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(out.stdoutText).toContain("Created preview branch:");
+        expect(out.stdoutText).toContain("feat-x");
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "branches create", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("includes optional flags in the request body only when set", () => {
     const { layer, api } = setup();
@@ -212,6 +275,17 @@ describe("branches create integration", () => {
         persistent: true,
         with_data: true,
         notify_url: "https://hook.example.com",
+      });
+      assertPermissionDrift({
+        command: "branches create",
+        activeFlags: {
+          region: true,
+          persistent: true,
+          "with-data": true,
+          "notify-url": true,
+        },
+        requests: api.requests,
+        exact: true,
       });
     }).pipe(Effect.provide(layer));
   });
@@ -339,9 +413,15 @@ describe("branches create integration", () => {
   });
 
   it.effect("fires cli_upgrade_suggested with feature_key=branching_limit on 402 gated", () => {
-    const { layer, analytics } = setup({ status: 402, gated: true });
+    const { layer, analytics, api } = setup({ status: 402, gated: true });
     return Effect.gen(function* () {
       yield* Effect.exit(branchesCreate({ ...baseFlags, name: Option.some("feat-x") }));
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `POST https://api.supabase.com/v1/projects/${VALID_REF}/branches`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        `GET https://api.supabase.com/v1/organizations/${ORG_SLUG}/entitlements`,
+      ]);
+      assertPermissionDrift({ command: "branches create", requests: api.requests });
       expect(analytics.captured).toEqual([
         {
           event: "cli_upgrade_suggested",
@@ -370,6 +450,7 @@ describe("branches create integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.url).toContain("/branches");
+      assertPermissionDrift({ command: "branches create", requests: api.requests, exact: true });
       expect(out.stderrText).toContain("/org/env-org/billing");
       expect(analytics.captured).toEqual([
         {

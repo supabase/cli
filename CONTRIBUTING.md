@@ -234,7 +234,7 @@ Recording proxies CLI traffic to the Supabase staging API. Provide a staging acc
 SUPABASE_ACCESS_TOKEN=<your-staging-token> SUPABASE_TEST_PROJECT_REF=<your-project-ref> SUPABASE_STAGING_URL=<stagingUrl> pnpm run record
 ```
 
-Review the generated files in `apps/cli-e2e/fixtures/recorded/` before committing — verify that no real tokens, UUIDs, or project refs appear (they should be replaced with `__ACCESS_TOKEN__`, `__UUID__`, `__PROJECT_REF__` placeholders).
+Review the generated files in `apps/cli-e2e/fixtures/recorded/` before committing — verify that no real tokens, UUIDs, or project refs appear (they should be replaced with `__ACCESS_TOKEN__` and `__UUID__` placeholders and the fixed `replayfixtureprojref` ref).
 
 ### Verifying fixtures
 

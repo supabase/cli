@@ -1,6 +1,11 @@
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
+import { upgradeSuggestion } from "../../../command-internal/upgrade-suggest.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -30,6 +35,14 @@ export const ssoRemoveCommand = Command.make("remove", config).pipe(
       description: "Remove an SSO provider by ID",
     },
   ]),
+  withPermissions(
+    compose(
+      { operations: [{ operationId: "v1-delete-a-sso-provider", kind: "required" }] },
+      upgradeSuggestion,
+      projectRefPicker,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     ssoRemove(flags).pipe(
       withCommandTelemetry({ flags, safeFlags: ["project-ref"] }),

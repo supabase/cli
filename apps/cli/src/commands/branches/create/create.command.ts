@@ -1,6 +1,12 @@
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { Layer } from "effect";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { upgradeSuggestion } from "../../../command-internal/upgrade-suggest.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -91,6 +97,17 @@ export type BranchesCreateFlags = CliCommand.Command.Config.Infer<typeof config>
 export const branchesCreateCommand = Command.make("create", config).pipe(
   Command.withDescription("Create a preview branch for the linked project."),
   Command.withShortDescription("Create a preview branch"),
+  withPermissions(
+    compose(
+      {
+        operations: [{ operationId: "v1-create-a-branch", kind: "required" }],
+        noApiEffectFlags: ["region", "size", "persistent", "with-data", "notify-url", "git-branch"],
+      },
+      projectRefPicker,
+      upgradeSuggestion,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     branchesCreate(flags).pipe(
       withCommandTelemetry({ flags, safeFlags: ["project-ref"], config }),

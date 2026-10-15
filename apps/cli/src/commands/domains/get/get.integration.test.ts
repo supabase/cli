@@ -1,10 +1,12 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
-import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
+  VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
@@ -12,6 +14,11 @@ import {
   useTempWorkdir,
   unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { domainsGet } from "./get.handler.ts";
 
 const HOSTNAME_RESPONSE: typeof V1GetHostnameConfigOutput.Type = {
@@ -57,6 +64,8 @@ const JsonEnvelope = Schema.Record(Schema.String, Schema.Unknown);
 
 const tempRoot = useTempWorkdir("supabase-domains-get-int-");
 
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const analytics = mockAnalytics();
@@ -83,13 +92,17 @@ const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: Option.
 
 describe("domains get integration", () => {
   it.effect("prints the hostname status to stderr in text mode", () => {
-    const { layer, out, telemetry, linkedProjectCache } = setup();
+    const { layer, out, api, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stderrText).toContain("Custom hostname configuration not started.");
       expect(out.stdoutText).toBe("");
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cached).toBe(true);
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname`,
+      ]);
+      assertPermissionDrift({ command: "domains get", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -372,6 +385,7 @@ describe("domains get integration", () => {
       const exit = yield* Effect.exit(domainsGet(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(1);
+      assertPermissionDrift({ command: "domains get", requests: api.requests });
       expect(out.stderrText).toContain("Upgrade your plan:");
       expect(out.stderrText).toContain("/org/env-org/billing");
       expect(analytics.captured).toEqual([
@@ -418,4 +432,56 @@ describe("domains get integration", () => {
       }
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "picks the project, fetches the hostname config and fills the linked-project cache through the real layers",
+    () => {
+      const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          const route = `${request.method} ${request.url}`;
+          if (route === "GET https://api.supabase.com/v1/projects") {
+            return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+          }
+          if (route === `GET https://api.supabase.com/v1/projects/${VALID_REF}`) {
+            return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+          }
+          if (route === `GET https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname`) {
+            return Effect.succeed(jsonResponse(request, 200, HOSTNAME_RESPONSE));
+          }
+          return Effect.succeed(jsonResponse(request, 404, { message: "unexpected request" }));
+        },
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+        yield* domainsGet(baseFlags);
+        expect(out.stderrText).toContain("Custom hostname configuration not started.");
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/v1/projects",
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname`,
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "domains get", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });

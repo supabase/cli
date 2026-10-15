@@ -1,5 +1,10 @@
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose, withContext } from "../../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../../telemetry/linked-project-cache.layer.ts";
+import { computeRead } from "../../../../shared/compute/compute-api.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
 import {
@@ -86,6 +91,28 @@ export const computeLogsCommand = Command.make("logs", config).pipe(
       description: "Skip the backlog and print only lines that arrive from now on",
     },
   ]),
+  withPermissions(
+    compose(
+      {
+        operations: [
+          {
+            operationId: "v1-get-project-logs",
+            kind: "required",
+            context: "--tail isn't 0",
+          },
+          {
+            operationId: "v1-get-project-logs",
+            kind: "required",
+            when: [{ flag: "follow", is: true }],
+          },
+        ],
+        noApiEffectFlags: ["kind", "tail"],
+      },
+      withContext(computeRead, "the log query returned no rows, or --tail 0 with --follow"),
+      projectRefPicker,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     computeLogs(flags).pipe(
       // `config` as well as `flags`: `--kind` is a choice flag, and the wrapper

@@ -8,6 +8,7 @@ import { commandFeedbackClientLayer, feedbackCliConfigLayer } from "../feedback.
 import { FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import { feedbackDelete } from "./delete.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {
   token: Argument.String("token").pipe(
@@ -44,6 +45,7 @@ export const feedbackDeleteCommand = Command.make("delete", config).pipe(
       description: "Delete feedback using the token printed when it was submitted",
     },
   ]),
+  withPermissions({ operations: [], noApiEffectFlags: ["project-ref"] }),
   Command.withHandler(feedbackDeleteHandler),
   Command.provide(commandRuntimeLayer(["feedback", "delete"])),
   Command.provide(telemetryStateLayer),

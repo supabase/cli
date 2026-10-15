@@ -1,9 +1,18 @@
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose, withContext } from "../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
-import { notebooksProjectRefSafeFlags } from "../notebooks.shared.ts";
+import {
+  notebookCreate,
+  notebookRead,
+  notebooksList,
+  notebooksProjectRefSafeFlags,
+} from "../notebooks.shared.ts";
 import { notebooksPull } from "./pull.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
@@ -45,6 +54,22 @@ export const notebooksPullCommand = Command.make("pull", config).pipe(
       description: "Replace the local copy of one notebook by id",
     },
   ]),
+  withPermissions(
+    compose(
+      { operations: [] },
+      projectRefPicker,
+      withContext(notebooksList, "no notebook id argument"),
+      withContext(
+        notebookRead,
+        "a notebook id argument, or no id argument and a project notebook with no file in supabase/notebooks",
+      ),
+      withContext(
+        notebookCreate,
+        "no notebook id argument, local notebooks the project lacks, stdout a TTY with text output, and the create answer",
+      ),
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler(notebooksPullHandler),
   Command.provide(managementApiRuntimeLayer(["notebooks", "pull"])),
   withTargetPolicy({ group: "hosted", consent: "none" }),

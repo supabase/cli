@@ -1,4 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
+import { type V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
 
@@ -8,6 +9,7 @@ import {
   mockOutput,
   mockProcessControl,
   mockRuntimeInfo,
+  mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import { v2ProjectConfigResponse } from "../../../../tests/helpers/config-fixtures.ts";
 import {
@@ -23,6 +25,8 @@ import {
   useTempWorkdir,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
 import { GLOBAL_OUTPUT_FORMATS } from "../../../command-internal/global-flags.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -37,6 +41,7 @@ const BACKDATED_MTIME_SECONDS = 1_577_836_800;
 
 const BRANCH_UUID = "11111111-1111-4111-8111-111111111111";
 const BRANCH_REF = "cccccccccccccccccccc";
+const API = "https://api.supabase.com";
 
 const writeProjectFile = Effect.fnUntraced(function* (name: string, contents: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -47,6 +52,7 @@ const writeProjectFile = Effect.fnUntraced(function* (name: string, contents: st
 });
 
 const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeJsonText = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 /** Schema-valid v2 project-config body whose managed values all sit at the local schema
  *  defaults, so an empty config.toml diffs clean against it. */
@@ -60,6 +66,23 @@ const decodeChanges = Schema.decodeUnknownEffect(
     Schema.StructWithRest(Schema.Struct({ path: Schema.Array(Schema.String) }), [jsonRecord]),
   ),
 );
+
+const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org-123",
+  organization_slug: "acme",
+  name: "alpha",
+  region: "us-east-1",
+  created_at: "2026-05-27T01:02:03Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.alpha.supabase.co",
+    version: "15.1",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
+};
 
 /** V1GetABranch body for the branch-name `--project-ref` lookup. */
 const BRANCH_BY_NAME = {
@@ -172,7 +195,7 @@ const noFlags = {
 
 describe("config diff integration", () => {
   it.effect("reports drift against the linked project without touching the config file", () => {
-    const { layer, out, processControl, telemetry, linkedProjectCache } = setup({
+    const { layer, out, processControl, telemetry, linkedProjectCache, api } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
     });
     return Effect.gen(function* () {
@@ -202,6 +225,7 @@ describe("config diff integration", () => {
       expect(processControl.exitCode).toBeUndefined();
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBe(VALID_REF);
+      assertPermissionDrift({ command: "config diff", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -283,12 +307,18 @@ describe("config diff integration", () => {
   });
 
   it.effect("--exit-code sets exit 2 when differences are found", () => {
-    const { layer, processControl } = setup({
+    const { layer, processControl, api } = setup({
       toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
     });
     return Effect.gen(function* () {
       yield* configDiff({ ...noFlags, exitCode: true });
       expect(processControl.exitCode).toBe(2);
+      assertPermissionDrift({
+        command: "config diff",
+        activeFlags: { "exit-code": true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -547,6 +577,11 @@ describe("config diff integration", () => {
         true,
       );
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
+      assertPermissionDrift({
+        command: "config diff",
+        activeFlags: { "project-ref": true },
+        requests: api.requests,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -576,6 +611,11 @@ describe("config diff integration", () => {
           true,
         );
         expect(urls.some((url) => url.includes(`/v1/projects/${BRANCH_REF}/`))).toBe(false);
+        assertPermissionDrift({
+          command: "config diff",
+          activeFlags: { "project-ref": true },
+          requests: api.requests,
+        });
       }).pipe(Effect.provide(layer));
     },
   );
@@ -595,6 +635,11 @@ describe("config diff integration", () => {
       expect(out.stderrText).toContain(
         `Comparing against branch ${BRANCH_UUID} (project ref ${BRANCH_REF})`,
       );
+      assertPermissionDrift({
+        command: "config diff",
+        activeFlags: { "project-ref": true },
+        requests: api.requests,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -608,6 +653,12 @@ describe("config diff integration", () => {
       const urls = api.requests.map((request) => request.url);
       expect(urls.some((url) => url.includes("/branches/"))).toBe(false);
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
+      assertPermissionDrift({
+        command: "config diff",
+        activeFlags: { "project-ref": true },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -880,7 +931,7 @@ describe("config diff integration", () => {
   });
 
   it.effect("a remote config error status maps to the read status error", () => {
-    const { layer } = setup({
+    const { layer, api } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 403, body: { message: "forbidden" } },
     });
@@ -894,6 +945,10 @@ describe("config diff integration", () => {
         expect(causeText).toContain("Access denied");
         expect(causeText).toContain(VALID_REF);
       }
+      expect(
+        api.requests.map((request) => `${request.method} ${new URL(request.url).pathname}`),
+      ).toEqual([`GET /v2/projects/${VALID_REF}/config`]);
+      assertPermissionDrift({ command: "config diff", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1316,6 +1371,64 @@ describe("config diff integration", () => {
       expect(api.requests.some((request) => request.url.includes("/v2/projects/"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "diffs the project chosen from the picker and fills the real linked-project cache",
+    () => {
+      const out = mockOutput({ format: "text", promptSelectResponses: [VALID_REF] });
+      const api = mockCommandPlatformApi({
+        handler: (request) =>
+          Effect.sync(() => {
+            if (request.method === "GET" && request.url === `${API}/v1/projects`) {
+              return jsonResponse(request, 200, [PROJECT]);
+            }
+            if (request.method === "GET" && request.url === `${API}/v1/projects/${VALID_REF}`) {
+              return jsonResponse(request, 200, PROJECT);
+            }
+            if (request.url === `${API}/v2/projects/${VALID_REF}/config`) {
+              return jsonResponse(request, 200, v2Response());
+            }
+            return jsonResponse(request, 404, { message: "unexpected request" });
+          }),
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = Layer.merge(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings,
+          tty: mockTty({ stdinIsTty: true }),
+          linkedProjectCache: realLinkedProjectCache({
+            httpClient: api.httpClientLayer,
+            cliSettings,
+          }),
+        }),
+        cliConfigValuesTestLayer,
+      );
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* writeProjectFile("config.toml", 'project_id = "test"\n');
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+
+        yield* configDiff(noFlags);
+
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          `GET ${API}/v1/projects`,
+          `GET ${API}/v2/projects/${VALID_REF}/config`,
+          `GET ${API}/v1/projects/${VALID_REF}`,
+        ]);
+        expect(out.stdoutText).toContain("No config differences found.");
+        expect(yield* decodeJsonText(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "config diff", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });
 
 describe("config diff telemetry wiring", () => {

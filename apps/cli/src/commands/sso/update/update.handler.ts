@@ -1,11 +1,9 @@
-import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option, Predicate, Redacted, Stdio } from "effect";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import { operationDefinitions, type SupabaseApiError } from "@supabase/api/effect";
+import { Effect, Option, Predicate, type Redacted, Schema, Stdio, type Types } from "effect";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { IdentityStitch } from "../../../command-internal/identity-stitch.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
@@ -17,18 +15,13 @@ import {
 } from "../../../shared/cli/flag-groups.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import type { OutputTask } from "../../../shared/output/output.service.ts";
-import {
-  encodeSortedJson,
-  encodeSortedJsonBody,
-} from "../../../command-internal/output.encoders.ts";
+import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
   encodeStructToml,
   encodeStructYaml,
 } from "../../../command-internal/struct-output.encoders.ts";
 import { SSO_PROVIDER_RESPONSE_SHAPE } from "../sso.response-shape.ts";
-import { mapHttpError, sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
-import { requestWithAuth } from "../../../command-internal/raw-http.ts";
-import { resolveAccessToken } from "../../../command-internal/resolve-token.ts";
+import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { accessTokenForProfile } from "../../../auth/command-credentials.layer.ts";
 import { missingAccessTokenMessage } from "../../../auth/access-token.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
@@ -55,14 +48,14 @@ import {
   SsoAccessTokenError,
   SsoTomlEncodeError,
 } from "../sso.errors.ts";
-import {
-  quoteSsoString,
-  renderSingleProvider,
-  toSsoProviderView,
-  validateUuid,
-} from "../sso.format.ts";
+import { quoteSsoString, renderSingleProvider, validateUuid } from "../sso.format.ts";
 import { validateMetadataUrl } from "../sso.metadata-url.ts";
-import { SSO_NAME_ID_FORMATS, readAttributeMappingFile, readMetadataFile } from "../sso.saml.ts";
+import {
+  SSO_NAME_ID_FORMATS,
+  readAttributeMappingFile,
+  readMetadataFile,
+  toNameIdFormat,
+} from "../sso.saml.ts";
 import type { SsoUpdateFlags } from "./update.command.ts";
 
 const readMetadata = readMetadataFile({
@@ -75,10 +68,29 @@ const readAttributeMapping = readAttributeMappingFile({
   openError: (args) => new SsoUpdateAttributeMappingFileError(args),
 });
 
+type SsoUpdateBody = Types.Mutable<
+  Omit<
+    Schema.Schema.Type<typeof operationDefinitions.v1UpdateASsoProvider.inputSchema>,
+    "ref" | "provider_id"
+  >
+>;
+
+const decodeProvider = Schema.decodeUnknownEffect(
+  operationDefinitions.v1UpdateASsoProvider.outputSchema,
+);
+
 const mapGetStatusOrNetwork = mapHttpError({
   networkError: SsoUpdateNetworkError,
   statusError: SsoUpdateUnexpectedStatusError,
   networkMessage: (cause) => `failed to get sso provider: ${cause}`,
+  statusMessage: (_status, body) => `unexpected error fetching identity provider: ${body}`,
+});
+
+const mapPutStatusOrNetwork = mapHttpError({
+  networkError: SsoUpdateNetworkError,
+  statusError: SsoUpdateUnexpectedStatusError,
+  networkMessage: (cause) => `failed to update sso provider: ${cause}`,
+  // Go reuses the GET error message for the PUT.
   statusMessage: (_status, body) => `unexpected error fetching identity provider: ${body}`,
 });
 
@@ -116,16 +128,32 @@ const SSO_UPDATE_SCAN_SPEC = {
   valueFlagShorthands: PERSISTENT_VALUE_FLAG_SHORTHANDS,
 } as const;
 
-const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError) =>
+type TokenForAux<R> = Effect.Effect<Option.Option<Redacted.Redacted<string>> | undefined, never, R>;
+
+interface GateContext<R> {
+  readonly ref: string;
+  readonly apiUrl: string;
+  readonly tokenForAux: TokenForAux<R>;
+}
+
+const suggestUpgradeFor = <R>(gate: GateContext<R>, cause: SupabaseApiError, statusCode: number) =>
+  Effect.gen(function* () {
+    const token = yield* gate.tokenForAux;
+    return yield* suggestUpgrade({
+      projectRef: gate.ref,
+      featureKey: "auth.saml_2",
+      statusCode,
+      response: gateResponse(cause),
+      apiUrl: gate.apiUrl,
+      ...(token !== undefined ? { accessToken: token } : {}),
+    });
+  });
+
+const handleGetError = <R>(gate: GateContext<R>, providerId: string, cause: SupabaseApiError) =>
   mapGetStatusOrNetwork(cause).pipe(
     Effect.catchTag("SsoUpdateUnexpectedStatusError", (mapped) =>
       Effect.gen(function* () {
-        const upgradeSuggested = yield* suggestUpgrade({
-          projectRef: ref,
-          featureKey: "auth.saml_2",
-          statusCode: mapped.status,
-          response: gateResponse(cause),
-        });
+        const upgradeSuggested = yield* suggestUpgradeFor(gate, cause, mapped.status);
         if (mapped.status === 404) {
           return yield* new SsoUpdateNotFoundError({
             message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
@@ -142,29 +170,23 @@ const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError
     ),
   );
 
+const handlePutError = <R>(gate: GateContext<R>, cause: SupabaseApiError) =>
+  mapPutStatusOrNetwork(cause).pipe(
+    Effect.catchTag("SsoUpdateUnexpectedStatusError", (mapped) =>
+      Effect.gen(function* () {
+        const upgradeSuggested = yield* suggestUpgradeFor(gate, cause, mapped.status);
+        return yield* new SsoUpdateUnexpectedStatusError({
+          status: mapped.status,
+          body: mapped.body,
+          message: mapped.message,
+          upgradeSuggested,
+        });
+      }),
+    ),
+  );
+
 interface ExistingDomainItem {
   readonly domain?: string;
-}
-
-/**
- * Narrows a raw GET-provider JSON body to the `domains` shape `mergeDomains`
- * consumes.
- */
-function extractDomainItems(parsed: unknown): ReadonlyArray<ExistingDomainItem> | undefined {
-  if (!Predicate.hasProperty(parsed, "domains")) {
-    return undefined;
-  }
-  const domains = parsed.domains;
-  if (!Array.isArray(domains)) {
-    return undefined;
-  }
-  return domains.map((item): ExistingDomainItem => {
-    if (!Predicate.hasProperty(item, "domain")) {
-      return {};
-    }
-    const domain = item.domain;
-    return typeof domain === "string" ? { domain } : {};
-  });
 }
 
 function mergeDomains(
@@ -192,12 +214,10 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const httpClient = yield* HttpClient.HttpClient;
   const cliSettings = yield* CommandSettings;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
-  const identityStitch = yield* Effect.serviceOption(IdentityStitch);
   const stdio = yield* Stdio.Stdio;
   const rawArgs = yield* stdio.args;
 
@@ -302,109 +322,38 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
     });
 
     yield* Effect.gen(function* () {
+      const reconciledToken =
+        reconciledTokenCached === undefined
+          ? undefined
+          : (yield* Effect.filterOrFail(
+              reconciledTokenCached,
+              Option.isSome,
+              () => new SsoAccessTokenError({ message: missingAccessTokenMessage() }),
+            )).value;
+      const requestOptions =
+        reconciledToken === undefined
+          ? undefined
+          : { baseUrl: apiUrl, accessToken: reconciledToken };
+      const gate = { ref, apiUrl, tokenForAux: reconciledTokenForAux };
+
       const startTask = Effect.suspend((): Effect.Effect<OutputTask | undefined> =>
         output.format === "text" ? output.task("Updating SSO provider...") : Effect.undefined,
       );
       const fetching = yield* startTask;
 
-      // The typed client bakes the layer's apiUrl in at construction, so when
-      // the reconciled profile differs, the GET must be issued raw against
-      // the effective host, matching the PUT's host. Error mapping and the
-      // spinner/suggestion ordering mirror the typed path (`handleGetError`).
-      const rawGetProvider = Effect.gen(function* () {
-        const tokenOpt =
-          reconciledTokenCached !== undefined
-            ? yield* Effect.filterOrFail(
-                reconciledTokenCached,
-                Option.isSome,
-                () => new SsoAccessTokenError({ message: missingAccessTokenMessage() }),
-              )
-            : yield* resolveAccessToken;
-        const request = requestWithAuth(
-          HttpClientRequest.get(
-            `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
-          ),
-          tokenOpt,
-          cliSettings.userAgent,
-        );
-        const response = yield* httpClient.execute(request).pipe(
-          Effect.tapError(() => fetching?.fail() ?? Effect.void),
-          Effect.mapError(
-            (cause) =>
-              new SsoUpdateNetworkError({
-                message: `failed to get sso provider: ${String(cause)}`,
-              }),
-          ),
-        );
-        // Every Management API response goes through the identity stitch
-        // once per command; this raw GET must too, before the status gate.
-        // `serviceOption`: absent outside the real CLI tree (handler-level
-        // tests), where no telemetry runtime exists to stitch into.
-        if (Option.isSome(identityStitch)) {
-          yield* identityStitch.value.stitch(response);
-        }
-        const rawBody = yield* response.text.pipe(
-          Effect.tapError(() => fetching?.fail() ?? Effect.void),
-          Effect.mapError(
-            (cause) =>
-              new SsoUpdateNetworkError({
-                message: `failed to get sso provider: ${String(cause)}`,
-              }),
-          ),
-        );
-        const contentType = response.headers["content-type"] ?? "";
-        if (response.status === 200 && contentType.includes("json")) {
-          const parsed = yield* Effect.try({
-            // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Native parser errors are CLI output; schema decoding discards their messages.
-            try: (): unknown => JSON.parse(rawBody),
-            catch: (cause) =>
-              new SsoUpdateNetworkError({
-                message: `failed to get sso provider: ${cause instanceof Error ? cause.message : String(cause)}`,
-                decode: true,
-              }),
-          }).pipe(Effect.tapError(() => fetching?.fail() ?? Effect.void));
-          return { domains: extractDomainItems(parsed) };
-        }
-        // A 200 without a JSON content type falls into this branch too.
-        yield* fetching?.fail() ?? Effect.void;
-        const bodyText = sanitizeErrorBody(rawBody);
-        const upgradeSuggested = yield* suggestUpgrade({
-          projectRef: ref,
-          featureKey: "auth.saml_2",
-          statusCode: response.status,
-          response,
-          apiUrl,
-          ...(yield* Effect.map(reconciledTokenForAux, (token) =>
-            token !== undefined ? { accessToken: token } : {},
-          )),
-        });
-        if (response.status === 404) {
-          return yield* new SsoUpdateNotFoundError({
-            message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
-            upgradeSuggested,
-          });
-        }
-        return yield* new SsoUpdateUnexpectedStatusError({
-          status: response.status,
-          body: bodyText,
-          message: `unexpected error fetching identity provider: ${bodyText}`,
-          upgradeSuggested,
-        });
-      });
-
       // Always GETs first, regardless of which flags are set.
-      const existing = yield* Option.isSome(profileApiUrl)
-        ? rawGetProvider
-        : api.v1.getASsoProvider({ ref, provider_id: providerId }).pipe(
-            Effect.tapError(() => fetching?.fail() ?? Effect.void),
-            Effect.catch((cause) => handleGetError(ref, providerId, cause)),
-          );
+      const existing = yield* api.v1
+        .getASsoProvider({ ref, provider_id: providerId }, requestOptions)
+        .pipe(
+          Effect.tapError(() => fetching?.fail() ?? Effect.void),
+          Effect.catch((cause) => handleGetError(gate, providerId, cause)),
+        );
 
-      const body: Record<string, unknown> = {};
+      const body: SsoUpdateBody = {};
 
       if (Option.isSome(metadataFile)) {
         const xml = yield* readMetadata(metadataFile.value);
-        body["metadata_xml"] = xml;
+        body.metadata_xml = xml;
       } else if (Option.isSome(metadataUrl)) {
         if (!skipUrlValidation) {
           yield* validateMetadataUrl(metadataUrl.value).pipe(
@@ -418,12 +367,12 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
             ),
           );
         }
-        body["metadata_url"] = metadataUrl.value;
+        body.metadata_url = metadataUrl.value;
       }
 
       if (Option.isSome(attributeMappingFile)) {
         const mapping = yield* readAttributeMapping(attributeMappingFile.value);
-        body["attribute_mapping"] = mapping;
+        body.attribute_mapping = mapping;
       }
 
       // `domains` is always recomputed and sent, even when no domain flag
@@ -432,10 +381,11 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         domains.length > 0
           ? [...domains]
           : mergeDomains(existing.domains, addDomains, removeDomains);
-      body["domains"] = finalDomains;
+      body.domains = [...finalDomains];
 
       if (Option.isSome(nameIdFormat)) {
-        body["name_id_format"] = nameIdFormat.value;
+        const format = toNameIdFormat(nameIdFormat.value);
+        if (format !== undefined) body.name_id_format = format;
       }
 
       yield* fetching?.clear ?? Effect.void;
@@ -451,78 +401,38 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
       });
       const updating = yield* startTask;
 
-      const tokenOpt =
-        reconciledTokenCached !== undefined
-          ? yield* Effect.filterOrFail(
-              reconciledTokenCached,
-              Option.isSome,
-              () => new SsoAccessTokenError({ message: missingAccessTokenMessage() }),
-            )
-          : yield* resolveAccessToken;
-
-      // See `add.handler.ts` for the rationale behind `bearerToken(Redacted)`.
-      const request = requestWithAuth(
-        HttpClientRequest.put(
-          `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
-        ),
-        tokenOpt,
-        cliSettings.userAgent,
-      ).pipe(
-        // See `add.handler.ts` — key order matters for cli-e2e parity.
-        HttpClientRequest.bodyText(encodeSortedJsonBody(body), "application/json"),
-      );
-
-      const response = yield* httpClient.execute(request).pipe(
+      // `executeRaw` keeps the response body intact so structured output emits it as the API
+      // returned it; the typed schema decodes a copy for the table view.
+      const { rawBody, provider } = yield* Effect.gen(function* () {
+        const response = yield* api
+          .executeRaw(
+            operationDefinitions.v1UpdateASsoProvider,
+            { ref, provider_id: providerId, ...body },
+            { ...requestOptions, retry: { requestTimeoutMs: Number.POSITIVE_INFINITY } },
+          )
+          .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
+        const rawBody: unknown = yield* response.json;
+        return { rawBody, provider: yield* decodeProvider(rawBody) };
+      }).pipe(
+        Effect.catch((cause) => handlePutError(gate, cause)),
         Effect.tapError(() => updating?.fail() ?? Effect.void),
-        Effect.mapError(
-          (cause) =>
-            new SsoUpdateNetworkError({
-              message: `failed to update sso provider: ${String(cause)}`,
-            }),
-        ),
       );
-
-      if (response.status !== 200) {
-        const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-        // Cap + sanitize to match `mapHttpError`'s defenses; see add handler for the rationale.
-        const bodyText = sanitizeErrorBody(rawBody);
-        const upgradeSuggested = yield* suggestUpgrade({
-          projectRef: ref,
-          featureKey: "auth.saml_2",
-          statusCode: response.status,
-          response,
-          apiUrl,
-          ...(yield* Effect.map(reconciledTokenForAux, (token) =>
-            token !== undefined ? { accessToken: token } : {},
-          )),
-        });
-        yield* updating?.fail() ?? Effect.void;
-        // Reuses the GET error message even for PUT.
-        return yield* new SsoUpdateUnexpectedStatusError({
-          status: response.status,
-          body: bodyText,
-          message: `unexpected error fetching identity provider: ${bodyText}`,
-          upgradeSuggested,
-        });
-      }
-
-      const parsedJson = yield* response.json.pipe(Effect.orElseSucceed((): unknown => ({})));
       yield* updating?.clear ?? Effect.void;
 
       const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
       if (outputFlagFormat === "json") {
-        yield* output.raw(encodeSortedJson(parsedJson));
+        yield* output.raw(encodeSortedJson(rawBody));
         return;
       }
       if (outputFlagFormat === "yaml") {
-        yield* output.raw(encodeStructYaml(parsedJson, SSO_PROVIDER_RESPONSE_SHAPE));
+        yield* output.raw(encodeStructYaml(rawBody, SSO_PROVIDER_RESPONSE_SHAPE));
         return;
       }
       if (outputFlagFormat === "toml") {
         // Same TOML-encode-failure pattern as list/show.
         const toml = yield* Effect.try({
-          try: () => encodeStructToml(parsedJson, SSO_PROVIDER_RESPONSE_SHAPE),
+          try: () => encodeStructToml(rawBody, SSO_PROVIDER_RESPONSE_SHAPE),
           catch: (cause) =>
             new SsoTomlEncodeError({
               message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -538,12 +448,12 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
       if (output.format === "json" || output.format === "stream-json") {
         yield* output.success(
           "",
-          Predicate.isObjectOrArray(parsedJson) ? { ...parsedJson } : { value: parsedJson },
+          Predicate.isObjectOrArray(rawBody) ? { ...rawBody } : { value: rawBody },
         );
         return;
       }
 
-      yield* output.raw(renderSingleProvider(toSsoProviderView(parsedJson)));
+      yield* output.raw(renderSingleProvider(provider));
     }).pipe(
       // Linked-project cache fill GETs `/v1/projects/{ref}` through the
       // reconciled host, never the config layer's.

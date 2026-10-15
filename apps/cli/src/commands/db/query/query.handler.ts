@@ -1,17 +1,8 @@
-import {
-  DateTime,
-  Effect,
-  FileSystem,
-  Option,
-  Path,
-  Predicate,
-  Redacted,
-  Ref,
-  Schema,
-} from "effect";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import { operationDefinitions } from "@supabase/api/effect";
+import { DateTime, Effect, FileSystem, Option, Path, Predicate, Ref, Schema } from "effect";
+import * as HttpClientError from "effect/http/HttpClientError";
 
+import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
@@ -19,6 +10,10 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { TelemetryOutputFormat } from "../../../telemetry/telemetry-output-format.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { ResolvedDbConnection } from "../../../command-internal/db-config.types.ts";
+import {
+  sanitizeErrorBody,
+  unexpectedStatusMessage,
+} from "../../../command-internal/http-errors.ts";
 import {
   DbConnection,
   type DbSession,
@@ -95,7 +90,7 @@ const inReadOnlyTransaction = <A, E, R>(session: DbSession, body: Effect.Effect<
   );
 
 type QueryRoute =
-  | { readonly kind: "linked"; readonly ref: string; readonly token: Redacted.Redacted<string> }
+  | { readonly kind: "linked"; readonly ref: string }
   | { readonly kind: "direct"; readonly connection: ResolvedDbConnection };
 
 export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
@@ -211,37 +206,39 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     format: ResolvedFormat,
     agentMode: boolean,
     ref: string,
-    token: Redacted.Redacted<string>,
     readOnly: boolean,
   ) =>
     Effect.gen(function* () {
-      const cliSettings = yield* CommandSettings;
-      const httpClient = yield* HttpClient.HttpClient;
+      const apiFactory = yield* CommandPlatformApiFactory;
+      const api = yield* apiFactory.make;
 
-      const request = HttpClientRequest.post(
-        `${cliSettings.apiUrl}/v1/projects/${ref}/database/query`,
-      ).pipe(
-        HttpClientRequest.setHeader("Authorization", `Bearer ${Redacted.value(token)}`),
-        HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
-        HttpClientRequest.bodyJsonUnsafe({ query: sql, ...(readOnly ? { read_only: true } : {}) }),
-      );
-      const { status, body } = yield* Effect.gen(function* () {
-        const response = yield* httpClient.execute(request);
-        const text = yield* response.text;
-        return { status: response.status, body: text };
-      }).pipe(
+      // `v1RunAQuery` declares no response body, so `executeRaw` keeps the row JSON text intact
+      // (column order, number formatting) for rendering.
+      const response = yield* api
+        .executeRaw(
+          operationDefinitions.v1RunAQuery,
+          { ref, query: sql, ...(readOnly ? { read_only: true } : {}) },
+          { retry: { requestTimeoutMs: Number.POSITIVE_INFINITY } },
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new DbQueryExecError({
+                message: `failed to execute query: ${cause}`,
+                transport: HttpClientError.isHttpClientError(cause),
+              }),
+          ),
+        );
+      const body = yield* response.text.pipe(
         Effect.mapError(
           (cause) =>
-            new DbQueryExecError({
-              message: `failed to execute query: ${cause}`,
-              transport: true,
-            }),
+            new DbQueryExecError({ message: `failed to execute query: ${cause}`, transport: true }),
         ),
       );
-      if (status !== 201) {
+      if (response.status !== 201) {
         return yield* new DbQueryUnexpectedStatusError({
-          status,
-          message: `unexpected status ${status}: ${body}`,
+          status: response.status,
+          message: unexpectedStatusMessage(response.status, sanitizeErrorBody(body)),
         });
       }
 
@@ -290,7 +287,7 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
             suggestion: "Run supabase login first.",
           });
         }
-        return { kind: "linked", token: tokenOpt.value, ref: target.ref } satisfies QueryRoute;
+        return { kind: "linked", ref: target.ref } satisfies QueryRoute;
       }
       const connection = yield* resolver.resolveConnection({
         target,
@@ -380,7 +377,7 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
 
     // 4. Linked queries go through the Management API; local/--db-url connect directly.
     if (route.kind === "linked") {
-      return yield* runLinked(sql, format, agentMode, route.ref, route.token, flags.readOnly).pipe(
+      return yield* runLinked(sql, format, agentMode, route.ref, flags.readOnly).pipe(
         Effect.withSpan("db.query.runLinked"),
       );
     }

@@ -6,6 +6,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { CompletionNoDescriptionsFlagDef } from "../completion.flags.ts";
 import { completionPowershell } from "./powershell.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {
   noDescriptions: CompletionNoDescriptionsFlagDef,
@@ -21,6 +22,7 @@ export const completionPowershellCommand = Command.make("powershell", config).pi
       "to your powershell profile.",
   ),
   Command.withShortDescription("Generate the autocompletion script for powershell"),
+  withPermissions({ operations: [], noApiEffectFlags: ["no-descriptions"] }),
   Command.withHandler((flags) =>
     completionPowershell(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),

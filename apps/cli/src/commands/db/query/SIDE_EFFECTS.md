@@ -32,10 +32,10 @@ confirmation and makes the statement unable to write (see Notes). The local stac
 
 ## API Routes
 
-| Method | Path                                | Auth   | Request body                                                    | Response                                                                                                  |
-| ------ | ----------------------------------- | ------ | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| POST   | `/v1/projects/{ref}/database/query` | Bearer | `{"query":"<sql>"}`, plus `"read_only":true` with `--read-only` | 201, JSON array of row objects (raw — the typed client voids the body, so the linked path uses raw HTTP). |
-| GET    | `/v1/projects/{ref}`                | Bearer | —                                                               | 200 → linked-project cache write; any other status → no write. Fired after the query on the linked path.  |
+| Method | Path                                | Auth   | Request body                                                    | Response                                                                                                 |
+| ------ | ----------------------------------- | ------ | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| POST   | `/v1/projects/{ref}/database/query` | Bearer | `{"query":"<sql>"}`, plus `"read_only":true` with `--read-only` | 201, JSON array of row objects (read via `executeRaw`, since the typed operation voids the body).        |
+| GET    | `/v1/projects/{ref}`                | Bearer | —                                                               | 200 → linked-project cache write; any other status → no write. Fired after the query on the linked path. |
 
 ## Environment Variables
 

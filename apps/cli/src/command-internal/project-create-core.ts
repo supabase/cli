@@ -137,8 +137,8 @@ export const projectCreateCore = Effect.fn("ProjectCreate.run")(function* (
 
   const creating = output.format === "text" ? yield* output.task("Creating project...") : undefined;
 
-  // `executeRaw` skips output decoding: the 201 response's `ref` can be the cli-e2e
-  // `__PROJECT_REF__` placeholder, which the generated schema would reject.
+  // `executeRaw` skips output decoding so the created project is emitted as the API returned it,
+  // including fields the generated schema does not declare.
   const response = yield* api.executeRaw(operationDefinitions.v1CreateAProject, body).pipe(
     Effect.tapError(() => creating?.fail() ?? Effect.void),
     Effect.mapError(

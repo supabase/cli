@@ -3054,7 +3054,7 @@ describe("db diff permissions through the real resolver and cache", () => {
     );
   });
 
-  it.effect("mints a login role for each side when both --from and --to are linked", () => {
+  it.effect("mints one login role shared by both sides when --from and --to are linked", () => {
     const s = setup(tmp.current, { realLayers: true, diffSql: "create table e ();\n" });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
@@ -3066,15 +3066,37 @@ describe("db diff permissions through the real resolver and cache", () => {
           projectRef: Option.some(VALID_REF),
         }),
       ).pipe(Effect.provide(s.layer));
-      expect(asLines(requests)).toEqual([
-        poolerRequest,
-        loginRoleRequest,
-        poolerRequest,
-        loginRoleRequest,
-      ]);
+      expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
       assertPermissionDrift({
         command: "db diff",
         activeFlags: { from: "linked", to: "linked", "project-ref": VALID_REF },
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("mints one login role shared by the --linked preflight and both linked sides", () => {
+    const s = setup(tmp.current, { realLayers: true, diffSql: "create table e ();\n" });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbDiff(
+        flags({
+          from: Option.some("linked"),
+          to: Option.some("linked"),
+          linked: true,
+          projectRef: Option.some(VALID_REF),
+        }),
+      ).pipe(Effect.provide(s.layer));
+      expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
+      assertPermissionDrift({
+        command: "db diff",
+        activeFlags: { linked: true, from: "linked", to: "linked", "project-ref": VALID_REF },
         requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
         exact: true,
       });

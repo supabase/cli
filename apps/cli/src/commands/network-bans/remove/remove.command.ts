@@ -2,6 +2,10 @@ import { Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
@@ -37,6 +41,16 @@ export type NetworkBansRemoveFlags = CliCommand.Command.Config.Infer<typeof conf
 export const networkBansRemoveCommand = Command.make("remove", config).pipe(
   Command.withDescription("Remove a network ban."),
   Command.withShortDescription("Remove a network ban"),
+  withPermissions(
+    compose(
+      {
+        operations: [{ operationId: "v1-delete-network-bans", kind: "required" }],
+        noApiEffectFlags: ["db-unban-ip"],
+      },
+      projectRefPicker,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // Validate the -o value before the --experimental gate, so an invalid value is

@@ -35,6 +35,16 @@
       }
     },
     {
+      // Management API calls go through the typed `@supabase/api` client so they emit the
+      // `api.operation` span; tests build stub URLs freely.
+      "files": ["apps/cli/src/**"],
+      "excludeFiles": ["**/*.test.ts"],
+      "jsPlugins": ["./tools/oxlint/supabase-plugin.js"],
+      "rules": {
+        "supabase/no-raw-management-api-url": "error"
+      }
+    },
+    {
       // Ambient env reads go through `CliConfigValues` (registry names) or the shared env-option
       // helpers, so a stray `process.env` can't bypass the flag > shell > .env > config order.
       "files": ["apps/cli/src/**"],

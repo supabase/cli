@@ -1,6 +1,10 @@
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -34,6 +38,16 @@ export const ssoShowCommand = Command.make("show", config).pipe(
       description: "Show SSO provider details",
     },
   ]),
+  withPermissions(
+    compose(
+      {
+        operations: [{ operationId: "v1-get-a-sso-provider", kind: "required" }],
+        noApiEffectFlags: ["metadata"],
+      },
+      projectRefPicker,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     ssoShow(flags).pipe(
       withCommandTelemetry({ flags, safeFlags: ["project-ref"] }),

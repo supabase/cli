@@ -4,13 +4,16 @@ import type * as CliCommand from "effect/cli/Command";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import { storageInvalidJobsMessage } from "../storage.errors.ts";
 import { parseUintBase0 } from "../../../shared/config/parse-uint.ts";
-import { storageTargetFlags } from "../storage.flags.ts";
+import { STORAGE_PERMISSIONS, storageTargetFlags } from "../storage.flags.ts";
 import { storageCp } from "./cp.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
@@ -80,6 +83,12 @@ export const storageCpCommand = Command.make("cp", config).pipe(
       description: "Download a directory from storage",
     },
   ]),
+  withPermissions(
+    compose(STORAGE_PERMISSIONS, {
+      operations: [],
+      noApiEffectFlags: ["cache-control", "content-type", "jobs"],
+    }),
+  ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // A non-uint `--jobs` never reaches here: `Flag.mapTryCatch` rejects it at parse time.

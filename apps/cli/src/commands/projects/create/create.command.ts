@@ -1,6 +1,14 @@
 import { V1CreateAProjectInput } from "@supabase/api/effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withContext,
+} from "../../../command-internal/command-permissions/model.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
+import { organizationPicker } from "../../../command-internal/organization-picker.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -103,6 +111,13 @@ const config = {
     Flag.withHidden,
   ),
 };
+// `--interactive` is read as `interactive ?? true`: absent and `true` can prompt, `false` cannot;
+// an optional boolean can't be tested with `is`, so the present entry names the value in its context.
+const interactivePicker = withContext(
+  organizationPicker,
+  "an interactive terminal (stdin TTY and text output)",
+);
+
 export type ProjectsCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const projectsCreateCommand = Command.make("create", config).pipe(
@@ -115,6 +130,28 @@ export const projectsCreateCommand = Command.make("create", config).pipe(
       description: "Create a new project",
     },
   ]),
+  withPermissions(
+    compose(
+      {
+        operations: [{ operationId: "v1-create-a-project", kind: "required" }],
+        noApiEffectFlags: [
+          "db-password",
+          "region",
+          "size",
+          "high-availability",
+          "release-channel",
+          "postgres-engine",
+          "plan",
+        ],
+      },
+      withCondition(interactivePicker, { flag: "interactive", present: false }),
+      withCondition(withContext(interactivePicker, "--interactive is true, not false"), {
+        flag: "interactive",
+        present: true,
+      }),
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     projectsCreate(flags).pipe(
       // `high-availability` is omitted from `safeFlags` since boolean flags are always logged

@@ -1,20 +1,42 @@
-import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
+import type { V1ListAllBranchesOutput, V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path, Schema } from "effect";
 
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { branchesList } from "./list.handler.ts";
 
 type Branches = typeof V1ListAllBranchesOutput.Type;
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org-123",
+  organization_slug: "acme",
+  name: "alpha",
+  region: "us-east-1",
+  created_at: "2026-05-27T01:02:03Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.alpha.supabase.co",
+    version: "15.1",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
+};
 
 const SAMPLE_BRANCH: Branches[number] = {
   id: "11111111-2222-4333-8444-555555555555",
@@ -304,8 +326,57 @@ describe("branches list integration", () => {
       yield* branchesList({ projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/branches`);
+      assertPermissionDrift({ command: "branches list", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "lists projects for the picker, then the branches, then fills the linked-project cache",
+    () => {
+      const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          if (request.url === "https://api.supabase.com/v1/projects") {
+            return Effect.succeed(jsonResponse(request, 200, [PROJECT]));
+          }
+          if (request.url === `https://api.supabase.com/v1/projects/${VALID_REF}`) {
+            return Effect.succeed(jsonResponse(request, 200, PROJECT));
+          }
+          return Effect.succeed(jsonResponse(request, 200, [SAMPLE_BRANCH]));
+        },
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+        yield* branchesList({ projectRef: Option.none() });
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          "GET https://api.supabase.com/v1/projects",
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}/branches`,
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        ]);
+        expect(out.stdoutText).toContain("feat-1");
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "branches list", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   describe("parent-scoped resolution after linking a branch (CLI-2167 follow-up)", () => {
     it.effect(
@@ -323,6 +394,7 @@ describe("branches list integration", () => {
           expect(api.requests[0]?.url).toContain(`/v1/projects/${PARENT_REF}/branches`);
           expect(out.stdoutText).toContain("STATUS");
           expect(out.stdoutText).toContain("feat-1");
+          assertPermissionDrift({ command: "branches list", requests: api.requests, exact: true });
         }).pipe(Effect.provide(layer));
       },
     );
@@ -354,6 +426,42 @@ describe("branches list integration", () => {
           yield* writeLinkedProjectCacheFile(workdir, PARENT_REF);
           yield* branchesList({ projectRef: Option.some(EXPLICIT_REF) });
           expect(api.requests[0]?.url).toContain(`/v1/projects/${EXPLICIT_REF}/branches`);
+          assertPermissionDrift({
+            command: "branches list",
+            activeFlags: { "project-ref": true },
+            requests: api.requests,
+            exact: true,
+          });
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.effect(
+      "an empty --project-ref resolves the linked parent from the project-ref file without the picker",
+      () => {
+        const api = mockCommandPlatformApi({
+          response: { status: 200, body: [SAMPLE_BRANCH] },
+        });
+        const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+        const layer = buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current, projectId: Option.none() }),
+          tty: mockTty({ stdinIsTty: true }),
+        });
+        return Effect.gen(function* () {
+          yield* writeProjectRefFile(tempRoot.current, FILE_ONLY_REF);
+          yield* branchesList({ projectRef: Option.some("") });
+          expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+            `GET https://api.supabase.com/v1/projects/${FILE_ONLY_REF}/branches`,
+          ]);
+          expect(out.promptSelectCalls).toHaveLength(0);
+          assertPermissionDrift({
+            command: "branches list",
+            activeFlags: { "project-ref": "" },
+            requests: api.requests,
+            exact: true,
+          });
         }).pipe(Effect.provide(layer));
       },
     );

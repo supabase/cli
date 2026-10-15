@@ -61,9 +61,7 @@ function sortKeysDeep(value: unknown): unknown {
  * Serializes an outbound API request body with sorted keys, HTML-safe string escaping, no
  * indentation, and no trailing newline.
  *
- * Used on the raw-HTTP code path (`sso add`/`sso update`) whose request bodies the cli-e2e replay
- * server compares by string equality against recorded bodies, so key order and escaping must
- * match exactly. {@link encodeSortedJson} is the parallel for human-facing `--output json`.
+ * {@link encodeSortedJson} is the parallel for human-facing `--output json`.
  */
 export function encodeSortedJsonBody(value: unknown): string {
   return encodeHtmlSafeJsonCompact(sortKeysDeep(value));

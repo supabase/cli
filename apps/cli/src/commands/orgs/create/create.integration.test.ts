@@ -13,6 +13,7 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { orgsCreate } from "./create.handler.ts";
 
 type CreatedOrganization = typeof V1CreateAnOrganizationOutput.Type;
@@ -96,6 +97,7 @@ describe("orgs create integration", () => {
       expect(api.requests[0]?.method).toBe("POST");
       expect(api.requests[0]?.url).toContain("/v1/organizations");
       expect(api.requests[0]?.body).toEqual({ name: "Acme" });
+      assertPermissionDrift({ command: "orgs create", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 

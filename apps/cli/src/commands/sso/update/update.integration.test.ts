@@ -18,9 +18,15 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
-import { mockAnalytics, mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
+import {
+  mockAnalytics,
+  mockOutput,
+  mockRuntimeInfo,
+  mockTty,
+} from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
+  DEFAULT_API_URL,
   VALID_REF,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
@@ -28,9 +34,13 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { ProfileFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
-import { IdentityStitch } from "../../../command-internal/identity-stitch.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import type { SsoUpdateFlags } from "./update.command.ts";
@@ -50,6 +60,8 @@ const RESPONSE_PROVIDER = {
   domains: [{ domain: "new.com" }],
 };
 
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 const tempRoot = useTempWorkdir("supabase-sso-update-int-");
 
 interface SetupOpts {
@@ -57,12 +69,6 @@ interface SetupOpts {
   outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   getStatus?: number;
   getBody?: unknown;
-  /**
-   * Serves the provider GET as a raw body + content type instead of
-   * `jsonResponse`, for the reconciled-profile raw GET's decode branches
-   * (invalid JSON, non-JSON content type).
-   */
-  getRaw?: { status: number; body: string; contentType: string };
   putStatus?: number;
   putBody?: unknown;
   upgradeGate?: "gated" | "notGated";
@@ -116,17 +122,6 @@ function setup(opts: SetupOpts = {}) {
       const url = request.url;
       if (url.includes("/config/auth/sso/providers/")) {
         if (request.method === "GET") {
-          if (opts.getRaw !== undefined) {
-            return Effect.succeed(
-              HttpClientResponse.fromWeb(
-                request,
-                new Response(opts.getRaw.body, {
-                  status: opts.getRaw.status,
-                  headers: { "content-type": opts.getRaw.contentType },
-                }),
-              ),
-            );
-          }
           return Effect.succeed(jsonResponse(request, getStatus, getBody));
         }
         if (request.method === "PUT")
@@ -171,17 +166,6 @@ function setup(opts: SetupOpts = {}) {
     },
   });
 
-  // Tracks that the reconciled-profile raw GET stitches identity through the
-  // same shared guard as the typed client's response transform.
-  let stitchedResponses = 0;
-  const stitchLayer = Layer.succeed(IdentityStitch, {
-    stitch: () =>
-      Effect.sync(() => {
-        stitchedResponses += 1;
-      }),
-    stitchedDistinctId: () => undefined,
-  });
-
   const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
     ...(opts.accessToken !== undefined ? { accessToken: opts.accessToken } : {}),
@@ -200,7 +184,6 @@ function setup(opts: SetupOpts = {}) {
     Stdio.layerTest({
       args: Effect.succeed(opts.cliArgs ?? ["sso", "update", VALID_PROVIDER_ID]),
     }),
-    stitchLayer,
     Layer.succeed(YesFlag, true),
     Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
     opts.profileFlag === undefined ? Layer.empty : Layer.succeed(ProfileFlag, opts.profileFlag),
@@ -216,9 +199,6 @@ function setup(opts: SetupOpts = {}) {
     analytics,
     telemetry,
     cache,
-    get stitchedResponses() {
-      return stitchedResponses;
-    },
   };
 }
 
@@ -294,17 +274,79 @@ describe("sso update integration", () => {
       yield* ssoUpdate(defaultFlags);
       const methods = api.requests.map((r) => r.method);
       expect(methods.indexOf("GET")).toBeLessThan(methods.indexOf("PUT"));
+      assertPermissionDrift({ command: "sso update", requests: api.requests, exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists the projects for the picker and fills the linked-project cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const projectsUrl = `${DEFAULT_API_URL}/v1/projects`;
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.method === "GET" && request.url === projectsUrl) {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (request.method === "GET" && request.url === `${projectsUrl}/${VALID_REF}`) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        if (request.method === "GET") {
+          return Effect.succeed(jsonResponse(request, 200, EXISTING_PROVIDER));
+        }
+        return Effect.succeed(jsonResponse(request, 200, RESPONSE_PROVIDER));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      Layer.succeed(YesFlag, true),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+      Stdio.layerTest({ args: Effect.succeed(["sso", "update", VALID_PROVIDER_ID]) }),
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* ssoUpdate(defaultFlags);
+      const providerUrl = `${projectsUrl}/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`;
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET ${projectsUrl}`,
+        `GET ${providerUrl}`,
+        `PUT ${providerUrl}`,
+        `GET ${projectsUrl}/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({ command: "sso update", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("GET 404 → NotFound error", () => {
-    const { layer } = setup({ getStatus: 404, getBody: {} });
+    const { layer, api } = setup({ getStatus: 404, getBody: {} });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("SsoUpdateNotFoundError");
       }
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET ${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
+        `GET ${DEFAULT_API_URL}/v1/projects/${VALID_REF}`,
+      ]);
+      assertPermissionDrift({ command: "sso update", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1258,6 +1300,24 @@ describe("sso update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("a GET body that fails the provider schema aborts before the PUT", () => {
+    const { layer, api } = setup({
+      getBody: { id: VALID_PROVIDER_ID, domains: ["not-an-object"] },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("SsoUpdateNetworkError");
+        expect(dump).toContain("failed to get sso provider:");
+        const classified = classifyCliCauseActionability(exit.cause);
+        expect(classified.error_fingerprint).toBe("tag:SsoUpdateNetworkError:api_response");
+      }
+      expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("PUT 4xx + gated entitlement → unexpected error + cli_upgrade_suggested", () => {
     // suggestUpgrade fires only on 4xx.
     const { layer, analytics } = setup({
@@ -1269,7 +1329,11 @@ describe("sso update integration", () => {
       const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("SsoUpdateUnexpectedStatusError");
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("SsoUpdateUnexpectedStatusError");
+        expect(dump).toContain(
+          'unexpected error fetching identity provider: {"error":"forbidden"}',
+        );
       }
       expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -1288,6 +1352,17 @@ describe("sso update integration", () => {
     return Effect.gen(function* () {
       yield* ssoUpdate(defaultFlags);
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("Go --output=json keeps response keys outside the OpenAPI schema", () => {
+    const { layer, out } = setup({
+      outputFlag: "json",
+      putBody: { ...RESPONSE_PROVIDER, resource_id: "res-123" },
+    });
+    return Effect.gen(function* () {
+      yield* ssoUpdate(defaultFlags);
+      expect(out.stdoutText).toMatch(/"resource_id":\s*"res-123"/);
     }).pipe(Effect.provide(layer));
   });
 
@@ -1380,6 +1455,27 @@ describe("sso update integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.effect("an attribute mapping with an unknown key fails before the PUT", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const path = pathService.join(tempRoot.current, "unknown-key.json");
+      yield* fs.writeFileString(path, '{"keys":{"email":{"nam":"email"}}}');
+      const flags = { ...defaultFlags, attributeMappingFile: Option.some(path) };
+      const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
+      return yield* Effect.gen(function* () {
+        const exit = yield* Effect.exit(ssoUpdate(flags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = Cause.pretty(exit.cause);
+          expect(dump).toContain("SsoUpdateAttributeMappingFileError");
+          expect(dump).toContain("failed to parse attribute mapping: Expected no excess property");
+        }
+        expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("--add-domains + --remove-domains combined apply remove then add", () => {
     const flags = { ...defaultFlags, addDomains: ["new.com"], removeDomains: ["old1.com"] };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
@@ -1417,11 +1513,10 @@ describe("sso update integration", () => {
       Effect.gen(function* () {
         const first = yield* writeProfileYaml("first.yml", "http://first.example");
         const second = yield* writeProfileYaml("second.yml", "http://second.example");
-        const testSetup = setup({
+        const { layer, api, cache } = setup({
           cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", first, "--profile", second],
           profileFlag: first,
         });
-        const { layer, api, cache } = testSetup;
         return yield* Effect.gen(function* () {
           yield* ssoUpdate(defaultFlags);
           const providerUrl = `http://second.example/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`;
@@ -1432,97 +1527,9 @@ describe("sso update integration", () => {
           const { domains } = yield* decodePutDomains(put?.body);
           expect([...domains].sort()).toEqual(["old1.com", "old2.com"]);
           expect(api.requests.some((r) => r.url.startsWith("http://first.example/"))).toBe(false);
-          expect(testSetup.stitchedResponses).toBeGreaterThan(0);
+          expect(get?.headers["authorization"]).toMatch(/^Bearer sbp_/);
+          expect(put?.headers["authorization"]).toMatch(/^Bearer sbp_/);
           expect(cache.cachedApiUrl).toBe("http://second.example");
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
-      }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect(
-    "profile emulation: the reconciled-host GET maps a 404 exactly like the typed client",
-    () =>
-      Effect.gen(function* () {
-        const first = yield* writeProfileYaml("first-404.yml", "http://first.example");
-        const second = yield* writeProfileYaml("second-404.yml", "http://second.example");
-        const { layer, api } = setup({
-          getStatus: 404,
-          getBody: {},
-          cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", first, "--profile", second],
-          profileFlag: first,
-        });
-        return yield* Effect.gen(function* () {
-          const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const dump = Cause.pretty(exit.cause);
-            expect(dump).toContain("SsoUpdateNotFoundError");
-            expect(dump).toContain(
-              `An identity provider with ID "${VALID_PROVIDER_ID}" could not be found.`,
-            );
-          }
-          expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
-      }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect(
-    "profile emulation: the reconciled-host GET maps a non-404 status exactly like the typed client",
-    () =>
-      Effect.gen(function* () {
-        const first = yield* writeProfileYaml("first-500.yml", "http://first.example");
-        const second = yield* writeProfileYaml("second-500.yml", "http://second.example");
-        const { layer, api } = setup({
-          getStatus: 500,
-          getBody: { error: "boom" },
-          cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", first, "--profile", second],
-          profileFlag: first,
-        });
-        return yield* Effect.gen(function* () {
-          const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const dump = Cause.pretty(exit.cause);
-            expect(dump).toContain("SsoUpdateUnexpectedStatusError");
-            expect(dump).toContain("unexpected error fetching identity provider:");
-          }
-          expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
-      }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect(
-    "profile emulation: the reconciled GET narrows odd JSON shapes when merging domains",
-    () =>
-      Effect.gen(function* () {
-        const first = yield* writeProfileYaml("first-merge.yml", "http://first.example");
-        const second = yield* writeProfileYaml("second-merge.yml", "http://second.example");
-        const { layer, api, cache } = setup({
-          getBody: {
-            id: VALID_PROVIDER_ID,
-            domains: [{ domain: "old1.com" }, "not-an-object", { domain: 42 }],
-          },
-          cliArgs: [
-            "sso",
-            "update",
-            VALID_PROVIDER_ID,
-            "--add-domains",
-            "new.com",
-            "--profile",
-            first,
-            "--profile",
-            second,
-          ],
-          profileFlag: first,
-        });
-        return yield* Effect.gen(function* () {
-          yield* ssoUpdate({ ...defaultFlags, addDomains: ["new.com"] });
-          const put = api.requests.find((r) => r.method === "PUT");
-          expect(put?.url).toBe(
-            `http://second.example/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
-          );
-          const { domains } = yield* decodePutDomains(put?.body);
-          expect([...domains].sort()).toEqual(["new.com", "old1.com"]);
-          expect(cache.cachedAccessToken).toBeDefined();
         }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
       }).pipe(Effect.provide(BunServices.layer)),
   );
@@ -1595,33 +1602,6 @@ describe("sso update integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("profile emulation: the reconciled GET tolerates a body without a domains array", () =>
-    Effect.gen(function* () {
-      const first = yield* writeProfileYaml("first-nodom.yml", "http://first.example");
-      const second = yield* writeProfileYaml("second-nodom.yml", "http://second.example");
-      const { layer, api } = setup({
-        getBody: { id: VALID_PROVIDER_ID },
-        cliArgs: [
-          "sso",
-          "update",
-          VALID_PROVIDER_ID,
-          "--add-domains",
-          "new.com",
-          "--profile",
-          first,
-          "--profile",
-          second,
-        ],
-        profileFlag: first,
-      });
-      return yield* Effect.gen(function* () {
-        yield* ssoUpdate({ ...defaultFlags, addDomains: ["new.com"] });
-        const put = api.requests.find((r) => r.method === "PUT");
-        expect(put?.body).toHaveProperty("domains", ["new.com"]);
-      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
   it.effect(
     "profile emulation: --profile consuming a trailing flag token fails LoadProfile, never GETs",
     () => {
@@ -1639,58 +1619,6 @@ describe("sso update integration", () => {
         expect(api.requests.length).toBe(0);
       }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
     },
-  );
-
-  it.effect(
-    "profile emulation: an undecodable 200 body from the reconciled GET aborts before the PUT",
-    () =>
-      Effect.gen(function* () {
-        const first = yield* writeProfileYaml("first-badjson.yml", "http://first.example");
-        const second = yield* writeProfileYaml("second-badjson.yml", "http://second.example");
-        const { layer, api } = setup({
-          getRaw: { status: 200, body: "{not json", contentType: "application/json" },
-          cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", first, "--profile", second],
-          profileFlag: first,
-        });
-        return yield* Effect.gen(function* () {
-          const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const dump = Cause.pretty(exit.cause);
-            expect(dump).toContain("SsoUpdateNetworkError");
-            expect(dump).toContain("failed to get sso provider:");
-            const classified = classifyCliCauseActionability(exit.cause);
-            expect(classified.error_kind).toBe("external_service");
-            expect(classified.error_category).toBe("api_status");
-            expect(classified.error_fingerprint).toBe("tag:SsoUpdateNetworkError:api_response");
-          }
-          expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
-      }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.effect(
-    "profile emulation: a 200 without a JSON content type maps to the unexpected-status branch",
-    () =>
-      Effect.gen(function* () {
-        const first = yield* writeProfileYaml("first-nonjson.yml", "http://first.example");
-        const second = yield* writeProfileYaml("second-nonjson.yml", "http://second.example");
-        const { layer, api } = setup({
-          getRaw: { status: 200, body: "plain text body", contentType: "text/plain" },
-          cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--profile", first, "--profile", second],
-          profileFlag: first,
-        });
-        return yield* Effect.gen(function* () {
-          const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const dump = Cause.pretty(exit.cause);
-            expect(dump).toContain("SsoUpdateUnexpectedStatusError");
-            expect(dump).toContain("unexpected error fetching identity provider: plain text body");
-          }
-          expect(api.requests.some((r) => r.method === "PUT")).toBe(false);
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
-      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect(
@@ -1722,6 +1650,11 @@ describe("sso update integration", () => {
             "http://second.example/v1/organizations/acme/entitlements",
           );
           expect(api.requests.some((r) => r.url.startsWith("http://first.example/"))).toBe(false);
+          assertPermissionDrift({
+            command: "sso update",
+            requests: api.requests,
+            apiUrl: "http://second.example",
+          });
         }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
       }).pipe(Effect.provide(BunServices.layer)),
   );

@@ -3,6 +3,11 @@ import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { PROJECT_REF_PATTERN } from "../../config/project-ref.service.ts";
+import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose, withContext } from "../../command-internal/command-permissions/model.ts";
+import { linkServices } from "../../command-internal/link-services-core.ts";
+import { projectRefPicker } from "../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
 import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
@@ -73,6 +78,36 @@ export const linkCommand = Command.make("link", config).pipe(
       description: "Link to a branch of the currently linked project by name",
     },
   ]),
+  withPermissions(
+    compose(
+      {
+        operations: [
+          {
+            operationId: "v1-list-all-branches",
+            kind: "required",
+            context:
+              "the [ref-or-branch] argument or --project-ref is a branch name or UUID, not a 20-letter project ref",
+          },
+          { operationId: "v1-get-project", kind: "required" },
+          {
+            operationId: "v1-get-project-api-keys",
+            kind: "required",
+            request: { query: { reveal: "true" } },
+          },
+          {
+            operationId: "v1-list-all-branches",
+            kind: "best-effort",
+            context:
+              "the project lookup returns 404 (the ref is a branch), the ref was not resolved from a branch name, and supabase/.temp/linked-project.json names a different project",
+          },
+        ],
+        noApiEffectFlags: ["password"],
+      },
+      withContext(projectRefPicker, "no [ref-or-branch] argument"),
+      linkServices,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler(linkHandler),
   Command.provide(managementApiRuntimeLayer(["link"])),
   Command.provide(cliConfigValuesLayer),

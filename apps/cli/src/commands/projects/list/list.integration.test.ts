@@ -6,12 +6,15 @@ import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { projectsList } from "./list.handler.ts";
 
 type Projects = typeof V1ListAllProjectsOutput.Type;
@@ -51,6 +54,9 @@ const PARENT_PROJECT: Projects[number] = {
 };
 
 const tempRoot = useTempWorkdir("supabase-projects-list-int-");
+const API = "https://api.supabase.com";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const LinkedProjectsPayload = Schema.Struct({
   projects: Schema.Array(Schema.Struct({ id: Schema.String, linked: Schema.Boolean })),
@@ -140,9 +146,10 @@ function setupTracked(opts: SetupOpts = {}) {
 
 describe("projects list integration", () => {
   it.effect("renders a Glamour table with all six columns in text mode", () => {
-    const { layer, out } = setup({ response: [SAMPLE_PROJECT, OTHER_PROJECT] });
+    const { layer, out, api } = setup({ response: [SAMPLE_PROJECT, OTHER_PROJECT] });
     return Effect.gen(function* () {
       yield* projectsList({});
+      assertPermissionDrift({ command: "projects list", requests: api.requests, exact: true });
       expect(out.stdoutText).toContain("LINKED");
       expect(out.stdoutText).toContain("ORG ID");
       expect(out.stdoutText).toContain("REFERENCE ID");
@@ -358,14 +365,14 @@ describe("projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("tolerates placeholder/short refs in the response (lenient parse)", () => {
-    // The typed client rejects refs under 20 chars; the raw-HTTP path renders them verbatim
-    // so placeholder fixtures still work.
-    const placeholder = { ...SAMPLE_PROJECT, id: "__PROJECT_REF__", ref: "__PROJECT_REF__" };
-    const { layer, out } = setup({ response: [placeholder] });
+  it.effect("passes through project fields the schema does not declare", () => {
+    const { layer, out } = setup({
+      outputFlag: "json",
+      response: [{ ...SAMPLE_PROJECT, undeclared_field: "kept" }],
+    });
     return Effect.gen(function* () {
       yield* projectsList({});
-      expect(out.stdoutText).toContain("__PROJECT_REF__");
+      expect(out.stdoutText).toContain('"undeclared_field": "kept"');
     }).pipe(Effect.provide(layer));
   });
 
@@ -384,6 +391,50 @@ describe("projects list integration", () => {
       yield* projectsList({});
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fills the real linked-project cache for a ref saved in supabase/.temp", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.sync(() => {
+          if (request.method === "GET" && request.url === `${API}/v1/projects`) {
+            return jsonResponse(request, 200, [SAMPLE_PROJECT]);
+          }
+          if (request.method === "GET" && request.url === `${API}/v1/projects/${VALID_REF}`) {
+            return jsonResponse(request, 200, SAMPLE_PROJECT);
+          }
+          return jsonResponse(request, 404, { message: "unexpected request" });
+        }),
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* writeProjectRefFile(tempRoot.current, VALID_REF);
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+
+      yield* projectsList({});
+
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET ${API}/v1/projects`,
+        `GET ${API}/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toContain("●");
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({ command: "projects list", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 });

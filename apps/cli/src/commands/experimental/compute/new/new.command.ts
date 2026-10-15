@@ -1,6 +1,7 @@
 import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
@@ -104,6 +105,10 @@ export const computeNewCommand = Command.make("new", config).pipe(
       description: "Scaffold the compute outside the compute directory",
     },
   ]),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["runtime", "size", "exposure", "instances", "source"],
+  }),
   Command.withHandler((flags) =>
     computeNew(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),

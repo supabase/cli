@@ -1,6 +1,20 @@
 import { Option } from "effect";
 import { Argument, Command, Flag, Param } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import {
+  compose,
+  withCondition,
+  withContext,
+  withDbTarget,
+  type EntryCondition,
+} from "../../../command-internal/command-permissions/model.ts";
+import {
+  dbConfigLinked,
+  dbConfigPoolerFallbackLinked,
+} from "../../../command-internal/db-config.layer.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
@@ -10,7 +24,11 @@ import {
   PERSISTENT_VALUE_FLAG_SHORTHANDS,
 } from "../../../shared/cli/flag-groups.ts";
 import { genTypes } from "./types.handler.ts";
-import { GEN_TYPES_LANGUAGES, genTypesLanguageFlags } from "./types.languages.ts";
+import {
+  GEN_TYPES_LANGUAGES,
+  GEN_TYPES_LANGUAGE_FLAG_NAMES,
+  genTypesLanguageFlags,
+} from "./types.languages.ts";
 import { genTypesRuntimeLayer } from "./types.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
@@ -84,6 +102,15 @@ const commandConfig = {
 export type GenTypesFlags = CliCommand.Command.Config.Infer<typeof flagsConfig> &
   Readonly<Record<string, unknown>>;
 
+const NON_TYPESCRIPT = GEN_TYPES_LANGUAGES.filter((lang) => lang !== "typescript");
+const nonTypescript = { flag: "lang", oneOf: NON_TYPESCRIPT } as const;
+const notBranch = "the ref names a project, not a preview branch";
+// Without a linked target the run uses a local or `--db-url` database, or fails before calling the API.
+const remoteTarget: ReadonlyArray<EntryCondition> = [
+  { dbTarget: ["linked"] },
+  { flag: "postgrest-v9-compat", is: false },
+];
+
 export const genTypesCommand = Command.make("types", commandConfig).pipe(
   Command.withDescription("Generate types from Postgres schema."),
   Command.withShortDescription("Generate types from Postgres schema"),
@@ -105,6 +132,50 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
       description: "Generate types from a database URL",
     },
   ]),
+  withPermissions(
+    withDbTarget(
+      remoteTarget.reduce(
+        (fragment, condition) => withCondition(fragment, condition),
+        compose(
+          {
+            operations: [
+              {
+                operationId: "v1-generate-typescript-types",
+                kind: "required",
+                when: [{ flag: "lang", oneOf: ["typescript"] }],
+              },
+              { operationId: "v1-get-project", kind: "required", when: [nonTypescript] },
+              {
+                operationId: "v1-get-a-branch-config",
+                kind: "required",
+                when: [nonTypescript],
+                context: "the project lookup returns 404, so the ref names a preview branch",
+              },
+              {
+                operationId: "v1-get-pooler-config",
+                kind: "required",
+                when: [nonTypescript],
+                context: `${notBranch}, the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url (--project-ref and --project-id ignore the saved file)`,
+              },
+              {
+                operationId: "v1-get-pooler-config",
+                kind: "required",
+                when: [nonTypescript],
+                context:
+                  "the ref names a preview branch and generating against its direct host fails with an IPv6 connectivity error",
+              },
+            ],
+            noApiEffectFlags: ["schema", "query-timeout", ...GEN_TYPES_LANGUAGE_FLAG_NAMES],
+          },
+          withCondition(withContext(dbConfigLinked, notBranch), nonTypescript),
+          withCondition(withContext(dbConfigPoolerFallbackLinked, notBranch), nonTypescript),
+          withCondition(projectRefPicker, { flag: "project-id", present: false }),
+          linkedProjectCache,
+        ),
+      ),
+      { default: "local" },
+    ),
+  ),
   Command.withHandler((flags) =>
     genTypes(flags).pipe(
       withCommandTelemetry({

@@ -12,9 +12,10 @@
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                                           | Format | When                                                                                                                                                                                     |
+| ---------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | after the command runs (in `Effect.ensuring`), unless the file already exists, `.temp/project-ref` names a different project, no access token resolves, or the project lookup is not 200 |
+| `~/.supabase/telemetry.json`                   | JSON   | always (in `Effect.ensuring`) at end of command                                                                                                                                          |
 
 ## API Routes
 
@@ -22,6 +23,7 @@
 | ------ | ------------------------------------- | ------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET`  | `/v1/projects/{ref}/database/backups` | Bearer token | none         | `{region, walg_enabled, pitr_enabled, backups: [{inserted_at, status, is_physical_backup}], physical_backup_data: {earliest_physical_backup_date_unix?, latest_physical_backup_date_unix?}}` |
 | `GET`  | `/v1/projects`                        | Bearer token | none         | `[{id, ref, name, organization_slug, region, ...}]` — TTY-prompt fallback only                                                                                                               |
+| `GET`  | `/v1/projects/{ref}`                  | Bearer token | none         | `{ref, name, organization_id, organization_slug}` — linked-project cache miss only (best-effort, after the command)                                                                          |
 
 ## Environment Variables
 

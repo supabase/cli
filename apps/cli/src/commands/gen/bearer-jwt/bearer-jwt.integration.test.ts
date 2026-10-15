@@ -20,6 +20,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { GLOBAL_FLAGS } from "../../../command-internal/global-flags.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
@@ -88,7 +89,7 @@ function setup(options: SetupOptions = {}) {
     mockStdin(options.stdinIsTty ?? false, options.pipedAnswer),
     Layer.succeed(DebugLogger, { debug: () => Effect.void, http: () => Effect.void }),
   );
-  return { layer, out, telemetry };
+  return { layer, out, telemetry, api };
 }
 
 const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -147,9 +148,15 @@ const testRoot = Command.make("supabase").pipe(
 
 describe("gen bearer-jwt integration", () => {
   it.effect("mints a token with the built-in default ES256 key when no config exists", () => {
-    const { layer, out } = setup();
+    const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* genBearerJwt(baseFlags);
+      assertPermissionDrift({
+        command: "gen bearer-jwt",
+        activeFlags: { "valid-for": true },
+        requests: api.requests,
+        exact: true,
+      });
 
       expect(out.stdoutText.endsWith("\n")).toBe(true);
       expect(out.stdoutText.indexOf("\n")).toBe(out.stdoutText.length - 1);

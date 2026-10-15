@@ -31,21 +31,24 @@ inspecting `supabase_db_*`. `--project-id` is a deprecated alias of `--project-r
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                                           | Format | When                                                                                                                                  |
+| ---------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | project-ref paths (`--linked`, `--project-id`, the implicit linked fallback), via `LinkedProjectCache.cache`, when the file is absent |
 
-No files are written.
+`--local` and `--db-url` write no files.
 
 ## API Routes
 
-| Method | Path                                        | Auth         | Request body           | Response (used fields)                     |
-| ------ | ------------------------------------------- | ------------ | ---------------------- | ------------------------------------------ |
-| `GET`  | `/v1/projects/{ref}/types/typescript`       | Bearer token | none                   | TypeScript type definitions text           |
-| `GET`  | `/v1/projects/{ref}`                        | Bearer token | none                   | (presence only; `404` ⇒ branch ref)        |
-| `GET`  | `/v1/branches/{branch_id_or_ref}`           | Bearer token | none                   | `db_host`, `db_port`, `db_user`, `db_pass` |
-| `POST` | `/v1/projects/{ref}/cli/login-role`         | Bearer token | `{ read_only: false }` | temporary `role` and `password`            |
-| `GET`  | `/v1/projects/{ref}/config/database/pooler` | Bearer token | none                   | primary pooler `connection_string`         |
+| Method   | Path                                        | Auth         | Request body                              | Response (used fields)                                                                                                         |
+| -------- | ------------------------------------------- | ------------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`    | `/v1/projects/{ref}/types/typescript`       | Bearer token | none                                      | TypeScript type definitions text                                                                                               |
+| `GET`    | `/v1/projects/{ref}`                        | Bearer token | none                                      | non-TypeScript lookup (`404` ⇒ branch ref); also the linked-project cache fill on every project-ref path                       |
+| `GET`    | `/v1/branches/{branch_id_or_ref}`           | Bearer token | none                                      | `db_host`, `db_port`, `db_user`, `db_pass`                                                                                     |
+| `POST`   | `/v1/projects/{ref}/cli/login-role`         | Bearer token | `{ read_only: false }`                    | temporary `role` and `password`                                                                                                |
+| `GET`    | `/v1/projects/{ref}/config/database/pooler` | Bearer token | none                                      | primary pooler `connection_string`                                                                                             |
+| `POST`   | `/v1/projects/{ref}/network-bans/retrieve`  | Bearer token | none                                      | `banned_ipv4_addresses`                                                                                                        |
+| `DELETE` | `/v1/projects/{ref}/network-bans`           | Bearer token | `{ ipv4_addresses, requester_ip: false }` | none                                                                                                                           |
+| `GET`    | `/v1/projects`                              | Bearer token | none                                      | project list for the ref prompt: no ref from a flag, `SUPABASE_PROJECT_ID` or `.temp/project-ref`, and an interactive terminal |
 
 The TypeScript endpoint is called for a linked target (`--linked`, `--project-ref`, or a
 workspace `target` of `remote`) when `--lang=typescript`. For other languages on a linked
@@ -59,7 +62,9 @@ target host is the project's direct `db.<ref>` host and the pooler URL matches t
 expected tenant and pooler domain. A `--project-ref` that is not the workdir's linked project fetches the
 primary pooler config for that ref to build the fallback connection (the saved
 workdir `.temp/pooler-url` is ignored because the ref may differ from the linked
-workdir). `--local` and `--db-url` do not call the Management API.
+workdir). The network-ban calls happen only on project refs, from the third attempt
+to connect as the temporary login role, and never for preview branches. `--local` and
+`--db-url` do not call the Management API.
 
 ## Subprocesses
 

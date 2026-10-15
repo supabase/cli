@@ -12,7 +12,6 @@ import { CommandCredentials } from "../../../auth/command-credentials.service.ts
 import { aqua } from "../../../command-internal/colors.ts";
 import { missingAccessTokenMessage } from "../../../auth/access-token.ts";
 import { failsOn } from "../../../command-internal/fail-on.ts";
-import { IdentityStitch } from "../../../command-internal/identity-stitch.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import type { DbSession } from "../../../command-internal/db-connection.service.ts";
@@ -114,9 +113,6 @@ const runLinked = Effect.fn("db.advisors.runLinked")(function* (
   const resolver = yield* DbConfigResolver;
   const credentials = yield* CommandCredentials;
   const linkedProjectCache = yield* LinkedProjectCache;
-  // Every Management API response is wrapped in identity stitching, including the raw-HTTP
-  // advisor GETs; one stitcher is shared across both calls so it fires at most once per session.
-  const { stitch } = yield* IdentityStitch;
 
   const { ref } = target;
 
@@ -157,10 +153,10 @@ const runLinked = Effect.fn("db.advisors.runLinked")(function* (
 
     const lints: Array<AdvisorLint> = [];
     if (advisorType === "all" || advisorType === "security") {
-      lints.push(...(yield* fetchSecurityAdvisors(ref, stitch)));
+      lints.push(...(yield* fetchSecurityAdvisors(ref)));
     }
     if (advisorType === "all" || advisorType === "performance") {
-      lints.push(...(yield* fetchPerformanceAdvisors(ref, stitch)));
+      lints.push(...(yield* fetchPerformanceAdvisors(ref)));
     }
     // The endpoint selection already applied the type filter, so filter by "all".
     return filterAdvisorLints(lints, "all", level);

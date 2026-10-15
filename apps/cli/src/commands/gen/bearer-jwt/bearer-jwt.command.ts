@@ -1,6 +1,7 @@
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -60,6 +61,10 @@ const genBearerJwtRuntimeLayer = Layer.mergeAll(
 export const genBearerJwtCommand = Command.make("bearer-jwt", config).pipe(
   Command.withDescription("Generate a Bearer Auth JWT for accessing Data API"),
   Command.withShortDescription("Generate a Bearer Auth JWT for accessing Data API"),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["role", "sub", "exp", "valid-for", "payload"],
+  }),
   Command.withHandler((flags) =>
     genBearerJwt(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),

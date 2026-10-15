@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Layer, Option, Redacted, Stream } from "effect";
+import { ConfigProvider, Effect, Layer, Option, Redacted, Stream } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import type {
@@ -36,9 +36,11 @@ import {
   transportFailure,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
+  mockCommandPlatformApi,
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
 } from "./command-mocks.ts";
+import { projectResponse, realLinkedProjectCache } from "./permission-real-layers.ts";
 
 interface StorageRoute {
   readonly method: string;
@@ -82,6 +84,8 @@ export interface SetupStorageOptions {
   readonly explicitWorkdir?: boolean;
   readonly stackBackend?: boolean;
   readonly stackApi?: SetupStorageStackApiOptions;
+  /** Records the Management API requests through the real factory and runs the real linked-project cache. */
+  readonly recordManagementApi?: boolean;
 }
 
 export interface SetupStorageStackApiOptions {
@@ -450,7 +454,26 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     },
   });
 
+  const recorded =
+    opts.recordManagementApi === true
+      ? mockCommandPlatformApi({
+          handler: (request) =>
+            Effect.succeed(
+              request.method === "GET" && request.url.endsWith(`/v1/projects/${projectRefRef}`)
+                ? jsonResponse(request, 200, projectResponse(projectRefRef))
+                : request.method === "GET" &&
+                    request.url.endsWith(`/v1/projects/${projectRefRef}/api-keys`)
+                  ? jsonResponse(request, 200, opts.apiKeys ?? STORAGE_TEST_API_KEYS)
+                  : jsonResponse(request, 404, { message: "no mock route" }),
+            ),
+        })
+      : undefined;
+
   const stackApi = buildStorageStackApi(workdir, opts.stackApi);
+  const cliSettings = mockCommandSettings({
+    workdir,
+    explicitWorkdir: opts.explicitWorkdir ?? false,
+  });
 
   const layer = Layer.mergeAll(
     out.layer,
@@ -459,14 +482,18 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     Layer.succeed(OutputFlag, opts.format === "json" ? Option.some("json") : Option.none()),
     httpLayer,
     telemetry.layer,
-    linkedCache.layer,
-    mockCommandSettings({ workdir, explicitWorkdir: opts.explicitWorkdir ?? false }),
+    recorded === undefined
+      ? linkedCache.layer
+      : realLinkedProjectCache({ httpClient: recorded.httpClientLayer, cliSettings }),
+    cliSettings,
     BunServices.layer,
     cliConfigValuesTestLayer,
     projectRefLayer,
-    Layer.succeed(CommandPlatformApiFactory, {
-      make: CommandPlatformApi.pipe(Effect.provide(managementApi.layer)),
-    }),
+    recorded === undefined
+      ? Layer.succeed(CommandPlatformApiFactory, {
+          make: CommandPlatformApi.pipe(Effect.provide(managementApi.layer)),
+        })
+      : recorded.factoryLayer,
     Layer.succeed(YesFlag, opts.yes ?? false),
     // `storage rm` confirms deletions via `promptYesNo`, answered by `confirm`;
     // other storage commands ignore it.
@@ -483,7 +510,22 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     unusedStackServices,
     stackApi.layer,
     ...(opts.stackBackend === true ? [stackBackendLayer("stack")] : []),
+    ...(recorded === undefined
+      ? []
+      : [
+          ConfigProvider.layer(
+            ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
+          ),
+        ]),
   );
 
-  return { layer, out, requests, telemetry, linkedCache, stackCalls: stackApi.stackCalls };
+  return {
+    layer,
+    out,
+    requests,
+    telemetry,
+    linkedCache,
+    stackCalls: stackApi.stackCalls,
+    managementRequests: recorded?.requests ?? [],
+  };
 }

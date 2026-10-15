@@ -9,6 +9,8 @@ import {
   computeRoute,
   COMPUTE_PROJECT_REF,
 } from "../../../../../tests/helpers/compute.ts";
+import { assertPermissionDrift } from "../../../../../tests/helpers/permission-drift.ts";
+import { projectResponse } from "../../../../../tests/helpers/permission-real-layers.ts";
 import {
   ComputeNotDeployedError,
   ComputeUnavailableError,
@@ -67,6 +69,12 @@ describe("compute delete", () => {
 
         expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
         expect(out.stderrText).toContain('permanently delete compute "api"');
+        assertPermissionDrift({
+          command: "compute delete",
+          variant: { computeEnabled: true },
+          requests: http.driftRequests,
+          exact: true,
+        });
         // Labelled "declared" because this response carries no live tally.
         // `spec.instances` is the target, not what is running.
         expect(out.stderrText).toContain("3 declared instances");
@@ -81,6 +89,47 @@ describe("compute delete", () => {
         );
         // The redeploy hint is a success trailer, which lands on stderr.
         expect(out.stderrText).toContain("supabase compute push api");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("picks the project, deletes the compute and records the linked project", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out, http } = setupCompute({
+        workdir: repo.dir,
+        realLayers: true,
+        interactive: true,
+        promptSelectResponses: [COMPUTE_PROJECT_REF],
+        promptTextResponses: ["api"],
+        routes: {
+          ...routes,
+          "GET /v1/projects": { status: 200, body: [projectResponse(COMPUTE_PROJECT_REF)] },
+          [`GET /v1/projects/${COMPUTE_PROJECT_REF}`]: {
+            status: 200,
+            body: projectResponse(COMPUTE_PROJECT_REF),
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* computeDelete({ name: "api", projectRef: Option.none() });
+
+        expect(http.routeKeys).toEqual([
+          "GET /v1/projects",
+          getRoute,
+          deleteRoute,
+          `GET /v1/projects/${COMPUTE_PROJECT_REF}`,
+        ]);
+        expect(out.promptSelectCalls).toHaveLength(1);
+        expect(out.stdoutText).toContain("Deleted Compute");
+        expect(yield* fs.exists(`${repo.dir}/supabase/.temp/linked-project.json`)).toBe(true);
+        assertPermissionDrift({
+          command: "compute delete",
+          variant: { computeEnabled: true },
+          requests: http.driftRequests,
+        });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -114,7 +163,7 @@ describe("compute delete", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  // The API grants `edge_functions:read` for the GET and `edge_functions:write`
+  // The API grants `workers_read` for the GET and `workers_write`
   // for the DELETE separately, so a credential holding only write could not
   // delete a compute it is entitled to delete.
   it.effect("deletes with --yes when the credential may not read the compute", () =>
@@ -133,6 +182,11 @@ describe("compute delete", () => {
         yield* computeDelete({ name: "api", projectRef: Option.none() });
 
         expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
+        assertPermissionDrift({
+          command: "compute delete",
+          variant: { computeEnabled: true },
+          requests: http.driftRequests,
+        });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -164,7 +218,7 @@ describe("compute delete", () => {
   it.effect("reports an unreadable compute as deleted, not as nothing to delete", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out } = setupCompute({
+      const { layer, out, http } = setupCompute({
         workdir: repo.dir,
         yes: true,
         routes: {
@@ -178,6 +232,12 @@ describe("compute delete", () => {
 
         expect(out.stdoutText).toContain("Deleted Compute");
         expect(out.stdoutText).not.toContain("nothing to delete");
+        expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
+        assertPermissionDrift({
+          command: "compute delete",
+          variant: { computeEnabled: true },
+          requests: http.driftRequests,
+        });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );

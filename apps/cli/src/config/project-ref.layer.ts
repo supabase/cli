@@ -30,7 +30,7 @@ export const projectRefPicker = block("project-ref", [
     kind: "required",
     when: [{ flag: "project-ref", present: false }],
     context:
-      "an interactive terminal, no SUPABASE_PROJECT_ID and no supabase/.temp/project-ref (`link` ignores that file)",
+      "an interactive terminal (stdin and stdout are TTYs, output format not json), no SUPABASE_PROJECT_ID and no supabase/.temp/project-ref (`link` ignores that file)",
   },
 ]);
 

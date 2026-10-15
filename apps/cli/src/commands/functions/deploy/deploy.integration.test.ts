@@ -11,6 +11,7 @@ import {
   Option,
   Path,
   Predicate,
+  Schema,
   Stdio,
 } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -21,6 +22,7 @@ import { TargetPolicy } from "../../../command-internal/target/target-policy.ts"
 import { stripControlSequences } from "../../../shared/output/strip-control-sequences.ts";
 import {
   type ApiHandler,
+  VALID_REF,
   buildTestRuntime,
   jsonResponse,
   mockCommandSettings,
@@ -33,6 +35,11 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
@@ -54,12 +61,26 @@ import { CommandPlatformApi } from "../../../auth/command-platform-api.service.t
 import { functionsDeploy } from "./deploy.handler.ts";
 import type { FunctionsDeployFlags } from "./deploy.command.ts";
 
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 const tempRoot = useTempWorkdir("supabase-functions-deploy-legacy-");
 
 const approvedHostedMutation = Layer.mergeAll(
   Layer.succeed(YesFlag, true),
   Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
 );
+
+const apiPathFlags = {
+  "use-api": true,
+  "use-docker": true,
+  prune: false,
+  "no-verify-jwt": false,
+} as const;
+
+const dockerPathFlags = { ...apiPathFlags, "use-api": false } as const;
+
+const requestLines = (requests: ReadonlyArray<{ readonly method: string; readonly url: string }>) =>
+  requests.map(({ method, url }) => `${method} ${url}`);
 
 const baseFlags: FunctionsDeployFlags = {
   functionNames: ["hello-world"],
@@ -213,6 +234,148 @@ describe("functions deploy", () => {
       );
       expect(linkedProjectCache.cached).toBe(true);
       expect(telemetry.flushed).toBe(true);
+      expect(requestLines(api.requests)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
+        `POST https://api.supabase.com/v1/projects/${VALID_REF}/functions/deploy`,
+      ]);
+      assertPermissionDrift({
+        command: "functions deploy",
+        activeFlags: apiPathFlags,
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
+  it.effect("picks a project interactively and fills the linked-project cache on --use-api", () => {
+    const out = mockOutput({ format: "text", promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.succeed(
+          request.url === "https://api.supabase.com/v1/projects"
+            ? jsonResponse(request, 200, [projectResponse(VALID_REF)])
+            : request.url === `https://api.supabase.com/v1/projects/${VALID_REF}`
+              ? jsonResponse(request, 200, projectResponse(VALID_REF))
+              : request.method === "GET"
+                ? jsonResponse(request, 200, [])
+                : jsonResponse(request, 201, deployedFunction("hello-world")),
+        ),
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        tty: mockTty({ stdinIsTty: true, stdoutIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      approvedHostedMutation,
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+      expect(yield* fs.exists(cachePath)).toBe(false);
+
+      yield* functionsDeploy(baseFlags);
+
+      expect(requestLines(api.requests)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
+        `POST https://api.supabase.com/v1/projects/${VALID_REF}/functions/deploy`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(stripControlSequences(out.stdoutText)).toContain(
+        `Deployed Functions on project ${VALID_REF}: hello-world\n`,
+      );
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "functions deploy",
+        activeFlags: apiPathFlags,
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
+  it.effect("skips the function list on --use-api --no-verify-jwt", () => {
+    const { api, layer } = apiDeployHarness(deployedHelloWorld, [
+      "functions",
+      "deploy",
+      "hello-world",
+      "--use-api",
+      "--no-verify-jwt",
+    ]);
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+      yield* functionsDeploy({ ...baseFlags, noVerifyJwt: true });
+
+      expect(requestLines(api.requests)).toEqual([
+        `POST https://api.supabase.com/v1/projects/${VALID_REF}/functions/deploy`,
+      ]);
+      const flags = { ...apiPathFlags, "no-verify-jwt": true };
+      assertPermissionDrift({
+        command: "functions deploy",
+        activeFlags: flags,
+        requests: api.requests,
+        exact: true,
+      });
+      expect(() =>
+        assertPermissionDrift({
+          command: "functions deploy",
+          activeFlags: flags,
+          requests: [
+            ...api.requests,
+            { method: "GET", url: `https://api.supabase.com/v1/projects/${VALID_REF}/functions` },
+          ],
+        }),
+      ).toThrow(/condition doesn't hold/);
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
+  it.effect("deploys through the API when --use-docker=false is passed alone", () => {
+    const { api, layer } = apiDeployHarness(deployedHelloWorld, [
+      "functions",
+      "deploy",
+      "hello-world",
+      "--use-docker=false",
+    ]);
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+      yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: false });
+
+      expect(requestLines(api.requests)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
+        `POST https://api.supabase.com/v1/projects/${VALID_REF}/functions/deploy`,
+      ]);
+      assertPermissionDrift({
+        command: "functions deploy",
+        activeFlags: { ...apiPathFlags, "use-api": false, "use-docker": false },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
@@ -552,7 +715,10 @@ describe("functions deploy", () => {
     },
   );
 
-  function apiDeployHarness(handler: ApiHandler) {
+  function apiDeployHarness(
+    handler: ApiHandler,
+    args: ReadonlyArray<string> = ["functions", "deploy", "hello-world", "--use-api"],
+  ) {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ handler });
     const layer = Layer.mergeAll(
@@ -564,9 +730,7 @@ describe("functions deploy", () => {
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
       approvedHostedMutation,
-      Stdio.layerTest({
-        args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
-      }),
+      Stdio.layerTest({ args: Effect.succeed(args) }),
     );
     return { out, api, layer };
   }
@@ -954,6 +1118,41 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
+  it.effect("retries a rate-limited deploy only through the command's own loop", () => {
+    let deployAttempts = 0;
+    const { layer, out, api } = apiDeployHarness((request) => {
+      if (request.method === "GET") return Effect.succeed(jsonResponse(request, 200, []));
+      deployAttempts += 1;
+      if (deployAttempts === 1) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response("{}", { status: 429, headers: { "retry-after": "0" } }),
+          ),
+        );
+      }
+      return Effect.succeed(
+        jsonResponse(request, 201, {
+          id: "function-id",
+          slug: "hello-world",
+          name: "hello-world",
+          status: "ACTIVE",
+          version: 1,
+        }),
+      );
+    });
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+      yield* functionsDeploy(baseFlags);
+
+      expect(api.requests.filter((request) => request.method === "POST")).toHaveLength(2);
+      expect(out.stderrText).toContain("Rate limit exceeded while deploying function hello-world.");
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
   it.effect("reports a malformed functions list with the schema decoder's message", () => {
     const { layer } = apiDeployHarness((request) =>
       Effect.succeed(
@@ -1019,6 +1218,80 @@ describe("functions deploy", () => {
           status: 201,
           decode: true,
           message: "failed to read function response: Expected a valid JSON string",
+        });
+        expect(requestLines(api.requests)).toEqual([
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
+          `POST https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
+        ]);
+        assertPermissionDrift({
+          command: "functions deploy",
+          activeFlags: dockerPathFlags,
+          requests: api.requests,
+        });
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    },
+  );
+
+  it.live(
+    "creates an undeployed function, updates a deployed one and bulk-updates both via Docker",
+    () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          if (request.method === "GET") {
+            return Effect.succeed(
+              jsonResponse(request, 200, [
+                { ...deployedFunction("bye-world"), ezbr_sha256: "stale-digest" },
+              ]),
+            );
+          }
+          if (request.method === "PUT") {
+            return Effect.succeed(jsonResponse(request, 200, {}));
+          }
+          const slug = request.url.endsWith("/functions/bye-world") ? "bye-world" : "hello-world";
+          return Effect.succeed(
+            jsonResponse(request, request.method === "POST" ? 201 : 200, deployedFunction(slug)),
+          );
+        },
+      });
+      const child = mockDockerBundleSpawner();
+      const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        approvedHostedMutation,
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "bye-world"]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* writeLocalFunction(tempRoot.current, "bye-world");
+
+        yield* functionsDeploy({
+          ...baseFlags,
+          functionNames: ["hello-world", "bye-world"],
+          useApi: false,
+          useDocker: true,
+        });
+
+        expect(requestLines(api.requests)).toEqual([
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
+          `POST https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
+          `PATCH https://api.supabase.com/v1/projects/${VALID_REF}/functions/bye-world`,
+          `PUT https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
+        ]);
+        assertPermissionDrift({
+          command: "functions deploy",
+          activeFlags: dockerPathFlags,
+          requests: api.requests,
         });
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     },
@@ -1276,6 +1549,63 @@ describe("functions deploy", () => {
     });
   });
 
+  it.effect("lists remote functions only for --prune when --no-verify-jwt is passed", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.method === "POST") {
+          return Effect.succeed(jsonResponse(request, 201, deployedFunction("hello-world")));
+        }
+        if (request.method === "GET") {
+          return Effect.succeed(
+            jsonResponse(request, 200, [{ ...deployedFunction("remote-only"), import_map: false }]),
+          );
+        }
+        return Effect.succeed(jsonResponse(request, 200, {}));
+      },
+    });
+    const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+      }),
+      approvedHostedMutation,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "deploy",
+          "hello-world",
+          "--use-api",
+          "--no-verify-jwt",
+          "--prune",
+          "--yes",
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+      yield* functionsDeploy({ ...baseFlags, noVerifyJwt: true, prune: true });
+
+      expect(requestLines(api.requests)).toEqual([
+        `POST https://api.supabase.com/v1/projects/${VALID_REF}/functions/deploy`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
+        `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/functions/remote-only`,
+      ]);
+      assertPermissionDrift({
+        command: "functions deploy",
+        activeFlags: { ...apiPathFlags, "no-verify-jwt": true, prune: true },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
   // A `bundleOnly` upload bumps the remote version without persisting metadata,
   // so a partially failed bulk deploy must still send the final PUT for whatever
   // uploaded, or the remote metadata is stranded and later deploys conflict.
@@ -1283,6 +1613,7 @@ describe("functions deploy", () => {
     function setupBulkDeploy(opts: {
       readonly deployStatuses: ReadonlyArray<number>;
       readonly bulkStatuses?: ReadonlyArray<number>;
+      readonly functionStatuses?: Readonly<Record<string, string>>;
     }) {
       const out = mockOutput({ format: "text" });
       let deployCalls = 0;
@@ -1306,7 +1637,7 @@ describe("functions deploy", () => {
                 id: `${slug}-id`,
                 slug,
                 name: slug,
-                status: "ACTIVE",
+                status: opts.functionStatuses?.[slug] ?? "ACTIVE",
                 version: 2,
                 created_at: 1_687_423_025_152,
                 updated_at: 1_687_423_025_152,
@@ -1371,6 +1702,11 @@ describe("functions deploy", () => {
         const bulkUpdate = api.requests.find((request) => request.method === "PUT");
         expect(bulkUpdate?.body).toMatchObject([{ slug: "hello-world" }]);
         expect(out.stdoutText).not.toContain("Deployed Functions on project");
+        assertPermissionDrift({
+          command: "functions deploy",
+          activeFlags: apiPathFlags,
+          requests: api.requests,
+        });
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
 
@@ -1393,8 +1729,42 @@ describe("functions deploy", () => {
             'unexpected deploy status 400: {"message":"rejected bye-world"}',
           ].join("\n"),
         });
+        expect(
+          api.requests.filter(
+            (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
+          ),
+        ).toHaveLength(2);
         expect(api.requests.some((request) => request.method === "PUT")).toBe(false);
         expect(out.stdoutText).not.toContain("Deployed Functions on project");
+        assertPermissionDrift({
+          command: "functions deploy",
+          activeFlags: apiPathFlags,
+          requests: api.requests,
+        });
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("fails loudly instead of coercing a function status the API newly reports", () => {
+      const { api, layer } = setupBulkDeploy({
+        deployStatuses: [201, 201],
+        functionStatuses: { "bye-world": "SUSPENDED" },
+      });
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* writeLocalFunction(tempRoot.current, "bye-world");
+
+        const error = yield* functionsDeploy({
+          ...baseFlags,
+          functionNames: ["hello-world", "bye-world"],
+        }).pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          message: "failed to read function bye-world: unexpected status SUSPENDED",
+        });
+        const bulkUpdate = api.requests.find((request) => request.method === "PUT");
+        expect(bulkUpdate?.body).toMatchObject([{ slug: "hello-world", status: "ACTIVE" }]);
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
 
@@ -1422,6 +1792,11 @@ describe("functions deploy", () => {
           ].join("\n"),
         });
         expect(api.requests.filter((request) => request.method === "PUT")).toHaveLength(1);
+        assertPermissionDrift({
+          command: "functions deploy",
+          activeFlags: apiPathFlags,
+          requests: api.requests,
+        });
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
   });
@@ -1683,6 +2058,15 @@ describe("functions deploy", () => {
         expect(stripControlSequences(out.stdoutText)).toContain(
           "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
         );
+        expect(requestLines(api.requests)).toEqual([
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
+          `POST https://api.supabase.com/v1/projects/${VALID_REF}/functions/deploy`,
+        ]);
+        assertPermissionDrift({
+          command: "functions deploy",
+          activeFlags: dockerPathFlags,
+          requests: api.requests,
+        });
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
   });

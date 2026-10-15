@@ -213,7 +213,7 @@ export const dockerRemoveAll = (
 
     if (deleteVolumes) {
       // `--all` requires Docker API >= 1.42 and is validated by the Docker CLI itself, so passing
-      // it unconditionally would hard-fail on an older daemon; ask `docker version` via
+      // it unconditionally would hard-fail on an older client or daemon; ask `docker version` via
       // {@link dockerSupportsVolumePruneAllFlag} instead of negotiating the API version directly.
       // Podman has no `--all` flag on `volume prune` at all, but already prunes every unused
       // volume by default, so omitting `--all` there is a lossless fallback.

@@ -1,12 +1,21 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Predicate, Stdio } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Predicate,
+  Schema,
+  Stdio,
+} from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
-import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
-import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
+  withEnvVar,
   buildTestRuntime,
   DEFAULT_API_URL,
   VALID_REF,
@@ -16,6 +25,13 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { ProfileFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
@@ -31,6 +47,8 @@ const RESPONSE_PROVIDER = {
   },
   domains: [{ domain: "example.com" }],
 };
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const tempRoot = useTempWorkdir("supabase-sso-add-int-");
 
@@ -219,6 +237,60 @@ describe("sso add integration", () => {
       expect(req).toBeDefined();
       expect(req?.url).toContain(`/v1/projects/${VALID_REF}/config/auth/sso/providers`);
       expect(req?.body).toHaveProperty("type", "saml");
+      assertPermissionDrift({ command: "sso add", requests: api.requests, exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists the projects for the picker and fills the linked-project cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.method === "GET" && request.url === `${DEFAULT_API_URL}/v1/projects`) {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (
+          request.method === "GET" &&
+          request.url === `${DEFAULT_API_URL}/v1/projects/${VALID_REF}`
+        ) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        return Effect.succeed(jsonResponse(request, 201, RESPONSE_PROVIDER));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      Layer.succeed(YesFlag, true),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+      Stdio.layerTest({ args: Effect.succeed(["sso", "add", "--type", "saml"]) }),
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* ssoAdd(defaultFlags);
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET ${DEFAULT_API_URL}/v1/projects`,
+        `POST ${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
+        `GET ${DEFAULT_API_URL}/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toContain(RESPONSE_PROVIDER.id);
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({ command: "sso add", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -874,6 +946,17 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("Go --output=json keeps response keys outside the OpenAPI schema", () => {
+    const { layer, out } = setup({
+      outputFlag: "json",
+      body: { ...RESPONSE_PROVIDER, resource_id: "res-123" },
+    });
+    return Effect.gen(function* () {
+      yield* ssoAdd(defaultFlags);
+      expect(out.stdoutText).toMatch(/"resource_id":\s*"res-123"/);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("TS --output-format=json emits success", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
@@ -894,10 +977,16 @@ describe("sso add integration", () => {
   });
 
   it.effect("fires cli_upgrade_suggested on 404 when entitlement is gated", () => {
-    const { layer, analytics } = setup({ status: 404, body: {}, upgradeGate: "gated" });
+    const { layer, analytics, api } = setup({ status: 404, body: {}, upgradeGate: "gated" });
     return Effect.gen(function* () {
       yield* Effect.exit(ssoAdd(defaultFlags));
       expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(true);
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `POST ${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
+        `GET ${DEFAULT_API_URL}/v1/projects/${VALID_REF}`,
+        `GET ${DEFAULT_API_URL}/v1/organizations/acme/entitlements`,
+      ]);
+      assertPermissionDrift({ command: "sso add", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -909,7 +998,7 @@ describe("sso add integration", () => {
       if (Exit.isFailure(exit)) {
         const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoAddUnexpectedStatusError");
-        expect(dump).toContain("Unexpected error adding identity provider");
+        expect(dump).toContain('Unexpected error adding identity provider: {"error":"boom"}');
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1029,6 +1118,52 @@ describe("sso add integration", () => {
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(BunServices.layer)),
   );
+
+  it.effect("an attribute mapping with an unknown key fails before the POST", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const path = pathService.join(tempRoot.current, "unknown-key.json");
+      yield* fs.writeFileString(path, '{"keys":{"email":{"nam":"email"}}}');
+      const flags = { ...defaultFlags, attributeMappingFile: Option.some(path) };
+      const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
+      return yield* Effect.gen(function* () {
+        const exit = yield* Effect.exit(ssoAdd(flags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = Cause.pretty(exit.cause);
+          expect(dump).toContain("SsoAddAttributeMappingFileError");
+          expect(dump).toContain("failed to parse attribute mapping: Expected no excess property");
+        }
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("a transport failure surfaces as a network error naming the operation", () => {
+    const { layer } = setup({ network: "fail" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(ssoAdd(defaultFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("SsoAddNetworkError");
+        expect(dump).toContain("failed to create sso provider:");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("a 201 body that fails the provider schema surfaces as an API response error", () => {
+    const { layer } = setup({ body: { saml: {} } });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(ssoAdd(defaultFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const classified = classifyCliCauseActionability(exit.cause);
+        expect(classified.error_fingerprint).toBe("tag:SsoAddNetworkError:api_response");
+      }
+    }).pipe(Effect.provide(layer));
+  });
 
   const writeProfileYaml = Effect.fnUntraced(function* (name: string, apiUrl: string) {
     const fs = yield* FileSystem.FileSystem;

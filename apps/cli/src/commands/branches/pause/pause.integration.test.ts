@@ -1,7 +1,8 @@
+import { type V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
 
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
@@ -15,6 +16,8 @@ import {
   unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import type { BranchesPauseFlags } from "./pause.command.ts";
 import { branchesPause } from "./pause.handler.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
@@ -47,6 +50,28 @@ const BRANCH_NAMED_LOOKUP = {
   with_data: false,
 };
 
+const OTHER_BRANCH_REF = "dddddddddddddddddddd";
+const API = "https://api.supabase.com";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
+  id: VALID_REF,
+  ref: VALID_REF,
+  organization_id: "org-123",
+  organization_slug: "acme",
+  name: "alpha",
+  region: "us-east-1",
+  created_at: "2026-05-27T01:02:03Z",
+  status: "ACTIVE_HEALTHY",
+  database: {
+    host: "db.alpha.supabase.co",
+    version: "15.1",
+    postgres_engine: "15",
+    release_channel: "ga",
+  },
+};
+
 const tempRoot = useTempWorkdir("supabase-branches-pause-int-");
 
 const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
@@ -57,6 +82,35 @@ const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
   );
 
 const confirmed = `Confirmed by --yes: Pause preview branch ${BRANCH_REF} on project ${VALID_REF} · identity unverified\n`;
+const sequence = (requests: ReadonlyArray<{ method: string; url: string }>) =>
+  requests.map(({ method, url }) => `${method} ${url}`);
+
+function pickerApi() {
+  return mockCommandPlatformApi({
+    handler: (request) =>
+      Effect.sync(() => {
+        if (request.method === "GET" && request.url === `${API}/v1/projects`) {
+          return jsonResponse(request, 200, [PROJECT]);
+        }
+        if (request.method === "GET" && request.url === `${API}/v1/projects/${VALID_REF}`) {
+          return jsonResponse(request, 200, PROJECT);
+        }
+        if (
+          request.method === "GET" &&
+          request.url === `${API}/v1/projects/${VALID_REF}/branches`
+        ) {
+          return jsonResponse(request, 200, [
+            { ...BRANCH_NAMED_LOOKUP, name: "other", project_ref: OTHER_BRANCH_REF },
+            BRANCH_NAMED_LOOKUP,
+          ]);
+        }
+        if (request.method === "POST" && request.url === `${API}/v1/projects/${BRANCH_REF}/pause`) {
+          return jsonResponse(request, 200, null);
+        }
+        return jsonResponse(request, 404, { message: "unexpected request" });
+      }),
+  });
+}
 
 interface SetupOpts {
   readonly pauseStatus?: number;
@@ -125,6 +179,7 @@ describe("branches pause integration", () => {
       const post = api.requests.find((r) => r.method === "POST");
       expect(post?.url).toContain(`/v1/projects/${BRANCH_REF}/pause`);
       expect(api.requests.find((r) => r.method === "GET")).toBeUndefined();
+      assertPermissionDrift({ command: "branches pause", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -138,6 +193,11 @@ describe("branches pause integration", () => {
       expect(api.requests.find((r) => r.method === "POST")?.url).toContain(
         `/v1/projects/${BRANCH_REF}/pause`,
       );
+      expect(sequence(api.requests)).toEqual([
+        `GET ${API}/v1/branches/${BRANCH_UUID}`,
+        `POST ${API}/v1/projects/${BRANCH_REF}/pause`,
+      ]);
+      assertPermissionDrift({ command: "branches pause", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -151,6 +211,11 @@ describe("branches pause integration", () => {
       expect(api.requests.find((r) => r.method === "POST")?.url).toContain(
         `/v1/projects/${BRANCH_REF}/pause`,
       );
+      expect(sequence(api.requests)).toEqual([
+        `GET ${API}/v1/projects/${VALID_REF}/branches/feat-x`,
+        `POST ${API}/v1/projects/${BRANCH_REF}/pause`,
+      ]);
+      assertPermissionDrift({ command: "branches pause", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -184,6 +249,67 @@ describe("branches pause integration", () => {
       yield* branchesPause({ ...baseFlags, name: Option.some(BRANCH_REF) });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "pauses the branch chosen from the pickers and fills the real linked-project cache",
+    () => {
+      const out = mockOutput({ format: "text", promptSelectResponses: [VALID_REF, BRANCH_REF] });
+      const api = pickerApi();
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+        expect(yield* fs.exists(cachePath)).toBe(false);
+
+        yield* branchesPause(baseFlags);
+
+        expect(sequence(api.requests)).toEqual([
+          `GET ${API}/v1/projects`,
+          `GET ${API}/v1/projects/${VALID_REF}/branches`,
+          `POST ${API}/v1/projects/${BRANCH_REF}/pause`,
+          `GET ${API}/v1/projects/${VALID_REF}`,
+        ]);
+        expect(out.stderrText).toContain(`Selected branch ID: ${BRANCH_REF}`);
+        expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+          ref: VALID_REF,
+        });
+        assertPermissionDrift({ command: "branches pause", requests: api.requests, exact: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("prompts with the branch listing when the branch argument is an empty string", () => {
+    const out = mockOutput({ format: "text", promptSelectResponses: [BRANCH_REF] });
+    const api = pickerApi();
+    const layer = buildRuntime({
+      out,
+      api,
+      cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+      tty: mockTty({ stdinIsTty: true }),
+    });
+    return Effect.gen(function* () {
+      yield* branchesPause({ ...baseFlags, name: Option.some("") });
+
+      expect(sequence(api.requests)).toEqual([
+        `GET ${API}/v1/projects/${VALID_REF}/branches`,
+        `POST ${API}/v1/projects/${BRANCH_REF}/pause`,
+      ]);
+      assertPermissionDrift({ command: "branches pause", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 });

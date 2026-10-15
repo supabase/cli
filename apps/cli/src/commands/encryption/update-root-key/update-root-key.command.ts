@@ -2,6 +2,10 @@ import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { ttyLayer } from "../../../shared/runtime/tty.layer.ts";
@@ -30,6 +34,15 @@ const updateRuntime = Layer.mergeAll(
 export const encryptionUpdateRootKeyCommand = Command.make("update-root-key", config).pipe(
   Command.withDescription("Update root encryption key of a Supabase project"),
   Command.withShortDescription("Update the root encryption key"),
+  withPermissions(
+    compose(
+      {
+        operations: [{ operationId: "v1-update-pgsodium-config", kind: "required" }],
+      },
+      projectRefPicker,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     encryptionUpdateRootKey(flags).pipe(
       // `--project-ref` is not telemetry-safe for encryption (no `markFlagTelemetrySafe`).

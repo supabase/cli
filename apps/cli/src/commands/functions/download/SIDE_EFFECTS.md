@@ -16,22 +16,22 @@
 
 ## Files Written
 
-| Path                                                | Format | When                                                                                                                                                                              |
-| --------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/functions/<slug>/<remote path>` | bytes  | for each source file returned by the API (`--use-api`, or the Docker-unbundle fallback when Docker isn't running)                                                                 |
-| `<workdir>/supabase/.temp/output_<slug>.eszip`      | bytes  | Docker-unbundle path (default): downloaded eszip, extracted into `supabase/functions/<slug>/...` by the edge-runtime container; removed after the attempt unless `--debug` is set |
-| `<workdir>/supabase/.temp/linked-project.json`      | JSON   | after resolving a project ref, cached on both success and failure paths                                                                                                           |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json`     | JSON   | after command completion, flushed on both success and failure paths                                                                                                               |
+| Path                                                | Format | When                                                                                                                                                                                                                            |
+| --------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/functions/<slug>/<remote path>` | bytes  | for each source file returned by the API (server-side path: `--use-api`, `--use-docker=false`, or the Docker-unbundle fallback when Docker isn't running)                                                                       |
+| `<workdir>/supabase/.temp/output_<slug>.eszip`      | bytes  | Docker-unbundle path (default): downloaded eszip, extracted into `supabase/functions/<slug>/...` by the edge-runtime container; removed after the attempt unless `--debug` is set                                               |
+| `<workdir>/supabase/.temp/linked-project.json`      | JSON   | post-run, once a project ref has resolved (success or failure), only when no such file exists, `<workdir>/supabase/.temp/project-ref` doesn't name another ref, an access token exists and `GET /v1/projects/{ref}` returns 200 |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json`     | JSON   | after command completion, flushed on both success and failure paths                                                                                                                                                             |
 
 ## API Routes
 
-| Method | Path                                       | Auth         | Request body | Response (used fields)                                                                                                                                                                                          |
-| ------ | ------------------------------------------ | ------------ | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`  | `/v1/projects/{ref}/functions`             | Bearer token | none         | function slugs, when downloading all                                                                                                                                                                            |
-| `GET`  | `/v1/projects/{ref}/functions/{slug}`      | Bearer token | none         | entrypoint path, when absent from multipart metadata (`--use-api` path only)                                                                                                                                    |
-| `GET`  | `/v1/projects/{ref}/functions/{slug}/body` | Bearer token | none         | `--use-api`: multipart function source (`Accept: multipart/form-data`). Docker-unbundle: raw eszip bytes; a `Content-Encoding: br` response is decoded transparently by the HTTP transport, not by this command |
-| `GET`  | `/v1/projects`                             | Bearer token | none         | project picker options when no ref is supplied in TTY                                                                                                                                                           |
-| `GET`  | `/v1/projects/{ref}`                       | Bearer token | none         | linked project metadata used by the post-run cache                                                                                                                                                              |
+| Method | Path                                       | Auth         | Request body | Response (used fields)                                                                                                                                                                                               |
+| ------ | ------------------------------------------ | ------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/projects/{ref}/functions`             | Bearer token | none         | function slugs, when downloading all                                                                                                                                                                                 |
+| `GET`  | `/v1/projects/{ref}/functions/{slug}`      | Bearer token | none         | entrypoint path, when absent from multipart metadata (server-side path only: `--use-api`, `--use-docker=false`, or Docker not running)                                                                               |
+| `GET`  | `/v1/projects/{ref}/functions/{slug}/body` | Bearer token | none         | Server-side path: multipart function source (`Accept: multipart/form-data`). Docker-unbundle: raw eszip bytes; a `Content-Encoding: br` response is decoded transparently by the HTTP transport, not by this command |
+| `GET`  | `/v1/projects`                             | Bearer token | none         | project picker options when no ref is supplied in TTY                                                                                                                                                                |
+| `GET`  | `/v1/projects/{ref}`                       | Bearer token | none         | linked project metadata used by the post-run cache                                                                                                                                                                   |
 
 ## Subprocesses
 
@@ -127,8 +127,8 @@ Same envelope as `json` above (including on the Docker-unbundle path).
 - The mutual-exclusivity check only counts flags the user explicitly passed on the command line,
   not `--use-docker`'s default value — so `--use-api` alone never trips the "mutually exclusive"
   error.
-- Refreshes the linked-project telemetry cache and flushes telemetry state after resolving a
-  project ref.
+- Telemetry state is flushed on success and failure. The linked-project cache is filled post-run
+  only under the conditions listed in Files Written.
 
 ### `--legacy-bundle` is removed
 

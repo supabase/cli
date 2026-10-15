@@ -25,6 +25,7 @@ import {
   decodeCliConfigDocumentForValidation,
   type CliConfigValidationOptions,
 } from "../config/cli-config-validation.ts";
+import { block } from "./command-permissions/model.ts";
 import { sanitizeErrorBody, sanitizeInlineName } from "./http-errors.ts";
 import type { ConfigTarget } from "./project-target.ts";
 import { BRANCH_UUID_PATTERN } from "./ref-patterns.ts";
@@ -568,6 +569,11 @@ export const openConfigPullSource = Effect.fn("ConfigPull.openSource")(function*
 
   return { loaded, text: loaded.rawText };
 });
+
+/** `planConfigPullRun`'s remote config read, shared by `config pull` and `pull`. */
+export const configPullRun = block("config-pull-run", [
+  { operationId: "v2-get-project-config", kind: "required" },
+]);
 
 /**
  * Resolves the pull destination, reloads with the `[remotes.*]` overlay when block reuse

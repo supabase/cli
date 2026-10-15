@@ -12,16 +12,18 @@
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                                           | Format | When                                                                                                                                                                                     |
+| ---------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | after the command runs (in `Effect.ensuring`), unless the file already exists, `.temp/project-ref` names a different project, no access token resolves, or the project lookup is not 200 |
+| `~/.supabase/telemetry.json`                   | JSON   | always (in `Effect.ensuring`) at end of command                                                                                                                                          |
 
 ## API Routes
 
-| Method | Path                                               | Auth         | Request body                         | Response (used fields)                                                         |
-| ------ | -------------------------------------------------- | ------------ | ------------------------------------ | ------------------------------------------------------------------------------ |
-| `POST` | `/v1/projects/{ref}/database/backups/restore-pitr` | Bearer token | `{recovery_time_target_unix: int64}` | none (201 Created)                                                             |
-| `GET`  | `/v1/projects`                                     | Bearer token | none                                 | `[{id, ref, name, organization_slug, region, ...}]` — TTY-prompt fallback only |
+| Method | Path                                               | Auth         | Request body                         | Response (used fields)                                                                                              |
+| ------ | -------------------------------------------------- | ------------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/v1/projects/{ref}/database/backups/restore-pitr` | Bearer token | `{recovery_time_target_unix: int64}` | none (201 Created)                                                                                                  |
+| `GET`  | `/v1/projects`                                     | Bearer token | none                                 | `[{id, ref, name, organization_slug, region, ...}]` — TTY-prompt fallback only                                      |
+| `GET`  | `/v1/projects/{ref}`                               | Bearer token | none                                 | `{ref, name, organization_id, organization_slug}` — linked-project cache miss only (best-effort, after the command) |
 
 ## Environment Variables
 

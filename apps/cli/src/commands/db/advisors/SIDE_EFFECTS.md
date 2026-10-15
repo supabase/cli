@@ -33,9 +33,9 @@ The local lint query runs inside a transaction that is **always rolled back**.
 | GET    | `/v1/projects/{ref}/advisors/security`    | Bearer | —       | `{ lints: Lint[] }`    |
 | GET    | `/v1/projects/{ref}/advisors/performance` | Bearer | —       | `{ lints: Lint[] }`    |
 
-Issued via **raw HTTP** (not the typed client) with a tolerant parse, so advisor
-`name` / `metadata.type` values the API can add do not fail decoding. `--type`
-selects which endpoints run:
+Issued through the typed client; the generated schema keeps advisor
+`name` / `metadata.type` open, so values the API can add do not fail decoding.
+`--type` selects which endpoints run:
 `security` → security only, `performance` → performance only, `all` → both.
 
 ## Database (local / `--db-url`)

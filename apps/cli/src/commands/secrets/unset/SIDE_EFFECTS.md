@@ -2,29 +2,30 @@
 
 ## Files Read
 
-| Path                                      | Format                    | When                                                                                          |
-| ----------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
-| `/proc/sys/kernel/osrelease` (Linux)      | plain text                | once on layer init — disables keyring on WSL (`WSL` / `Microsoft` substring match)            |
-| keyring `"Supabase CLI"` / `<profile>`    | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile` |
-| keyring `"Supabase CLI"` / `access-token` | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
-| `~/.supabase/access-token`                | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
-| `<workdir>/supabase/.temp/project-ref`    | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset                                 |
+| Path                                           | Format                    | When                                                                                          |
+| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
+| `/proc/sys/kernel/osrelease` (Linux)           | plain text                | once on layer init — disables keyring on WSL (`WSL` / `Microsoft` substring match)            |
+| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile` |
+| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
+| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset                                 |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | existence check before the cache fill (in `Effect.ensuring` after the project ref resolves)   |
 
 ## Files Written
 
-| Path                                           | Format | When                                                                                               |
-| ---------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | in `Effect.ensuring` after the ref resolves, on success and failure, only when the file is missing |
-| `~/.supabase/telemetry.json`                   | JSON   | always (in `Effect.ensuring`) at end of command                                                    |
+| Path                                           | Format | When                                                                                                                                                                                              |
+| ---------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | in `Effect.ensuring` after the project ref resolves — only when no cached file exists, `.temp/project-ref` is absent or names the same ref, a token is available, and the project lookup succeeds |
+| `~/.supabase/telemetry.json`                   | JSON   | always (in `Effect.ensuring`) at end of command                                                                                                                                                   |
 
 ## API Routes
 
-| Method   | Path                         | Auth         | Request body    | Response (used fields)                                                                                                          |
-| -------- | ---------------------------- | ------------ | --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`    | `/v1/projects/{ref}/secrets` | Bearer token | none            | `[{name}]` — `--all` path only, filters `SUPABASE_` prefix                                                                      |
-| `DELETE` | `/v1/projects/{ref}/secrets` | Bearer token | `["NAME", ...]` | none (200 expected; not called with `--dry-run`)                                                                                |
-| `GET`    | `/v1/projects`               | Bearer token | none            | TTY-prompt fallback only                                                                                                        |
-| `GET`    | `/v1/projects/{ref}`         | Bearer token | none            | linked-project cache fill in `Effect.ensuring`, on success and failure, only when `linked-project.json` is missing; best-effort |
+| Method   | Path                         | Auth         | Request body    | Response (used fields)                                                                                                                                                                        |
+| -------- | ---------------------------- | ------------ | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/v1/projects/{ref}/secrets` | Bearer token | none            | `[{name}]` — `--all` path only, filters `SUPABASE_` prefix                                                                                                                                    |
+| `DELETE` | `/v1/projects/{ref}/secrets` | Bearer token | `["NAME", ...]` | none (200 expected; not called with `--dry-run`)                                                                                                                                              |
+| `GET`    | `/v1/projects`               | Bearer token | none            | project picker — only when no ref comes from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref`, stdin is a TTY and output is interactive                                          |
+| `GET`    | `/v1/projects/{ref}`         | Bearer token | none            | linked-project cache fill — best-effort, only when `.temp/linked-project.json` is absent, `.temp/project-ref` is absent or names the same ref, and a token is available; failures are ignored |
 
 ## Environment Variables
 

@@ -1,14 +1,21 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, Schema } from "effect";
+import { Effect, FileSystem, Option, Schema } from "effect";
 import { useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
 import {
+  NOTEBOOKS_PROJECT_REF,
   notebookListPage,
   notebookResource,
   notebooksProject,
   notebooksRoute,
   setupNotebooks,
 } from "../../../../tests/helpers/notebooks.ts";
+import {
+  assertBlockDrift,
+  assertPermissionDrift,
+} from "../../../../tests/helpers/permission-drift.ts";
+import { projectResponse } from "../../../../tests/helpers/permission-real-layers.ts";
 import { NotebookIdError, NotebookNameConflictError } from "../notebooks.errors.ts";
+import { notebooksList } from "../notebooks.shared.ts";
 import { notebooksPullHandler as notebooksPull } from "./pull.command.ts";
 import type { NotebooksPullFlags } from "./pull.command.ts";
 
@@ -72,6 +79,7 @@ describe("notebooks pull", () => {
       ]);
       expect(out.stdoutText).toContain("Pulled 1 notebook(s)");
       expect(out.stdoutText).toContain("Kept 1 existing local notebook(s) unchanged.");
+      assertPermissionDrift({ command: "notebooks pull", requests: http.driftRequests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -101,6 +109,7 @@ describe("notebooks pull", () => {
       });
       expect(yield* repo.exists("leftover")).toBe(true);
       expect(http.routeKeys).toEqual([`GET ${notebooksRoute(`/${SALES_ID}`)}`]);
+      assertPermissionDrift({ command: "notebooks pull", requests: http.driftRequests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -171,6 +180,8 @@ describe("notebooks pull", () => {
           },
         },
       });
+      expect(http.routeKeys).toEqual([`GET ${notebooksRoute()}`, `POST ${notebooksRoute()}`]);
+      assertPermissionDrift({ command: "notebooks pull", requests: http.driftRequests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -178,7 +189,7 @@ describe("notebooks pull", () => {
   // divergence and resolves nothing.
   it.effect("leaves both sides alone when there is nobody to ask", () => {
     const repo = project();
-    const { layer, out } = setupNotebooks({
+    const { layer, out, http } = setupNotebooks({
       workdir: repo.dir,
       format: "json",
       routes: {
@@ -191,6 +202,8 @@ describe("notebooks pull", () => {
       yield* notebooksPull(flags());
 
       expect(yield* repo.exists("gone")).toBe(true);
+      expect(http.routeKeys).toEqual([`GET ${notebooksRoute()}`]);
+      assertPermissionDrift({ command: "notebooks pull", requests: http.driftRequests });
       expect(out.promptSelectCalls).toHaveLength(0);
       expect(out.messages).toContainEqual(
         expect.objectContaining({
@@ -246,6 +259,52 @@ describe("notebooks pull", () => {
       expect(listCalls[0]?.query.get("page[size]")).toBe("100");
       expect(listCalls[0]?.query.get("page[after]")).toBeNull();
       expect(listCalls[1]?.query.get("page[after]")).toBe("cursor-1");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("picks the project, pulls its notebooks and records the linked project", () => {
+    const repo = project();
+    const { layer, http, out } = setupNotebooks({
+      workdir: repo.dir,
+      realLayers: true,
+      promptSelectResponses: [NOTEBOOKS_PROJECT_REF],
+      routes: {
+        "GET /v1/projects": { status: 200, body: [projectResponse(NOTEBOOKS_PROJECT_REF)] },
+        [`GET /v1/projects/${NOTEBOOKS_PROJECT_REF}`]: {
+          status: 200,
+          body: projectResponse(NOTEBOOKS_PROJECT_REF),
+        },
+        [`GET ${notebooksRoute()}`]: {
+          status: 200,
+          body: notebookListPage({ notebooks: [{ id: SALES_ID, name: "sales-dashboard" }] }),
+        },
+        [`GET ${notebooksRoute(`/${SALES_ID}`)}`]: {
+          status: 200,
+          body: { data: notebookResource({ id: SALES_ID, name: "sales-dashboard" }) },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* notebooksPull(flags());
+
+      expect(http.routeKeys).toEqual([
+        "GET /v1/projects",
+        `GET ${notebooksRoute()}`,
+        `GET ${notebooksRoute(`/${SALES_ID}`)}`,
+        `GET /v1/projects/${NOTEBOOKS_PROJECT_REF}`,
+      ]);
+      expect(out.promptSelectCalls).toHaveLength(1);
+      expect(yield* repo.exists("sales-dashboard")).toBe(true);
+      expect(out.stdoutText).toContain("Pulled 1 notebook(s)");
+      expect(yield* fs.exists(`${repo.dir}/supabase/.temp/linked-project.json`)).toBe(true);
+      assertPermissionDrift({ command: "notebooks pull", requests: http.driftRequests });
+      assertBlockDrift(notebooksList, {
+        requests: http.driftRequests.filter(
+          (request) => new URL(request.url).pathname === notebooksRoute(),
+        ),
+      });
     }).pipe(Effect.provide(layer));
   });
 

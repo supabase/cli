@@ -1,4 +1,5 @@
 import { Command, Flag } from "effect/cli";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { removedCommand } from "../../../../command-internal/removed-command.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 import { CliConfigKeys } from "../../../../config/cli-config-keys.ts";
@@ -33,6 +34,11 @@ const config = {
 export const dbRemoteCommitCommand = Command.make("commit", config).pipe(
   Command.withDescription("Removed: use `supabase db pull` instead."),
   Command.withShortDescription("Removed: use `db pull` instead"),
+  // Removed: fails before any Management API call, so no flag changes what it calls.
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["db-url", "linked", "password", "schema"],
+  }),
   Command.withHandler(() =>
     removedCommand("Use `supabase db pull` instead.").pipe(
       withCommandTelemetry(),

@@ -8,21 +8,24 @@
 | keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
 | `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are unset                             |
 
 ## Files Written
 
-| Path                                           | Format | When                                             |
-| ---------------------------------------------- | ------ | ------------------------------------------------ |
-| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`) |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves       |
+| Path                                           | Format | When                                                                                                                                                                                                                           |
+| ---------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`)                                                                                                                                                                               |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | in `Effect.ensuring` after the project ref resolves, on success or failure — only when no cached file exists, `.temp/project-ref` is absent or names the same ref, a token is available, and `GET /v1/projects/{ref}` succeeds |
 
 ## API Routes
 
-| Method   | Path                                                         | Auth         | Request body | Response (used fields)                                    |
-| -------- | ------------------------------------------------------------ | ------------ | ------------ | --------------------------------------------------------- |
-| `DELETE` | `/v1/projects/{ref}/config/auth/sso/providers/{provider_id}` | Bearer token | none         | `{id, saml?, domains?, created_at?, updated_at?}`         |
-| `GET`    | `/v1/projects/{ref}`                                         | Bearer token | none         | `{organization_slug}` — upgrade-gate side-call on 4xx     |
-| `GET`    | `/v1/organizations/{slug}/entitlements`                      | Bearer token | none         | `{entitlements[].feature.key, .hasAccess}` — upgrade-gate |
+| Method   | Path                                                         | Auth         | Request body | Response (used fields)                                                                                                                                                                                       |
+| -------- | ------------------------------------------------------------ | ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`    | `/v1/projects`                                               | Bearer token | none         | project list for the interactive picker — only when no ref comes from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref` and stdin is a TTY with interactive output                               |
+| `DELETE` | `/v1/projects/{ref}/config/auth/sso/providers/{provider_id}` | Bearer token | none         | `{id, saml?, domains?, created_at?, updated_at?}`                                                                                                                                                            |
+| `GET`    | `/v1/projects/{ref}`                                         | Bearer token | none         | `{organization_slug}` — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                                                                  |
+| `GET`    | `/v1/organizations/{slug}/entitlements`                      | Bearer token | none         | `{entitlements[].feature.key, .hasAccess}` — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                                             |
+| `GET`    | `/v1/projects/{ref}`                                         | Bearer token | none         | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available |
 
 ## Environment Variables
 

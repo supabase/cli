@@ -2,29 +2,40 @@
 
 ## Files Read
 
-| Path                                           | Format | When                                                           |
-| ---------------------------------------------- | ------ | -------------------------------------------------------------- |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | always — `linkedProjectCache` reads to decide whether to write |
+| Path                                           | Format                    | When                                                                                          |
+| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
+| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile` |
+| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
+| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are unset                             |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                |
 
-`info` makes **no** API call, so no access-token lookup occurs.
+`info` makes no Management API call of its own, but the Management API client is built eagerly, so an
+access token is required: a missing one fails before the handler runs.
 
 ## Files Written
 
-| Path                                           | Format | When                                             |
-| ---------------------------------------------- | ------ | ------------------------------------------------ |
-| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`) |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves       |
+| Path                                           | Format | When                                                                                                                                                                                                                           |
+| ---------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`)                                                                                                                                                                               |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | in `Effect.ensuring` after the project ref resolves, on success or failure — only when no cached file exists, `.temp/project-ref` is absent or names the same ref, a token is available, and `GET /v1/projects/{ref}` succeeds |
 
 ## API Routes
 
-`info` derives all three URLs locally from the project ref. No Management API
-calls are made.
+`info` derives all three URLs locally from the project ref and makes no Management API call of its
+own. The ref resolution and the cache fill still call the API:
+
+| Method | Path                 | Auth         | Request body | Response (used fields)                                                                                                                                                                                       |
+| ------ | -------------------- | ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`  | `/v1/projects`       | Bearer token | none         | project list for the interactive picker — only when no ref comes from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref` and stdin is a TTY with interactive output                               |
+| `GET`  | `/v1/projects/{ref}` | Bearer token | none         | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available |
 
 ## Environment Variables
 
-| Variable           | Purpose                                            | Required?                   |
-| ------------------ | -------------------------------------------------- | --------------------------- |
-| `SUPABASE_PROFILE` | profile selector (built-in name or YAML file path) | no (defaults to `supabase`) |
+| Variable                | Purpose                                              | Required?                                               |
+| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROFILE`      | profile selector (built-in name or YAML file path)   | no (defaults to `supabase`)                             |
 
 ## Exit Codes
 

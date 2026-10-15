@@ -2,6 +2,9 @@ import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose, withContext } from "../../command-internal/command-permissions/model.ts";
+import { branchTarget } from "../../command-internal/branch-target.ts";
 import { commandCredentialsLayer } from "../../auth/command-credentials.layer.ts";
 import { commandPlatformApiFactoryLayer } from "../../auth/command-platform-api-factory.layer.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
@@ -43,9 +46,9 @@ const config = {
 
 export type StatusFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// `status` makes no Management API calls, so it avoids `managementApiRuntimeLayer` — the eager
-// `CommandPlatformApi` stack that resolves a token at layer build time and fails outright
-// without one.
+// `status` avoids `managementApiRuntimeLayer` — the eager `CommandPlatformApi` stack that
+// resolves a token at layer build time and fails outright without one — because its only
+// Management API call is the lazy best-effort branch lookup below.
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 
 // Lazy Management API handle for `resolveLinkedState`'s best-effort branch-name lookup:
@@ -84,6 +87,15 @@ export const statusCommand = Command.make("status", config).pipe(
       description: "Output status as JSON",
     },
   ]),
+  withPermissions(
+    compose(
+      { operations: [], noApiEffectFlags: ["override-name", "exclude", "ignore-health-check"] },
+      withContext(
+        branchTarget,
+        "the linked project ref (SUPABASE_PROJECT_ID or supabase/.temp/project-ref) differs from the parent ref in supabase/.temp/linked-project.json, and an access token resolves",
+      ),
+    ),
+  ),
   Command.withHandler((flags) =>
     status(flags).pipe(
       withCommandTelemetry({

@@ -1,6 +1,7 @@
 import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { machineErrorContextLayer } from "../../../../shared/output/machine-error-context.layer.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
@@ -40,6 +41,7 @@ export const stackDestroyCommand = Command.make("destroy", config).pipe(
       description: "Permanently destroy multiple stacks by id or unique id prefix",
     },
   ]),
+  withPermissions({ operations: [], noApiEffectFlags: ["stack", "stack-id"] }),
   Command.withHandler((flags) =>
     stackDestroy(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
