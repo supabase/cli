@@ -24,13 +24,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "feedback add",
   "feedback delete",
 
-  "functions delete",
-  "functions deploy",
-  "functions download",
-  "functions list",
-  "functions new",
-  "functions serve",
-
   "gen keys",
 
   "init",
