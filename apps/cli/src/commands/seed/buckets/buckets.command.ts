@@ -1,9 +1,8 @@
 import { Effect, Layer, type Option } from "effect";
-import { Command, Flag } from "effect/cli";
+import { Command } from "effect/cli";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import {
   compose,
@@ -14,23 +13,20 @@ import { storageCredentials } from "../../../command-internal/storage-credential
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
-import { SeedLinkedFlag, SeedLocalFlag } from "../seed.flags.ts";
-import { assertSeedTargetsExclusive } from "./buckets.flags.ts";
+import {
+  seedTargetGlobalFlags,
+  targetFlags,
+} from "../../../command-internal/target/target-flags.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import { seedBuckets } from "./buckets.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  // TS-only flag; see push.command.ts (db push) for the same pattern.
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  projectRef: targetFlags({ group: "selectable", subject: "Storage API", dbUrl: false }).projectRef,
 };
 
-// `--linked`/`--local` are scoped globals on the `seed` group (`seed.flags.ts`); the handler
-// selects the target from the changed argv set, not these parsed values.
+// `--linked`/`--local` are scoped globals on the `seed` group (`seedTargetGlobalFlags`).
 export type BucketsFlags = {
   readonly linked: boolean;
   readonly local: boolean;
@@ -51,15 +47,9 @@ export const bucketsCommand = Command.make("buckets", config).pipe(
   ),
   Command.withHandler((leafFlags) =>
     Effect.gen(function* () {
-      // Enforce --local/--linked mutual exclusivity before instrumentation, so a
-      // flag-validation rejection doesn't emit `cli_command_executed`.
-      const cliArgs = yield* CliArgs;
-      yield* assertSeedTargetsExclusive(cliArgs.args);
-      // Persistent seed-group flags for the telemetry flags map; target selection
-      // itself uses the changed set above.
       const flags: BucketsFlags = {
-        linked: yield* SeedLinkedFlag,
-        local: yield* SeedLocalFlag,
+        linked: yield* seedTargetGlobalFlags.linked,
+        local: yield* seedTargetGlobalFlags.local,
         projectRef: leafFlags.projectRef,
       };
       return yield* seedBuckets(flags).pipe(

@@ -110,7 +110,12 @@ const decodeDefaultCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
  * `emitSummary` gates the stdout summary; `interactive` (default `true`) gates overwrite/prune
  * prompts. The caller owns project-ref resolution, cache writes, and telemetry.
  */
-export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
+export const seedBucketsRun = Effect.fnUntraced(function* <
+  EA = never,
+  RA = never,
+  EC = never,
+  RC = never,
+>(opts: {
   readonly projectRef: string;
   readonly emitSummary: boolean;
   readonly interactive?: boolean;
@@ -151,6 +156,13 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
    * would swallow the next line of a `curl … | bash` script. Declined prunes say so instead.
    */
   readonly promptless?: boolean;
+  /** Announces the local Storage endpoint as the run's target once its URL is known. */
+  readonly announceLocalEndpoint?: (baseUrl: string) => Effect.Effect<void, EA, RA>;
+  /**
+   * Asks for consent to the hosted plan's writes before the first one. One answer covers every
+   * bucket overwrite and prune, so no per-bucket prompt follows it.
+   */
+  readonly confirmHostedWrites?: (details: ReadonlyArray<string>) => Effect.Effect<unknown, EC, RC>;
 }) {
   const output = yield* Output;
   const cliSettings = yield* CommandSettings;
@@ -247,6 +259,9 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
 
   // Build the Storage service-gateway client (local or remote).
   const credentials = opts.credentials ?? (yield* resolveStorageCredentials({ projectRef }));
+  if (projectRef === "" && opts.announceLocalEndpoint !== undefined) {
+    yield* opts.announceLocalEndpoint(credentials.baseUrl);
+  }
 
   // Gateway operations use plain `globalThis.fetch` instead of the DoH fetch, with the Kong CA in
   // `FetchHttpClient.RequestInit` for local + https; the api-keys lookup in
@@ -260,16 +275,33 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
 
     const summary = emptySummary();
 
-    yield* upsertBuckets(output, yes, interactive, promptless, gateway, bucketPropsByName, summary);
+    // A hosted run never prompts per item: one consent covers every overwrite and prune.
+    const confirmHostedWrites = projectRef === "" ? undefined : opts.confirmHostedWrites;
+    if (confirmHostedWrites !== undefined) {
+      const details = yield* planHostedWrites(gateway, config, bucketPropsByName);
+      if (details.length > 0) yield* confirmHostedWrites(details);
+    }
+    const approved = confirmHostedWrites !== undefined || yes;
+    const skipPrompts = confirmHostedWrites !== undefined || promptless;
+
+    yield* upsertBuckets(
+      output,
+      approved,
+      interactive,
+      skipPrompts,
+      gateway,
+      bucketPropsByName,
+      summary,
+    );
 
     // Upsert analytics buckets (remote --linked only).
     if (config.storage.analytics.enabled && projectRef !== "") {
       yield* output.raw("Updating analytics buckets...\n", "stderr");
       yield* upsertAnalyticsBuckets(
         output,
-        yes,
+        approved,
         interactive,
-        promptless,
+        skipPrompts,
         gateway,
         Object.keys(config.storage.analytics.buckets),
         summary,
@@ -281,9 +313,9 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
       yield* output.raw("Updating vector buckets...\n", "stderr");
       yield* upsertVectorBuckets(
         output,
-        yes,
+        approved,
         interactive,
-        promptless,
+        skipPrompts,
         gateway,
         vectorBucketNames,
         summary,
@@ -476,6 +508,69 @@ const upsertAnalyticsBuckets = Effect.fnUntraced(function* (
     yield* gateway.deleteAnalyticsBucket(name);
     summary.analytics_pruned.push(name);
   }
+});
+
+const joinNames = (names: ReadonlyArray<string>): string => names.join(", ");
+
+/**
+ * The hosted writes `seedBucketsRun` is about to make, as consent detail lines; empty when it
+ * would write nothing. Reads the remote bucket lists but changes nothing.
+ */
+const planHostedWrites = Effect.fnUntraced(function* (
+  gateway: StorageGateway,
+  config: CliConfig,
+  propsByName: ReadonlyMap<string, UpsertBucketProps>,
+) {
+  const details: Array<string> = [];
+  const existing = new Set((yield* gateway.listBuckets).map((bucket) => bucket.name));
+  const configured = [...propsByName.keys()];
+  const create = configured.filter((name) => !existing.has(name));
+  const overwrite = configured.filter((name) => existing.has(name));
+  if (create.length > 0) details.push(`Create buckets: ${joinNames(create)}`);
+  if (overwrite.length > 0)
+    details.push(`Overwrite the properties of buckets: ${joinNames(overwrite)}`);
+
+  const withObjects = Object.entries(config.storage.buckets ?? {})
+    .filter(([, bucket]) => bucket.objects_path.length > 0)
+    .map(([name]) => name);
+  if (withObjects.length > 0) {
+    details.push(
+      `Upload objects, overwriting existing ones, to buckets: ${joinNames(withObjects)}`,
+    );
+  }
+
+  if (config.storage.analytics.enabled) {
+    const declared = Object.keys(config.storage.analytics.buckets);
+    const present = new Set(yield* gateway.listAnalyticsBuckets);
+    const created = declared.filter((name) => !present.has(name));
+    const pruned = [...present].filter((name) => !declared.includes(name));
+    if (created.length > 0) details.push(`Create analytics buckets: ${joinNames(created)}`);
+    if (pruned.length > 0) {
+      details.push(`Delete analytics buckets not declared in ${CONFIG_PATH}: ${joinNames(pruned)}`);
+    }
+  }
+
+  const declaredVector = Object.keys(config.storage.vector.buckets);
+  if (config.storage.vector.enabled && declaredVector.length > 0) {
+    const listed = yield* gateway.listVectorBuckets.pipe(
+      Effect.catch((error) =>
+        isVectorBucketsFeatureNotEnabled(error.message) ||
+        isLocalVectorBucketsUnavailable(error.message)
+          ? Effect.succeed(undefined)
+          : Effect.fail(error),
+      ),
+    );
+    if (listed !== undefined) {
+      const present = new Set(listed);
+      const created = declaredVector.filter((name) => !present.has(name));
+      const pruned = listed.filter((name) => !declaredVector.includes(name));
+      if (created.length > 0) details.push(`Create vector buckets: ${joinNames(created)}`);
+      if (pruned.length > 0) {
+        details.push(`Delete vector buckets not declared in ${CONFIG_PATH}: ${joinNames(pruned)}`);
+      }
+    }
+  }
+  return details;
 });
 
 /**
