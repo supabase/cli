@@ -359,7 +359,10 @@ export function renderMarkdown(
 export function commentBody(markdown: string): string {
   const note =
     "\n\n…truncated; the full report is in the job summary and the `flaky-check-report` artifact.\n";
-  return markdown.length <= MAX_COMMENT
-    ? markdown
-    : markdown.slice(0, MAX_COMMENT - note.length) + note;
+  if (markdown.length <= MAX_COMMENT) {
+    return markdown;
+  }
+  // Cutting at a line end keeps table rows, mention escapes, and surrogate pairs whole.
+  const head = markdown.slice(0, MAX_COMMENT - note.length);
+  return head.slice(0, head.lastIndexOf("\n")) + note;
 }

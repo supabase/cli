@@ -281,8 +281,10 @@ describe("renderMarkdown", () => {
     );
     expect(failing).toContain("| focused | @<!---->supabase/api > twin (#2) |");
     expect(commentBody(failing)).toBe(failing);
-    expect(commentBody(failing.repeat(200))).toHaveLength(65_000);
-    expect(commentBody(failing.repeat(200))).toEndWith("`flaky-check-report` artifact.\n");
+    const truncated = commentBody(failing.repeat(200));
+    expect(truncated.length).toBeLessThanOrEqual(65_000);
+    expect(failing.repeat(200)).toStartWith(truncated.split("\n\n…truncated")[0] + "\n");
+    expect(truncated).toEndWith("`flaky-check-report` artifact.\n");
     expect(isClean(cleanReport)).toBe(true);
     expect(cleanMarkdown.split("\n").slice(0, 4)).toEqual([
       "<!-- flaky-check -->",
