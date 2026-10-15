@@ -66,6 +66,7 @@ import * as Container from "./runtime/Container.ts";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import { stackError, type OwnerRpc } from "./Rpc.ts";
 import { confirmStackDataRoot } from "./namespace/Paths.ts";
+import { makeScopedPorts } from "./Ports.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import type { SavedStack, StackCredentials, StackKeysInput } from "./StackNamespace.ts";
 import { makeDockerHelperRegistry } from "./storage/DockerHelperRegistry.ts";
@@ -245,6 +246,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
   );
   const orchestrator = yield* Orchestrator.make<Entry>({ admit: () => rejectWhileDraining });
   const helpers = yield* makeDockerHelperRegistry(yield* crypto.randomUUIDv4);
+  const ports = yield* makeScopedPorts(options.state).pipe(Effect.mapError(serviceError("ports")));
   const logStore = yield* LogStore.make({
     root: StackNamespace.stackLogsRoot(path, options.state.root, options.saved.id),
   }).pipe(Effect.provideContext(services));
@@ -452,6 +454,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       cacheRoot: options.cacheRoot,
       runtime,
       helpers,
+      claimNativePort: (key, port) => ports.claimNative(stackId, key, port),
       ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
       ...(options.engineTarget === undefined ? {} : { engineTarget: options.engineTarget }),
     }).pipe(Effect.provideContext(services));

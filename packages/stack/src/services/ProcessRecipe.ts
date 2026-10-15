@@ -499,7 +499,11 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           const reservations = yield* Effect.forEach(
             portNames,
             ([name]) =>
-              reserveNativePort(keyFor(name), excluded.get(keyFor(name)) ?? emptyNativePortSet),
+              reserveNativePort(keyFor(name), {
+                excluded: excluded.get(keyFor(name)) ?? emptyNativePortSet,
+                claim: (port) => options.claimNativePort(keyFor(name), port),
+                claimScope: parent,
+              }),
             { concurrency: 1 },
           ).pipe(
             Scope.provide(portScope),
@@ -528,9 +532,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         if (spec.startupCommands.length > 0) {
           const startupScope = yield* Scope.fork(launchScope, "sequential");
           const reservation =
-            spec.nativeStartupEnv === undefined
-              ? undefined
-              : yield* reserveEndpoints(context.scope);
+            spec.nativeStartupEnv === undefined ? undefined : yield* reserveEndpoints(launchScope);
           const startupEndpoints =
             reservation?.endpoints ??
             startupEndpointsFor(context.config, spec, { container: false });
