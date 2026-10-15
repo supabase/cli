@@ -85,7 +85,8 @@ Prints progress and success messages as Functions are deployed, bundled, uploade
 
 ### `--output-format json`
 
-Emits a structured success payload with the project ref, deployed function slugs, and dashboard URL.
+Emits one structured success payload with the project ref, deployed function slugs, and dashboard
+URL, after `--prune` has finished deleting. A failing prune emits only the error envelope.
 
 ### `--output-format stream-json`
 
