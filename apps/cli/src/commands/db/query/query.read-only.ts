@@ -77,6 +77,8 @@ const BEGIN_ATOMIC = /begin\s+atomic/iu;
 const statementViolation = (statement: string): string | undefined => {
   const text = trimLeadingSqlComments(statement);
   if (text === "") return undefined;
+  // Only a parenthesised SELECT or VALUES can start with `(`.
+  if (text.startsWith("(")) return undefined;
   const word = LEADING_WORD.exec(text)?.[0];
   // ASCII only: `ſelect` upper-cases to `SELECT` in JS but is a plain identifier to PostgreSQL.
   const keyword = word !== undefined && /^[A-Za-z]+$/u.test(word) ? word.toUpperCase() : undefined;

@@ -49,14 +49,14 @@ stack never prompts.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                            |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`  | success                                                                                                                                                                                                                              |
-| `1`  | more than one of `--db-url`/`--linked`/`--local` (`TargetSelectorConflictError`); no SQL provided; empty stdin; unreadable `--file`; linked target without login; query exec failure; non-201 linked status                          |
-| `1`  | `--project-ref` with `--local` or `--db-url` (`TargetProjectRefConflictError`)                                                                                                                                                       |
-| `1`  | hosted target without `--read-only` in a JSON, piped, agent or non-TTY run without `--yes` or a shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`); nothing is sent                                                         |
-| `1`  | `--read-only` with a statement that does not start with `SELECT`, `WITH`, `VALUES`, `TABLE`, `SHOW` or `EXPLAIN`, or with input that ends inside a comment, quote or dollar quote (`DbQueryReadOnlyStatementError`); nothing is sent |
-| `1`  | hosted target confirmation declined (`HostedMutationDeclinedError`, `context canceled`); nothing is sent                                                                                                                             |
+| Code | Condition                                                                                                                                                                                                                                 |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                                   |
+| `1`  | more than one of `--db-url`/`--linked`/`--local` (`TargetSelectorConflictError`); no SQL provided; empty stdin; unreadable `--file`; linked target without login; query exec failure; non-201 linked status                               |
+| `1`  | `--project-ref` with `--local` or `--db-url` (`TargetProjectRefConflictError`)                                                                                                                                                            |
+| `1`  | hosted target without `--read-only` in a JSON, piped, agent or non-TTY run without `--yes` or a shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`); nothing is sent                                                              |
+| `1`  | `--read-only` with a statement that does not start with `SELECT`, `WITH`, `VALUES`, `TABLE`, `SHOW`, `EXPLAIN` or `(`, or with input that ends inside a comment, quote or dollar quote (`DbQueryReadOnlyStatementError`); nothing is sent |
+| `1`  | hosted target confirmation declined (`HostedMutationDeclinedError`, `context canceled`); nothing is sent                                                                                                                                  |
 
 ## Output
 
@@ -111,7 +111,7 @@ from the environment. Agent mode defaults the format to JSON (table for humans).
 - **`--read-only`.** Skips the hosted confirmation entirely and prints no question. On every
   target, before the statement is sent or any question is asked, the SQL is split into statements
   and each must start (after whitespace, a BOM and comments) with `SELECT`, `WITH`, `VALUES`,
-  `TABLE`, `SHOW` or `EXPLAIN`. Any other statement (`COMMIT`, `SET`, `CALL`, `DO`, `COPY`, `LOCK`,
+  `TABLE`, `SHOW`, `EXPLAIN` or `(` (a parenthesised query). Any other statement (`COMMIT`, `SET`, `CALL`, `DO`, `COPY`, `LOCK`,
   …), input that ends inside a comment, quote or dollar quote, and input containing
   `BEGIN ATOMIC` (the splitter reads such a body as one statement) fails with
   `DbQueryReadOnlyStatementError`, naming only the leading keyword or a fixed label. Keywords

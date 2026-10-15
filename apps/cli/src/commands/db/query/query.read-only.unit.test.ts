@@ -72,7 +72,6 @@ describe("findReadOnlyViolation", () => {
 
   it.each([
     ["an unknown word", "FROBNICATE t"],
-    ["a parenthesised query", "(SELECT 1) UNION (SELECT 2)"],
     ["a quoted keyword", '"select" 1'],
     ["a keyword with a trailing identifier character", "SELECTx 1"],
     ["a keyword with a trailing digit", "SELECT1"],
@@ -97,6 +96,10 @@ describe("findReadOnlyViolation", () => {
     ["comment opened by /*/", "/*/ x */ COMMIT"],
   ])("sees through a %s", (_name, sql) => {
     expect(findReadOnlyViolation(sql)).toBe("COMMIT");
+  });
+
+  it("still checks every statement after a parenthesised query", () => {
+    expect(findReadOnlyViolation("(SELECT 1) UNION (SELECT 2); COMMIT")).toBe("COMMIT");
   });
 
   it("refuses a read-only setting change hidden after a nested comment", () => {
@@ -152,6 +155,8 @@ describe("findReadOnlyViolation", () => {
     ["SHOW ALL", "show all"],
     ["EXPLAIN", "EXPLAIN SELECT 1"],
     ["EXPLAIN ANALYZE", "EXPLAIN (ANALYZE, BUFFERS) SELECT 1"],
+    ["a parenthesised query", "(SELECT 1) UNION (SELECT 2)"],
+    ["a parenthesised query after a comment", "-- note\n/* a */ (VALUES (1))"],
     ["a keyword glued to a punctuation mark", "SELECT*FROM t"],
     ["a keyword after a line comment", "-- note\nSELECT 1"],
     ["a keyword after a nested block comment", "/* a /* b */ c */ SELECT 1"],
