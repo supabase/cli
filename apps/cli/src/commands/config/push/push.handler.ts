@@ -112,7 +112,7 @@ import type { ConfigPushFlags } from "./push.command.ts";
 import type { ConfigPushServiceResult } from "./push.types.ts";
 
 /** The `services[].changes` union: encoded paths ∪ content extras ∪ secret paths the write
- *  actually sent, path-sorted. `sentSecretPaths` is `[]` for a declined/skipped write. */
+ *  actually sent, path-sorted. `sentSecretPaths` is `[]` for a skipped write. */
 function pushServiceChanges(
   encoded: PushEncoded<unknown>,
   sentSecretPaths: ReadonlyArray<ReadonlyArray<string>>,
@@ -420,21 +420,17 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       const changes = plan.changesByResource[resource];
       switch (resource) {
         case "api":
-          return planResource(
-            changes,
-            encodeApiBody({ changes, local, remote }),
-            [],
-            (body) =>
-              api.v1.updatePostgrestServiceConfig({ ref, ...body }).pipe(
-                Effect.catch(
-                  mapHttpError({
-                    networkError: ConfigPushApiUpdateNetworkError,
-                    statusError: ConfigPushApiUpdateStatusError,
-                    networkMessage: (cause) => `failed to update API config: ${cause}`,
-                    statusMessage: unexpectedStatusMessage,
-                  }),
-                ),
+          return planResource(changes, encodeApiBody({ changes, local, remote }), [], (body) =>
+            api.v1.updatePostgrestServiceConfig({ ref, ...body }).pipe(
+              Effect.catch(
+                mapHttpError({
+                  networkError: ConfigPushApiUpdateNetworkError,
+                  statusError: ConfigPushApiUpdateStatusError,
+                  networkMessage: (cause) => `failed to update API config: ${cause}`,
+                  statusMessage: unexpectedStatusMessage,
+                }),
               ),
+            ),
           );
         case "db.settings":
           return planResource(
@@ -607,9 +603,9 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
         ),
         ...(authPlan?.write === undefined
           ? []
-          : PUSH_ADDON_GATES.filter((gate) =>
-              pushEnablesAddon(authPlan.changes, gate, remote),
-            ).map((gate) => gate.costKey)),
+          : PUSH_ADDON_GATES.filter((gate) => pushEnablesAddon(authPlan.changes, gate, remote)).map(
+              (gate) => gate.costKey,
+            )),
       ]);
       const costLines = [...costKeys].flatMap((key) => {
         const item = cost.get(key);

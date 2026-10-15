@@ -59,18 +59,19 @@ Prints a styled ASCII table with columns `ID`, `NAME`, `SLUG`, `STATUS`, `VERSIO
 
 ### `--output-format json`
 
-Prints a structured success result shaped as `{ "functions": [...] }`.
+Prints a structured success result shaped as `{ "functions": [...], "target": {...} }`, where `target` is `kind: "linked"` with `project_ref` and, when known, `project_name`, `environment` and `parent_project_ref`.
 
 ### `--output-format stream-json`
 
-Prints a structured success result shaped as `{ "functions": [...] }`.
+Prints the same structured success result, including `target`.
 
 ## Notes
 
 - Requires a linked project (`--project-ref`, `SUPABASE_PROJECT_ID`, or `<workdir>/supabase/.temp/project-ref`).
 - Uses the Management API.
+- Prints the `Target:` banner (project name, ref and, for a branch, the parent project) to stderr before the request. It never asks for confirmation, so `--yes` and `SUPABASE_YES` have no effect.
 - `--output` behavior:
-  - `json` emits the raw array.
-  - `yaml` emits the raw array.
+  - `json` emits the raw array, without `target`.
+  - `yaml` emits the raw array, without `target`.
   - `toml` emits `{ functions = [...] }`.
   - `env` fails with `--output env flag is not supported`.
