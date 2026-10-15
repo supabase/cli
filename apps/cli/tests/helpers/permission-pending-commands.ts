@@ -20,12 +20,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "db branch switch",
   "db remote changes",
 
-  "domains activate",
-  "domains create",
-  "domains delete",
-  "domains get",
-  "domains reverify",
-
   "encryption get-root-key",
   "encryption update-root-key",
 
@@ -59,9 +53,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "network-restrictions get",
   "network-restrictions update",
 
-  "notebooks pull",
-  "notebooks push",
-
   "orgs create",
   "orgs list",
 
@@ -76,22 +67,10 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
 
   "pull",
 
-  "secrets set",
-  "secrets unset",
-
   "services",
-
-  "snippets download",
 
   "ssl-enforcement get",
   "ssl-enforcement update",
-
-  "sso add",
-  "sso info",
-  "sso list",
-  "sso remove",
-  "sso show",
-  "sso update",
 
   "stack destroy",
   "stack list",
@@ -107,11 +86,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "status",
 
   "stop",
-
-  "storage cp",
-  "storage ls",
-  "storage mv",
-  "storage rm",
 
   "telemetry disable",
   "telemetry enable",

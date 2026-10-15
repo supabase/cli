@@ -1,9 +1,18 @@
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose, withContext } from "../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
-import { notebooksProjectRefSafeFlags } from "../notebooks.shared.ts";
+import {
+  notebookCreate,
+  notebookRead,
+  notebooksList,
+  notebooksProjectRefSafeFlags,
+} from "../notebooks.shared.ts";
 import { notebooksPush } from "./push.handler.ts";
 
 const config = {
@@ -42,6 +51,33 @@ export const notebooksPushCommand = Command.make("push", config).pipe(
       description: "Push a single notebook by name",
     },
   ]),
+  withPermissions(
+    compose(
+      {
+        operations: [
+          {
+            operationId: "v2-update-notebook",
+            kind: "required",
+            context: "a notebook file whose name a project notebook carries",
+          },
+          {
+            operationId: "v2-delete-notebook",
+            kind: "required",
+            context:
+              "no notebook name argument, project notebooks with no local file, stdout a TTY with text output, and the delete answer",
+          },
+        ],
+      },
+      projectRefPicker,
+      notebooksList,
+      withContext(notebookCreate, "a notebook file whose name no project notebook carries"),
+      withContext(
+        notebookRead,
+        "no notebook name argument, project notebooks with no local file, stdout a TTY with text output, and the write-locally answer",
+      ),
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler(notebooksPushHandler),
   Command.provide(managementApiRuntimeLayer(["notebooks", "push"])),
 );

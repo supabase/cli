@@ -1,6 +1,10 @@
 import type * as CliCommand from "effect/cli/Command";
 import { Argument, Command, Flag } from "effect/cli";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -36,6 +40,16 @@ export const secretsSetCommand = Command.make("set", config).pipe(
       description: "Set secrets from a .env file",
     },
   ]),
+  withPermissions(
+    compose(
+      {
+        operations: [{ operationId: "v1-bulk-create-secrets", kind: "required" }],
+        noApiEffectFlags: ["env-file"],
+      },
+      projectRefPicker,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     secretsSet(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
