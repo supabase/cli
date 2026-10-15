@@ -31,22 +31,25 @@ Cloudflare DNS-over-HTTPS CNAME pre-check.
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                                |
-| ----------------------- | ---------------------------------------------------- | -------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`)  |
-| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset   | no (falls back to linked-project file)                   |
-| `SUPABASE_PROFILE`      | built-in profile name or path to a YAML profile      | no (defaults to `supabase`; sets API URL + project host) |
+| Variable                | Purpose                                                                                                     | Required?                                                |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                        | no (falls back to keyring → `~/.supabase/access-token`)  |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset                                                          | no (falls back to linked-project file)                   |
+| `SUPABASE_PROFILE`      | built-in profile name or path to a YAML profile                                                             | no (defaults to `supabase`; sets API URL + project host) |
+| `SUPABASE_YES`          | approves the hosted-mutation confirmation like `--yes` (shell environment only; `supabase/.env` is ignored) | no                                                       |
 
 ## Exit Codes
 
-| Code | Condition                                                                                 |
-| ---- | ----------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                   |
-| `1`  | project ref cannot be resolved / is malformed                                             |
-| `1`  | `create`: hostname has no matching CNAME record (Cloudflare DNS pre-check)                |
-| `1`  | API error — unexpected (non-201/200) response from the custom-hostname endpoint           |
-| `1`  | network / connection failure                                                              |
-| `1`  | `--include-raw-output` passed at all (any value, including `=false`) — removed, see Notes |
+| Code | Condition                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                |
+| `1`  | project ref cannot be resolved / is malformed                                                                          |
+| `1`  | `create`: hostname has no matching CNAME record (Cloudflare DNS pre-check)                                             |
+| `1`  | API error — unexpected (non-201/200) response from the custom-hostname endpoint                                        |
+| `1`  | network / connection failure                                                                                           |
+| `1`  | `--include-raw-output` passed at all (any value, including `=false`) — removed, see Notes                              |
+| `1`  | `HostedMutationConsentRequiredError` — no `--yes` / shell `SUPABASE_YES` and the run cannot prompt; nothing is changed |
+| `1`  | `HostedMutationDeclinedError` — the confirmation prompt was declined                                                   |
 
 ## Telemetry Events Fired
 
@@ -100,3 +103,10 @@ suppressed on stderr. `delete` ignores `-o`.
   - Text-mode status output is newline-terminated. Without the final newline, interactive shell prompts can redraw over the last status line, hiding the ACME TXT record.
   - In a structured `-o` mode the human status is suppressed on stderr, keeping stdout clean.
   - The CNAME pre-check's "failed to locate" error text embeds a readable, 1024-byte-capped JSON dump of the DNS answers, rather than an uncapped decimal byte-value array — see `domains.cname.ts`'s comment at the failure site for detail.
+
+- Prints `Target: <project>` once on stderr in every output format, for example `Target: project <name> (<ref>) · production`. `--output-format json|stream-json` object results and error envelopes also carry a `target` object; `--output {json,yaml,toml,env}` payloads are unchanged.
+- **Consent (`create`).** Asks once, after the CNAME pre-check passes and before the POST, with default Yes: `Create custom hostname <hostname>`.
+- **Consent (`activate`).** Asks once before the POST, with default No: `Activate the custom hostname`. The question notes that third-party auth providers stop working on the Supabase-provisioned subdomain.
+- **Consent (`delete`).** Asks once before the DELETE, with default No: `Delete the custom hostname config`.
+- **Consent behaviour.** `--yes` or a shell `SUPABASE_YES` approves it (`supabase/.env` does not) and echoes `Confirmed by --yes: <action> on <target>` to stderr. Without it, only an interactive text-mode terminal is asked: JSON, `-o`, piped and agent runs exit 1 with `HostedMutationConsentRequiredError` and change nothing, and declining exits 1 with `HostedMutationDeclinedError`. Stdin is never read.
+- `get` never prompts. `reverify` never prompts: it re-runs verification and changes no configuration.

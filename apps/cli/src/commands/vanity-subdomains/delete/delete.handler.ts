@@ -6,6 +6,7 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
   VanitySubdomainsDeleteNetworkError,
@@ -34,6 +35,11 @@ export const vanitySubdomainsDelete = Effect.fn("vanity-subdomains.delete")(func
     const ref = yield* resolver.resolve(flags.projectRef);
 
     yield* Effect.gen(function* () {
+      yield* requireHostedMutationConsent({
+        action: "Delete the vanity subdomain",
+        details: ["Routing reverts to the project ref hostname."],
+      });
+
       const deleting =
         output.format === "text" ? yield* output.task("Deleting vanity subdomain...") : undefined;
       yield* api.v1.deactivateVanitySubdomainConfig({ ref }).pipe(

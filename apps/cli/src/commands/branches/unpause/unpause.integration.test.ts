@@ -1,8 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
+  VALID_REF,
   buildTestRuntime,
   jsonResponse,
   mockCommandSettings,
@@ -10,13 +11,25 @@ import {
   useTempWorkdir,
   unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import type { BranchesUnpauseFlags } from "./unpause.command.ts";
 import { branchesUnpause } from "./unpause.handler.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 // 20-lowercase ref (matches V1RestoreAProjectInput.ref plain pattern).
 const BRANCH_REF = "cccccccccccccccccccc";
 
 const tempRoot = useTempWorkdir("supabase-branches-unpause-int-");
+
+const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
+  Layer.mergeAll(
+    buildTestRuntime(opts),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
+
+const confirmed = `Confirmed by --yes: Unpause preview branch ${BRANCH_REF} on project ${VALID_REF} · identity unverified\n`;
 
 interface SetupOpts {
   readonly restoreStatus?: number;
@@ -35,7 +48,7 @@ function setup(opts: SetupOpts = {}) {
       }),
   });
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
-  const layer = buildTestRuntime({ out, api, cliSettings });
+  const layer = buildRuntime({ out, api, cliSettings });
   return { layer, out, api };
 }
 
@@ -60,7 +73,7 @@ describe("branches unpause integration", () => {
     return Effect.gen(function* () {
       yield* branchesUnpause({ ...baseFlags, name: Option.some(BRANCH_REF) });
       expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe(unverifiedTargetBanner());
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + confirmed);
     }).pipe(Effect.provide(layer));
   });
 
@@ -78,4 +91,9 @@ describe("branches unpause integration", () => {
       }
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("branches unpause", {
+  api: { response: { status: 200, body: null } },
+  invoke: () => ({ run: branchesUnpause({ ...baseFlags, name: Option.some(BRANCH_REF) }) }),
 });

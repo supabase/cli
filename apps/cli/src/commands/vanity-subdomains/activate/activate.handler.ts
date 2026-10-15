@@ -14,6 +14,7 @@ import {
   shapeString,
   shapeStruct,
 } from "../../../command-internal/struct-output.encoders.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
   DesiredSubdomainRequiredError,
@@ -55,6 +56,10 @@ export const vanitySubdomainsActivate = Effect.fn("vanity-subdomains.activate")(
         });
       }
       const desiredSubdomain = flags.desiredSubdomain.value;
+      yield* requireHostedMutationConsent({
+        action: `Activate vanity subdomain ${desiredSubdomain}`,
+        details: ["Auth services stop working on the project's default hostname."],
+      });
       const activating =
         output.format === "text" ? yield* output.task("Activating vanity subdomain...") : undefined;
       const response = yield* api.v1

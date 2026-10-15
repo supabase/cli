@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
@@ -12,7 +12,10 @@ import {
   useTempWorkdir,
   unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { backupsRestore } from "./restore.handler.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -23,6 +26,15 @@ interface SetupOpts {
 
 const tempRoot = useTempWorkdir("supabase-backups-restore-int-");
 
+const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
+  Layer.mergeAll(
+    buildTestRuntime(opts),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
+
+const confirmed = `Confirmed by --yes: Start a PITR restore without a recovery time target on project ${VALID_REF} · identity unverified\n`;
+
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const api = mockCommandPlatformApi({
@@ -31,7 +43,7 @@ function setup(opts: SetupOpts = {}) {
     network: opts.network,
   });
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
-  const layer = buildTestRuntime({
+  const layer = buildRuntime({
     out,
     api,
     cliSettings,
@@ -72,7 +84,7 @@ describe("backups restore integration", () => {
         timestamp: Option.none(),
       });
       expect(out.stderrText).toBe(
-        `${unverifiedTargetBanner()}Started PITR restore: ${VALID_REF}\n`,
+        `${unverifiedTargetBanner()}${confirmed}Started PITR restore: ${VALID_REF}\n`,
       );
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
@@ -126,7 +138,7 @@ describe("backups restore integration", () => {
           timestamp: Option.none(),
         });
         expect(out.stderrText).toBe(
-          `${unverifiedTargetBanner()}Started PITR restore: ${VALID_REF}\n`,
+          `${unverifiedTargetBanner()}${confirmed}Started PITR restore: ${VALID_REF}\n`,
         );
         expect(out.stdoutText).toBe("");
       }).pipe(Effect.provide(layer));
@@ -182,7 +194,7 @@ describe("backups restore integration", () => {
       workdir: tempRoot.current,
       projectId: Option.none(),
     });
-    const layer = buildTestRuntime({ out, api, cliSettings });
+    const layer = buildRuntime({ out, api, cliSettings });
 
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -240,7 +252,7 @@ describe("backups restore integration", () => {
       workdir: tempRoot.current,
       projectId: Option.none(),
     });
-    const layer = buildTestRuntime({
+    const layer = buildRuntime({
       out,
       api,
       cliSettings,
@@ -266,4 +278,11 @@ describe("backups restore integration", () => {
       expect(api.requests[0]?.body).toEqual({ recovery_time_target_unix: 42 });
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("backups restore", {
+  api: { response: { status: 201, body: null } },
+  invoke: () => ({
+    run: backupsRestore({ projectRef: Option.none(), timestamp: Option.some(1_707_407_047) }),
+  }),
 });
