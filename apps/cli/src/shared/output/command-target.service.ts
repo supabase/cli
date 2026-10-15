@@ -18,6 +18,8 @@ interface CommandTargetShape {
   readonly announce: (rendered: RenderedTarget) => Effect.Effect<void>;
   /** The first announced target's JSON form, or `None` before any announcement. */
   readonly json: Effect.Effect<Option.Option<TargetJson>>;
+  /** The first announced target's text, or `None` before any announcement. */
+  readonly text: Effect.Effect<Option.Option<string>>;
 }
 
 /** One cell per command invocation, provided at the root. */

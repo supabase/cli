@@ -47,6 +47,7 @@ export const commandTargetLayer = Layer.effect(
           yield* output.raw(`Target: ${rendered.text}\n`, "stderr");
         }),
       json: Ref.get(state).pipe(Effect.map((current) => current.first)),
+      text: Ref.get(state).pipe(Effect.map((current) => Option.fromNullishOr(current.texts[0]))),
     });
   }),
 );

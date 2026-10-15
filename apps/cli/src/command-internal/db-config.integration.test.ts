@@ -55,7 +55,9 @@ import {
   OutputFlag,
   ProfileFlag,
   WorkdirFlag,
+  YesFlag,
 } from "./global-flags.ts";
+import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../config/cli-config-flags.ts";
 import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
 import { cliConfigValuesLayer } from "../config/cli-config-values.layer.ts";
@@ -64,7 +66,7 @@ import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { identityStitchLayer } from "./identity-stitch.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import type { DbConfigFlags, DbConnectionInput } from "./db-config.types.ts";
-import type { HostedMutationConsent } from "./hosted-consent/hosted-consent.token.ts";
+import { hostedMutationPreapproval } from "./hosted-consent/hosted-consent.ts";
 import type { ResolvedTarget } from "./target/resolve-target.ts";
 import { DbConnectError } from "./db-connection.errors.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
@@ -1986,10 +1988,11 @@ describe("dbConfigResolver (container pooler fallback)", () => {
 });
 
 describe("dbConfigResolver.resolveConnection", () => {
-  const approval = Option.some({
-    action: "remove network bans",
-    via: "yes",
-  } as unknown as HostedMutationConsent);
+  const approval = hostedMutationPreapproval.pipe(
+    Effect.provide(
+      Layer.mergeAll(Layer.succeed(YesFlag, true), Layer.succeed(CliArgs, { args: [] })),
+    ),
+  );
   const inputFor = (
     target: ResolvedTarget,
     overrides: Partial<DbConnectionInput> = {},
@@ -2282,7 +2285,7 @@ describe("dbConfigResolver.resolveConnection", () => {
         yield* bannedRequests(requests, ["203.0.113.7"]);
         const { fiber, advance } = yield* forkResolve(
           inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false }), {
-            networkBanRemoval: approval,
+            networkBanRemoval: yield* approval,
           }),
           connection.layer,
         );

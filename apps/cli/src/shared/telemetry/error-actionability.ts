@@ -38,6 +38,7 @@ export const CliErrorCategory = {
   PlanLimit: "plan_limit",
   ProjectPaused: "project_paused",
   InvalidInput: "invalid_input",
+  ConsentRequired: "consent_required",
   ResourceLimit: "resource_limit",
   Network: "network",
   ApiStatus: "api_status",
@@ -175,6 +176,7 @@ type UserActionableErrorCategory =
   | typeof CliErrorCategory.PlanLimit
   | typeof CliErrorCategory.ProjectPaused
   | typeof CliErrorCategory.InvalidInput
+  | typeof CliErrorCategory.ConsentRequired
   | typeof CliErrorCategory.ResourceLimit;
 
 type CliErrorKindCategory =
@@ -312,6 +314,13 @@ export const actionability = {
     error_category: CliErrorCategory.InvalidInput,
     has_suggestion: false,
     suggestion_type: CliSuggestionType.None,
+  },
+  /** A hosted mutation needs confirmation this run cannot ask for; `--yes` or a terminal supplies it. */
+  consentRequired: {
+    error_kind: CliErrorKind.UserActionable,
+    error_category: CliErrorCategory.ConsentRequired,
+    has_suggestion: true,
+    suggestion_type: CliSuggestionType.ProvideFlags,
   },
   invalidConfig: {
     error_kind: CliErrorKind.UserActionable,
@@ -638,6 +647,7 @@ function isUserActionableCategory(value: unknown): value is UserActionableErrorC
     value === CliErrorCategory.PlanLimit ||
     value === CliErrorCategory.ProjectPaused ||
     value === CliErrorCategory.InvalidInput ||
+    value === CliErrorCategory.ConsentRequired ||
     value === CliErrorCategory.ResourceLimit
   );
 }

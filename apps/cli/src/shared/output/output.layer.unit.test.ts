@@ -1,10 +1,22 @@
 import { describe, expect, it } from "@effect/vitest";
 import { beforeEach, vi } from "vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schema, Sink, Stdio, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Schema,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
 import { TestClock } from "effect/testing";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
 import { mockTty } from "../../../tests/helpers/mocks.ts";
-import { announceTarget } from "./command-target.service.ts";
+import { announceTarget, CommandTarget } from "./command-target.service.ts";
 import { commandTargetLayer } from "./command-target.layer.ts";
 import { machineErrorContextLayer } from "./machine-error-context.layer.ts";
 import { MachineErrorContext } from "./machine-error-context.service.ts";
@@ -1491,6 +1503,17 @@ describe("Output", () => {
         ]);
         const parsed = yield* decodeJson(mock.stdout[0]!);
         expect(parsed.target).toEqual(linkedTarget.json);
+      }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
+    });
+
+    it.effect("the cell reports the first announced text, or none before an announcement", () => {
+      const mock = mockStdio();
+      return Effect.gen(function* () {
+        const cell = yield* CommandTarget;
+        expect(yield* cell.text).toEqual(Option.none());
+        yield* announceTarget(linkedTarget);
+        yield* announceTarget(localTarget);
+        expect(yield* cell.text).toEqual(Option.some(linkedTarget.text));
       }).pipe(Effect.provide(layerWith(jsonOutputLayer, mock)));
     });
 

@@ -304,6 +304,8 @@ GenTypesWorkdirError
 HealthCheckProbeError
 HealthCheckTimeoutError
 HostPostgresClientError
+HostedMutationConsentRequiredError
+HostedMutationDeclinedError
 ImagePrepullError
 InitConfigExistsError
 InitParseSettingsError
