@@ -3,6 +3,8 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { ProjectRefResolver, PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
 import { readProjectRefFile, tempPaths } from "../shared/config/temp-paths.ts";
+import { announceTarget } from "../shared/output/command-target.service.ts";
+import { describeLinkedTarget } from "./target/target-identity.ts";
 
 export type ParentRefResolution =
   | { readonly kind: "resolved"; readonly ref: string }
@@ -57,6 +59,17 @@ export function parseCachedLinkedProject(content: string): Option.Option<CachedL
   }
   return Option.none();
 }
+
+/** Reads and parses `<workdir>/supabase/.temp/linked-project.json`; any failure is `None`. */
+export const readCachedLinkedProject = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+): Effect.Effect<Option.Option<CachedLinkedProject>> =>
+  fs.readFileString(tempPaths(path, workdir).linkedProjectCache).pipe(
+    Effect.map(parseCachedLinkedProject),
+    Effect.orElseSucceed(() => Option.none<CachedLinkedProject>()),
+  );
 
 function parseCachedParentRef(content: string): Option.Option<string> {
   return Option.map(parseCachedLinkedProject(content), (project) => project.ref);
@@ -140,6 +153,16 @@ export const resolveParentScopedProjectRef = Effect.fn("ParentProjectRef.resolve
   yield* Effect.annotateCurrentSpan("parent_project_ref.linked_parent", parent.kind);
   if (parent.kind === "resolved") {
     yield* Effect.annotateCurrentSpan("parent_project_ref.source", "linked_parent");
+    const cliSettings = yield* CommandSettings;
+    const cache = yield* readCachedLinkedProject(
+      yield* FileSystem.FileSystem,
+      yield* Path.Path,
+      cliSettings.workdir,
+    );
+    const cachedParent = Option.exists(cache, (project) => project.ref === parent.ref);
+    yield* announceTarget(
+      describeLinkedTarget({ ref: parent.ref, source: cachedParent ? "file" : "env", cache }),
+    );
     return parent.ref;
   }
 

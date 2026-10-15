@@ -225,6 +225,8 @@ function setup(
   const projectRefLayer = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(opts.projectRef ?? VALID_REF),
     resolveForLink: () => Effect.succeed(opts.projectRef ?? VALID_REF),
+    resolveRef: () =>
+      Effect.succeed({ ref: opts.projectRef ?? VALID_REF, source: "file", matchesLinkedRef: true }),
     resolveOptional: () => Effect.succeed(Option.some(opts.projectRef ?? VALID_REF)),
     // An explicit `--project-ref` flag takes top precedence, short-circuiting before
     // the "not linked" failure.

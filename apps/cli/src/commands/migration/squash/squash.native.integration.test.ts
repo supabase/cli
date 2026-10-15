@@ -84,6 +84,8 @@ const testLayer = (root: string) =>
     Layer.succeed(ProjectRefResolver, {
       resolve: () => Effect.succeed("abcdefghijklmnopqrst"),
       resolveForLink: () => Effect.succeed("abcdefghijklmnopqrst"),
+      resolveRef: () =>
+        Effect.succeed({ ref: "abcdefghijklmnopqrst", source: "file", matchesLinkedRef: true }),
       resolveOptional: () => Effect.succeed(Option.some("abcdefghijklmnopqrst")),
       loadProjectRef: () => Effect.succeed("abcdefghijklmnopqrst"),
       promptProjectRef: () => Effect.succeed("abcdefghijklmnopqrst"),

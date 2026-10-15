@@ -373,18 +373,25 @@ const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
   ).pipe(Layer.provide(BunServices.layer));
 
 /** The resolver, stubbed: `--project-ref` wins, else the linked project. */
-const testProjectRefLayer = (linked: boolean) =>
-  Layer.succeed(ProjectRefResolver, {
-    resolve: (flagValue: Option.Option<string>) =>
-      Option.isSome(flagValue)
-        ? Effect.succeed(flagValue.value)
-        : linked
-          ? Effect.succeed(COMPUTE_PROJECT_REF)
-          : Effect.fail(
-              new ProjectRefNotLinkedError({
-                message: "Cannot find project ref. Have you run supabase link?",
-              }),
-            ),
+const testProjectRefLayer = (linked: boolean) => {
+  const resolve = (
+    flagValue: Option.Option<string>,
+  ): Effect.Effect<string, ProjectRefNotLinkedError> =>
+    Option.isSome(flagValue)
+      ? Effect.succeed(flagValue.value)
+      : linked
+        ? Effect.succeed(COMPUTE_PROJECT_REF)
+        : Effect.fail(
+            new ProjectRefNotLinkedError({
+              message: "Cannot find project ref. Have you run supabase link?",
+            }),
+          );
+  return Layer.succeed(ProjectRefResolver, {
+    resolve,
+    resolveRef: (flagValue: Option.Option<string>) =>
+      resolve(flagValue).pipe(
+        Effect.map((ref) => ({ ref, source: "file" as const, matchesLinkedRef: true })),
+      ),
     resolveForLink: () =>
       Effect.fail(new ProjectRefNotLinkedError({ message: "Not available in compute tests" })),
     resolveOptional: () =>
@@ -394,6 +401,7 @@ const testProjectRefLayer = (linked: boolean) =>
     promptProjectRef: () =>
       Effect.fail(new ProjectRefNotLinkedError({ message: "Not available in compute tests" })),
   });
+};
 
 export interface ComputeSetupOptions {
   readonly workdir: string;

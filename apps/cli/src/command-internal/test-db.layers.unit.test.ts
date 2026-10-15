@@ -39,6 +39,7 @@ import { DbConnection } from "./db-connection.service.ts";
 import { IdentityStitch } from "./identity-stitch.ts";
 
 import { testDbRuntimeLayer } from "./test-db.layers.ts";
+import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-test-db-layers-");
 
@@ -82,6 +83,7 @@ function ambientStubs() {
     analytics.layer,
     mockTelemetryRuntime(),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     flagLayers,
     mockTelemetryStateLayer,
     cliConfigValuesTestLayer,

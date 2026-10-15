@@ -160,6 +160,7 @@ function mockProjectRef(unlinked = false, refReadFails = false) {
   return Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(REF),
     resolveForLink: () => Effect.succeed(REF),
+    resolveRef: () => Effect.succeed({ ref: REF, source: "file", matchesLinkedRef: true }),
     resolveOptional: () => Effect.succeed(unlinked ? Option.none() : Option.some(REF)),
     loadProjectRef,
     promptProjectRef: () => Effect.succeed(REF),

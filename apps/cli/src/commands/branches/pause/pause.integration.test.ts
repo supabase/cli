@@ -11,6 +11,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
 import type { BranchesPauseFlags } from "./pause.command.ts";
 import { branchesPause } from "./pause.handler.ts";
@@ -141,7 +142,7 @@ describe("branches pause integration", () => {
     return Effect.gen(function* () {
       yield* branchesPause({ ...baseFlags, name: Option.some(BRANCH_REF) });
       expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 

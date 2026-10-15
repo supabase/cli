@@ -12,6 +12,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../tests/helpers/command-mocks.ts";
 import { postgresConfigDelete } from "./delete/delete.handler.ts";
 import { postgresConfigGet } from "./get/get.handler.ts";
@@ -50,7 +51,8 @@ describe("postgres-config get", () => {
       yield* postgresConfigGet({ projectRef: Option.none() });
       expect(out.progressEvents[0]?.message).toBe("Fetching Postgres config...");
       expect(out.stderrText).toBe(
-        "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
+        unverifiedTargetBanner() +
+          "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
       );
       expect(out.stdoutText).toContain("Parameter");
       expect(out.stdoutText).toContain("max_connections");
@@ -89,7 +91,7 @@ describe("postgres-config get", () => {
     return Effect.gen(function* () {
       yield* postgresConfigGet({ projectRef: Option.none() });
       expect(out.stdoutText).toBe("max_connections = 100.0\n");
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 
@@ -156,7 +158,7 @@ describe("postgres-config get", () => {
         const layer = runtimeWith({ out, api, outputFlag });
         yield* postgresConfigGet({ projectRef: Option.none() }).pipe(Effect.provide(layer));
         expect(out.stdoutText).toContain(expected);
-        expect(out.stderrText).toBe("");
+        expect(out.stderrText).toBe(unverifiedTargetBanner());
       }
     }),
   );
@@ -199,7 +201,8 @@ describe("postgres-config get", () => {
     return Effect.gen(function* () {
       yield* postgresConfigGet({ projectRef: Option.none() });
       expect(out.stderrText).toBe(
-        "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
+        unverifiedTargetBanner() +
+          "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
       );
       expect(out.stdoutText).toContain("Parameter");
       expect(out.stdoutText).toContain("max_connections");
@@ -286,7 +289,8 @@ describe("postgres-config update", () => {
           restart_database: false,
         });
         expect(out.stderrText).toBe(
-          "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
+          unverifiedTargetBanner() +
+            "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
         );
       }).pipe(Effect.provide(layer));
     },
@@ -352,7 +356,7 @@ describe("postgres-config update", () => {
           noRestart: false,
         }).pipe(Effect.provide(layer));
         expect(out.stdoutText).toContain(testCase.expected);
-        expect(out.stderrText).toBe("");
+        expect(out.stderrText).toBe(unverifiedTargetBanner());
       }
     }),
   );
@@ -500,7 +504,8 @@ describe("postgres-config delete", () => {
       });
       expect(out.stdoutText).toContain("shared_buffers");
       expect(out.stderrText).toBe(
-        "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
+        unverifiedTargetBanner() +
+          "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
       );
     }).pipe(Effect.provide(layer));
   });
@@ -562,7 +567,7 @@ describe("postgres-config delete", () => {
           noRestart: false,
         }).pipe(Effect.provide(layer));
         expect(out.stdoutText).toContain(testCase.expected);
-        expect(out.stderrText).toBe("");
+        expect(out.stderrText).toBe(unverifiedTargetBanner());
       }
     }),
   );

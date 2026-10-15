@@ -222,7 +222,7 @@ export function notebooksProject(dir: string) {
 function testProjectRefLayer(linked: boolean) {
   const optional = (flag: Option.Option<string>) =>
     Option.orElse(flag, () => (linked ? Option.some(NOTEBOOKS_PROJECT_REF) : Option.none()));
-  const resolve = (flag: Option.Option<string>) =>
+  const resolve = (flag: Option.Option<string>): Effect.Effect<string, ProjectRefNotLinkedError> =>
     Option.match(optional(flag), {
       onSome: Effect.succeed,
       onNone: () =>
@@ -234,6 +234,10 @@ function testProjectRefLayer(linked: boolean) {
     });
   return Layer.succeed(ProjectRefResolver, {
     resolve,
+    resolveRef: (flag) =>
+      resolve(flag).pipe(
+        Effect.map((ref) => ({ ref, source: "file" as const, matchesLinkedRef: true })),
+      ),
     resolveForLink: resolve,
     resolveOptional: (flag) => Effect.succeed(optional(flag)),
     loadProjectRef: resolve,

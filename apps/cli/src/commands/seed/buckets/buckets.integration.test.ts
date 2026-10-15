@@ -191,6 +191,14 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
             }),
           )
         : Effect.succeed(projectRefRef),
+    resolveRef: () =>
+      opts.linkedFails === true
+        ? Effect.fail(
+            new ProjectRefNotLinkedError({
+              message: "Cannot find project ref. Have you run supabase link?",
+            }),
+          )
+        : Effect.succeed({ ref: projectRefRef, source: "file" as const, matchesLinkedRef: true }),
     resolveOptional: () => Effect.succeed(Option.some(projectRefRef)),
     // An explicit `--project-ref` flag takes precedence and short-circuits
     // before `linkedFails`, so a test can prove the flag resolves a ref even

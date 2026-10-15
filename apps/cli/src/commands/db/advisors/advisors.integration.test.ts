@@ -173,6 +173,7 @@ function mockProjectRef() {
         return VALID_REF;
       }),
     resolveForLink: () => Effect.succeed(VALID_REF),
+    resolveRef: () => Effect.succeed({ ref: VALID_REF, source: "file", matchesLinkedRef: true }),
     resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
     // Gives an explicit `--project-ref` flag top precedence, mirroring the real resolver so a
     // test can prove the flag (not just the hardcoded fallback) drives the linked ref.

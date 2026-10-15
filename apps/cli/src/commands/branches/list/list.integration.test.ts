@@ -327,6 +327,21 @@ describe("branches list integration", () => {
       },
     );
 
+    it.effect("announces the cached parent project as the production target", () => {
+      const { layer, out, workdir } = setup({
+        projectId: Option.none(),
+        response: [SAMPLE_BRANCH],
+      });
+      return Effect.gen(function* () {
+        yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
+        yield* writeLinkedProjectCacheFile(workdir, PARENT_REF);
+        yield* branchesList({ projectRef: Option.none() });
+        expect(out.stderrText).toBe(
+          `Target: project Parent Project (${PARENT_REF}) · production\n`,
+        );
+      }).pipe(Effect.provide(layer));
+    });
+
     it.effect(
       "an explicit --project-ref still wins over both the cache and the project-ref file",
       () => {

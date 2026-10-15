@@ -9,7 +9,30 @@ import type {
   ProjectRefRequiredError,
 } from "./project-ref.errors.ts";
 
+/** Where a resolved project ref came from, in chain order. */
+export type ProjectRefSource = "flag" | "env" | "file" | "picker";
+
+export interface ResolvedProjectRef {
+  readonly ref: string;
+  readonly source: ProjectRefSource;
+  /** Whether `ref` is the project linked in `supabase/.temp/project-ref`. */
+  readonly matchesLinkedRef: boolean;
+}
+
 interface ProjectRefResolverShape {
+  /**
+   * The single resolution chain: `--project-ref` → `SUPABASE_PROJECT_ID` → `.temp/project-ref`
+   * → project picker (stdin TTY and interactive output only), otherwise `ProjectRefNotLinkedError`.
+   * Announces the resolved target.
+   */
+  readonly resolveRef: (
+    flagValue: Option.Option<string>,
+  ) => Effect.Effect<
+    ResolvedProjectRef,
+    ProjectRefNotLinkedError | InvalidProjectRefError | ProjectRefReadError,
+    never
+  >;
+  /** `resolveRef`, narrowed to the ref. */
   readonly resolve: (
     flagValue: Option.Option<string>,
   ) => Effect.Effect<
@@ -21,7 +44,7 @@ interface ProjectRefResolverShape {
    * Resolution chain used by `supabase link`, skipping the on-disk `project-ref` file:
    * flag → `cliSettings.projectId` (env `SUPABASE_PROJECT_ID`) → (TTY) prompt. Fails with
    * `ProjectRefRequiredError` on a non-TTY when neither is set, with the
-   * `required flag(s) "project-ref" not set` wording.
+   * `required flag(s) "project-ref" not set` wording. Announces the resolved target.
    */
   readonly resolveForLink: (
     flagValue: Option.Option<string>,
@@ -42,8 +65,9 @@ interface ProjectRefResolverShape {
   /**
    * Non-prompting resolution chain (flag → `cliSettings.projectId` → ref file) that fails
    * hard with `ProjectRefNotLinkedError` when nothing resolves, with ref-format validation.
-   * Used by the `--linked` PreRun of the `db` command family, so a run with a token but no
-   * linked-project file fails fast instead of opening a project picker.
+   * Announces no target.
+   *
+   * @deprecated Use `resolveRef`, or `resolveTarget` for database and storage commands.
    */
   readonly loadProjectRef: (
     flagValue: Option.Option<string>,

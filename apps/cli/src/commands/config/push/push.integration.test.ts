@@ -3631,6 +3631,19 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
     },
   );
 
+  it.effect("--project-ref <branch-name> announces the parent project and resolved branch", () => {
+    const { layer, out } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: true,
+      branchByName: { status: 200, body: BRANCH_BY_NAME },
+      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
+    });
+    return Effect.gen(function* () {
+      yield* configPush({ projectRef: Option.some("staging") });
+      expect(out.stderrText).toContain(`Target: project ${REF} · branch staging (${BRANCH_REF})\n`);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect(
     "--project-ref <branch-name> enriches the parent name from a matching linked-project cache",
     () => {
@@ -3702,6 +3715,7 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
         const exit = yield* configPush({ projectRef: Option.some(BRANCH_UUID) }).pipe(Effect.exit);
         expect(Exit.isSuccess(exit)).toBe(true);
         expect(out.stderrText).toContain(`Pushing config to branch: ${UUID_TARGET_REF}`);
+        expect(out.stderrText).toContain(`Target: branch ${UUID_TARGET_REF}\n`);
         expect(out.stderrText).not.toContain(BRANCH_UUID);
         const branchRequests = api.requests.filter((r) => r.url.includes("/branches"));
         expect(branchRequests).toHaveLength(1);

@@ -8,6 +8,7 @@ import {
   mockCommandSettings,
   mockCommandPlatformApi,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
 import type { BranchesUnpauseFlags } from "./unpause.command.ts";
 import { branchesUnpause } from "./unpause.handler.ts";
@@ -59,7 +60,7 @@ describe("branches unpause integration", () => {
     return Effect.gen(function* () {
       yield* branchesUnpause({ ...baseFlags, name: Option.some(BRANCH_REF) });
       expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 

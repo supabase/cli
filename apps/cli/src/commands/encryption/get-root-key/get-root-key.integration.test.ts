@@ -10,6 +10,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { encryptionGetRootKey } from "./get-root-key.handler.ts";
 
@@ -54,7 +55,7 @@ describe("encryption get-root-key integration", () => {
     return Effect.gen(function* () {
       yield* encryptionGetRootKey(baseFlags);
       expect(out.stdoutText).toBe("abc123rootkey\n");
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 

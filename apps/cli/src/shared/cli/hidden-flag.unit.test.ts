@@ -30,6 +30,7 @@ import {
   mockTty,
   processEnvLayer,
 } from "../../../tests/helpers/mocks.ts";
+import { commandTargetLayer } from "../output/command-target.layer.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { CliArgs } from "./cli-args.service.ts";
 
@@ -41,11 +42,13 @@ const buildHelpDoc = <Name extends string, Input, ContextInput, E, R>(
   cmd: Command.Command<Name, Input, ContextInput, E, R>,
 ): HelpDoc.HelpDoc => (cmd as unknown as CommandImpl).buildHelpDoc([]);
 
-const testRootLayer = (formatter: CliOutput.Formatter, args: ReadonlyArray<string>) =>
-  Layer.mergeAll(
+const testRootLayer = (formatter: CliOutput.Formatter, args: ReadonlyArray<string>) => {
+  const out = mockOutput({ format: "text" });
+  return Layer.mergeAll(
     CliOutput.layer(formatter),
     Layer.succeed(CliArgs, { args }),
-    mockOutput({ format: "text" }).layer,
+    out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     BunServices.layer,
     mockRuntimeInfo(),
     mockAnalytics().layer,
@@ -53,6 +56,7 @@ const testRootLayer = (formatter: CliOutput.Formatter, args: ReadonlyArray<strin
     mockTty(),
     mockProcessControl().layer,
   );
+};
 
 const testRoot = Command.make("supabase").pipe(
   Command.withSubcommands([

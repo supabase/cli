@@ -139,6 +139,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const projectRef = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
+    resolveRef: () => Effect.succeed({ ref: VALID_REF, source: "file", matchesLinkedRef: true }),
     resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
     loadProjectRef: (flagValue: Option.Option<string>) =>
       Effect.succeed(

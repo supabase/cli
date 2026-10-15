@@ -390,6 +390,10 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
   const projectRefLayer = Layer.succeed(ProjectRefResolver, {
     resolve: () =>
       opts.linkedFails === true ? Effect.fail(notLinked()) : Effect.succeed(projectRefRef),
+    resolveRef: () =>
+      opts.linkedFails === true
+        ? Effect.fail(notLinked())
+        : Effect.succeed({ ref: projectRefRef, source: "file" as const, matchesLinkedRef: true }),
     resolveForLink: () =>
       opts.linkedFails === true ? Effect.fail(notLinked()) : Effect.succeed(projectRefRef),
     resolveOptional: () => Effect.succeed(Option.some(projectRefRef)),

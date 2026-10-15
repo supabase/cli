@@ -43,6 +43,7 @@ import {
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { commandTargetLayer } from "../../../shared/output/command-target.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import {
@@ -199,6 +200,7 @@ function setup(opts: SetupOpts = {}) {
     cliConfigValuesTestLayer,
     unusedStackServices,
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     processControl.layer,
     analytics.layer,
     telemetry.layer,
@@ -331,6 +333,7 @@ describe("db test (alias) integration", () => {
       // so this can dispatch through the real command tree without a real Postgres or Docker.
       const args = ["db", "test", "--local", "--linked"];
       const analytics = mockContextualAnalytics();
+      const out = mockOutput({ format: "text" });
       const layer = Layer.mergeAll(
         cliConfigValuesTestLayer,
         unusedStackServices,
@@ -338,7 +341,8 @@ describe("db test (alias) integration", () => {
         mockRuntimeInfo(),
         mockTty(),
         mockProcessControl().layer,
-        mockOutput({ format: "text" }).layer,
+        out.layer,
+        commandTargetLayer.pipe(Layer.provide(out.layer)),
         mockTelemetryRuntime(),
         analytics.layer,
         CliOutput.layer(textCliOutputFormatter()),

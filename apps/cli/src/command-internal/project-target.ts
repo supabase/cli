@@ -9,10 +9,12 @@ import {
   resolveLinkedParentRef,
   resolveParentScopedProjectRef,
 } from "./parent-project-ref.ts";
+import { announceTarget } from "../shared/output/command-target.service.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { resolveBranchProjectRef } from "./branch-ref.resolver.ts";
 import { sanitizeInlineName } from "./http-errors.ts";
 import { BRANCH_PROJECT_REF_PATTERN, BRANCH_UUID_PATTERN } from "./ref-patterns.ts";
+import { renderBranchTarget } from "./target/target-identity.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -176,6 +178,7 @@ export const resolveConfigTarget = Effect.fn("ProjectTarget.resolve")(function* 
     yield* Effect.annotateCurrentSpan("project_target.kind", byId ? "branch_id" : "branch_name");
 
     let parentRef: ReturnType<typeof resolveParentScopedProjectRef>;
+    let parentProjectRef = Option.none<string>();
     if (byId) {
       parentRef = resolveParentScopedProjectRef(Option.none());
     } else {
@@ -187,6 +190,7 @@ export const resolveConfigTarget = Effect.fn("ProjectTarget.resolve")(function* 
         return yield* Effect.fail(errors.parentRefInvalid(target));
       }
       parentRef = Effect.succeed(parent.ref);
+      parentProjectRef = Option.some(parent.ref);
     }
 
     const resolving =
@@ -205,6 +209,13 @@ export const resolveConfigTarget = Effect.fn("ProjectTarget.resolve")(function* 
     if (!BRANCH_PROJECT_REF_PATTERN.test(ref)) {
       return yield* Effect.fail(errors.branchNotReady(target));
     }
+    yield* announceTarget(
+      renderBranchTarget({
+        branch: byId ? Option.none() : Option.some(target),
+        ref,
+        parentRef: parentProjectRef,
+      }),
+    );
   } else {
     yield* Effect.annotateCurrentSpan("project_target.kind", "project");
     ref = yield* resolver.resolve(requested);

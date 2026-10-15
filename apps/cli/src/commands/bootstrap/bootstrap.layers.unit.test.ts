@@ -43,6 +43,7 @@ import { IdentityStitch } from "../../command-internal/identity-stitch.ts";
 import { TemplateService } from "./bootstrap.templates.ts";
 
 import { bootstrapRuntimeLayer } from "./bootstrap.layers.ts";
+import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-bootstrap-layers-");
 
@@ -74,6 +75,7 @@ function ambientStubs() {
     Layer.succeed(ProjectRefResolver, {
       resolve: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveForLink: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
+      resolveRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveOptional: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       loadProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       promptProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
@@ -99,6 +101,7 @@ function ambientStubs() {
     analytics.layer,
     mockTelemetryRuntime(),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     flagLayers,
     mockCommandSettings({ workdir: "/tmp/bootstrap-layers-test" }),
     mockCommandCredentialsLayer,

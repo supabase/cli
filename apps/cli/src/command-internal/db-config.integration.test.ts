@@ -57,6 +57,7 @@ import {
   WorkdirFlag,
 } from "./global-flags.ts";
 import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../config/cli-config-flags.ts";
+import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
 import { cliConfigValuesLayer } from "../config/cli-config-values.layer.ts";
 import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
@@ -102,6 +103,7 @@ function buildResolver(
     readonly flagPassword?: string;
   } = {},
 ) {
+  const out = mockOutput();
   const deps = Layer.mergeAll(
     Layer.succeed(
       CliConfigFlagInputs,
@@ -119,7 +121,8 @@ function buildResolver(
     }),
     opts.dbConnection ?? mockDbConnection,
     opts.debugLogger ?? mockDebugLogger,
-    mockOutput().layer,
+    out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     mockAnalytics().layer,
     mockTelemetryRuntime(),
     mockTty(),

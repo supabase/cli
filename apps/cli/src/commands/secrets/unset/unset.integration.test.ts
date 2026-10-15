@@ -14,6 +14,7 @@ import {
   mockCommandPlatformApi,
   useTempWorkdir,
   withConfigEnv,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
 import {
   SecretsNoArgumentsError,
@@ -137,7 +138,8 @@ describe("secrets unset integration", () => {
         expect(methods(api)).toEqual(["DELETE"]);
         expect(api.requests[0]?.body).toEqual(["FOO", "BAR"]);
         expect(out.stderrText).toBe(
-          `Do you want to unset these function secrets from project ${VALID_REF}?\n • FOO\n • BAR\n\n [y/N] y\n`,
+          unverifiedTargetBanner() +
+            `Do you want to unset these function secrets from project ${VALID_REF}?\n • FOO\n • BAR\n\n [y/N] y\n`,
         );
         expect(out.stdoutText).toBe("Finished supabase secrets unset.\n");
       }).pipe(Effect.provide(layer));
@@ -150,7 +152,7 @@ describe("secrets unset integration", () => {
         { SUPABASE_YES: "1" },
         Effect.gen(function* () {
           yield* unset({ names: ["FOO"] });
-          expect(out.stderrText).toBe(`${FOO_PROMPT} [y/N] y\n`);
+          expect(out.stderrText).toBe(`${unverifiedTargetBanner()}${FOO_PROMPT} [y/N] y\n`);
           expect(methods(api)).toEqual(["DELETE"]);
         }).pipe(Effect.provide(layer)),
       );
@@ -190,7 +192,8 @@ describe("secrets unset integration", () => {
         expect(methods(api)).toEqual(["GET", "DELETE"]);
         expect(api.requests[1]?.body).toEqual(["FOO", "BAR"]);
         expect(out.stderrText).toBe(
-          `Do you want to unset these function secrets from project ${VALID_REF}?\n • FOO\n • BAR\n\n [y/N] y\n`,
+          unverifiedTargetBanner() +
+            `Do you want to unset these function secrets from project ${VALID_REF}?\n • FOO\n • BAR\n\n [y/N] y\n`,
         );
       }).pipe(Effect.provide(layer));
     });
@@ -202,7 +205,9 @@ describe("secrets unset integration", () => {
       const { layer, out, api } = setup({ yes: true, list });
       return Effect.gen(function* () {
         yield* unset({ all: true });
-        expect(out.stderrText).toBe("You have not set any function secrets, nothing to do.\n");
+        expect(out.stderrText).toBe(
+          unverifiedTargetBanner() + "You have not set any function secrets, nothing to do.\n",
+        );
         expect(out.stdoutText).toBe("");
         expect(methods(api)).toEqual(["GET"]);
       }).pipe(Effect.provide(layer));
@@ -223,7 +228,7 @@ describe("secrets unset integration", () => {
           suggestion: expect.stringMatching(/--yes.*--dry-run/u),
         });
         expect(api.requests).toEqual([]);
-        expect(out.stderrText).toBe("");
+        expect(out.stderrText).toBe(unverifiedTargetBanner());
       }).pipe(Effect.provide(layer));
     });
 
@@ -233,7 +238,7 @@ describe("secrets unset integration", () => {
         const error = yield* unset({ names: ["FOO"] }).pipe(Effect.flip);
         expect(error).toBeInstanceOf(SecretsUnsetConfirmationRequiredError);
         expect(api.requests).toEqual([]);
-        expect(out.stderrText).toBe("");
+        expect(out.stderrText).toBe(unverifiedTargetBanner());
       }).pipe(Effect.provide(layer));
     });
 
@@ -269,7 +274,7 @@ describe("secrets unset integration", () => {
         expect(out.stdoutText).toBe(
           `Would unset these function secrets from project ${VALID_REF}:\n • FOO\n • BAR\n`,
         );
-        expect(out.stderrText).toBe("");
+        expect(out.stderrText).toBe(unverifiedTargetBanner());
         expect(api.requests).toEqual([]);
       }).pipe(Effect.provide(layer));
     });
@@ -354,7 +359,7 @@ describe("secrets unset integration", () => {
               data: { project_ref: VALID_REF, count: 0, names: [], dry_run: dryRun },
             },
           ]);
-          expect(out.stderrText).toBe("");
+          expect(out.stderrText).toBe(unverifiedTargetBanner());
           expect(methods(api)).toEqual(["GET"]);
         }).pipe(Effect.provide(layer));
       },

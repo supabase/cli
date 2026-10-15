@@ -17,6 +17,7 @@ import { isolatedHomeLayer, useTempWorkdir } from "../../../tests/helpers/comman
 import { ExperimentalRequiredError } from "../../command-internal/experimental-gate.ts";
 import { storageCommand } from "./storage.command.ts";
 import { StorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
+import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-storage-experimental-int-");
 
@@ -31,6 +32,7 @@ function setup(args: ReadonlyArray<string>) {
     BunServices.layer,
     CliOutput.layer(textCliOutputFormatter()),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     Layer.succeed(CliArgs, { args }),
     // Isolates ambient env/homeDir defensively even though neither check here reaches
     // storageGatewayRuntimeLayer's lazy cliSettings/credentials factory.

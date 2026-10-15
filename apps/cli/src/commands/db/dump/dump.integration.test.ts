@@ -295,6 +295,8 @@ function mockProjectRefResolver(opts: {
   const layer = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(opts.ref ?? VALID_REF),
     resolveForLink: () => Effect.succeed(opts.ref ?? VALID_REF),
+    resolveRef: () =>
+      Effect.succeed({ ref: opts.ref ?? VALID_REF, source: "file", matchesLinkedRef: true }),
     resolveOptional: () => Effect.succeed(Option.some(opts.ref ?? VALID_REF)),
     loadProjectRef: (flagValue: Option.Option<string>) => {
       if (Option.isSome(flagValue) && flagValue.value.length > 0) {
@@ -1492,6 +1494,7 @@ describe("db dump permissions through the real resolver and cache", () => {
       expect(asLines(requests)).toEqual([loginRoleRequest, poolerRequest, loginRoleRequest]);
       assertPermissionDrift({
         command: "db dump",
+        activeFlags: { linked: true },
         requests: [...asRecordedRequests(requests), ...projectHttp.calls],
         exact: true,
       });

@@ -16,6 +16,7 @@ import {
   ProfileFlag,
   WorkdirFlag,
 } from "./global-flags.ts";
+import { CommandTarget } from "../shared/output/command-target.service.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../shared/runtime/tty.service.ts";
@@ -597,6 +598,7 @@ export const dbConfigResolverLayer = Layer.effect(
       Layer.succeed(TelemetryRuntime, yield* TelemetryRuntime),
       Layer.succeed(Tty, yield* Tty),
       Layer.succeed(Output, yield* Output),
+      Layer.succeed(CommandTarget, yield* CommandTarget),
       // The per-command identity stitcher, shared with the linked stack's lazy platform-API
       // factory + linked-project cache. Provided to this layer by each command runtime.
       Layer.succeed(IdentityStitch, yield* IdentityStitch),

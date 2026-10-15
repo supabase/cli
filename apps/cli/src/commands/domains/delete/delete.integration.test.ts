@@ -9,6 +9,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { domainsDelete } from "./delete.handler.ts";
 
@@ -50,7 +51,9 @@ describe("domains delete integration", () => {
     const { layer, out, api, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
-      expect(out.stderrText).toBe("Deleted custom hostname config successfully.\n");
+      expect(out.stderrText).toBe(
+        unverifiedTargetBanner() + "Deleted custom hostname config successfully.\n",
+      );
       expect(out.stdoutText).toBe("");
       expect(api.requests[0]?.method).toBe("DELETE");
       expect(telemetry.flushed).toBe(true);
@@ -80,7 +83,9 @@ describe("domains delete integration", () => {
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
       expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe("Deleted custom hostname config successfully.\n");
+      expect(out.stderrText).toBe(
+        unverifiedTargetBanner() + "Deleted custom hostname config successfully.\n",
+      );
     }).pipe(Effect.provide(layer));
   });
 

@@ -14,6 +14,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { DomainsCnameError } from "../domains.errors.ts";
 import { domainsCreate } from "./create.handler.ts";
@@ -248,7 +249,7 @@ describe("domains create integration", () => {
     return Effect.gen(function* () {
       yield* domainsCreate(flags());
       expect(out.stdoutText.startsWith("{")).toBe(true);
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 
@@ -258,7 +259,7 @@ describe("domains create integration", () => {
       yield* domainsCreate(flags());
       // YAML output lowercases the whole field name.
       expect(out.stdoutText).toContain(`customhostname: ${CUSTOM_HOSTNAME}`);
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 

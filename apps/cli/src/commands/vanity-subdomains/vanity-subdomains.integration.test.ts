@@ -16,6 +16,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../tests/helpers/command-mocks.ts";
 import { vanitySubdomainsActivate } from "./activate/activate.handler.ts";
 import { vanitySubdomainsCheckAvailability } from "./check-availability/check-availability.handler.ts";
@@ -634,7 +635,9 @@ describe("vanity-subdomains delete", () => {
 
     return Effect.gen(function* () {
       yield* vanitySubdomainsDelete({ projectRef: Option.none() });
-      expect(out.stderrText).toBe("Deleted vanity subdomain successfully.\n");
+      expect(out.stderrText).toBe(
+        unverifiedTargetBanner() + "Deleted vanity subdomain successfully.\n",
+      );
       expect(api.requests[0]?.method).toBe("DELETE");
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/vanity-subdomain`);
     }).pipe(Effect.provide(layer));
@@ -659,7 +662,9 @@ describe("vanity-subdomains delete", () => {
 
     return Effect.gen(function* () {
       yield* vanitySubdomainsDelete({ projectRef: Option.none() });
-      expect(out.stderrText).toBe("Deleted vanity subdomain successfully.\n");
+      expect(out.stderrText).toBe(
+        unverifiedTargetBanner() + "Deleted vanity subdomain successfully.\n",
+      );
       expect(out.messages.find((m) => m.type === "success")).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });

@@ -35,6 +35,7 @@ import {
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../tests/helpers/command-mocks.ts";
 import { link } from "./link.handler.ts";
 import { linkHandler } from "./link.command.ts";
@@ -1317,7 +1318,8 @@ describe("link integration", () => {
             message: "Resolving branch...",
           });
           expect(out.stderrText).toBe(
-            `Resolved branch "feature-branch" of project ${PARENT_REF} to project ref ${BRANCH_PROJECT_REF}.\n`,
+            `Resolved branch "feature-branch" of project ${PARENT_REF} to project ref ${BRANCH_PROJECT_REF}.\n` +
+              unverifiedTargetBanner(BRANCH_PROJECT_REF),
           );
           expect(out.stdoutText).toBe("Finished supabase link.\n");
         }).pipe(Effect.provide(layer));

@@ -10,6 +10,7 @@ import {
   mockCommandSettings,
   mockCommandPlatformApi,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { backupsRestore } from "./restore.handler.ts";
 
@@ -70,7 +71,9 @@ describe("backups restore integration", () => {
         projectRef: Option.none(),
         timestamp: Option.none(),
       });
-      expect(out.stderrText).toBe(`Started PITR restore: ${VALID_REF}\n`);
+      expect(out.stderrText).toBe(
+        `${unverifiedTargetBanner()}Started PITR restore: ${VALID_REF}\n`,
+      );
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
@@ -122,7 +125,9 @@ describe("backups restore integration", () => {
           projectRef: Option.none(),
           timestamp: Option.none(),
         });
-        expect(out.stderrText).toBe(`Started PITR restore: ${VALID_REF}\n`);
+        expect(out.stderrText).toBe(
+          `${unverifiedTargetBanner()}Started PITR restore: ${VALID_REF}\n`,
+        );
         expect(out.stdoutText).toBe("");
       }).pipe(Effect.provide(layer));
     },

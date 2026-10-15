@@ -10,6 +10,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { encryptionUpdateRootKey } from "./update-root-key.handler.ts";
 
@@ -103,7 +104,7 @@ describe("encryption update-root-key integration", () => {
       expect(success?.message).toBe("");
       expect(success?.data).toEqual({ root_key: "new-key" });
       expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 

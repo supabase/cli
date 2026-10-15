@@ -10,6 +10,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { domainsReverify } from "./reverify.handler.ts";
 
@@ -122,7 +123,7 @@ describe("domains reverify integration", () => {
     return Effect.gen(function* () {
       yield* domainsReverify(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 

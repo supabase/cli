@@ -1,6 +1,7 @@
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
+import { CommandTarget } from "../shared/output/command-target.service.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { Tty } from "../shared/runtime/tty.service.ts";
 import { readProjectRefFile } from "../shared/config/temp-paths.ts";
@@ -15,8 +16,12 @@ import {
   ProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
   PROJECT_REF_PATTERN,
+  type ProjectRefSource,
+  type ResolvedProjectRef,
 } from "./project-ref.service.ts";
 import { block } from "../command-internal/command-permissions/model.ts";
+import { readCachedLinkedProject } from "../command-internal/parent-project-ref.ts";
+import { describeLinkedTarget } from "../command-internal/target/target-identity.ts";
 
 /** `ProjectRefResolver`'s interactive picker, reached only when no ref comes from a flag, env or the linked workdir. */
 export const projectRefPicker = block("project-ref", [
@@ -45,6 +50,7 @@ export const projectRefLayer = Layer.effect(
     const tty = yield* Tty;
     const output = yield* Output;
     const platformApi = yield* CommandPlatformApiFactory;
+    const commandTarget = yield* CommandTarget;
 
     const readRefFile = readProjectRefFile(fs, path, cliSettings.workdir);
 
@@ -87,45 +93,62 @@ export const projectRefLayer = Layer.effect(
       return chosen;
     });
 
+    const announceLinked = Effect.fnUntraced(function* (ref: string, source: ProjectRefSource) {
+      const cache = yield* readCachedLinkedProject(fs, path, cliSettings.workdir);
+      yield* commandTarget.announce(describeLinkedTarget({ ref, source, cache }));
+    });
+
+    const resolveRef = Effect.fnUntraced(function* (flagValue: Option.Option<string>) {
+      let resolved: { readonly ref: string; readonly source: ProjectRefSource };
+      let linkedRef = Option.none<string>();
+      if (Option.isSome(flagValue) && flagValue.value.length > 0) {
+        resolved = { ref: yield* assertValid(flagValue.value), source: "flag" };
+      } else if (Option.isSome(cliSettings.projectId)) {
+        resolved = { ref: yield* assertValid(cliSettings.projectId.value), source: "env" };
+      } else {
+        linkedRef = yield* readRefFile;
+        if (Option.isSome(linkedRef)) {
+          resolved = { ref: yield* assertValid(linkedRef.value), source: "file" };
+        } else if (tty.stdinIsTty && output.interactive) {
+          const chosen = yield* promptForProjectRef("Select a project:");
+          resolved = { ref: yield* assertValid(chosen), source: "picker" };
+        } else {
+          return yield* new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE });
+        }
+      }
+      if (resolved.source === "flag" || resolved.source === "env") {
+        linkedRef = yield* readRefFile.pipe(Effect.orElseSucceed(() => Option.none<string>()));
+      }
+      yield* announceLinked(resolved.ref, resolved.source);
+      return {
+        ...resolved,
+        matchesLinkedRef: Option.isSome(linkedRef) && linkedRef.value === resolved.ref,
+      } satisfies ResolvedProjectRef;
+    });
+
     return ProjectRefResolver.of({
-      resolve: (flagValue) =>
-        Effect.gen(function* () {
-          if (Option.isSome(flagValue) && flagValue.value.length > 0) {
-            return yield* assertValid(flagValue.value);
-          }
-          if (Option.isSome(cliSettings.projectId)) {
-            return yield* assertValid(cliSettings.projectId.value);
-          }
-          const fileValue = yield* readRefFile;
-          if (Option.isSome(fileValue)) {
-            return yield* assertValid(fileValue.value);
-          }
-          if (tty.stdinIsTty && output.interactive) {
-            const chosen = yield* promptForProjectRef("Select a project:");
-            return yield* assertValid(chosen);
-          }
-          return yield* Effect.fail(
-            new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
-          );
-        }),
+      resolveRef,
+      resolve: (flagValue) => resolveRef(flagValue).pipe(Effect.map((resolved) => resolved.ref)),
       resolveForLink: (flagValue) =>
         Effect.gen(function* () {
+          let resolved: { readonly ref: string; readonly source: ProjectRefSource };
           if (Option.isSome(flagValue) && flagValue.value.length > 0) {
-            return yield* assertValid(flagValue.value);
-          }
-          if (Option.isSome(cliSettings.projectId)) {
-            return yield* assertValid(cliSettings.projectId.value);
-          }
-          // `resolveForLink` skips the ref-file fallback that `resolve` uses.
-          if (tty.stdinIsTty && output.interactive) {
+            resolved = { ref: yield* assertValid(flagValue.value), source: "flag" };
+          } else if (Option.isSome(cliSettings.projectId)) {
+            resolved = { ref: yield* assertValid(cliSettings.projectId.value), source: "env" };
+          } else if (tty.stdinIsTty && output.interactive) {
+            // `resolveForLink` skips the ref-file fallback that `resolveRef` uses.
             const chosen = yield* promptForProjectRef("Select a project:");
-            return yield* assertValid(chosen);
+            resolved = { ref: yield* assertValid(chosen), source: "picker" };
+          } else {
+            return yield* Effect.fail(
+              new ProjectRefRequiredError({
+                message: `required flag(s) "project-ref" not set`,
+              }),
+            );
           }
-          return yield* Effect.fail(
-            new ProjectRefRequiredError({
-              message: `required flag(s) "project-ref" not set`,
-            }),
-          );
+          yield* announceLinked(resolved.ref, resolved.source);
+          return resolved.ref;
         }),
       resolveOptional: (flagValue) =>
         Effect.gen(function* () {

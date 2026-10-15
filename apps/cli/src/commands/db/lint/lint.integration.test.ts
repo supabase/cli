@@ -168,6 +168,7 @@ function mockProjectRef() {
   const layer = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
+    resolveRef: () => Effect.succeed({ ref: VALID_REF, source: "file", matchesLinkedRef: true }),
     resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
     // An explicit `--project-ref` flag takes top precedence, mirroring the real
     // resolver.
