@@ -5,6 +5,7 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { CompletionNoDescriptionsFlagDef } from "../completion.flags.ts";
 import { completionBash } from "./bash.handler.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {
   noDescriptions: CompletionNoDescriptionsFlagDef,
@@ -26,6 +27,7 @@ export const completionBashCommand = Command.make("bash", config).pipe(
       "You will need to start a new shell for this setup to take effect.",
   ),
   Command.withShortDescription("Generate the autocompletion script for bash"),
+  withPermissions({ operations: [], noApiEffectFlags: ["no-descriptions"] }),
   Command.withHandler((flags) =>
     completionBash(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
