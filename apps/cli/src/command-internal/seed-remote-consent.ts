@@ -64,6 +64,33 @@ export const resolveDbSeedInput = Effect.fn("DbSeedInput.resolve")(function* (
   return { enabled: enabled.value, sqlPaths: sqlPaths.value, consent } satisfies DbSeedInput;
 });
 
+/** The seed input plus the line a hosted-mutation consent shows for the files a run would seed. */
+export interface DbSeedPlan {
+  readonly input: DbSeedInput;
+  /** `undefined` when seeding is off or `files` is empty. */
+  readonly detail: (files: ReadonlyArray<string>) => string | undefined;
+}
+
+/** Reads `[db.seed]` like {@link resolveDbSeedInput} but never prompts: the caller's single consent carries {@link DbSeedPlan.detail}. */
+export const planDbSeed = Effect.fn("DbSeedPlan.plan")(function* (
+  resolvedConfig: ResolvedCliConfig,
+  target: { readonly workdir: string; readonly ref: string },
+) {
+  const input = yield* resolveDbSeedInput(resolvedConfig, target);
+  const remote = Option.getOrUndefined(resolvedConfig.appliedRemote);
+  return {
+    input,
+    detail: (files) => {
+      if (!input.enabled || files.length === 0) return undefined;
+      const noun = files.length === 1 ? "file" : "files";
+      const into = remote === undefined ? "" : ` into [remotes.${remote}]`;
+      const enabledBy =
+        input.consent === undefined ? "" : ` (seeding enabled by ${input.consent.enabledBy})`;
+      return `seed ${files.length} ${noun}${into}${enabledBy}`;
+    },
+  } satisfies DbSeedPlan;
+});
+
 /** Whether a prompt can reach someone: a real terminal, or a piped line standing in for one. */
 const canPromptForSeed = Effect.fnUntraced(function* () {
   const output = yield* Output;
