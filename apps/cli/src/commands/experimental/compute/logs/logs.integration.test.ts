@@ -4,6 +4,7 @@ import {
   Cause,
   Effect,
   Exit,
+  FileSystem,
   Layer,
   Option,
   Schedule,
@@ -32,6 +33,8 @@ import {
   mockCommandSettings,
   VALID_TOKEN,
 } from "../../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../../tests/helpers/permission-drift.ts";
+import { projectResponse } from "../../../../../tests/helpers/permission-real-layers.ts";
 import {
   mockContextualAnalytics,
   mockRuntimeInfo,
@@ -161,7 +164,7 @@ describe("compute logs", () => {
   it.effect("prints a compute's own output oldest first", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out } = setupCompute({
+      const { layer, out, http } = setupCompute({
         workdir: repo.dir,
         routes: {
           [LOGS_ROUTE]: logsResponse([
@@ -182,6 +185,53 @@ describe("compute logs", () => {
           .split("\n")
           .map((line) => line.replace(/^\S+\s+\[\S+\]\s+/u, ""));
         expect(messages).toEqual(["listening on :8080", "terminate hook", "app drained"]);
+        expect(http.routeKeys).toEqual([LOGS_ROUTE]);
+        assertPermissionDrift({
+          command: "compute logs",
+          variant: { computeEnabled: true },
+          activeFlags: { follow: false },
+          requests: http.driftRequests,
+        });
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("picks the project, reads its logs and records the linked project", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out, http } = setupCompute({
+        workdir: repo.dir,
+        realLayers: true,
+        interactive: true,
+        promptSelectResponses: [COMPUTE_PROJECT_REF],
+        routes: {
+          "GET /v1/projects": { status: 200, body: [projectResponse(COMPUTE_PROJECT_REF)] },
+          [`GET /v1/projects/${COMPUTE_PROJECT_REF}`]: {
+            status: 200,
+            body: projectResponse(COMPUTE_PROJECT_REF),
+          },
+          [LOGS_ROUTE]: logsResponse([computeLogRow({ message: "listening on :8080" })]),
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* computeLogs(flags());
+
+        expect(http.routeKeys).toEqual([
+          "GET /v1/projects",
+          LOGS_ROUTE,
+          `GET /v1/projects/${COMPUTE_PROJECT_REF}`,
+        ]);
+        expect(out.promptSelectCalls).toHaveLength(1);
+        expect(out.stdoutText).toContain("listening on :8080");
+        expect(yield* fs.exists(`${repo.dir}/supabase/.temp/linked-project.json`)).toBe(true);
+        assertPermissionDrift({
+          command: "compute logs",
+          variant: { computeEnabled: true },
+          activeFlags: { follow: false },
+          requests: http.driftRequests,
+        });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -398,6 +448,43 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  const tailZeroRuns: ReadonlyArray<{
+    readonly argv: string;
+    readonly kind: Option.Option<"requests">;
+    readonly activeFlags: Readonly<Record<string, string | boolean>>;
+  }> = [
+    { argv: "--tail 0", kind: Option.none(), activeFlags: { tail: "0", follow: false } },
+    {
+      argv: "--tail 0 --kind requests",
+      kind: Option.some("requests"),
+      activeFlags: { tail: "0", kind: "requests", follow: false },
+    },
+  ];
+
+  it.effect.each(tailZeroRuns)("makes no Management request for $argv", ({ kind, activeFlags }) =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, http } = setupCompute({
+        workdir: repo.dir,
+        routes: {
+          [GET_COMPUTE_ROUTE]: { status: 200, body: { data: computeResource({ name: "api" }) } },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        yield* computeLogs(flags({ tail: 0, kind }));
+
+        expect(http.routeKeys).toEqual([]);
+        assertPermissionDrift({
+          command: "compute logs",
+          variant: { computeEnabled: true },
+          activeFlags,
+          requests: http.driftRequests,
+        });
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.effect("passes --tail through as the row limit", () =>
     Effect.gen(function* () {
       const repo = yield* project();
@@ -440,7 +527,7 @@ describe("compute logs", () => {
   it.effect("says so when a deployed compute has simply been quiet", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out } = setupCompute({
+      const { layer, out, http } = setupCompute({
         workdir: repo.dir,
         routes: {
           [LOGS_ROUTE]: logsResponse([]),
@@ -452,6 +539,13 @@ describe("compute logs", () => {
         yield* computeLogs(flags());
 
         expect(out.stdoutText).toContain('No logs for "api" in the last 24 hours.');
+        expect(http.routeKeys).toEqual([LOGS_ROUTE, GET_COMPUTE_ROUTE]);
+        assertPermissionDrift({
+          command: "compute logs",
+          variant: { computeEnabled: true },
+          activeFlags: { follow: false },
+          requests: http.driftRequests,
+        });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -809,6 +903,14 @@ describe("compute logs", () => {
               DateTime.toEpochMillis(DateTime.makeUnsafe(start)),
           ).toBeLessThan(24 * 60 * 60 * 1000);
         }
+        expect(http.routeKeys).toEqual([LOGS_ROUTE, LOGS_ROUTE, LOGS_ROUTE, LOGS_ROUTE]);
+        assertPermissionDrift({
+          command: "compute logs",
+          variant: { computeEnabled: true },
+          activeFlags: { follow: true },
+          requests: http.driftRequests,
+          exact: true,
+        });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -927,6 +1029,32 @@ describe("compute logs", () => {
         for (const query of sql) {
           expect(query).not.toContain("limit 0");
         }
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("checks the compute, then polls, when --tail 0 --follow finds no rows", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, http } = setupCompute({
+        workdir: repo.dir,
+        routes: {
+          [GET_COMPUTE_ROUTE]: { status: 200, body: { data: computeResource({ name: "api" }) } },
+          [LOGS_ROUTE]: logsResponse([]),
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        yield* computeLogs(flags({ follow: true, tail: 0 }), followFor(0));
+
+        expect(http.routeKeys).toEqual([GET_COMPUTE_ROUTE, LOGS_ROUTE]);
+        assertPermissionDrift({
+          command: "compute logs",
+          variant: { computeEnabled: true },
+          activeFlags: { tail: "0", follow: true },
+          requests: http.driftRequests,
+          exact: true,
+        });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );

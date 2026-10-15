@@ -5,8 +5,10 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { CommandPlatformApiFactory } from "../../src/auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../../src/auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../src/config/command-settings.service.ts";
+import { projectRefLayer } from "../../src/config/project-ref.layer.ts";
 import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import { OutputFlag, YesFlag } from "../../src/command-internal/global-flags.ts";
@@ -15,6 +17,7 @@ import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts
 import { mockLinkedProjectCacheLayer } from "./command-mocks.ts";
 import { TelemetryState } from "../../src/telemetry/telemetry-state.service.ts";
 import { mockOutput, mockProcessControl, mockRuntimeInfo, mockTty } from "./mocks.ts";
+import { realLinkedProjectCache } from "./permission-real-layers.ts";
 
 /**
  * Shared scaffolding for the `supabase compute` command integration tests.
@@ -196,9 +199,18 @@ function mockComputeHttp(routes: ComputeHttpRoutes) {
 
   return {
     layer: Layer.mergeAll(apiLayer, httpClientLayer),
+    httpClientLayer,
     requests,
     get routeKeys(): Array<string> {
       return requests.map((request) => `${request.method} ${new URL(request.url).pathname}`);
+    },
+    /** The requests in the shape the permission drift helpers take. */
+    get driftRequests() {
+      return requests.map(({ method, url, urlParams }) => ({
+        method,
+        url,
+        urlParams: new URLSearchParams(urlParams).toString(),
+      }));
     },
   };
 }
@@ -416,6 +428,7 @@ export interface ComputeSetupOptions {
    * delete api`.
    */
   readonly stdinIsTty?: boolean;
+  /** Picks the mock resolver's linkage; ignored with `realLayers`, where the workdir's ref file decides. */
   readonly linked?: boolean;
   readonly promptTextResponses?: ReadonlyArray<string>;
   readonly promptSelectResponses?: ReadonlyArray<string>;
@@ -436,6 +449,12 @@ export interface ComputeSetupOptions {
    * never fires, modelling a terminal nobody has interrupted.
    */
   readonly signal?: "SIGINT" | "SIGTERM" | "SIGHUP";
+  /**
+   * Runs the real `projectRefLayer` (an unlinked workdir reaches its picker) and the real
+   * linked-project cache, so their `GET /v1/projects` and `GET /v1/projects/{ref}` calls go
+   * through `routes`. Linkage then comes from the workdir's `.temp/project-ref`, not `linked`.
+   */
+  readonly realLayers?: boolean;
 }
 
 /**
@@ -479,6 +498,26 @@ export function setupCompute(options: ComputeSetupOptions) {
   const processControl = mockProcessControl(
     options.signal === undefined ? {} : { signal: options.signal },
   );
+  const tty = mockTty({ stdinIsTty: options.stdinIsTty ?? interactive, stdoutIsTty: interactive });
+  const cliSettings = testCliConfigLayer(options.workdir, options.explicitWorkdir ?? false);
+  const projectRef =
+    options.realLayers === true
+      ? projectRefLayer.pipe(
+          Layer.provide(
+            Layer.succeed(CommandPlatformApiFactory, {
+              make: CommandPlatformApi.pipe(Effect.provide(http.layer)),
+            }),
+          ),
+          Layer.provide(cliSettings),
+          Layer.provide(tty),
+          Layer.provide(out.layer),
+          Layer.provide(BunServices.layer),
+        )
+      : testProjectRefLayer(options.linked !== false);
+  const linkedProjectCache =
+    options.realLayers === true
+      ? realLinkedProjectCache({ httpClient: http.httpClientLayer, cliSettings })
+      : mockLinkedProjectCacheLayer;
 
   return {
     out,
@@ -489,11 +528,11 @@ export function setupCompute(options: ComputeSetupOptions) {
       out.layer,
       http.layer,
       mockRuntimeInfo({ cwd: options.cwd ?? options.workdir }),
-      mockTty({ stdinIsTty: options.stdinIsTty ?? interactive, stdoutIsTty: interactive }),
-      testCliConfigLayer(options.workdir, options.explicitWorkdir ?? false),
-      testProjectRefLayer(options.linked !== false),
+      tty,
+      cliSettings,
+      projectRef,
       telemetry.layer,
-      mockLinkedProjectCacheLayer,
+      linkedProjectCache,
       randomLayer,
       Layer.succeed(
         OutputFlag,
