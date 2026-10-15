@@ -40,10 +40,6 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
 
   "logout",
 
-  "postgres-config delete",
-  "postgres-config get",
-  "postgres-config update",
-
   "pull",
 
   "stack destroy",

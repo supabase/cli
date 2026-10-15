@@ -2,6 +2,7 @@ import { operationDefinitions } from "@supabase/api/effect";
 import { Effect, Option, Schema, SchemaIssue } from "effect";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
+import { block } from "../../command-internal/command-permissions/model.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { renderGlamourTable } from "../../output/glamour-table.ts";
@@ -114,6 +115,16 @@ const mapGetError = mapHttpError({
   networkMessage: (description) => `failed to retrieve Postgres config overrides: ${description}`,
   statusMessage: getStatusMessage,
 });
+
+/** `fetchCurrentPostgresConfig`: the project's stored Postgres config overrides. */
+export const postgresConfigRead = block("postgres-config-read", [
+  { operationId: "v1-get-postgres-config", kind: "required" },
+]);
+
+/** `putPostgresConfig`: replaces the project's Postgres config overrides. */
+export const postgresConfigWrite = block("postgres-config-write", [
+  { operationId: "v1-update-postgres-config", kind: "required" },
+]);
 
 /**
  * Reads the stored overrides as the platform returned them. Read-modify-write callers must see
