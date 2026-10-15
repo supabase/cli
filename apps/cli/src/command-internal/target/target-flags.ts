@@ -1,8 +1,8 @@
 import type { Option } from "effect";
 import { Flag, GlobalFlag } from "effect/cli";
 
-export type TargetFlagGroup = "sync" | "selectable";
-export type TargetSubject = "database" | "Storage API";
+type TargetFlagGroup = "sync" | "selectable";
+type TargetSubject = "database" | "Storage API";
 
 interface TargetFlagOptions {
   readonly group: TargetFlagGroup;
