@@ -264,67 +264,6 @@ const NETWORK_BAN_REMOVAL_OWNERS: ReadonlyArray<RegExp> = [
 
 const TARGET_GUARD_FILE = "shared/cli/code-structure.unit.test.ts";
 
-/** Files still on the previous target selection and consent APIs; the integration pass empties this list. */
-const TARGET_MIGRATION_PENDING_FILES: ReadonlySet<string> = new Set<string>([
-  "command-internal/db-config.layer.ts",
-  "command-internal/db-config.types.ts",
-  "command-internal/db-pull-run.ts",
-  "command-internal/db-push-core.ts",
-  "command-internal/db-target-flags.ts",
-  "command-internal/db-target-flags.unit.test.ts",
-  "command-internal/migration-fetch-run.ts",
-  "command-internal/seed-remote-consent.ts",
-  "command-internal/test-db.command-handler.ts",
-  "command-internal/test-db.handler.ts",
-  "command-internal/test-db.integration.test.ts",
-  "commands/db/advisors/advisors.command.ts",
-  "commands/db/advisors/advisors.handler.ts",
-  "commands/db/diff/diff.command.ts",
-  "commands/db/diff/diff.handler.ts",
-  "commands/db/dump/dump.command.ts",
-  "commands/db/dump/dump.handler.ts",
-  "commands/db/lint/lint.command.ts",
-  "commands/db/lint/lint.handler.ts",
-  "commands/db/pull/pull.command.ts",
-  "commands/db/push/push.command.ts",
-  "commands/db/push/push.handler.ts",
-  "commands/db/query/query.command.ts",
-  "commands/db/query/query.handler.ts",
-  "commands/db/reset/reset.command.ts",
-  "commands/db/reset/reset.handler.ts",
-  "commands/db/schema/declarative/generate/generate.command.ts",
-  "commands/db/schema/declarative/generate/generate.handler.ts",
-  "commands/db/shared/pooler-fallback.ts",
-  "commands/gen/types/types.command.ts",
-  "commands/inspect/db/inspect-db-command.ts",
-  "commands/inspect/db/inspect-query.ts",
-  "commands/inspect/report/report.command.ts",
-  "commands/inspect/report/report.handler.ts",
-  "commands/migration/down/down.command.ts",
-  "commands/migration/down/down.handler.ts",
-  "commands/migration/fetch/fetch.command.ts",
-  "commands/migration/fetch/fetch.handler.ts",
-  "commands/migration/fetch/fetch.integration.test.ts",
-  "commands/migration/list/list.command.ts",
-  "commands/migration/list/list.handler.ts",
-  "commands/migration/migration.prompt.ts",
-  "commands/migration/repair/repair.command.ts",
-  "commands/migration/repair/repair.handler.ts",
-  "commands/migration/squash/squash.command.ts",
-  "commands/migration/squash/squash.handler.ts",
-  "commands/migration/up/up.command.ts",
-  "commands/migration/up/up.handler.ts",
-  "commands/seed/buckets/buckets.flags.ts",
-  "commands/seed/buckets/buckets.handler.ts",
-  "commands/seed/seed.flags.ts",
-  "commands/storage/cp/cp.handler.ts",
-  "commands/storage/ls/ls.handler.ts",
-  "commands/storage/mv/mv.handler.ts",
-  "commands/storage/rm/rm.handler.ts",
-  "commands/storage/storage.flags.ts",
-  "telemetry/command-telemetry.ts",
-]);
-
 const allSpecifiers = (source: string): Array<string> =>
   Array.from(
     source.matchAll(/(?:from\s+|import\(\s*)["']([^"']+)["']/g),
@@ -508,9 +447,7 @@ layer(BunServices.layer)("code structure", (it) => {
     Effect.gen(function* () {
       const files = (yield* walk(srcDir)).filter(isSourceFile);
       const violations = yield* scanSource(files, (relativePath, source) =>
-        relativePath in TARGET_FLAG_EXEMPT || TARGET_MIGRATION_PENDING_FILES.has(relativePath)
-          ? []
-          : findRawTargetFlags(source),
+        relativePath in TARGET_FLAG_EXEMPT ? [] : findRawTargetFlags(source),
       );
       expect(violations).toEqual([]);
     }),
@@ -520,9 +457,7 @@ layer(BunServices.layer)("code structure", (it) => {
     Effect.gen(function* () {
       const files = (yield* walk(srcDir)).filter(isAnyTypeScript);
       const violations = yield* scanSource(files, (relativePath, source) =>
-        relativePath === TARGET_GUARD_FILE || TARGET_MIGRATION_PENDING_FILES.has(relativePath)
-          ? []
-          : findLegacyTargetIdentifiers(source),
+        relativePath === TARGET_GUARD_FILE ? [] : findLegacyTargetIdentifiers(source),
       );
       expect(violations).toEqual([]);
     }),
@@ -543,9 +478,7 @@ layer(BunServices.layer)("code structure", (it) => {
   it.effect("leaves announcing the target to the Target banner", () =>
     Effect.gen(function* () {
       const files = (yield* walk(srcDir)).filter(isSourceFile);
-      const violations = yield* scanSource(files, (relativePath, source) =>
-        TARGET_MIGRATION_PENDING_FILES.has(relativePath) ? [] : findAdHocTargetLines(source),
-      );
+      const violations = yield* scanSource(files, (_, source) => findAdHocTargetLines(source));
       expect(violations).toEqual([]);
     }),
   );

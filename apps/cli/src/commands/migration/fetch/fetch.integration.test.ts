@@ -85,7 +85,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   const resolveCalls: Array<DbConnectionInput> = [];
   const resolver = Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.die("resolve is not used by migration fetch"),
     resolveConnection: (input: DbConnectionInput) =>
       opts.resolveFails === true
         ? Effect.fail(
@@ -140,7 +139,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           : { ref: VALID_REF, source: "file", matchesLinkedRef: true },
       ),
     resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
-    loadProjectRef: () => Effect.die("loadProjectRef is not used by migration fetch"),
     promptProjectRef: () => Effect.succeed(VALID_REF),
   });
 

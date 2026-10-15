@@ -414,7 +414,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const poolerFallbackCalls: unknown[] = [];
   const resolveCalls: Array<DbConnectionInput> = [];
   const resolver = Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.die("resolve is not used by db pull"),
     resolveConnection: (input: DbConnectionInput) => {
       resolveCalls.push(input);
       const isLocal = input.target.kind === "local";
@@ -463,7 +462,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
               matchesLinkedRef: true,
             }),
     resolveOptional: () => Effect.succeed(Option.some(opts.resolvedRef ?? VALID_REF)),
-    loadProjectRef: () => Effect.die("loadProjectRef is not used by db pull"),
     promptProjectRef: () => Effect.succeed(opts.resolvedRef ?? VALID_REF),
   });
 

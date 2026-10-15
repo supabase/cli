@@ -21,7 +21,6 @@ import {
   type DbConfigError,
   DbConfigResolver,
 } from "../../../command-internal/db-config.service.ts";
-import type { DbConfigFlags } from "../../../command-internal/db-config.types.ts";
 import { poolerConfigFromConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
@@ -401,13 +400,17 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     yield* output.raw(types);
   });
 
-  const connectTo = Effect.fnUntraced(function* (target: ResolvedTarget) {
-    return yield* dbConfig.resolveConnection({
+  const connectionInputFor = Effect.fnUntraced(function* (target: ResolvedTarget) {
+    return {
       target,
       dnsResolver,
       password: Option.none(),
       networkBanRemoval: yield* hostedMutationPreapproval,
-    });
+    };
+  });
+
+  const connectTo = Effect.fnUntraced(function* (target: ResolvedTarget) {
+    return yield* dbConfig.resolveConnection(yield* connectionInputFor(target));
   });
 
   const runProjectTypes = (
@@ -429,15 +432,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         );
         if (projectResult === "branch") return;
 
-        const resolved = yield* connectTo(target);
+        const connectionInput = yield* connectionInputFor(target);
+        const resolved = yield* dbConfig.resolveConnection(connectionInput);
         const conn = pinSupabaseTls(resolved.conn);
-        const poolerFlags: DbConfigFlags = {
-          dbUrl: Option.none(),
-          connType: "linked",
-          dnsResolver,
-          linkedProjectRef: Option.some(projectRef),
-          adHocProjectRef: !target.matchesLinkedRef,
-        };
         yield* runGenerate({
           conn,
           isLocal: resolved.isLocal,
@@ -447,7 +444,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
             directHost: conn.host,
             eligible: !resolved.isLocal && isDirectDbHost(conn.host, cliSettings.projectHost),
             resolve: dbConfig
-              .resolvePoolerFallback(poolerFlags)
+              .resolvePoolerFallback(connectionInput)
               .pipe(Effect.map(Option.map(pinSupabaseTls))),
           },
         });

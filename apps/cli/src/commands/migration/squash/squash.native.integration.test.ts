@@ -65,7 +65,6 @@ const testLayer = (root: string) =>
     mockRuntimeInfo(),
     Layer.succeed(CliArgs, { args: [] }),
     Layer.succeed(DbConfigResolver, {
-      resolve: () => Effect.die("resolve is not used by this test"),
       resolveConnection: (input: DbConnectionInput) =>
         Effect.succeed({
           conn: {
@@ -94,7 +93,6 @@ const testLayer = (root: string) =>
       resolveRef: () =>
         Effect.succeed({ ref: "abcdefghijklmnopqrst", source: "file", matchesLinkedRef: true }),
       resolveOptional: () => Effect.succeed(Option.some("abcdefghijklmnopqrst")),
-      loadProjectRef: () => Effect.succeed("abcdefghijklmnopqrst"),
       promptProjectRef: () => Effect.succeed("abcdefghijklmnopqrst"),
     }),
     mockTty(),

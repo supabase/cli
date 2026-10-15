@@ -390,7 +390,6 @@ function makeDbConfigLayers(
   });
 
   const resolver = Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.die("resolve is not used by pull"),
     resolveConnection: ({ target }: DbConnectionInput) =>
       Effect.succeed({
         conn: {

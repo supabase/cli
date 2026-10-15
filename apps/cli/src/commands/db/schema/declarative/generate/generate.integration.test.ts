@@ -298,7 +298,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   );
   const resolverCalls: DbConnectionInput[] = [];
   const resolver = Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.die("resolve is not used by this test"),
     resolveConnection: (input) =>
       Effect.sync(() => {
         resolverCalls.push(input);

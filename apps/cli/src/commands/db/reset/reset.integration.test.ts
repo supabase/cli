@@ -162,7 +162,6 @@ function mockResolver(opts: {
   let calls = 0;
   const inputs: Array<DbConnectionInput> = [];
   const layer = Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.die("resolve is not used by this test"),
     resolveConnection: (input: DbConnectionInput) => {
       calls++;
       inputs.push(input);
@@ -1083,7 +1082,6 @@ function setup(
                 matchesLinkedRef: true,
               }),
       resolveOptional: () => Effect.succeed(Option.some(opts.ref ?? VALID_REF)),
-      loadProjectRef: () => Effect.die("loadProjectRef is not used by this test"),
       promptProjectRef: () => Effect.succeed(opts.ref ?? VALID_REF),
     }),
     Layer.succeed(CommandPlatformApiFactory, {

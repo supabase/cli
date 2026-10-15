@@ -417,8 +417,6 @@ const testProjectRefLayer = (linked: boolean) => {
       Effect.fail(new ProjectRefNotLinkedError({ message: "Not available in compute tests" })),
     resolveOptional: () =>
       Effect.succeed(linked ? Option.some(COMPUTE_PROJECT_REF) : Option.none()),
-    loadProjectRef: () =>
-      Effect.fail(new ProjectRefNotLinkedError({ message: "Not available in compute tests" })),
     promptProjectRef: () =>
       Effect.fail(new ProjectRefNotLinkedError({ message: "Not available in compute tests" })),
   });

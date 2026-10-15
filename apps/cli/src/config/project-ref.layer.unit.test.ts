@@ -276,60 +276,6 @@ describe("projectRefLayer", () => {
     });
   });
 
-  describe("loadProjectRef (non-prompting)", () => {
-    it.effect("prefers flag, then projectId, then the ref file", () => {
-      writeRefFile(tempRoot, ANOTHER_REF);
-      const { layer } = makeLayer({ workdir: tempRoot, projectId: ANOTHER_REF });
-      return Effect.gen(function* () {
-        const { loadProjectRef } = yield* ProjectRefResolver;
-        expect(yield* loadProjectRef(Option.some(VALID_REF))).toBe(VALID_REF);
-      }).pipe(Effect.provide(layer));
-    });
-
-    it.effect("reads the ref file when flag and projectId are unset", () => {
-      writeRefFile(tempRoot, VALID_REF);
-      const { layer } = makeLayer({ workdir: tempRoot });
-      return Effect.gen(function* () {
-        const { loadProjectRef } = yield* ProjectRefResolver;
-        expect(yield* loadProjectRef(Option.none())).toBe(VALID_REF);
-      }).pipe(Effect.provide(layer));
-    });
-
-    it.effect("fails fast with ProjectRefNotLinkedError and never prompts on a TTY", () => {
-      const { layer, out } = makeLayer({
-        workdir: tempRoot,
-        stdinIsTty: true,
-        projects: [
-          { id: VALID_REF, name: "alpha", organization_slug: "acme", region: "us-east-1" },
-        ],
-        promptSelectResponses: [VALID_REF],
-      });
-      return Effect.gen(function* () {
-        const { loadProjectRef } = yield* ProjectRefResolver;
-        const exit = yield* Effect.exit(loadProjectRef(Option.none()));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const errorJson = JSON.stringify(exit.cause);
-          expect(errorJson).toContain("ProjectRefNotLinkedError");
-          expect(errorJson).toContain("supabase link");
-        }
-        expect(out.promptSelectCalls).toHaveLength(0);
-      }).pipe(Effect.provide(layer));
-    });
-
-    it.effect("validates the resolved ref format", () => {
-      const { layer } = makeLayer({ workdir: tempRoot, projectId: "not-a-valid-ref" });
-      return Effect.gen(function* () {
-        const { loadProjectRef } = yield* ProjectRefResolver;
-        const exit = yield* Effect.exit(loadProjectRef(Option.none()));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("InvalidProjectRefError");
-        }
-      }).pipe(Effect.provide(layer));
-    });
-  });
-
   describe("resolveForLink", () => {
     it.effect("prefers the --project-ref flag", () => {
       const { layer } = makeLayer({ workdir: tempRoot, projectId: ANOTHER_REF });
@@ -493,6 +439,19 @@ describe("projectRefLayer", () => {
         yield* resolve(Option.some(VALID_REF));
         yield* resolve(Option.some(VALID_REF));
         expect(out.stderrText).toBe(banner(`project ${VALID_REF} · identity unverified`));
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("surfaces a ref-file read failure instead of reporting not-linked", () => {
+      mkdirSync(join(tempRoot, "supabase", ".temp", "project-ref"), { recursive: true });
+      const { layer } = makeLayer({ workdir: tempRoot });
+      return Effect.gen(function* () {
+        const { resolveRef } = yield* ProjectRefResolver;
+        const exit = yield* Effect.exit(resolveRef(Option.none()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        const errorJson = JSON.stringify(exit);
+        expect(errorJson).toContain("failed to load project ref");
+        expect(errorJson).not.toContain("Cannot find project ref");
       }).pipe(Effect.provide(layer));
     });
 

@@ -92,7 +92,6 @@ function mockResolver(
 ) {
   const calls: Array<DbConnectionInput> = [];
   const layer = Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.die("resolve is not used by db push"),
     resolveConnection: (input: DbConnectionInput) =>
       Effect.sync(() => {
         calls.push(input);
@@ -252,7 +251,6 @@ function setup(
               matchesLinkedRef: true,
             }),
     resolveOptional: () => Effect.succeed(Option.some(opts.projectRef ?? VALID_REF)),
-    loadProjectRef: () => Effect.die("loadProjectRef is not used by db push"),
     promptProjectRef: () => Effect.succeed(opts.projectRef ?? VALID_REF),
   });
 

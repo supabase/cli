@@ -6,6 +6,7 @@ import { DbConfigResolver } from "../../../../command-internal/db-config.service
 import { hostedMutationPreapproval } from "../../../../command-internal/hosted-consent/hosted-consent.ts";
 import { toPostgresURL } from "../../../../command-internal/postgres-url.ts";
 import type { ResolvedTarget } from "../../../../command-internal/target/resolve-target.ts";
+import { rejectTargetPassword } from "../../../../command-internal/target/target-password.ts";
 import type { PgDeltaDatabaseEndpoint } from "../../shared/pgdelta-engine.service.ts";
 import { DeclarativeApplyError, readErrorSuggestion } from "./declarative.errors.ts";
 import { DeclarativeSeam } from "../../shared/pgdelta.seam.service.ts";
@@ -52,6 +53,7 @@ export const prepareLocalTargetEndpoint = Effect.fn("DeclarativeSchema.localTarg
   E,
   R,
 >(shouldReset: Effect.Effect<boolean, E, R>, password: Option.Option<string> = Option.none()) {
+  yield* rejectTargetPassword("local", password);
   const seam = yield* DeclarativeSeam;
   yield* seam.ensureLocalPostgresImageCurrent;
   yield* seam.ensureLocalDatabaseStarted;

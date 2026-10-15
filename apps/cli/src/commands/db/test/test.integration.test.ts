@@ -115,7 +115,6 @@ function mockContextualAnalytics() {
 
 function mockResolver(conn: PgConnInput = LOCAL_CONN) {
   return Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.die("resolve is not used by this test"),
     resolveConnection: (input: DbConnectionInput) =>
       Effect.succeed({
         conn,
@@ -137,7 +136,6 @@ const projectRefLayer = Layer.succeed(ProjectRefResolver, {
       matchesLinkedRef: false,
     }),
   resolveOptional: () => Effect.die("resolveOptional is not used by this test"),
-  loadProjectRef: () => Effect.die("loadProjectRef is not used by this test"),
   promptProjectRef: () => Effect.die("promptProjectRef is not used by this test"),
 });
 

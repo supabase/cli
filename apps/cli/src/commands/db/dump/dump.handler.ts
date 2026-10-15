@@ -145,17 +145,14 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     if (target.kind === "linked") {
       yield* Ref.set(linkedRefForCache, target.ref);
     }
-    const {
-      conn,
-      isLocal,
-      ref: resolvedRef,
-    } = yield* resolver.resolveConnection({
+    const connectionInput = {
       target,
       dnsResolver,
       password: flags.password,
       hasPasswordFlag: true,
       networkBanRemoval: yield* hostedMutationPreapproval,
-    });
+    };
+    const { conn, isLocal, ref: resolvedRef } = yield* resolver.resolveConnection(connectionInput);
     const db = isLocal ? "local" : "remote";
     // On the linked path, re-read config with the resolved ref so a matching
     // `[remotes.<ref>]` block overrides `db.major_version` for the pg_dump image.
@@ -406,15 +403,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
           projectHost: cliSettings.projectHost,
           resolvePooler: () =>
             resolver
-              .resolvePoolerFallback({
-                dbUrl: Option.none(),
-                connType: "linked",
-                dnsResolver,
-                password: flags.password,
-                linkedProjectRef:
-                  target.kind === "linked" ? Option.some(target.ref) : Option.none(),
-                adHocProjectRef: target.kind === "linked" && !target.matchesLinkedRef,
-              })
+              .resolvePoolerFallback(connectionInput)
               .pipe(Effect.orElseSucceed(() => Option.none())),
           runWithConn: (c) => runContainer(mode.buildEnv(c, opt)),
           reprintOnRetry: output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr"),

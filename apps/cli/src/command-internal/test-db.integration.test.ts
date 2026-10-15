@@ -79,7 +79,6 @@ const stackApiStub = Layer.succeed(StackApi, {
 function mockResolver(opts: { conn?: PgConnInput; isLocal?: boolean } = {}) {
   const inputs: Array<DbConnectionInput> = [];
   const layer = Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.die("resolve is not used by this test"),
     resolveConnection: (input: DbConnectionInput) => {
       inputs.push(input);
       return Effect.succeed({
@@ -109,7 +108,6 @@ const projectRefLayer = Layer.succeed(ProjectRefResolver, {
         : { ref: VALID_REF, source: "file" as const, matchesLinkedRef: true },
     ),
   resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
-  loadProjectRef: () => Effect.die("loadProjectRef is not used by this test"),
   promptProjectRef: () => Effect.succeed(VALID_REF),
 });
 

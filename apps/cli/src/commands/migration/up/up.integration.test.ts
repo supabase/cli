@@ -76,7 +76,6 @@ function fakeDatabase(opts: SetupOpts = {}) {
 
   const resolverCalls: Array<DbConnectionInput> = [];
   const resolver = Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.die("resolve is not used by this test"),
     resolveConnection: (input: DbConnectionInput) => {
       resolverCalls.push(input);
       return Effect.succeed({
@@ -148,8 +147,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         matchesLinkedRef: Option.isNone(flagValue),
       }),
     resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
-    loadProjectRef: (flagValue: Option.Option<string>) =>
-      Effect.succeed(Option.getOrElse(flagValue, () => VALID_REF)),
     promptProjectRef: () => Effect.succeed(VALID_REF),
   });
 

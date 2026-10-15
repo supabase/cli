@@ -63,20 +63,6 @@ interface ProjectRefResolverShape {
     flagValue: Option.Option<string>,
   ) => Effect.Effect<Option.Option<string>, never, never>;
   /**
-   * Non-prompting resolution chain (flag → `cliSettings.projectId` → ref file) that fails
-   * hard with `ProjectRefNotLinkedError` when nothing resolves, with ref-format validation.
-   * Announces no target.
-   *
-   * @deprecated Use `resolveRef`, or `resolveTarget` for database and storage commands.
-   */
-  readonly loadProjectRef: (
-    flagValue: Option.Option<string>,
-  ) => Effect.Effect<
-    string,
-    ProjectRefNotLinkedError | InvalidProjectRefError | ProjectRefReadError,
-    never
-  >;
-  /**
    * Lists all projects and prompts the user to select one with the given title,
    * writing "Selected project: <ref>" to stderr (text mode). The `title` lets
    * callers set their own per-command prompt label (e.g. `projects delete`

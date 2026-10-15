@@ -104,7 +104,6 @@ describe("managed test db pgTAP", { timeout: 180_000 }, () => {
             output.layer,
             mockTelemetryStateTracked().layer,
             Layer.succeed(DbConfigResolver, {
-              resolve: () => Effect.die("resolve is not used by this test"),
               resolveConnection: (input) =>
                 Effect.succeed({
                   conn: connection,
@@ -135,7 +134,6 @@ describe("managed test db pgTAP", { timeout: 180_000 }, () => {
               resolveForLink: () => Effect.die("unused"),
               resolveRef: () => Effect.die("unused"),
               resolveOptional: () => Effect.die("unused"),
-              loadProjectRef: () => Effect.die("unused"),
               promptProjectRef: () => Effect.die("unused"),
             }),
             Layer.succeed(BundledPostgresClient, { run: () => Effect.die("unused") }),

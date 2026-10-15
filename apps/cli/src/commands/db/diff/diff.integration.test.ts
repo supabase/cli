@@ -409,7 +409,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   const resolverCalls: DbConnectionInput[] = [];
   const resolver = Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.die("resolve is not used by this test"),
     resolveConnection: (input: DbConnectionInput) => {
       resolverCalls.push(input);
       return Effect.succeed({
@@ -442,7 +441,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
               matchesLinkedRef: true,
             }),
     resolveOptional: () => Effect.succeed(Option.some(opts.linkedRef ?? VALID_REF)),
-    loadProjectRef: () => Effect.die("loadProjectRef is not used by this test"),
     promptProjectRef: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
   });
 

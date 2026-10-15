@@ -73,7 +73,6 @@ function fakeDatabase(opts: Pick<SetupOpts, "failSql"> = {}) {
   const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
 
   const resolver = Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.die("resolve is not used by this test"),
     resolveConnection: (connectionInput: DbConnectionInput) =>
       Effect.succeed({
         conn: {
@@ -152,8 +151,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             matchesLinkedRef: Option.isNone(flagValue),
           }),
     resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
-    loadProjectRef: (flagValue: Option.Option<string>) =>
-      Effect.succeed(Option.getOrElse(flagValue, () => VALID_REF)),
     promptProjectRef: () => Effect.succeed(VALID_REF),
   });
 

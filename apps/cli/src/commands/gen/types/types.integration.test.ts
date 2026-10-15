@@ -51,7 +51,6 @@ import type { DbConfigError } from "../../../command-internal/db-config.service.
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 import type {
-  DbConfigFlags,
   DbConnectionInput,
   ResolvedDbConfig,
   ResolvedDbConnection,
@@ -164,9 +163,8 @@ function mockDbConfigResolver(
   } = {},
 ) {
   const resolves: Array<DbConnectionInput> = [];
-  const poolerFallbacks: Array<DbConfigFlags> = [];
+  const poolerFallbacks: Array<DbConnectionInput> = [];
   const layer = Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.die("resolve is not used by this test"),
     resolveConnection: (input) =>
       Effect.gen(function* () {
         resolves.push(input);
@@ -184,11 +182,11 @@ function mockDbConfigResolver(
         );
         return { ...resolved, target: input.target } satisfies ResolvedDbConnection;
       }),
-    resolvePoolerFallback: (flags) =>
+    resolvePoolerFallback: (input) =>
       opts.poolerFallbackFails === true
         ? Effect.fail(new DbConfigLoadError({ message: "pooler fallback failed" }))
         : Effect.sync(() => {
-            poolerFallbacks.push(flags);
+            poolerFallbacks.push(input);
             return opts.poolerFallback ?? Option.none<PgConnInput>();
           }),
   });
@@ -1929,8 +1927,10 @@ describe("gen types", () => {
         expect(generator.calls[0]?.conn.host).toBe(`db.${VALID_REF}.supabase.co`);
         expect(generator.calls[1]?.conn.host).toBe("127.0.0.1");
         expect(dbConfig.poolerFallbacks).toHaveLength(1);
-        expect(dbConfig.poolerFallbacks[0]?.connType).toBe("linked");
-        expect(dbConfig.poolerFallbacks[0]?.adHocProjectRef).toBe(true);
+        expect(dbConfig.poolerFallbacks[0]?.target).toMatchObject({
+          kind: "linked",
+          matchesLinkedRef: false,
+        });
       }).pipe(Effect.provide(BunServices.layer)),
     );
 

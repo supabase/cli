@@ -211,16 +211,6 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     // An explicit `--project-ref` flag takes precedence and short-circuits
     // before `linkedFails`, so a test can prove the flag resolves a ref even
     // for an "unlinked" workdir.
-    loadProjectRef: (flagValue: Option.Option<string>) =>
-      Option.isSome(flagValue) && flagValue.value.length > 0
-        ? Effect.succeed(flagValue.value)
-        : opts.linkedFails === true
-          ? Effect.fail(
-              new ProjectRefNotLinkedError({
-                message: "Cannot find project ref. Have you run supabase link?",
-              }),
-            )
-          : Effect.succeed(projectRefRef),
     promptProjectRef: () => Effect.succeed(projectRefRef),
   });
 

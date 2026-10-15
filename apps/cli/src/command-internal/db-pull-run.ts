@@ -177,21 +177,14 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
       linkedRef,
     );
 
-    const resolved = yield* resolver.resolveConnection({
+    const connectionInput = {
       target,
       dnsResolver,
       password: flags.password ?? Option.none(),
       hasPasswordFlag: true,
       networkBanRemoval: yield* hostedMutationPreapproval,
-    });
-    const poolerFallbackFlags = {
-      dbUrl: Option.none<string>(),
-      connType: "linked",
-      dnsResolver,
-      password: flags.password ?? Option.none(),
-      linkedProjectRef: Option.fromNullishOr(linkedRef),
-      adHocProjectRef: target.kind === "linked" && !target.matchesLinkedRef,
-    } as const;
+    };
+    const resolved = yield* resolver.resolveConnection(connectionInput);
     const requireHistoryConsent = (migrations: number) =>
       Option.isSome(preapproved)
         ? Effect.void
@@ -237,7 +230,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               // A pooler resolution failure is treated as "no fallback" (re-fail the
               // original diff error), not surfaced as its own error.
               const pooler = yield* resolver
-                .resolvePoolerFallback(poolerFallbackFlags)
+                .resolvePoolerFallback(connectionInput)
                 .pipe(Effect.orElseSucceed(() => Option.none()));
               if (Option.isSome(pooler)) {
                 yield* emitPoolerFallbackWarning(resolved.conn.host);
@@ -451,7 +444,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             projectHost: cliSettings.projectHost,
             resolvePooler: () =>
               resolver
-                .resolvePoolerFallback(poolerFallbackFlags)
+                .resolvePoolerFallback(connectionInput)
                 .pipe(Effect.orElseSucceed(() => Option.none())),
             runWithConn: runSchemaDump,
             reprintOnRetry: Effect.void,

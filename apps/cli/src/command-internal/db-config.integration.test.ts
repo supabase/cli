@@ -65,7 +65,7 @@ import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { identityStitchLayer } from "./identity-stitch.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
-import type { DbConfigFlags, DbConnectionInput } from "./db-config.types.ts";
+import type { DbConnectionInput } from "./db-config.types.ts";
 import { hostedMutationPreapproval } from "./hosted-consent/hosted-consent.ts";
 import type { ResolvedTarget } from "./target/resolve-target.ts";
 import { DbConnectError } from "./db-connection.errors.ts";
@@ -172,14 +172,49 @@ function withWorkdir(toml?: string) {
   });
 }
 
-const resolve = (
+const inputFor = (
+  target: ResolvedTarget,
+  overrides: Partial<DbConnectionInput> = {},
+): DbConnectionInput => ({
+  target,
+  dnsResolver: "native",
+  password: Option.none(),
+  networkBanRemoval: Option.none(),
+  ...overrides,
+});
+
+const localTarget: ResolvedTarget = { kind: "local" };
+const dbUrlTarget = (url: string): ResolvedTarget => ({
+  kind: "db-url",
+  url: Redacted.make(url),
+});
+const linkedTarget = (
+  ref: string,
+  overrides: Partial<Extract<ResolvedTarget, { readonly kind: "linked" }>> = {},
+): ResolvedTarget => ({
+  kind: "linked",
+  ref,
+  source: "file",
+  matchesLinkedRef: true,
+  ...overrides,
+});
+const explicitRefTarget = (ref: string, overrides: { readonly matchesLinkedRef?: boolean } = {}) =>
+  linkedTarget(ref, { source: "flag", ...overrides });
+
+const approval = hostedMutationPreapproval.pipe(
+  Effect.provide(
+    Layer.mergeAll(Layer.succeed(YesFlag, true), Layer.succeed(CliArgs, { args: [] })),
+  ),
+);
+
+const resolveConnection = (
   workdir: string,
-  flags: DbConfigFlags,
+  input: DbConnectionInput,
   opts?: Parameters<typeof buildResolver>[1],
 ) =>
   Effect.gen(function* () {
     const resolver = yield* DbConfigResolver;
-    return yield* resolver.resolve(flags);
+    return yield* resolver.resolveConnection(input);
   }).pipe(
     Effect.provide(buildResolver(workdir, opts)),
     Effect.provideServiceEffect(
@@ -190,12 +225,12 @@ const resolve = (
 
 const resolvePoolerFallback = (
   workdir: string,
-  flags: DbConfigFlags,
+  input: DbConnectionInput,
   opts?: Parameters<typeof buildResolver>[1],
 ) =>
   Effect.gen(function* () {
     const resolver = yield* DbConfigResolver;
-    return yield* resolver.resolvePoolerFallback(flags);
+    return yield* resolver.resolvePoolerFallback(input);
   }).pipe(
     Effect.provide(buildResolver(workdir, opts)),
     Effect.provideServiceEffect(
@@ -203,22 +238,6 @@ const resolvePoolerFallback = (
       pinnedConfigProvider(explicitEnv(opts?.configEnv)),
     ),
   );
-
-const localFlags: DbConfigFlags = {
-  dbUrl: Option.none(),
-  connType: "local",
-  dnsResolver: "native",
-};
-const dbUrlFlags = (url: string): DbConfigFlags => ({
-  dbUrl: Option.some(url),
-  connType: "db-url",
-  dnsResolver: "native",
-});
-const linkedFlags: DbConfigFlags = {
-  dbUrl: Option.none(),
-  connType: "linked",
-  dnsResolver: "native",
-};
 
 const assertDbConfigDrift = (
   requests: ReadonlyArray<{ readonly method: string; readonly path: string }>,
@@ -238,7 +257,7 @@ describe("dbConfigResolver (local + db-url)", () => {
       const dir = yield* withWorkdir(
         ["[db]", "port = 55555", 'password = "hunter2"', ""].join("\n"),
       );
-      return yield* resolve(dir, localFlags);
+      return yield* resolveConnection(dir, inputFor(localTarget));
     }).pipe(
       Effect.tap((r) =>
         Effect.sync(() => {
@@ -266,7 +285,7 @@ describe("dbConfigResolver (local + db-url)", () => {
   it.effect("local mode: honors SUPABASE_SERVICES_HOSTNAME for the connection host", () =>
     Effect.gen(function* () {
       const dir = yield* withWorkdir();
-      return yield* resolve(dir, localFlags, {
+      return yield* resolveConnection(dir, inputFor(localTarget), {
         configEnv: { SUPABASE_SERVICES_HOSTNAME: "host.docker.internal" },
       });
     }).pipe(
@@ -284,7 +303,7 @@ describe("dbConfigResolver (local + db-url)", () => {
   it.effect("local mode: falls back to default port/password without a config.toml", () =>
     Effect.gen(function* () {
       const dir = yield* withWorkdir();
-      return yield* resolve(dir, localFlags);
+      return yield* resolveConnection(dir, inputFor(localTarget));
     }).pipe(
       Effect.tap((r) =>
         Effect.sync(() => {
@@ -301,7 +320,10 @@ describe("dbConfigResolver (local + db-url)", () => {
   it.effect("db-url mode: parses the connection string and percent-decodes the password", () =>
     Effect.gen(function* () {
       const dir = yield* withWorkdir();
-      return yield* resolve(dir, dbUrlFlags("postgres://alice:p%40ss@example.com:6543/appdb"));
+      return yield* resolveConnection(
+        dir,
+        inputFor(dbUrlTarget("postgres://alice:p%40ss@example.com:6543/appdb")),
+      );
     }).pipe(
       Effect.tap((r) =>
         Effect.sync(() => {
@@ -327,9 +349,9 @@ describe("dbConfigResolver (local + db-url)", () => {
   it.effect("db-url mode: a 127.0.0.1 url on the configured db.port is detected as local", () =>
     Effect.gen(function* () {
       const dir = yield* withWorkdir();
-      return yield* resolve(
+      return yield* resolveConnection(
         dir,
-        dbUrlFlags("postgres://postgres:postgres@127.0.0.1:54322/postgres"),
+        inputFor(dbUrlTarget("postgres://postgres:postgres@127.0.0.1:54322/postgres")),
       );
     }).pipe(
       Effect.tap((r) =>
@@ -345,9 +367,11 @@ describe("dbConfigResolver (local + db-url)", () => {
   it.effect("db-url mode: a multi-host url stays remote even when its primary is local", () =>
     Effect.gen(function* () {
       const dir = yield* withWorkdir();
-      return yield* resolve(
+      return yield* resolveConnection(
         dir,
-        dbUrlFlags("postgres://postgres:pw@127.0.0.1:54322,db.example.com:5432/postgres"),
+        inputFor(
+          dbUrlTarget("postgres://postgres:pw@127.0.0.1:54322,db.example.com:5432/postgres"),
+        ),
       );
     }).pipe(
       Effect.tap((r) =>
@@ -366,7 +390,10 @@ describe("dbConfigResolver (local + db-url)", () => {
       const dir = yield* withWorkdir(
         ["[db]", "port = 54322", 'password = "hunter2"', ""].join("\n"),
       );
-      return yield* resolve(dir, dbUrlFlags("postgres://postgres@127.0.0.1:54322/postgres"));
+      return yield* resolveConnection(
+        dir,
+        inputFor(dbUrlTarget("postgres://postgres@127.0.0.1:54322/postgres")),
+      );
     }).pipe(
       Effect.tap((r) =>
         Effect.sync(() => {
@@ -384,7 +411,10 @@ describe("dbConfigResolver (local + db-url)", () => {
     () => {
       return Effect.gen(function* () {
         const dir = yield* withWorkdir();
-        return yield* resolve(dir, dbUrlFlags("postgres://user:s3cret@ bad host/db"));
+        return yield* resolveConnection(
+          dir,
+          inputFor(dbUrlTarget("postgres://user:s3cret@ bad host/db")),
+        );
       }).pipe(
         Effect.exit,
         Effect.tap((exit) =>
@@ -409,7 +439,7 @@ describe("dbConfigResolver (local + db-url)", () => {
       "postgres://postgres:pw@example.com:5432/postgres?sslmode=verify-full&options=reference%3Dabcdefghijklmnop";
     return Effect.gen(function* () {
       const dir = yield* withWorkdir();
-      return yield* resolve(dir, dbUrlFlags(url));
+      return yield* resolveConnection(dir, inputFor(dbUrlTarget(url)));
     }).pipe(
       Effect.tap((r) =>
         Effect.sync(() => {
@@ -425,7 +455,10 @@ describe("dbConfigResolver (local + db-url)", () => {
   it.effect("db-url mode: accepts a libpq keyword/value DSN", () =>
     Effect.gen(function* () {
       const dir = yield* withWorkdir();
-      return yield* resolve(dir, dbUrlFlags("host=pg.example.com port=6543 user=admin dbname=app"));
+      return yield* resolveConnection(
+        dir,
+        inputFor(dbUrlTarget("host=pg.example.com port=6543 user=admin dbname=app")),
+      );
     }).pipe(
       Effect.tap((r) =>
         Effect.sync(() => {
@@ -448,7 +481,10 @@ describe("dbConfigResolver (local + db-url)", () => {
       // throws. It must surface as a normal parse failure, not an untyped defect.
       return Effect.gen(function* () {
         const dir = yield* withWorkdir();
-        return yield* resolve(dir, dbUrlFlags("postgres://user:p%zz@example.com/db"));
+        return yield* resolveConnection(
+          dir,
+          inputFor(dbUrlTarget("postgres://user:p%zz@example.com/db")),
+        );
       }).pipe(
         Effect.exit,
         Effect.tap((exit) =>
@@ -467,44 +503,6 @@ describe("dbConfigResolver (local + db-url)", () => {
         Effect.provide(BunServices.layer),
       );
     },
-  );
-});
-
-describe("dbConfigResolver --password rejection", () => {
-  const failureTag = (exit: Exit.Exit<unknown, { readonly _tag: string }>) =>
-    Exit.isFailure(exit) ? JSON.stringify(exit.cause) : "";
-
-  const targets: ReadonlyArray<readonly [string, DbConfigFlags]> = [
-    ["--db-url", dbUrlFlags("postgresql://u:p@db.example.com:5432/postgres")],
-    ["--local", localFlags],
-    ["the default local target", { ...localFlags, connType: undefined }],
-  ];
-  for (const [label, flags] of targets) {
-    it.effect(`rejects --password with ${label}`, () =>
-      Effect.gen(function* () {
-        const dir = yield* withWorkdir();
-        return yield* resolve(dir, { ...flags, password: Option.some("pw") });
-      }).pipe(
-        Effect.exit,
-        Effect.tap((exit) =>
-          Effect.sync(() => {
-            expect(failureTag(exit)).toContain("DbPasswordFlagsError");
-          }),
-        ),
-        Effect.scoped,
-        Effect.provide(BunServices.layer),
-      ),
-    );
-  }
-
-  it.effect("accepts an absent --password with --db-url", () =>
-    Effect.gen(function* () {
-      const dir = yield* withWorkdir();
-      return yield* resolve(dir, {
-        ...dbUrlFlags("postgresql://u:p@db.example.com:5432/postgres"),
-        password: Option.none(),
-      });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 });
 
@@ -606,7 +604,10 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
     dir: string,
     url: string,
     stackApi: Layer.Layer<StackApi> = projectStackApi(dir, "running"),
-  ) => resolve(dir, dbUrlFlags(url), { stackApi }).pipe(Effect.provide(stackBackendLayer("stack")));
+  ) =>
+    resolveConnection(dir, inputFor(dbUrlTarget(url)), { stackApi }).pipe(
+      Effect.provide(stackBackendLayer("stack")),
+    );
 
   it.effect("treats the url printed by `stack status --env` as the local database", () =>
     Effect.gen(function* () {
@@ -711,8 +712,7 @@ describe("dbConfigResolver (linked config ordering)", () => {
           "",
         ].join("\n"),
       );
-      // The linked ref is sourced via the project-ref resolver's env fallback.
-      return yield* resolve(dir, linkedFlags, { configEnv: { SUPABASE_PROJECT_ID: ref } });
+      return yield* resolveConnection(dir, inputFor(linkedTarget(ref)));
     }).pipe(
       Effect.exit,
       Effect.tap((exit) =>
@@ -722,34 +722,6 @@ describe("dbConfigResolver (linked config ordering)", () => {
             expect(Cause.pretty(exit.cause)).toContain(
               "Failed reading config: Invalid db.major_version: 99.",
             );
-          }
-        }),
-      ),
-      Effect.scoped,
-      Effect.provide(BunServices.layer),
-    );
-  });
-
-  it.effect("surfaces a project-ref read failure instead of reporting not-linked", () => {
-    // The ref file is seeded as a directory (not a file), with no project_id or env fallback,
-    // to force a real read error.
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const dir = yield* withWorkdir();
-      yield* fs.makeDirectory(path.join(dir, "supabase", ".temp", "project-ref"), {
-        recursive: true,
-      });
-      return yield* resolve(dir, linkedFlags);
-    }).pipe(
-      Effect.exit,
-      Effect.tap((exit) =>
-        Effect.sync(() => {
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const causeText = Cause.pretty(exit.cause);
-            expect(causeText).toContain("failed to load project ref");
-            expect(causeText).not.toContain("Cannot find project ref");
           }
         }),
       ),
@@ -854,13 +826,9 @@ describe("dbConfigResolver (linked config ordering)", () => {
         path.join(dir, "supabase", ".temp", "pooler-url"),
         `postgres://postgres.${linkedRef}:saved-workdir-password@stale.pooler.supabase.com:6543/postgres`,
       );
-      return yield* resolve(
+      return yield* resolveConnection(
         dir,
-        {
-          ...linkedFlags,
-          linkedProjectRef: Option.some(adHocRef),
-          adHocProjectRef: true,
-        },
+        inputFor(explicitRefTarget(adHocRef, { matchesLinkedRef: false })),
         {
           projectHost: "invalid",
           dbConnection,
@@ -1022,11 +990,7 @@ describe("dbConfigResolver (linked config ordering)", () => {
         );
         return yield* resolvePoolerFallback(
           dir,
-          {
-            ...linkedFlags,
-            linkedProjectRef: Option.some(adHocRef),
-            adHocProjectRef: true,
-          },
+          inputFor(explicitRefTarget(adHocRef, { matchesLinkedRef: false })),
           {
             dbConnection,
             configEnv: {
@@ -1170,21 +1134,14 @@ describe("dbConfigResolver (linked config ordering)", () => {
         path.join(dir, "supabase", ".temp", "pooler-url"),
         "postgres://postgres.qrstabcdefghijklmnop:saved-workdir-password@aws-0-us-east-1.pooler.supabase.com:6543/postgres",
       );
-      return yield* resolvePoolerFallback(
-        dir,
-        {
-          ...linkedFlags,
-          linkedProjectRef: Option.some(linkedRef),
+      return yield* resolvePoolerFallback(dir, inputFor(explicitRefTarget(linkedRef)), {
+        projectHost: "supabase.co",
+        dbConnection,
+        configEnv: {
+          SUPABASE_ACCESS_TOKEN: VALID_TOKEN,
+          SUPABASE_DB_PASSWORD: "linked-password",
         },
-        {
-          projectHost: "supabase.co",
-          dbConnection,
-          configEnv: {
-            SUPABASE_ACCESS_TOKEN: VALID_TOKEN,
-            SUPABASE_DB_PASSWORD: "linked-password",
-          },
-        },
-      );
+      });
     }).pipe(
       Effect.tap((connOpt) =>
         Effect.sync(() => {
@@ -1222,11 +1179,10 @@ describe("dbConfigResolver (linked config ordering)", () => {
   });
 });
 
-// An explicit `--project-ref`/`linkedProjectRef` on a non-ad-hoc `db` command must
-// independently unlock the Management API pooler fetch on an IPv4-only network — it must not
-// stay confined to the workdir's saved `.temp/pooler-url` the way the plain `--linked` default
-// path is.
-describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProjectRef)", () => {
+// An explicit `--project-ref` must unlock the Management API pooler fetch on an IPv4-only
+// network, even when it names the linked project, rather than staying confined to the workdir's
+// saved `.temp/pooler-url` the way the plain `--linked` path is.
+describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)", () => {
   it.effect(
     "an unlinked workdir + explicit --project-ref resolves via the API pooler config, honoring the ambient password with no login-role mint",
     () => {
@@ -1286,12 +1242,9 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
       // so there is no `.temp/project-ref` and no `.temp/pooler-url` to reuse.
       return Effect.gen(function* () {
         const dir = yield* withWorkdir();
-        return yield* resolve(
+        return yield* resolveConnection(
           dir,
-          {
-            ...linkedFlags,
-            linkedProjectRef: Option.some(ref),
-          },
+          inputFor(explicitRefTarget(ref, { matchesLinkedRef: false })),
           {
             projectHost: "invalid",
             dbConnection,
@@ -1404,12 +1357,9 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
           path.join(dir, "supabase", ".temp", "pooler-url"),
           `postgres://postgres.${linkedRef}:saved-workdir-password@stale.pooler.supabase.com:6543/postgres`,
         );
-        return yield* resolve(
+        return yield* resolveConnection(
           dir,
-          {
-            ...linkedFlags,
-            linkedProjectRef: Option.some(targetRef),
-          },
+          inputFor(explicitRefTarget(targetRef, { matchesLinkedRef: false })),
           {
             projectHost: "invalid",
             dbConnection,
@@ -1453,136 +1403,6 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
   );
 
   it.effect(
-    "an explicit --project-ref with no password mints a login role and clears network bans after three failed temp-role connects",
-    () => {
-      const ref = "banrecoveryrefabcdef";
-
-      const previousFetch = globalThis.fetch;
-      const requests: Array<{ readonly method: string; readonly path: string }> = [];
-      let connectAttempts = 0;
-      const session: DbSession = {
-        exec: () => Effect.void,
-        execBatch: () => Effect.void,
-        query: () => Effect.succeed([]),
-        extensionExists: () => Effect.succeed(false),
-        copyToCsv: () => Effect.succeed(new Uint8Array()),
-        queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "SELECT 1" }),
-      };
-      const dbConnection = Layer.succeed(DbConnection, {
-        connect: () =>
-          Effect.suspend(() => {
-            connectAttempts += 1;
-            return connectAttempts <= 3
-              ? Effect.fail(new DbConnectError({ message: "password authentication failed" }))
-              : Effect.succeed(session);
-          }),
-      });
-      const json = (status: number, body: unknown) =>
-        Promise.resolve(
-          new Response(JSON.stringify(body), {
-            status,
-            headers: { "content-type": "application/json" },
-          }),
-        );
-      const fetchMock = Object.assign(
-        (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-          const url = new URL(
-            typeof input === "string" || input instanceof URL ? input : input.url,
-          );
-          const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-          requests.push({ method, path: url.pathname });
-
-          if (method === "GET" && url.pathname === `/v1/projects/${ref}/config/database/pooler`) {
-            return json(200, [
-              {
-                identifier: "primary",
-                database_type: "PRIMARY",
-                is_using_scram_auth: true,
-                db_user: "postgres",
-                db_host: "db.example",
-                db_port: 5432,
-                db_name: "postgres",
-                connection_string: `postgres://postgres.${ref}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
-                connectionString: `postgres://postgres.${ref}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
-                default_pool_size: null,
-                max_client_conn: null,
-                pool_mode: "transaction",
-              },
-            ]);
-          }
-          if (method === "POST" && url.pathname === `/v1/projects/${ref}/cli/login-role`) {
-            return json(201, {
-              role: "cli_login_role",
-              password: "temporary-role-password",
-              ttl_seconds: 3600,
-            });
-          }
-          if (method === "POST" && url.pathname === `/v1/projects/${ref}/network-bans/retrieve`) {
-            return json(200, { banned_ipv4_addresses: ["203.0.113.7"] });
-          }
-          if (method === "DELETE" && url.pathname === `/v1/projects/${ref}/network-bans`) {
-            return json(200, {});
-          }
-          return json(404, { message: "unexpected request" });
-        },
-        { preconnect: previousFetch.preconnect },
-      );
-
-      globalThis.fetch = fetchMock;
-
-      return Effect.gen(function* () {
-        const retries = yield* Queue.unbounded<string>();
-        const debugLogger = Layer.succeed(DebugLogger, {
-          debug: (message) =>
-            message.startsWith("Retry (") ? Queue.offer(retries, message) : Effect.void,
-          http: () => Effect.void,
-        });
-        const dir = yield* withWorkdir();
-        const resolved = yield* resolve(
-          dir,
-          { ...linkedFlags, linkedProjectRef: Option.some(ref) },
-          {
-            projectHost: "invalid",
-            dbConnection,
-            debugLogger,
-            configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
-          },
-        ).pipe(Effect.forkChild({ startImmediately: true }));
-        for (let failedConnects = 1; failedConnects <= 3; failedConnects++) {
-          yield* Queue.take(retries).pipe(Effect.raceFirst(Fiber.join(resolved)));
-          yield* TestClock.adjust("10 seconds");
-        }
-        return yield* Fiber.join(resolved);
-      }).pipe(
-        Effect.tap((r) =>
-          Effect.sync(() => {
-            expect(r.conn).toMatchObject({
-              host: "aws-0-us-east-1.pooler.supabase.com",
-              user: `cli_login_role.${ref}`,
-              password: "temporary-role-password",
-            });
-            expect(connectAttempts).toBe(4);
-            expect(requests).toEqual([
-              { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
-              { method: "POST", path: `/v1/projects/${ref}/cli/login-role` },
-              { method: "POST", path: `/v1/projects/${ref}/network-bans/retrieve` },
-              { method: "DELETE", path: `/v1/projects/${ref}/network-bans` },
-            ]);
-            assertDbConfigDrift(requests, { linked: true, "project-ref": ref });
-          }),
-        ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            globalThis.fetch = previousFetch;
-          }),
-        ),
-        Effect.scoped,
-        Effect.provide(BunServices.layer),
-      );
-    },
-  );
-
-  it.effect(
     "the plain --linked path (no --project-ref) keeps the IPv6 error when no pooler URL is saved",
     () => {
       const ref = "plainlinkedrefabcdef";
@@ -1595,7 +1415,9 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
         );
         yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
         yield* fs.writeFileString(path.join(dir, "supabase", ".temp", "project-ref"), ref);
-        return yield* resolve(dir, linkedFlags, { projectHost: "invalid" });
+        return yield* resolveConnection(dir, inputFor(linkedTarget(ref)), {
+          projectHost: "invalid",
+        });
       }).pipe(
         Effect.exit,
         Effect.tap((exit) =>
@@ -1645,7 +1467,7 @@ describe("dbConfigResolver (Management API calls)", () => {
     return Effect.gen(function* () {
       yield* stubManagementApi(requests, () => undefined);
       const dir = yield* withWorkdir();
-      const r = yield* resolve(dir, localFlags);
+      const r = yield* resolveConnection(dir, inputFor(localTarget));
       expect(r.isLocal).toBe(true);
       noApiCalls(requests, { local: true });
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
@@ -1656,7 +1478,10 @@ describe("dbConfigResolver (Management API calls)", () => {
     return Effect.gen(function* () {
       yield* stubManagementApi(requests, () => undefined);
       const dir = yield* withWorkdir();
-      const r = yield* resolve(dir, dbUrlFlags("postgres://alice:secret@example.com:6543/appdb"));
+      const r = yield* resolveConnection(
+        dir,
+        inputFor(dbUrlTarget("postgres://alice:secret@example.com:6543/appdb")),
+      );
       expect(r.isLocal).toBe(false);
       noApiCalls(requests, { "db-url": true });
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
@@ -1674,9 +1499,9 @@ describe("dbConfigResolver (Management API calls)", () => {
             : undefined,
         );
         const dir = yield* withWorkdir();
-        return yield* resolve(
+        return yield* resolveConnection(
           dir,
-          { ...linkedFlags, linkedProjectRef: Option.some(ref) },
+          inputFor(explicitRefTarget(ref, { matchesLinkedRef: false })),
           {
             projectHost: "invalid",
             dbConnection: noDirectConnect,
@@ -1706,40 +1531,6 @@ describe("dbConfigResolver (Management API calls)", () => {
     },
   );
 
-  it.effect("an empty --project-ref still fetches the pooler config for the linked project", () => {
-    const ref = "emptyprojectrefabcde";
-    const requests: Array<{ readonly method: string; readonly path: string }> = [];
-    return Effect.gen(function* () {
-      yield* stubManagementApi(requests, (method, path) =>
-        method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`
-          ? Response.json(primaryPoolerConfigs(ref))
-          : undefined,
-      );
-      const dir = yield* withWorkdir();
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
-      yield* fs.writeFileString(path.join(dir, "supabase", ".temp", "project-ref"), ref);
-      const r = yield* resolve(
-        dir,
-        { ...linkedFlags, linkedProjectRef: Option.some("") },
-        {
-          projectHost: "invalid",
-          dbConnection: noDirectConnect,
-          configEnv: {
-            SUPABASE_ACCESS_TOKEN: VALID_TOKEN,
-            SUPABASE_DB_PASSWORD: "ambient-password",
-          },
-        },
-      );
-      expect(r.conn).toMatchObject({ host: "aws-0-us-east-1.pooler.supabase.com", port: 5432 });
-      expect(requests).toEqual([
-        { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
-      ]);
-      assertDbConfigDrift(requests, { linked: true, "project-ref": "" });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
-  });
-
   it.effect("an empty --password still mints a login role", () => {
     const ref = "emptypasswordrefabcd";
     const requests: Array<{ readonly method: string; readonly path: string }> = [];
@@ -1765,9 +1556,11 @@ describe("dbConfigResolver (Management API calls)", () => {
         return undefined;
       });
       const dir = yield* withWorkdir();
-      const r = yield* resolve(
+      const r = yield* resolveConnection(
         dir,
-        { ...linkedFlags, linkedProjectRef: Option.some(ref), password: Option.some("") },
+        inputFor(explicitRefTarget(ref, { matchesLinkedRef: false }), {
+          password: Option.some(""),
+        }),
         {
           projectHost: "invalid",
           dbConnection: Layer.succeed(DbConnection, { connect: () => Effect.succeed(session) }),
@@ -1841,9 +1634,11 @@ describe("dbConfigResolver (Management API calls)", () => {
             http: () => Effect.void,
           });
           const dir = yield* withWorkdir();
-          const resolved = yield* resolve(
+          const resolved = yield* resolveConnection(
             dir,
-            { ...linkedFlags, linkedProjectRef: Option.some(ref) },
+            inputFor(explicitRefTarget(ref, { matchesLinkedRef: false }), {
+              networkBanRemoval: yield* approval,
+            }),
             {
               projectHost: "invalid",
               dbConnection,
@@ -1911,11 +1706,10 @@ describe("dbConfigResolver (container pooler fallback)", () => {
         return undefined;
       });
       const dir = yield* withWorkdir();
-      const pooler = yield* resolvePoolerFallback(
-        dir,
-        { ...linkedFlags, linkedProjectRef: Option.some(ref) },
-        { dbConnection: connects, configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN } },
-      );
+      const pooler = yield* resolvePoolerFallback(dir, inputFor(explicitRefTarget(ref)), {
+        dbConnection: connects,
+        configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+      });
       expect(Option.isSome(pooler)).toBe(true);
       if (Option.isSome(pooler)) {
         expect(pooler.value).toMatchObject({
@@ -1943,7 +1737,7 @@ describe("dbConfigResolver (container pooler fallback)", () => {
       const dir = yield* withWorkdir();
       const pooler = yield* resolvePoolerFallback(
         dir,
-        { ...linkedFlags, linkedProjectRef: Option.some(ref), password: Option.some("secret") },
+        inputFor(explicitRefTarget(ref), { password: Option.some("secret") }),
         { dbConnection: connects, configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN } },
       );
       expect(pooler).toEqual(
@@ -1963,11 +1757,10 @@ describe("dbConfigResolver (container pooler fallback)", () => {
           : undefined,
       );
       const dir = yield* withWorkdir();
-      const pooler = yield* resolvePoolerFallback(
-        dir,
-        { ...linkedFlags, linkedProjectRef: Option.some(ref) },
-        { dbConnection: connects, configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN } },
-      );
+      const pooler = yield* resolvePoolerFallback(dir, inputFor(explicitRefTarget(ref)), {
+        dbConnection: connects,
+        configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+      });
       expect(Option.isNone(pooler)).toBe(true);
       expect(requests).toEqual([{ method: "GET", path: poolerPath }]);
       assertFallbackDrift(requests, { linked: true });
@@ -1979,7 +1772,7 @@ describe("dbConfigResolver (container pooler fallback)", () => {
     return Effect.gen(function* () {
       yield* stubManagementApi(requests, () => undefined);
       const dir = yield* withWorkdir();
-      const pooler = yield* resolvePoolerFallback(dir, localFlags);
+      const pooler = yield* resolvePoolerFallback(dir, inputFor(localTarget));
       expect(Option.isNone(pooler)).toBe(true);
       expect(requests).toEqual([]);
       assertFallbackDrift(requests, { local: true });
@@ -1988,46 +1781,6 @@ describe("dbConfigResolver (container pooler fallback)", () => {
 });
 
 describe("dbConfigResolver.resolveConnection", () => {
-  const approval = hostedMutationPreapproval.pipe(
-    Effect.provide(
-      Layer.mergeAll(Layer.succeed(YesFlag, true), Layer.succeed(CliArgs, { args: [] })),
-    ),
-  );
-  const inputFor = (
-    target: ResolvedTarget,
-    overrides: Partial<DbConnectionInput> = {},
-  ): DbConnectionInput => ({
-    target,
-    dnsResolver: "native",
-    password: Option.none(),
-    networkBanRemoval: Option.none(),
-    ...overrides,
-  });
-  const resolveConnection = (
-    workdir: string,
-    input: DbConnectionInput,
-    opts?: Parameters<typeof buildResolver>[1],
-  ) =>
-    Effect.gen(function* () {
-      const resolver = yield* DbConfigResolver;
-      return yield* resolver.resolveConnection(input);
-    }).pipe(
-      Effect.provide(buildResolver(workdir, opts)),
-      Effect.provideServiceEffect(
-        ConfigProvider.ConfigProvider,
-        pinnedConfigProvider(explicitEnv(opts?.configEnv)),
-      ),
-    );
-  const linkedTarget = (
-    ref: string,
-    overrides: Partial<Extract<ResolvedTarget, { readonly kind: "linked" }>> = {},
-  ): ResolvedTarget => ({
-    kind: "linked",
-    ref,
-    source: "file",
-    matchesLinkedRef: true,
-    ...overrides,
-  });
   const failureText = (exit: Exit.Exit<unknown, unknown>) =>
     Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "";
   const session: DbSession = {

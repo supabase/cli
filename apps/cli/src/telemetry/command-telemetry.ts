@@ -177,8 +177,7 @@ function extractChangedFlagNames(
     }
 
     // End-of-options sentinel: parsing stops at a bare `--`, so everything after it
-    // is positional (e.g. `test db -- --linked` makes `--linked` a path arg, not a flag). Mirrors
-    // `resolveDbTargetFlags`'s `--` handling.
+    // is positional (e.g. `test db -- --linked` makes `--linked` a path arg, not a flag).
     if (arg === "--") break;
 
     if (arg.startsWith("--")) {

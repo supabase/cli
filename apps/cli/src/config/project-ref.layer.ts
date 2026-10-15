@@ -158,25 +158,9 @@ export const projectRefLayer = Layer.effect(
           if (Option.isSome(cliSettings.projectId)) {
             return cliSettings.projectId;
           }
-          // A ref-file read error degrades to "not linked" here, unlike `resolve`/
-          // `loadProjectRef`, since `projects list` only uses the value as a display marker.
+          // A ref-file read error degrades to "not linked" here, unlike `resolve`,
+          // since `projects list` only uses the value as a display marker.
           return yield* readRefFile.pipe(Effect.orElseSucceed(() => Option.none<string>()));
-        }),
-      loadProjectRef: (flagValue) =>
-        Effect.gen(function* () {
-          if (Option.isSome(flagValue) && flagValue.value.length > 0) {
-            return yield* assertValid(flagValue.value);
-          }
-          if (Option.isSome(cliSettings.projectId)) {
-            return yield* assertValid(cliSettings.projectId.value);
-          }
-          const fileValue = yield* readRefFile;
-          if (Option.isSome(fileValue)) {
-            return yield* assertValid(fileValue.value);
-          }
-          return yield* Effect.fail(
-            new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
-          );
         }),
       promptProjectRef: promptForProjectRef,
     });

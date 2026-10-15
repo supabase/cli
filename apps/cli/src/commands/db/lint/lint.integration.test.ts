@@ -80,7 +80,6 @@ function checkRow(proname: string, issues: ReadonlyArray<Record<string, unknown>
 function mockResolver(opts: { isLocal?: boolean } = {}) {
   let resolveInput: DbConnectionInput | undefined;
   const layer = Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.die("resolve is not used by this test"),
     resolveConnection: (input: DbConnectionInput) => {
       resolveInput = input;
       return Effect.succeed({
@@ -191,7 +190,6 @@ function mockProjectRef() {
         };
       }),
     resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
-    loadProjectRef: () => Effect.die("loadProjectRef is not used by this test"),
     promptProjectRef: () => Effect.succeed(VALID_REF),
   });
   return {

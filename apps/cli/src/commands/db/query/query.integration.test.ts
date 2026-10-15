@@ -102,7 +102,6 @@ const failMessage = (exit: Exit.Exit<unknown, { readonly message: string }>): st
 
 function mockResolver(isLocal: boolean | undefined, resolveFails = false) {
   return Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.die("resolve is not used by this test"),
     resolveConnection: (input: DbConnectionInput) =>
       resolveFails
         ? Effect.fail(
@@ -223,7 +222,6 @@ function mockProjectRef(unlinked = false, refReadFails = false) {
     resolveForLink: () => Effect.succeed(REF),
     resolveRef,
     resolveOptional: () => Effect.succeed(unlinked ? Option.none() : Option.some(REF)),
-    loadProjectRef: () => Effect.die("loadProjectRef is not used by this test"),
     promptProjectRef: () => Effect.succeed(REF),
   });
 }

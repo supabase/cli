@@ -108,7 +108,6 @@ function lintRow(over: Partial<Record<string, unknown>> = {}) {
 function mockResolver(opts: { ipv6Error?: boolean } = {}) {
   const resolveInputs: Array<DbConnectionInput> = [];
   const layer = Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.die("resolve is not used by this test"),
     resolveConnection: (input: DbConnectionInput) =>
       Effect.gen(function* () {
         resolveInputs.push(input);
@@ -194,7 +193,6 @@ function mockProjectRef() {
         };
       }),
     resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
-    loadProjectRef: () => Effect.die("loadProjectRef is not used by this test"),
     promptProjectRef: () => Effect.succeed(VALID_REF),
   });
   return {

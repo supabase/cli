@@ -242,7 +242,6 @@ function testProjectRefLayer(linked: boolean) {
       ),
     resolveForLink: resolve,
     resolveOptional: (flag) => Effect.succeed(optional(flag)),
-    loadProjectRef: resolve,
     promptProjectRef: () => resolve(Option.none()),
   });
 }

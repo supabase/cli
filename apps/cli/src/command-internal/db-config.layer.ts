@@ -9,7 +9,6 @@ import { CliConfigKeys } from "../config/cli-config-keys.ts";
 import { CliConfigValues, type ResolvedCliConfig } from "../config/cli-config-values.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { projectRefPicker } from "../config/project-ref.layer.ts";
-import { ProjectRefResolver, PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
@@ -39,8 +38,7 @@ import {
 } from "./db-config.parse.ts";
 import { DbConfigResolver, type DbConfigError } from "./db-config.service.ts";
 import { loadProjectEnvValues, readDbToml } from "./db-config.toml-read.ts";
-import type { DbConfigFlags, DbConnectionInput } from "./db-config.types.ts";
-import { rejectPasswordWithDirectTarget } from "./db-target-flags.ts";
+import type { DbConnectionInput } from "./db-config.types.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { getHostname } from "./hostname.ts";
 import { mapHttpError } from "./http-errors.ts";
@@ -49,7 +47,7 @@ import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { stackLocalDatabaseConn } from "./stack-local-database.ts";
 import { block, type OperationEntry } from "./command-permissions/model.ts";
 import { renderDbUrlTarget, renderLocalTarget } from "./target/target-identity.ts";
-import { TargetPasswordConflictError } from "./target/target.errors.ts";
+import { rejectTargetPassword } from "./target/target-password.ts";
 
 const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
   {
@@ -65,13 +63,6 @@ const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
     when: [{ flag: "project-ref" }],
     context:
       "the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
-  },
-  {
-    operationId: "v1-get-pooler-config",
-    kind: "required",
-    when: [{ flag: "project-ref", oneOf: [""] }],
-    context:
-      "an empty --project-ref falls back to the linked project but still allows the pooler fetch, when the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
   },
   {
     operationId: "v1-list-all-network-bans",
@@ -92,16 +83,14 @@ const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
 
 /**
  * The same calls as {@link dbConfig} without its target condition, for a command that reaches the
- * linked path some other way: `db diff --from linked`, a `--linked` flag with no default target, or
- * a target prompt.
+ * linked path some other way, such as `db diff --from linked`.
  */
 export const dbConfigLinked = block("db-config", linkedEntries);
 
 /**
  * `DbConfigResolver` on the linked path; `--local` and `--db-url` make no API calls. Commands
  * include it with `withDbTarget`. The container retry that `db dump` and `db pull` run is
- * {@link dbConfigPoolerFallback}; `gen types --project-id` fetches the
- * pooler config without `--project-ref`, so that command declares its own entry.
+ * {@link dbConfigPoolerFallback}.
  */
 export const dbConfig = block(
   "db-config",
@@ -237,7 +226,7 @@ const listAndUnban = Effect.fnUntraced(function* (ref: string, removeBans: boole
     return yield* new Errors.LinkedDbNetworkBannedError({
       message: `Network bans (${addrs.join(", ")}) may be blocking the connection, and removing them needs approval.`,
       suggestion:
-        "Re-run with --yes to remove the bans, or run supabase network-bans remove --db-unban-ip <ip> first.",
+        "Re-run with --yes to remove the bans, or run supabase network-bans remove --db-unban-ip <ip> --experimental --yes first.",
     });
   }
   yield* api.v1
@@ -330,32 +319,6 @@ const describePasswordOrigin = (origin: CliConfigKeyOrigin): string => {
   }
 };
 
-/**
- * A `--password` the caller bound on {@link DbConfigFlags} is passed to
- * {@link resolveLinkedPassword} as the caller's password, so it wins over `SUPABASE_DB_PASSWORD` and
- * the project `.env` just like the flag tier does, and no login role is minted for it. An
- * explicitly empty `--password` asks for a temporary login role even when the env holds one; the
- * flag binding drops empty strings, so this is the only way that request reaches the resolver.
- */
-const passwordFlag = (password: Option.Option<string> | undefined): Option.Option<string> =>
-  password ?? Option.none();
-
-const rejectTargetPassword = (
-  target: "local" | "db-url",
-  password: Option.Option<string>,
-): Effect.Effect<void, TargetPasswordConflictError> =>
-  Option.isNone(Option.filter(password, (value) => value.length > 0))
-    ? Effect.void
-    : Effect.fail(
-        new TargetPasswordConflictError({
-          target,
-          message:
-            target === "db-url"
-              ? "--password can't be used with --db-url. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres"
-              : "--password only applies to a linked project. The local database uses [db].password from supabase/config.toml.",
-        }),
-      );
-
 const loadFailureToDbConfigError = <E extends { readonly _tag: string; readonly message: string }>(
   error: E,
 ) =>
@@ -429,7 +392,7 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   // no `.temp/pooler-url` is saved; the resolve-time IPv6 path uses the saved URL only and
   // errors otherwise, so this defaults off.
   fetchFromApi = false,
-  // For an ad-hoc `--project-id` ref the saved `.temp/pooler-url` belongs to the
+  // For an ad-hoc `--project-ref` the saved `.temp/pooler-url` belongs to the
   // (possibly different) linked workdir, so ignore it and resolve the pooler for
   // `ref` from the Management API instead.
   ignoreSavedUrl = false,
@@ -439,9 +402,9 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   // Linked-path read: merge the `[remotes.<ref>]` override, so this matches the ref-aware read
-  // on the main linked branch rather than validating base config. For an ad-hoc `--project-id`
-  // ref, skip the saved workdir pooler URL because it belongs to the linked project, not
-  // necessarily the explicit ref.
+  // on the main linked branch rather than validating base config. For an ad-hoc `--project-ref`,
+  // skip the saved workdir pooler URL because it belongs to the linked project, not necessarily
+  // the explicit ref.
   const tomlValues = yield* readDbToml(fs, path, workdir, ref, {
     resolveVaultSecrets,
   });
@@ -510,12 +473,10 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     readonly resolveVaultSecrets?: boolean;
     /**
      * Requests the Management API pooler-config fetch on an IPv4-only network
-     * independent of `adHocProjectRef`'s saved-URL semantics — see
-     * `DbConfigFlags.linkedProjectRef`'s doc comment. Set when the caller
-     * supplied an explicit ref (`--project-ref`/`--project-id`) rather than
-     * falling back to `.temp/project-ref`, so an unlinked or mismatched-tenant
-     * workdir still reaches the primary pooler config instead of dead-ending in
-     * the "run supabase link" IPv6 error.
+     * independent of `adHocProjectRef`'s saved-URL semantics. Set when the caller
+     * supplied an explicit `--project-ref` rather than falling back to
+     * `.temp/project-ref`, so an unlinked or mismatched-tenant workdir still reaches
+     * the primary pooler config instead of dead-ending in the "run supabase link" IPv6 error.
      */
     readonly fetchPoolerFromApi?: boolean;
     /** Whether the calling command binds `--password`, so the withheld-password notice can name it. */
@@ -548,8 +509,8 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     return yield* initLoginRole(ref, base);
   }
 
-  // Direct host unreachable (IPv6-only network) → try the pooler. For an ad-hoc `--project-id`
-  // ref the command already holds a Management API token, so fall back to the API pooler config
+  // Direct host unreachable (IPv6-only network) → try the pooler. For an ad-hoc `--project-ref`
+  // the command already holds a Management API token, so fall back to the API pooler config
   // (and ignore the workdir's saved pooler URL) rather than failing with the IPv6 suggestion. An
   // explicit `--project-ref` on a non-ad-hoc `db` command keeps `ignoreSavedUrl` at the
   // saved-URL-first default (the tenant-mismatch check in `poolerConfigFrom` still rejects a
@@ -594,7 +555,7 @@ export const dbConfigResolverLayer = Layer.effect(
     // `resolveLinkedConn`/`resolvePoolerConn` (etc.) are standalone functions that yield their
     // own `FileSystem`/`Path`/`DebugLogger`/`Output`/`DbConnection` (so bootstrap can call them
     // directly from its own ambient context). Calling them from here would otherwise leak those
-    // services into `resolve`/`resolvePoolerFallback`'s R (the interface promises `never`), so
+    // services into `resolveConnection`/`resolvePoolerFallback`'s R (the interface promises `never`), so
     // every call site below re-closes the gap by additionally providing this layer of
     // already-resolved values alongside `linkedDbResolverRuntimeLayer`.
     const localAmbientServices = Layer.mergeAll(
@@ -615,7 +576,7 @@ export const dbConfigResolverLayer = Layer.effect(
     };
 
     // Capture the ambient services the Management API stack needs, so the
-    // lazily-built linked stack is fully self-provided and `resolve`'s R stays
+    // lazily-built linked stack is fully self-provided and `resolveConnection`'s R stays
     // `never` (handler tests can mock this resolver without wiring the whole
     // management runtime). None of these resolves an access token — only the
     // platform API layer does, and that is built only on the `--linked` branch.
@@ -629,7 +590,7 @@ export const dbConfigResolverLayer = Layer.effect(
       Layer.succeed(DebugFlag, yield* DebugFlag),
       // `linkedDbResolverRuntimeLayer`'s platform-API factory provides a DoH fetch layer that
       // reads `DnsResolverFlag`; snapshot it so the lazily built linked stack stays fully
-      // self-provided (`resolve`'s R stays `never`).
+      // self-provided (`resolveConnection`'s R stays `never`).
       Layer.succeed(DnsResolverFlag, yield* DnsResolverFlag),
       Layer.succeed(RuntimeInfo, yield* RuntimeInfo),
       Layer.succeed(Analytics, yield* Analytics),
@@ -652,13 +613,13 @@ export const dbConfigResolverLayer = Layer.effect(
     // Compile-time guard: if `linkedDbResolverRuntimeLayer`'s requirements ever
     // grow a service not captured above, this assignment fails to type-check (the
     // lazy `Effect.provide` in the `--linked` branch would otherwise leak that
-    // service into `resolve`'s R and only surface as a runtime panic). Mirrors the
+    // service into `resolveConnection`'s R and only surface as a runtime panic). Mirrors the
     // `_serviceCoverageCheck` pattern in `management-api-runtime.layer.ts`.
     const _ambientCoverageCheck: Layer.Layer<LinkedDbResolverRuntimeRequirements, never, never> =
       ambientLayer;
     void _ambientCoverageCheck;
 
-    // `resolve`'s R is `never`, so capture StackApi at layer build.
+    // `resolveConnection`'s R is `never`, so capture StackApi at layer build.
     const stackDatabaseConn = stackLocalDatabaseConn.pipe(
       Effect.provideService(CommandSettings, cliSettings),
       Effect.provideService(StackApi, stackApi),
@@ -802,56 +763,6 @@ export const dbConfigResolverLayer = Layer.effect(
         ),
       );
 
-    const resolve = (flags: DbConfigFlags) =>
-      Effect.gen(function* () {
-        yield* rejectPasswordWithDirectTarget(flags.connType, flags.password);
-        const resolveVaultSecrets = flags.resolveVaultSecrets ?? true;
-        // Config is read per branch, not unconditionally up front: the linked branch resolves
-        // the ref first and reads the `[remotes.<ref>]`-merged config. A base read here would
-        // validate base config (db.major_version, deno_version, …) before the ref is known,
-        // failing a linked run that should succeed once the ref is known. Only
-        // `--db-url`/`--local` read base config, since neither merges a remote block.
-        const localHost = yield* resolveLocalHost;
-
-        // --db-url (direct) takes precedence.
-        if (flags.connType === "db-url" && Option.isSome(flags.dbUrl)) {
-          return yield* resolveDbUrl(flags.dbUrl.value, localHost, resolveVaultSecrets);
-        }
-
-        if (flags.connType === "linked") {
-          const linked = yield* withLinkedRuntime(
-            Effect.gen(function* () {
-              const projectRef = yield* ProjectRefResolver;
-              // Load-or-fail with no prompt: use `loadProjectRef` (not the soft
-              // `resolveOptional`, which swallows a read error to `None`) — an unlinked workdir
-              // fails with a not-linked error, a bad ref with the invalid-ref error, and an
-              // unreadable ref file surfaces the filesystem problem, for every caller of this
-              // resolver (`test db --linked`, dump, declarative).
-              const ref = yield* projectRef.loadProjectRef(flags.linkedProjectRef ?? Option.none());
-              const conn = yield* resolveLinkedConnection(ref, {
-                dnsResolver: flags.dnsResolver,
-                password: passwordFlag(flags.password),
-                resolveVaultSecrets,
-                adHocProjectRef: flags.adHocProjectRef ?? false,
-                // An explicit ref (the eight `db` commands' `--project-ref`, or
-                // `gen types --project-id`) independently unlocks the Management API
-                // pooler fetch, regardless of `adHocProjectRef`'s saved-URL semantics
-                // — see `DbConfigFlags.linkedProjectRef`'s doc comment.
-                fetchPoolerFromApi: Option.isSome(flags.linkedProjectRef ?? Option.none()),
-                hasPasswordFlag: flags.password !== undefined,
-                removeNetworkBans: true,
-              });
-              return { conn, ref };
-            }),
-          );
-          // Surface the resolved ref so the caller can re-read config with a matching
-          // `[remotes.<ref>]` override applied (merged into the linked config).
-          return { conn: linked.conn, isLocal: false, ref: Option.some(linked.ref) };
-        }
-
-        return yield* resolveLocalStack(localHost, resolveVaultSecrets);
-      });
-
     const resolveConnection = (input: DbConnectionInput) =>
       Effect.gen(function* () {
         const { target } = input;
@@ -890,37 +801,31 @@ export const dbConfigResolverLayer = Layer.effect(
 
     // When a linked dump's pg_dump container fails with an IPv6 connectivity error (the direct
     // host is reachable from the CLI process but not from inside Docker), it resolves the
-    // project's IPv4 transaction pooler and retries once. This exposes that pooler resolution
-    // for the dump handler to invoke on demand. Returns `None` when the path is not
-    // pooler-eligible (`--linked` only) or no pooler URL is configured, so the caller keeps the
-    // original container error.
-    const resolvePoolerFallback = (flags: DbConfigFlags) =>
+    // project's IPv4 transaction pooler and retries once. Returns `None` for a local or `--db-url`
+    // target or when no pooler URL is configured, so the caller keeps the original container error.
+    const resolvePoolerFallback = (input: DbConnectionInput) =>
       Effect.gen(function* () {
-        if (flags.connType !== "linked") return Option.none<PgConnInput>();
+        const { target } = input;
+        if (target.kind !== "linked") return Option.none<PgConnInput>();
         return yield* Effect.gen(function* () {
-          const projectRef = yield* ProjectRefResolver;
-          const refOpt = yield* projectRef.resolveOptional(flags.linkedProjectRef ?? Option.none());
-          if (Option.isNone(refOpt)) return Option.none<PgConnInput>();
-          const ref = refOpt.value;
-          if (!PROJECT_REF_PATTERN.test(ref)) return Option.none<PgConnInput>();
-          const adHocProjectRef = flags.adHocProjectRef ?? false;
           const password = yield* resolveLinkedPassword(
-            ref,
+            target.ref,
             cliSettings.workdir,
-            passwordFlag(flags.password),
-            flags.password !== undefined,
+            input.password,
+            input.hasPasswordFlag ?? false,
           );
           // Container-fallback: fetch the primary pooler config from the Management API when
           // no `.temp/pooler-url` is saved.
           return yield* resolvePoolerConn(
-            ref,
+            target.ref,
             cliSettings.workdir,
             cliSettings.poolerHost,
-            flags.dnsResolver,
+            input.dnsResolver,
             password,
             true,
-            adHocProjectRef,
-            flags.resolveVaultSecrets ?? true,
+            !target.matchesLinkedRef,
+            input.resolveVaultSecrets ?? true,
+            Option.isSome(input.networkBanRemoval),
           );
         }).pipe(
           Effect.provide(
@@ -939,15 +844,6 @@ export const dbConfigResolverLayer = Layer.effect(
       suggestionContext,
     });
     return DbConfigResolver.of({
-      resolve: (flags) =>
-        resolve(flags).pipe(
-          Effect.provideService(CliConfigValues, configValues),
-          Effect.tap((r) => Effect.annotateCurrentSpan("db.is_local", r.isLocal)),
-          Effect.map((r) => ({ ...r, conn: withSuggestion(r.conn) })),
-          Effect.withSpan("DbConfig.resolve", {
-            attributes: { "db.conn_type": flags.connType ?? "local" },
-          }),
-        ),
       resolveConnection: (input) =>
         resolveConnection(input).pipe(
           Effect.provideService(CliConfigValues, configValues),
@@ -957,15 +853,15 @@ export const dbConfigResolverLayer = Layer.effect(
             attributes: { "db.conn_type": input.target.kind },
           }),
         ),
-      resolvePoolerFallback: (flags) =>
-        resolvePoolerFallback(flags).pipe(
+      resolvePoolerFallback: (input) =>
+        resolvePoolerFallback(input).pipe(
           Effect.provideService(CliConfigValues, configValues),
           Effect.tap((pooler) =>
             Effect.annotateCurrentSpan("db.pooler.found", Option.isSome(pooler)),
           ),
           Effect.map(Option.map(withSuggestion)),
           Effect.withSpan("DbConfig.resolvePoolerFallback", {
-            attributes: { "db.conn_type": flags.connType ?? "local" },
+            attributes: { "db.conn_type": input.target.kind },
           }),
         ),
     });

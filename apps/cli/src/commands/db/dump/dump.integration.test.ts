@@ -75,7 +75,6 @@ import {
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type {
-  DbConfigFlags,
   DbConnectionInput,
   ResolvedDbConnection,
 } from "../../../command-internal/db-config.types.ts";
@@ -246,9 +245,8 @@ function mockResolver(opts: {
   ref?: string;
 }) {
   const calls: DbConnectionInput[] = [];
-  const fallbackCalls: DbConfigFlags[] = [];
+  const fallbackCalls: DbConnectionInput[] = [];
   const layer = Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.die("resolve is not used by this test"),
     resolveConnection: (input: DbConnectionInput) => {
       calls.push(input);
       // Simulates connection resolution failing (IPv6 probe/pooler/temp login-role)
@@ -265,8 +263,8 @@ function mockResolver(opts: {
         target: input.target,
       } satisfies ResolvedDbConnection);
     },
-    resolvePoolerFallback: (flags) => {
-      fallbackCalls.push(flags);
+    resolvePoolerFallback: (input) => {
+      fallbackCalls.push(input);
       return opts.poolerFallbackFails === true
         ? Effect.fail(new DbConfigConnectTempRoleError({ message: "failed to create temp role" }))
         : Effect.succeed(opts.poolerFallback ?? Option.none());
@@ -316,7 +314,6 @@ function mockProjectRefResolver(opts: {
           });
     },
     resolveOptional: () => Effect.succeed(Option.some(opts.ref ?? VALID_REF)),
-    loadProjectRef: () => Effect.die("loadProjectRef is not used by this test"),
     promptProjectRef: () => Effect.succeed(opts.ref ?? VALID_REF),
   });
   return { layer };
@@ -1099,10 +1096,7 @@ describe("db dump integration", () => {
       yield* dbDump(flags({ linked: true }));
       expect(docker.allOpts).toHaveLength(2);
       expect(resolver.fallbackCalls).toHaveLength(1);
-      expect(resolver.fallbackCalls[0]).toMatchObject({
-        connType: "linked",
-        linkedProjectRef: Option.some(VALID_REF),
-      });
+      expect(resolver.fallbackCalls[0]?.target).toMatchObject({ kind: "linked", ref: VALID_REF });
       expect(docker.allOpts[1]?.env["PGHOST"]).toBe(POOLER_CONN.host);
       expect(out.stderrText).toContain("does not support IPv6");
       expect(out.stderrText).toContain("Retrying via the IPv4 connection pooler.");

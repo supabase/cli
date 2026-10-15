@@ -53,7 +53,6 @@ function setup() {
     Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
     configValuesLayer(),
     Layer.succeed(DbConfigResolver, {
-      resolve: () => Effect.die("resolve is not used by this test"),
       resolveConnection: (input: DbConnectionInput) =>
         Effect.succeed({ conn: LOCAL_CONN, isLocal: true, target: input.target }),
       resolvePoolerFallback: () => Effect.succeed(Option.none()),

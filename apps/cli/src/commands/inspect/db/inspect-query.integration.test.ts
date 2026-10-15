@@ -103,7 +103,6 @@ const LOCKS_ROW = {
 function mockResolver(opts: { conn?: PgConnInput; isLocal?: boolean; fails?: boolean }) {
   let connectionInput: DbConnectionInput | undefined;
   const layer = Layer.succeed(DbConfigResolver, {
-    resolve: () => Effect.die("resolve is not used by this test"),
     resolveConnection: (input: DbConnectionInput) => {
       connectionInput = input;
       if (opts.fails === true) {

@@ -21,12 +21,6 @@ const VARIANTS: ReadonlyArray<{ readonly name: string; readonly variant: Permiss
   },
 ];
 
-/** Leaves whose flags have not yet moved to the shared target flags. */
-const FLAG_MIGRATION_PENDING: ReadonlySet<string> = new Set([
-  "gen types",
-  "db schema declarative generate",
-]);
-
 /** Non-GET operations a leaf may call without hosted-mutation consent, with the reason. */
 const CONSENT_FREE_OPERATIONS: ReadonlyMap<string, string> = new Map([
   [
@@ -77,7 +71,6 @@ const leavesByVariant = VARIANTS.map(({ name, variant }) => {
   const leaves = [...tree].filter(([, node]) => node.isLeaf);
   return {
     name,
-    leafPaths: new Set(leaves.map(([path]) => path)),
     withPolicy: leaves.flatMap(([path, node]): ReadonlyArray<Leaf> => {
       const policy = readTargetPolicy(node.command);
       return Option.isSome(policy) ? [{ path, node, policy: policy.value }] : [];
@@ -87,8 +80,6 @@ const leavesByVariant = VARIANTS.map(({ name, variant }) => {
       .map(([path]) => path),
   };
 });
-
-const everyLeafPath = new Set(leavesByVariant.flatMap(({ leafPaths }) => [...leafPaths]));
 
 const lastWord = (path: string) => path.split(" ").at(-1) ?? path;
 
@@ -113,7 +104,6 @@ describe.each(leavesByVariant)(
     it("gives sync and selectable leaves local, linked and project-ref flags", () => {
       const offenders = withPolicy
         .filter(({ policy }) => policy.group === "sync" || policy.group === "selectable")
-        .filter(({ path }) => !FLAG_MIGRATION_PENDING.has(path))
         .flatMap(({ path, node }) =>
           (["local", "linked", "project-ref"] as const)
             .filter((flag) => !node.flags.has(flag))
@@ -170,11 +160,6 @@ describe.each(leavesByVariant)(
 );
 
 describe("target policy allowlists", () => {
-  it("name only real leaves", () => {
-    const stale = [...FLAG_MIGRATION_PENDING].filter((path) => !everyLeafPath.has(path));
-    expect(stale).toEqual([]);
-  });
-
   it("name only operations in the API spec", () => {
     const unknown = [...CONSENT_FREE_OPERATIONS.keys()].filter(
       (operationId) => !OPERATIONS.has(operationId),

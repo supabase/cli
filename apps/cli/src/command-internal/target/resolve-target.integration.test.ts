@@ -40,7 +40,6 @@ const projectRefResolver = (options: { readonly linked: boolean }) => {
     resolve: () => Effect.die("resolve is not used by resolveTarget"),
     resolveForLink: () => Effect.die("resolveForLink is not used by resolveTarget"),
     resolveOptional: () => Effect.die("resolveOptional is not used by resolveTarget"),
-    loadProjectRef: () => Effect.die("loadProjectRef is not used by resolveTarget"),
     promptProjectRef: () => Effect.die("promptProjectRef is not used by resolveTarget"),
   });
   return { layer, flags };

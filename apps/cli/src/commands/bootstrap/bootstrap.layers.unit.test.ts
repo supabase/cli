@@ -77,7 +77,6 @@ function ambientStubs() {
       resolveForLink: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveOptional: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
-      loadProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       promptProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
     }),
     Layer.succeed(TemplateService, {

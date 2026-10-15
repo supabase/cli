@@ -103,18 +103,18 @@ describe("--password with a direct database target", () => {
           const failure = yield* runCommand(entry, selector);
 
           expect(failure).toMatchObject({
-            _tag: "DbPasswordFlagsError",
+            _tag: "TargetPasswordConflictError",
             message:
               selector === "db-url"
                 ? "--password can't be used with --db-url. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres"
-                : "--password can't be used with --local. The local database uses [db].password from supabase/config.toml.",
+                : "--password only applies to a linked project. The local database uses [db].password from supabase/config.toml.",
           });
         }),
       );
     }
   }
 
-  it.effect("explains that migration squash defaults to local when --password has no target", () =>
+  it.effect("rejects migration squash --password when the workspace target is local", () =>
     Effect.gen(function* () {
       const entry = passwordCommands.find(
         (candidate) => candidate.path.join(" ") === "migration squash",
@@ -123,9 +123,9 @@ describe("--password with a direct database target", () => {
       const failure = yield* runCommand(entry!, "none");
 
       expect(failure).toMatchObject({
-        _tag: "DbPasswordFlagsError",
+        _tag: "TargetPasswordConflictError",
         message:
-          "migration squash targets the local database unless you pass --linked, and --password only applies to a linked project. Pass --linked, or drop --password.",
+          "--password only applies to a linked project. The local database uses [db].password from supabase/config.toml.",
       });
     }),
   );
