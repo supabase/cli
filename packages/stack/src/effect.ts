@@ -79,6 +79,16 @@ export { gatewayLog };
 export { StackError } from "./Rpc.ts";
 /** Atomically writes a file so readers only ever see the prior or the complete new content. */
 export { NamespaceError, publish } from "./StackNamespace.ts";
+export {
+  Lock,
+  LOCK_SCHEMA_URL,
+  LockInvalidError,
+  LockIoError,
+  LockUnsupportedVersionError,
+  lockSelection,
+  readLock,
+  writeLock,
+} from "./Lock.ts";
 export type { StackFailureKind } from "./FailureKind.ts";
 export type { ServiceCreation } from "./services/Catalog.ts";
 /** A service creation as `services.create` accepts it, before stack credentials fill its inputs. */
