@@ -32,8 +32,10 @@ const config = {
 export type MigrationListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const migrationListCommand = Command.make("list", config).pipe(
-  Command.withDescription("List local and remote migrations."),
-  Command.withShortDescription("List local and remote migrations"),
+  Command.withDescription(
+    "List local migration files and the migration history of the target database.",
+  ),
+  Command.withShortDescription("List local files and the target database's migration history"),
   withPermissions(
     withDbTarget(
       compose(
