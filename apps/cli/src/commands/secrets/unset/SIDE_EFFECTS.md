@@ -12,18 +12,19 @@
 
 ## Files Written
 
-| Path                                             | Format | When                                                         |
-| ------------------------------------------------ | ------ | ------------------------------------------------------------ |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
-| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command              |
+| Path                                           | Format | When                                                                                               |
+| ---------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | in `Effect.ensuring` after the ref resolves, on success and failure, only when the file is missing |
+| `~/.supabase/telemetry.json`                   | JSON   | always (in `Effect.ensuring`) at end of command                                                    |
 
 ## API Routes
 
-| Method   | Path                         | Auth         | Request body    | Response (used fields)                                     |
-| -------- | ---------------------------- | ------------ | --------------- | ---------------------------------------------------------- |
-| `GET`    | `/v1/projects/{ref}/secrets` | Bearer token | none            | `[{name}]` — `--all` path only, filters `SUPABASE_` prefix |
-| `DELETE` | `/v1/projects/{ref}/secrets` | Bearer token | `["NAME", ...]` | none (200 expected; not called with `--dry-run`)           |
-| `GET`    | `/v1/projects`               | Bearer token | none            | TTY-prompt fallback only                                   |
+| Method   | Path                         | Auth         | Request body    | Response (used fields)                                                                                                          |
+| -------- | ---------------------------- | ------------ | --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/v1/projects/{ref}/secrets` | Bearer token | none            | `[{name}]` — `--all` path only, filters `SUPABASE_` prefix                                                                      |
+| `DELETE` | `/v1/projects/{ref}/secrets` | Bearer token | `["NAME", ...]` | none (200 expected; not called with `--dry-run`)                                                                                |
+| `GET`    | `/v1/projects`               | Bearer token | none            | TTY-prompt fallback only                                                                                                        |
+| `GET`    | `/v1/projects/{ref}`         | Bearer token | none            | linked-project cache fill in `Effect.ensuring`, on success and failure, only when `linked-project.json` is missing; best-effort |
 
 ## Environment Variables
 
@@ -37,23 +38,23 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                 |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — secrets unset from the linked project                                                                                           |
-| `0`  | `--dry-run` — the secrets that would be unset were printed, no DELETE call                                                                |
-| `0`  | `--all` resolved to zero non-`SUPABASE_` secrets (no DELETE call; text writes the stderr no-op, machine formats an empty result)          |
-| `1`  | `SecretsNoArgumentsError` — no names and no `--all`; fails before the project ref resolves and before any API call                        |
-| `1`  | `SecretsUnsetInputError` — names given together with `--all`; fails before the project ref resolves and before any API call               |
-| `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                                                                                 |
-| `1`  | `InvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`                                                             |
-| `1`  | `ProjectRefNotLinkedError` — `--project-ref` unset, env/file empty, and stdin not a TTY                                                   |
-| `1`  | `InvalidProjectRefError` — resolved ref violates `^[a-z]{20}$`                                                                            |
-| `1`  | `SecretsUnsetConfirmationRequiredError` — no `--yes`/`SUPABASE_YES` and stdin is not a TTY or output is not interactive text; no API call |
-| `1`  | `SecretsListUnexpectedStatusError` — non-2xx response from GET (`--all` path)                                                             |
-| `1`  | `SecretsListNetworkError` — GET transport failure (`--all` path)                                                                          |
-| `1`  | `SecretsUnsetCancelledError` — user declined the confirmation prompt                                                                      |
-| `1`  | `SecretsUnsetUnexpectedStatusError` — non-2xx response from DELETE                                                                        |
-| `1`  | `SecretsUnsetNetworkError` — DELETE transport failure                                                                                     |
+| Code | Condition                                                                                                                                                                                      |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — secrets unset from the linked project                                                                                                                                                |
+| `0`  | `--dry-run` — the secrets that would be unset were printed, no DELETE call                                                                                                                     |
+| `0`  | `--all` resolved to zero non-`SUPABASE_` secrets (no DELETE call; text writes the stderr no-op, machine formats an empty result)                                                               |
+| `1`  | `SecretsNoArgumentsError` — no names and no `--all`; fails before the project ref resolves and before any API call                                                                             |
+| `1`  | `SecretsUnsetInputError` — names given together with `--all`; fails before the project ref resolves and before any API call                                                                    |
+| `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                                                                                                                                      |
+| `1`  | `InvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`                                                                                                                  |
+| `1`  | `ProjectRefNotLinkedError` — `--project-ref` unset, env/file empty, and stdin not a TTY                                                                                                        |
+| `1`  | `InvalidProjectRefError` — resolved ref violates `^[a-z]{20}$`                                                                                                                                 |
+| `1`  | `SecretsUnsetConfirmationRequiredError` — no `--yes`/`SUPABASE_YES` and stdin is not a TTY or output is not interactive text; no secrets request (the linked-project cache fill may still run) |
+| `1`  | `SecretsListUnexpectedStatusError` — non-2xx response from GET (`--all` path)                                                                                                                  |
+| `1`  | `SecretsListNetworkError` — GET transport failure (`--all` path)                                                                                                                               |
+| `1`  | `SecretsUnsetCancelledError` — user declined the confirmation prompt                                                                                                                           |
+| `1`  | `SecretsUnsetUnexpectedStatusError` — non-2xx response from DELETE                                                                                                                             |
+| `1`  | `SecretsUnsetNetworkError` — DELETE transport failure                                                                                                                                          |
 
 ## Telemetry Events Fired
 
@@ -94,6 +95,6 @@ One `result` NDJSON event on success containing `{project_ref, count, names, dry
 - Names and `--all` are mutually exclusive; with neither, the command fails. `--all` unsets every secret that does not have a `SUPABASE_` prefix.
 - Argument validation runs before the project ref resolves, so a usage error never opens the project picker and makes no API call.
 - The prompt defaults to No and names the project ref. `--yes` (or `SUPABASE_YES`) skips the prompt with a stderr label echo.
-- Without `--yes`, a run whose stdin is not a TTY, or whose output is not interactive text (`json`, `stream-json`), fails before any API call. Piped stdin answers are not read.
+- Without `--yes`, a run whose stdin is not a TTY, or whose output is not interactive text (`json`, `stream-json`), fails before any secrets request. Piped stdin answers are not read.
 - `--dry-run` never prompts, never calls DELETE, and works without `--yes` in every output mode. With `--all` it still calls GET to list the secrets.
 - Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers.
