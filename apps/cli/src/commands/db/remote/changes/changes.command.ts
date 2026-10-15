@@ -1,6 +1,7 @@
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { dbRemoteChanges } from "./changes.handler.ts";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {
   schema: Flag.String("schema").pipe(
@@ -28,5 +29,6 @@ export type DbRemoteChangesFlags = CliCommand.Command.Config.Infer<typeof config
 export const dbRemoteChangesCommand = Command.make("changes", config).pipe(
   Command.withDescription("Show changes on the remote database since last migration."),
   Command.withShortDescription("Show changes on the remote database"),
+  withPermissions({ status: "unmapped", reason: "go-delegated" }),
   Command.withHandler((flags) => dbRemoteChanges(flags)),
 );
