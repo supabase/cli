@@ -1,3 +1,4 @@
+import { legacyProjectStatePaths } from "../../../../command-internal/legacy-project-state.paths.ts";
 import {
   defaultRuntime,
   isOrioledbVersion,
@@ -824,7 +825,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     if (requested.some(({ service }) => service === "storage"))
       yield* fs
         .makeDirectory(
-          path.join(target.projectRoot, "supabase", ".temp", "stack-uploads", stack.id),
+          path.join(legacyProjectStatePaths(path, target.projectRoot).stackUploadsDir, stack.id),
           {
             recursive: true,
           },

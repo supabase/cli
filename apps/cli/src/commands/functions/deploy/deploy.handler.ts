@@ -27,9 +27,7 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
   const stdio = yield* Stdio.Stdio;
   const path = yield* Path.Path;
   const rawArgs = yield* stdio.args;
-  const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(
-    path.join(cliSettings.workdir, "supabase"),
-  );
+  const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(cliSettings.workdir);
   const resolvedProjectRef = yield* Ref.make(Option.none<string>());
 
   yield* deployFunctions(flags, {

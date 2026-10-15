@@ -1,3 +1,4 @@
+import { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
@@ -64,14 +65,16 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
   const telemetryState = yield* TelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const legacyState = yield* LegacyProjectState;
 
-  const projectRefPath = path.join(cliSettings.workdir, "supabase", ".temp", "project-ref");
   const linkedProjectRef = yield* Effect.gen(function* () {
     if (Option.isSome(cliSettings.projectId)) {
       return cliSettings.projectId;
     }
 
-    const exists = yield* fs.exists(projectRefPath).pipe(Effect.orElseSucceed(() => false));
+    const exists = yield* legacyState
+      .exists(cliSettings.workdir, "projectRef")
+      .pipe(Effect.orElseSucceed(() => false));
     if (!exists) {
       return Option.none<string>();
     }
@@ -79,7 +82,7 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
     // Warns on a ref-file read error, but treats a NotFound race between the
     // exists() check and this read as simply unlinked (silent, no warning).
     // Only the "failed to load project ref: " prefix is compatibility-bearing.
-    const content = yield* fs.readFileString(projectRefPath).pipe(
+    const content = yield* legacyState.read(cliSettings.workdir, "projectRef").pipe(
       Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed("")),
       Effect.catch((cause) =>
         output.raw(`failed to load project ref: ${String(cause)}\n`, "stderr").pipe(Effect.as("")),

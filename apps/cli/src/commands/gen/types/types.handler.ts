@@ -33,7 +33,7 @@ import {
 import { getHostname } from "../../../command-internal/hostname.ts";
 import type { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
-import { tempPaths } from "../../../command-internal/temp-paths.ts";
+import { LegacyProjectState } from "../../../command-internal/legacy-project-state.service.ts";
 import {
   missingProjectConfigMessageEffect,
   relativeConfigPath,
@@ -229,6 +229,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   const telemetryState = yield* TelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const legacyState = yield* LegacyProjectState;
   const stdio = yield* Stdio.Stdio;
   const dnsResolver = yield* DnsResolverFlag;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -617,13 +618,12 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         path.basename(cliSettings.workdir),
       );
 
-      const paths = tempPaths(path, cliSettings.workdir);
       // Only forces v9 compat from the rest-version file's image tag when the database's
       // major version is > 14, so older databases aren't forced into v9 mode.
       const restVersion =
         config.majorVersion > 14
-          ? (yield* fs
-              .readFileString(paths.restVersion)
+          ? (yield* legacyState
+              .read(cliSettings.workdir, "restVersion")
               .pipe(Effect.orElseSucceed(() => ""))).trim()
           : "";
       const forcedV9 = restVersion.length > 0 && restVersion.includes("v9");

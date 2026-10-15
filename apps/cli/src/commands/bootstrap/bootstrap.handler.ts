@@ -34,7 +34,7 @@ import {
 import { dbPushCore } from "../../command-internal/db-push-core.ts";
 import { linkServicesCore } from "../../command-internal/link-services-core.ts";
 import { projectCreateCore } from "../../command-internal/project-create-core.ts";
-import { tempPaths } from "../../command-internal/temp-paths.ts";
+import { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
 import { extractServiceKeys } from "../../command-internal/tenant-keys.ts";
 import { parseDotEnv } from "../../command-internal/dotenv.ts";
 import {
@@ -77,6 +77,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
   const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const legacyState = yield* LegacyProjectState;
   const templateService = yield* TemplateService;
   const api = yield* CommandPlatformApi;
   const linkedProjectCache = yield* LinkedProjectCache;
@@ -241,9 +242,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       skipPooler: false,
       workdir,
     });
-    const paths = tempPaths(path, workdir);
-    yield* fs.makeDirectory(path.dirname(paths.projectRef), { recursive: true });
-    yield* fs.writeFileString(paths.projectRef, projectRef);
+    yield* legacyState.write(workdir, "projectRef", projectRef);
 
     const healthNotify = yield* bootstrapRetryNotify;
     yield* Effect.gen(function* () {

@@ -1,3 +1,4 @@
+import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
 import { normalizeDeprecatedOrioleDBVersion } from "@supabase/config/internal";
 import { Config, Effect, Match, type FileSystem, Option, type Path } from "effect";
 import * as SmolToml from "smol-toml";
@@ -1260,9 +1261,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
 
   // Read the linked pooler URL from `.temp/pooler-url` and treat it as configured only
   // when the file exists and is non-empty.
-  const poolerUrlPath = path.join(supabaseDir, ".temp", "pooler-url");
   const poolerConnectionString = yield* fs
-    .readFileString(poolerUrlPath)
+    .readFileString(legacyProjectStatePaths(path, workdir).poolerUrl)
     .pipe(Effect.map(nonEmptyString), Effect.orElseSucceed(Option.none<string>));
 
   // `SUPABASE_PROJECT_ID` overrides the top-level `project_id` used to name the local

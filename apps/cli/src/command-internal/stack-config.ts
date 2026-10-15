@@ -1,3 +1,4 @@
+import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
 import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { validateCliConfig } from "@supabase/config/effect";
@@ -1208,7 +1209,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       );
       const poolMode =
         validatedConfig.db.pooler.pool_mode === "session" ? ("session" as const) : "transaction";
-      const storagePath = `${projectRoot}/supabase/.temp/stack-uploads`;
+      const storagePath = legacyProjectStatePaths(path, projectRoot).stackUploadsDir;
       const pgmetaCreation: ServiceCreationType = {
         service: "pgmeta",
         config: {},

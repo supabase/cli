@@ -2,7 +2,8 @@ import { Effect, FileSystem, Option, Path } from "effect";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { ProjectRefResolver, PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
-import { readProjectRefFile, tempPaths } from "./temp-paths.ts";
+import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
+import { readLegacyProjectRef } from "./legacy-project-state.layer.ts";
 
 export type ParentRefResolution =
   | { readonly kind: "resolved"; readonly ref: string }
@@ -90,9 +91,9 @@ export const resolveLinkedParentRef = Effect.fnUntraced(function* () {
   const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const paths = tempPaths(path, cliSettings.workdir);
+  const paths = legacyProjectStatePaths(path, cliSettings.workdir);
 
-  const fileRef = yield* readProjectRefFile(fs, path, cliSettings.workdir).pipe(
+  const fileRef = yield* readLegacyProjectRef(fs, path, cliSettings.workdir).pipe(
     Effect.orElseSucceed(() => Option.none<string>()),
   );
   // The cache alone isn't proof a link completed — `link` writes it on both success and

@@ -7,7 +7,8 @@ import { CommandSettings } from "../config/command-settings.service.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { GroupOrganization, GroupProject } from "../shared/telemetry/event-catalog.ts";
-import { readProjectRefFile, tempPaths } from "../command-internal/temp-paths.ts";
+import { legacyProjectStatePaths } from "../command-internal/legacy-project-state.paths.ts";
+import { readLegacyProjectRef } from "../command-internal/legacy-project-state.layer.ts";
 import { LinkedProjectCache } from "./linked-project-cache.service.ts";
 import { block } from "../command-internal/command-permissions/model.ts";
 
@@ -57,7 +58,7 @@ export const linkedProjectCacheLayer = Layer.effect(
       ) =>
         Effect.gen(function* () {
           const resolvedWorkdir = workdir ?? cliSettings.workdir;
-          const cachePath = tempPaths(path, resolvedWorkdir).linkedProjectCache;
+          const cachePath = legacyProjectStatePaths(path, resolvedWorkdir).linkedProjectCache;
           const exists = yield* fs.exists(cachePath).pipe(Effect.orElseSucceed(() => false));
           yield* Effect.annotateCurrentSpan({ "cache.hit": exists });
           if (exists) return;
@@ -73,7 +74,7 @@ export const linkedProjectCacheLayer = Layer.effect(
           // absent entirely falls through to the write below — the read side
           // (`resolveLinkedParentRef`) already refuses to trust a cache with no `project-ref`
           // file at all, so there is nothing to protect there yet.
-          const fileRef = yield* readProjectRefFile(fs, path, resolvedWorkdir).pipe(
+          const fileRef = yield* readLegacyProjectRef(fs, path, resolvedWorkdir).pipe(
             Effect.orElseSucceed(() => Option.none<string>()),
           );
           if (Option.isSome(fileRef) && fileRef.value !== ref) return;

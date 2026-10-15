@@ -9,7 +9,8 @@ import {
   parseCachedLinkedProject,
 } from "../../../command-internal/parent-project-ref.ts";
 import { BRANCH_PROJECT_REF_PATTERN } from "../../../command-internal/ref-patterns.ts";
-import { readProjectRefFile, tempPaths } from "../../../command-internal/temp-paths.ts";
+import { legacyProjectStatePaths } from "../../../command-internal/legacy-project-state.paths.ts";
+import { readLegacyProjectRef } from "../../../command-internal/legacy-project-state.layer.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 
 /**
@@ -97,7 +98,10 @@ export function resolveConfigPushTarget(
     const cliSettings = yield* CommandSettings;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const linkedProjectCachePath = tempPaths(path, cliSettings.workdir).linkedProjectCache;
+    const linkedProjectCachePath = legacyProjectStatePaths(
+      path,
+      cliSettings.workdir,
+    ).linkedProjectCache;
     const readCachedParent = fs.readFileString(linkedProjectCachePath).pipe(
       Effect.map(parseCachedLinkedProject),
       Effect.orElseSucceed(() => Option.none<CachedLinkedProject>()),
@@ -174,7 +178,7 @@ export function resolveConfigPushTarget(
       return { kind: "branch", ref };
     }
 
-    const fileRef = yield* readProjectRefFile(fs, path, cliSettings.workdir).pipe(
+    const fileRef = yield* readLegacyProjectRef(fs, path, cliSettings.workdir).pipe(
       Effect.orElseSucceed(() => Option.none<string>()),
     );
     const branchName = normalizeApiName(

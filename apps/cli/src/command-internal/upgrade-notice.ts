@@ -36,6 +36,7 @@ import {
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
 import { bold, yellow } from "./colors.ts";
+import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
 import { parseDotEnv } from "./dotenv.ts";
 import { candidateDotenvFilenames } from "./project-environment.ts";
 
@@ -302,8 +303,9 @@ export const runUpgradeNotice = Effect.fnUntraced(function* (
   const supabaseDir = path.join(base, "supabase");
   const inProject = isDirectoryEntry(yield* lstatEntry(fs, supabaseDir));
   /* `resolve` drops a trailing `/` or `/.`, which would make the symlink check follow a symlinked home. */
-  const cacheDir = inProject ? path.join(supabaseDir, ".temp") : path.resolve(deps.supabaseHome);
-  const cacheFile = path.join(cacheDir, "cli-latest");
+  const projectState = legacyProjectStatePaths(path, base);
+  const cacheDir = inProject ? projectState.tempDir : path.resolve(deps.supabaseHome);
+  const cacheFile = inProject ? projectState.cliLatest : path.join(cacheDir, "cli-latest");
 
   // A hostile checkout can commit a symlink at any level of this well-known
   // path to clobber an arbitrary user-writable file (CWE-59), so a symlink

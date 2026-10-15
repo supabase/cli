@@ -1,3 +1,4 @@
+import { legacyProjectStateLayer } from "../../src/command-internal/legacy-project-state.layer.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1474,6 +1475,7 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
       Layer.provide(BunServices.layer),
     ),
     BunServices.layer,
+    legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
     Layer.succeed(OutputFlag, goOutput),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
     linkedProjectCache,

@@ -1,3 +1,4 @@
+import { legacyProjectStatePaths } from "../../command-internal/legacy-project-state.paths.ts";
 import { BunPath } from "@effect/platform-bun";
 import { operationDefinitions, SupabaseApiInputError, type ApiClient } from "@supabase/api/effect";
 import { randomUUID } from "node:crypto";
@@ -965,7 +966,7 @@ const downloadWithDockerUnbundle = Effect.fn("functions.download.dockerUnbundle"
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
-  const tempDir = path.join(dependencies.projectRoot, "supabase", ".temp");
+  const tempDir = legacyProjectStatePaths(path, dependencies.projectRoot).tempDir;
   yield* fs.makeDirectory(tempDir, { recursive: true }).pipe(
     Effect.mapError(
       (error) =>

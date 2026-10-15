@@ -10,7 +10,7 @@ import { Output } from "../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
 import { bold } from "../../../../../command-internal/colors.ts";
-import { readProjectRefFile } from "../../../../../command-internal/temp-paths.ts";
+import { readLegacyProjectRef } from "../../../../../command-internal/legacy-project-state.layer.ts";
 import {
   loadProjectEnv,
   readDbToml,
@@ -108,7 +108,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     if (Option.isSome(flags.linked)) {
       const linkedRef = Option.isSome(cliSettings.projectId)
         ? cliSettings.projectId
-        : yield* readProjectRefFile(fs, path, cliSettings.workdir);
+        : yield* readLegacyProjectRef(fs, path, cliSettings.workdir);
       if (Option.isSome(linkedRef)) {
         yield* Ref.set(linkedProjectRef, linkedRef.value);
         toml = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef.value);
@@ -222,7 +222,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
         // `--linked` branch above still propagates a real failure.
         linkedRef = Option.isSome(cliSettings.projectId)
           ? cliSettings.projectId
-          : yield* readProjectRefFile(fs, path, cliSettings.workdir).pipe(
+          : yield* readLegacyProjectRef(fs, path, cliSettings.workdir).pipe(
               Effect.orElseSucceed(() => Option.none<string>()),
             );
         if (Option.isSome(linkedRef)) {

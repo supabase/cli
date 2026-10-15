@@ -1,3 +1,4 @@
+import { legacyProjectStatePaths } from "../../command-internal/legacy-project-state.paths.ts";
 import { Effect, FileSystem, Path } from "effect";
 import { dockerfileServiceImageRaw } from "../services/dockerfile-images.ts";
 import { imageTag, slimImageForCurrentPin } from "../services/slim-images.ts";
@@ -42,10 +43,10 @@ export function edgeRuntimeImage(tag: string, slim: boolean): string {
  * the Dockerfile-embedded tag. Shared by every `functions` command that
  * resolves a Docker edge-runtime image.
  */
-export const resolveEdgeRuntimeVersionPin = Effect.fnUntraced(function* (supabaseDir: string) {
+export const resolveEdgeRuntimeVersionPin = Effect.fnUntraced(function* (workdir: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  return yield* fs.readFileString(path.join(supabaseDir, ".temp", "edge-runtime-version")).pipe(
+  return yield* fs.readFileString(legacyProjectStatePaths(path, workdir).edgeRuntimeVersion).pipe(
     Effect.map((version) => version.trim()),
     Effect.orElseSucceed(() => ""),
     Effect.map((version) => version || (imageTag(dockerfileServiceImageRaw("edgeruntime")) ?? "")),

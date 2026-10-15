@@ -1,6 +1,5 @@
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
-import { Duration, Effect, FileSystem, Option, Path, Ref, Schema } from "effect";
-import type { PlatformError } from "effect/PlatformError";
+import { Duration, Effect, Option, Ref, Schema } from "effect";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
@@ -31,7 +30,7 @@ import { mapTenantApiKeysError } from "../../command-internal/get-tenant-api-key
 import { sanitizeInlineName, mapHttpError } from "../../command-internal/http-errors.ts";
 import { linkServicesCore } from "../../command-internal/link-services-core.ts";
 import { extractServiceKeys } from "../../command-internal/tenant-keys.ts";
-import { tempPaths } from "../../command-internal/temp-paths.ts";
+import { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
 import {
   LinkApiKeysNetworkError,
   LinkAuthTokenError,
@@ -69,8 +68,6 @@ const classifyProjectError = classifyProjectLookupError({
   statusMessage: (_status, body) => `Unexpected error retrieving remote project status: ${body}`,
   networkMessage: (cause) => `failed to retrieve remote project status: ${String(cause)}`,
 });
-
-type WriteTempFile = (filePath: string, content: string) => Effect.Effect<void, PlatformError>;
 
 const mapApiKeysError = mapTenantApiKeysError({
   networkError: LinkApiKeysNetworkError,
@@ -207,8 +204,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const analytics = yield* Analytics;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
+  const legacyState = yield* LegacyProjectState;
 
   // Captured once ref/branch resolution succeeds; `undefined` means no ref was ever resolved,
   // so the post-run cache fill below stays a no-op.
@@ -249,12 +245,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       "project.ref": ref,
       "link.via_branch": Option.isSome(branchResolution),
     });
-    const paths = tempPaths(path, cliSettings.workdir);
-
-    const writeTempFile: WriteTempFile = (filePath, content) =>
-      fs
-        .makeDirectory(path.dirname(filePath), { recursive: true })
-        .pipe(Effect.andThen(() => fs.writeFileString(filePath, content)));
+    const workdir = cliSettings.workdir;
 
     // 1. Check remote project status (404 tolerated for branch projects).
     const project = yield* api.v1
@@ -284,7 +275,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       // Updates the postgres image version to match the remote project.
       const version = project.value.database.version;
       if (version.length > 0) {
-        yield* writeTempFile(paths.postgresVersion, version);
+        yield* legacyState.write(workdir, "postgresVersion", version);
       }
     }
 
@@ -302,11 +293,11 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       ref,
       serviceKey: serviceRole,
       skipPooler: flags.skipPooler,
-      workdir: cliSettings.workdir,
+      workdir,
     });
 
     // 4. Save project ref (mandatory — a write failure fails the command).
-    yield* writeTempFile(paths.projectRef, ref);
+    yield* legacyState.write(workdir, "projectRef", ref);
 
     // 5. Telemetry + linked-project cache (only for resolvable projects, not the 404 branch path).
     if (Option.isSome(project)) {
@@ -319,8 +310,8 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
         organization_id: p.organization_id,
         organization_slug: p.organization_slug,
       }).pipe(
-        Effect.flatMap((content) => writeTempFile(paths.linkedProjectCache, content)),
-        Effect.catch(() => fs.remove(paths.linkedProjectCache, { force: true })),
+        Effect.flatMap((content) => legacyState.write(workdir, "linkedProjectCache", content)),
+        Effect.catch(() => legacyState.remove(workdir, "linkedProjectCache")),
         Effect.ignore,
       );
 
@@ -354,7 +345,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       // below) also GETs `ref` and 404s on a branch — so without persisting parent evidence
       // here, `resolveLinkedParentRef`'s chain can lose it or go stale. Both branches below
       // are best-effort and never affect `link`'s own outcome.
-      const cachedParent = yield* fs.readFileString(paths.linkedProjectCache).pipe(
+      const cachedParent = yield* legacyState.read(workdir, "linkedProjectCache").pipe(
         Effect.map(parseCachedLinkedProject),
         Effect.orElseSucceed(() => Option.none<CachedLinkedProject>()),
       );
@@ -369,8 +360,8 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
           // If the replacement write fails, delete the stale cache instead of leaving a
           // wrong parent trusted — no parent info beats wrong parent info.
           yield* encodeLinkedParentCache({ ref: parentRef }).pipe(
-            Effect.flatMap((content) => writeTempFile(paths.linkedProjectCache, content)),
-            Effect.catch(() => fs.remove(paths.linkedProjectCache, { force: true })),
+            Effect.flatMap((content) => legacyState.write(workdir, "linkedProjectCache", content)),
+            Effect.catch(() => legacyState.remove(workdir, "linkedProjectCache")),
             Effect.ignore,
           );
         }
@@ -409,7 +400,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
           Effect.tap((result) => Effect.annotateCurrentSpan("link.parent_verified", result)),
         );
         if (!verified) {
-          yield* fs.remove(paths.linkedProjectCache, { force: true }).pipe(Effect.ignore);
+          yield* legacyState.remove(workdir, "linkedProjectCache").pipe(Effect.ignore);
         }
       }
     }

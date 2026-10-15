@@ -1,3 +1,4 @@
+import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
 import { Effect, type FileSystem, type Path } from "effect";
 import { DENO1_EDGE_RUNTIME_VERSION } from "../shared/functions/functions.shared.ts";
 import {
@@ -37,11 +38,12 @@ export const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
     return EDGE_RUNTIME_DENO1_IMAGE;
   }
   const raw = dockerfileServiceImageRaw("edgeruntime");
-  const versionPath = path.join(workdir, "supabase", ".temp", "edge-runtime-version");
-  const pinned = yield* fs.readFileString(versionPath).pipe(
-    Effect.map((s) => s.trim()),
-    Effect.orElseSucceed(() => ""),
-  );
+  const pinned = yield* fs
+    .readFileString(legacyProjectStatePaths(path, workdir).edgeRuntimeVersion)
+    .pipe(
+      Effect.map((s) => s.trim()),
+      Effect.orElseSucceed(() => ""),
+    );
   if (pinned === DENO1_EDGE_RUNTIME_VERSION) {
     return EDGE_RUNTIME_DENO1_IMAGE;
   }

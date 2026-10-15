@@ -1,9 +1,6 @@
 import { Context, Data, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { extractCommandPath, hasRootVersionFlag } from "../shared/cli/run.ts";
-import {
-  readExperimentalFeatureConfig,
-  resolveExperimentalFeature,
-} from "./experimental-feature.ts";
+import { projectStateMode } from "./project-state-mode.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -89,12 +86,7 @@ export const resolveStackBackend = (input: {
     )
       return undefined;
 
-    const enabled = yield* resolveExperimentalFeature({
-      feature: "stack",
-      configValue: readExperimentalFeatureConfig({ feature: "stack", ...input, args: routingArgs }),
-      env: input.env,
-    }).pipe(
+    return yield* projectStateMode({ ...input, args: routingArgs }).pipe(
       Effect.mapError((error) => new StackRoutingError({ message: error.message, cause: error })),
     );
-    return enabled ? "stack" : "legacy";
   });

@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path, Predicate, Result } from "effect";
+import { Effect, Predicate, Result } from "effect";
 
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import { CredentialDeleteError } from "../../auth/errors.ts";
@@ -7,7 +7,7 @@ import { ProjectRefNotLinkedError } from "../../config/project-ref.errors.ts";
 import { PROJECT_NOT_LINKED_MESSAGE } from "../../config/project-ref.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import { tempPaths } from "../../command-internal/temp-paths.ts";
+import { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
 import { UnlinkRefReadError, UnlinkTempRemovalError } from "./unlink.errors.ts";
 
 export const unlink = Effect.fn("unlink")(function* () {
@@ -15,21 +15,21 @@ export const unlink = Effect.fn("unlink")(function* () {
   const cliSettings = yield* CommandSettings;
   const credentials = yield* CommandCredentials;
   const telemetryState = yield* TelemetryState;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-
-  const paths = tempPaths(path, cliSettings.workdir);
+  const legacyState = yield* LegacyProjectState;
+  const workdir = cliSettings.workdir;
 
   yield* Effect.gen(function* () {
     // 1. Load the linked project ref. An absent file means not-linked; any other
     // read failure surfaces verbatim.
-    const exists = yield* fs.exists(paths.projectRef).pipe(Effect.orElseSucceed(() => false));
+    const exists = yield* legacyState
+      .exists(workdir, "projectRef")
+      .pipe(Effect.orElseSucceed(() => false));
     if (!exists) {
       return yield* new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE });
     }
     // No trimming needed: `link` writes the ref with no trailing newline, so the raw
     // bytes round-trip exactly for both the stderr message and the keyring key.
-    const projectRef = yield* fs.readFileString(paths.projectRef).pipe(
+    const projectRef = yield* legacyState.read(workdir, "projectRef").pipe(
       Effect.mapError(
         (cause) =>
           new UnlinkRefReadError({
@@ -44,7 +44,7 @@ export const unlink = Effect.fn("unlink")(function* () {
     // attempted regardless of either failing; their errors are joined below.
     const collected: Array<UnlinkTempRemovalError | CredentialDeleteError> = [];
 
-    const removed = yield* fs.remove(paths.tempDir, { recursive: true, force: true }).pipe(
+    const removed = yield* legacyState.removeAll(workdir).pipe(
       Effect.mapError(
         (cause) =>
           new UnlinkTempRemovalError({

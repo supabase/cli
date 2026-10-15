@@ -1,3 +1,4 @@
+import { legacyProjectStatePaths } from "../../command-internal/legacy-project-state.paths.ts";
 import { brotliCompressSync, constants as zlibConstants } from "node:zlib";
 import { URL } from "node:url";
 import {
@@ -1573,7 +1574,7 @@ const bundleFunctionWithDocker = Effect.fn("functions.deploy.bundleWithDocker")(
   const path = yield* Path.Path;
   yield* output.raw(`Bundling Function: ${styleEmphasis(config.slug)}\n`, "stderr");
 
-  const outputRoot = path.resolve(functionsDir, "..", ".temp");
+  const outputRoot = legacyProjectStatePaths(path, path.resolve(functionsDir, "..", "..")).tempDir;
   yield* fs
     .makeDirectory(outputRoot, { recursive: true })
     .pipe(Effect.mapError(unknownHostError(outputRoot)));

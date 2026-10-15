@@ -1,10 +1,9 @@
 import type { ApiClient } from "@supabase/api/effect";
-import { Effect, FileSystem, Option, Path } from "effect";
-import type { PlatformError } from "effect/PlatformError";
+import { Effect, Option } from "effect";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
-import { tempPaths } from "./temp-paths.ts";
+import { LegacyProjectState } from "./legacy-project-state.service.ts";
 import {
   fetchGotrueVersion,
   fetchPostgrestVersion,
@@ -39,8 +38,6 @@ export interface LinkServicesInput {
   readonly workdir: string;
 }
 
-type WriteTempFile = (filePath: string, content: string) => Effect.Effect<void, PlatformError>;
-
 /**
  * Writes the best-effort portion of linking:
  * `supabase/.temp/{storage-migration,pooler-url,rest-version,gotrue-version,
@@ -58,24 +55,11 @@ export const linkServicesCore = Effect.fn("LinkServices.write")(function* (
   });
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const paths = tempPaths(path, input.workdir);
+  const state = yield* LegacyProjectState;
+  const { workdir } = input;
 
-  const writeTempFile: WriteTempFile = (filePath, content) =>
-    fs
-      .makeDirectory(path.dirname(filePath), { recursive: true })
-      .pipe(Effect.andThen(() => fs.writeFileString(filePath, content)));
-
-  yield* linkStorageMigration(api, input.ref, paths.storageMigration, writeTempFile);
-  yield* linkPooler({
-    api,
-    ref: input.ref,
-    skipPooler: input.skipPooler,
-    fs,
-    poolerUrlPath: paths.poolerUrl,
-    writeTempFile,
-  });
+  yield* linkStorageMigration(api, input.ref, state, workdir);
+  yield* linkPooler({ api, ref: input.ref, skipPooler: input.skipPooler, state, workdir });
 
   const tenantOpts = {
     ref: input.ref,
@@ -85,19 +69,19 @@ export const linkServicesCore = Effect.fn("LinkServices.write")(function* (
   };
   yield* fetchPostgrestVersion(tenantOpts).pipe(
     Effect.flatMap((v) =>
-      Option.isSome(v) ? writeTempFile(paths.restVersion, v.value) : Effect.void,
+      Option.isSome(v) ? state.write(workdir, "restVersion", v.value) : Effect.void,
     ),
     Effect.ignore,
   );
   yield* fetchGotrueVersion(tenantOpts).pipe(
     Effect.flatMap((v) =>
-      Option.isSome(v) ? writeTempFile(paths.gotrueVersion, v.value) : Effect.void,
+      Option.isSome(v) ? state.write(workdir, "gotrueVersion", v.value) : Effect.void,
     ),
     Effect.ignore,
   );
   yield* fetchStorageVersion(tenantOpts).pipe(
     Effect.flatMap((v) =>
-      Option.isSome(v) ? writeTempFile(paths.storageVersion, v.value) : Effect.void,
+      Option.isSome(v) ? state.write(workdir, "storageVersion", v.value) : Effect.void,
     ),
     Effect.ignore,
   );
@@ -106,14 +90,14 @@ export const linkServicesCore = Effect.fn("LinkServices.write")(function* (
 const linkStorageMigration = (
   api: ApiClient,
   ref: string,
-  storageMigrationPath: string,
-  writeTempFile: WriteTempFile,
+  state: LegacyProjectState["Service"],
+  workdir: string,
 ) =>
   api.v1.getStorageConfig({ ref }).pipe(
     Effect.flatMap((config) =>
       config.migrationVersion === null
         ? Effect.void
-        : writeTempFile(storageMigrationPath, config.migrationVersion),
+        : state.write(workdir, "storageMigration", config.migrationVersion),
     ),
     Effect.ignore,
   );
@@ -122,14 +106,13 @@ const linkPooler = (opts: {
   api: ApiClient;
   ref: string;
   skipPooler: boolean;
-  fs: FileSystem.FileSystem;
-  poolerUrlPath: string;
-  writeTempFile: WriteTempFile;
+  state: LegacyProjectState["Service"];
+  workdir: string;
 }) =>
   Effect.gen(function* () {
     if (opts.skipPooler) {
       // Use direct connection: drop any cached pooler URL.
-      yield* opts.fs.remove(opts.poolerUrlPath, { recursive: true }).pipe(Effect.ignore);
+      yield* opts.state.remove(opts.workdir, "poolerUrl").pipe(Effect.ignore);
       return;
     }
     const configs = yield* opts.api.v1.getPoolerConfig({ ref: opts.ref });
@@ -141,5 +124,5 @@ const linkPooler = (opts: {
     if (primary.pool_mode !== "session") {
       connectionString = connectionString.replaceAll(":6543/", ":5432/");
     }
-    yield* opts.writeTempFile(opts.poolerUrlPath, connectionString);
+    yield* opts.state.write(opts.workdir, "poolerUrl", connectionString);
   }).pipe(Effect.ignore);

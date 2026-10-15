@@ -1,3 +1,4 @@
+import { legacyProjectStateLayer } from "../../command-internal/legacy-project-state.layer.ts";
 import { describe, expect, it } from "@effect/vitest";
 import { catalogPins, orioledbVersions } from "@supabase/stack/internal/artifacts";
 import { BunServices } from "@effect/platform-bun";
@@ -102,6 +103,7 @@ function setup(
     cachedRefs,
     layer: Layer.mergeAll(
       BunServices.layer,
+      legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
       FetchHttpClient.layer,
       mockRuntimeInfo({
         cwd: opts.workdir ?? defaultWorkdir.current,
@@ -266,6 +268,7 @@ describe("services", () => {
       const args = ["services"];
       const layer = Layer.mergeAll(
         BunServices.layer,
+        legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
         processControlLayer,
         CliOutput.layer(textCliOutputFormatter()),
         out.layer,

@@ -1,3 +1,4 @@
+import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
 import { Effect, type FileSystem, type Path } from "effect";
 import { dockerfileServiceImageRaw } from "../shared/services/dockerfile-images.ts";
 import { postgresImageForDbMajorVersion } from "../shared/services/services.shared.ts";
@@ -94,11 +95,12 @@ export const resolveDbImage = Effect.fnUntraced(function* (
   const currentRaw = postgresImageForDbMajorVersion(majorVersion) ?? pgImageRaw();
   let appliedPin: string | undefined;
   if (majorVersion > 14) {
-    const versionPath = path.join(workdir, "supabase", ".temp", "postgres-version");
-    const pinned = yield* fs.readFileString(versionPath).pipe(
-      Effect.map((s) => s.trim()),
-      Effect.orElseSucceed(() => ""),
-    );
+    const pinned = yield* fs
+      .readFileString(legacyProjectStatePaths(path, workdir).postgresVersion)
+      .pipe(
+        Effect.map((s) => s.trim()),
+        Effect.orElseSucceed(() => ""),
+      );
     if (pinned.length > 0) {
       const colon = currentRaw.indexOf(":");
       const currentTag = colon >= 0 ? currentRaw.slice(colon + 1) : currentRaw;

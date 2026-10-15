@@ -7,7 +7,7 @@ import {
   pgDeltaNextTempPath,
   savePgDeltaNextDebugArtifacts,
 } from "./pgdelta-next-artifacts.ts";
-import { pgDeltaTempPath } from "../../../command-internal/pgdelta.paths.ts";
+import { legacyProjectStatePaths } from "../../../command-internal/legacy-project-state.paths.ts";
 
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 
@@ -30,7 +30,9 @@ describe("pg-delta next artifact generation", () => {
           .pipe(Effect.flatMap(Schema.decodeEffect(UnknownFromJsonString)));
 
       expect(debugId).toBe("20240102-030405-678-diff");
-      expect(pgDeltaNextTempPath(path, root)).not.toBe(pgDeltaTempPath(path, root));
+      expect(pgDeltaNextTempPath(path, root)).not.toBe(
+        legacyProjectStatePaths(path, root).pgdeltaDir,
+      );
       expect(debugDir).toBe(path.join(pgDeltaNextTempPath(path, root), "debug", debugId));
       expect(yield* readJson("metadata.json")).toEqual({
         version: 1,

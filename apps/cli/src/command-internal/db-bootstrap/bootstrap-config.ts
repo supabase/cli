@@ -29,7 +29,7 @@ import {
   readServiceVersionOverrides,
 } from "../service-version-overrides.ts";
 import { ramInBytes } from "../size-units.ts";
-import { tempPaths } from "../temp-paths.ts";
+import { legacyProjectStatePaths } from "../legacy-project-state.paths.ts";
 
 export interface DbBootstrapConfigInput {
   readonly config: CliConfig;
@@ -261,7 +261,7 @@ export const resolveDbBootstrapConfig = <E>(
     // Feeds `DB_MIGRATIONS_FREEZE_AT` for the one-shot Storage migrate job. Any read error
     // (including not-exist) or blank content resolves to "".
     const storageTargetMigration = yield* fs
-      .readFileString(tempPaths(path, workdir).storageMigration)
+      .readFileString(legacyProjectStatePaths(path, workdir).storageMigration)
       .pipe(
         Effect.map((content) => content.trim()),
         Effect.orElseSucceed(() => ""),

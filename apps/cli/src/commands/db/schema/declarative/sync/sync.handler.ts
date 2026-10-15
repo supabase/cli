@@ -1,3 +1,4 @@
+import { legacyProjectStatePaths } from "../../../../../command-internal/legacy-project-state.paths.ts";
 import { Clock, DateTime, Effect, FileSystem, Option, Path, Ref, Result } from "effect";
 
 import { withSingleOrioleDBVersionEnvWarning } from "../../../../../command-internal/local-config-values.ts";
@@ -24,11 +25,10 @@ import {
 import { makeDir } from "../../../../../command-internal/make-dir.ts";
 import { applyMigrationFile } from "../../../../../command-internal/migration-apply.ts";
 import { ENABLE_LOCAL_WEBHOOKS_SUGGESTION } from "../../../../../command-internal/pg-net-guidance.ts";
-import { readProjectRefFile } from "../../../../../command-internal/temp-paths.ts";
+import { readLegacyProjectRef } from "../../../../../command-internal/legacy-project-state.layer.ts";
 import { LinkedProjectCache } from "../../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
 import { listLocalMigrations } from "../../../../../command-internal/migration-list.ts";
-import { pgDeltaTempPath } from "../../../../../command-internal/pgdelta.paths.ts";
 import {
   isPgDeltaDebugEnabled,
   resolvePgDeltaProjectId,
@@ -141,7 +141,7 @@ const runDbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(funct
     // a bare `extension.sql` is ambiguous in a tree with nested schema folders.
     const extensionSqlRel = path.join(declarativeDirRel, "extension.sql");
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
-    const tempDir = pgDeltaTempPath(path, cliSettings.workdir);
+    const tempDir = legacyProjectStatePaths(path, cliSettings.workdir).pgdeltaDir;
     const run: DeclarativeRunContext = {
       pgDelta: {
         // `resolvePgDeltaProjectId` resolves `SUPABASE_PROJECT_ID` env → config.toml's
@@ -215,7 +215,7 @@ const runDbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(funct
         // correctly does not fire.
         linkedRef = Option.isSome(cliSettings.projectId)
           ? cliSettings.projectId
-          : yield* readProjectRefFile(fs, path, cliSettings.workdir).pipe(
+          : yield* readLegacyProjectRef(fs, path, cliSettings.workdir).pipe(
               Effect.orElseSucceed(() => Option.none<string>()),
             );
         if (Option.isSome(linkedRef)) {

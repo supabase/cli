@@ -1,3 +1,5 @@
+import { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
+import { legacyProjectStateLayer } from "../../command-internal/legacy-project-state.layer.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
@@ -29,15 +31,15 @@ interface SetupOpts {
   removeFails?: boolean;
 }
 
-// Wraps the real Bun FileSystem but forces `remove` to fail, so the temp-dir-removal
+// Wraps the real state service but forces `removeAll` to fail, so the temp-dir-removal
 // error branch is exercised deterministically, independent of filesystem permissions.
-const failingRemoveFsLayer = Layer.effect(
-  FileSystem.FileSystem,
+const failingRemoveStateLayer = Layer.effect(
+  LegacyProjectState,
   Effect.gen(function* () {
-    const real = yield* FileSystem.FileSystem;
-    return FileSystem.FileSystem.of({
+    const real = yield* LegacyProjectState;
+    return LegacyProjectState.of({
       ...real,
-      remove: () =>
+      removeAll: () =>
         Effect.fail(
           badArgument({
             module: "FileSystem",
@@ -47,7 +49,7 @@ const failingRemoveFsLayer = Layer.effect(
         ),
     });
   }),
-).pipe(Layer.provide(BunServices.layer));
+).pipe(Layer.provide(legacyProjectStateLayer), Layer.provide(BunServices.layer));
 
 const seedProjectRef = (workdir: string, ref: string) =>
   Effect.gen(function* () {
@@ -83,7 +85,7 @@ function setup(opts: SetupOpts = {}) {
       telemetry: telemetry.layer,
     }),
     credentials.layer,
-    ...(opts.removeFails === true ? [failingRemoveFsLayer] : []),
+    ...(opts.removeFails === true ? [failingRemoveStateLayer] : []),
   );
   return { layer, out, telemetry, credentials, workdir: tempRoot.current };
 }

@@ -4,7 +4,7 @@ import {
   INVALID_PROJECT_REF_MESSAGE,
   PROJECT_REF_PATTERN,
 } from "../../config/project-ref.service.ts";
-import { readProjectRefFile } from "../../command-internal/temp-paths.ts";
+import { readLegacyProjectRef } from "../../command-internal/legacy-project-state.layer.ts";
 
 // Mirrors `ProjectRefResolver` (`project-ref.layer.ts`) source by source:
 //
@@ -37,7 +37,7 @@ export const resolveFeedbackProjectRef = Effect.fnUntraced(function* (
   }
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  return yield* readProjectRefFile(fs, path, workdir).pipe(
+  return yield* readLegacyProjectRef(fs, path, workdir).pipe(
     Effect.orElseSucceed(() => Option.none<string>()),
     Effect.map(Option.filter((ref) => PROJECT_REF_PATTERN.test(ref))),
   );

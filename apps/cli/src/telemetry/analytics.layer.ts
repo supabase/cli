@@ -1,3 +1,4 @@
+import { legacyProjectStatePaths } from "../command-internal/legacy-project-state.paths.ts";
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { aiToolLayer } from "../shared/telemetry/ai-tool.layer.ts";
 import { AiTool } from "../shared/telemetry/ai-tool.service.ts";
@@ -117,7 +118,7 @@ function makeLoadLinkedProject(
   return Effect.gen(function* () {
     const configuredWorkdir = yield* Config.option(Config.String("SUPABASE_WORKDIR"));
     const workdir = Option.getOrElse(configuredWorkdir, () => runtimeInfo.cwd);
-    const cachePath = path.join(workdir, "supabase", ".temp", "linked-project.json");
+    const cachePath = legacyProjectStatePaths(path, workdir).linkedProjectCache;
     const exists = yield* fs.exists(cachePath).pipe(Effect.orElseSucceed(() => false));
     if (!exists) return Option.none<LinkedProjectCacheValue>();
 

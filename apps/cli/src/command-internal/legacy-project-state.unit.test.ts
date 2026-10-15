@@ -1,26 +1,29 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { classifyCliErrorActionability } from "../shared/telemetry/error-actionability.ts";
-import { ProjectRefReadError, readProjectRefFile, tempPaths } from "./temp-paths.ts";
+import { legacyProjectStateLayer } from "./legacy-project-state.layer.ts";
+import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
+import { LegacyProjectState, ProjectRefReadError } from "./legacy-project-state.service.ts";
+
+const services = legacyProjectStateLayer.pipe(Layer.provideMerge(BunServices.layer));
 
 const readRef = (workdir: string) =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    return yield* readProjectRefFile(fs, path, workdir);
+    const state = yield* LegacyProjectState;
+    return yield* state.readProjectRef(workdir);
   });
 
 const REF = "abcdefghijklmnopqrst";
 
-describe("tempPaths", () => {
+describe("legacyProjectStatePaths", () => {
   it.effect("maps a workdir to the supabase/.temp/* layout", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const workdir = path.join(path.sep, "home", "user", "project");
       const tempDir = path.join(workdir, "supabase", ".temp");
-      const paths = tempPaths(path, workdir);
+      const paths = legacyProjectStatePaths(path, workdir);
 
       expect(paths.tempDir).toBe(tempDir);
       expect(paths.projectRef).toBe(path.join(tempDir, "project-ref"));
@@ -31,13 +34,17 @@ describe("tempPaths", () => {
       expect(paths.storageVersion).toBe(path.join(tempDir, "storage-version"));
       expect(paths.storageMigration).toBe(path.join(tempDir, "storage-migration"));
       expect(paths.linkedProjectCache).toBe(path.join(tempDir, "linked-project.json"));
+      expect(paths.cliLatest).toBe(path.join(tempDir, "cli-latest"));
+      expect(paths.pgdeltaDir).toBe(path.join(tempDir, "pgdelta"));
+      expect(paths.stackUploadsDir).toBe(path.join(tempDir, "stack-uploads"));
+      expect(paths.startSecretsDir).toBe(path.join(tempDir, "start-secrets"));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("every temp path is nested under tempDir", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
-      const paths = tempPaths(path, "/tmp/wd");
+      const paths = legacyProjectStatePaths(path, "/tmp/wd");
       const { tempDir, ...rest } = paths;
       for (const value of Object.values(rest)) {
         expect(path.dirname(value)).toBe(tempDir);
@@ -46,7 +53,28 @@ describe("tempPaths", () => {
   );
 });
 
-describe("readProjectRefFile", () => {
+describe("LegacyProjectState file access", () => {
+  it.effect("writes a state file, reads it back, and removes the directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const state = yield* LegacyProjectState;
+      const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "legacy-state-" });
+
+      yield* state.write(workdir, "postgresVersion", "17.0.0");
+      expect(yield* state.read(workdir, "postgresVersion")).toBe("17.0.0");
+      expect(yield* state.exists(workdir, "postgresVersion")).toBe(true);
+
+      yield* state.remove(workdir, "postgresVersion");
+      expect(yield* state.exists(workdir, "postgresVersion")).toBe(false);
+
+      yield* state.write(workdir, "restVersion", "v1");
+      yield* state.removeAll(workdir);
+      expect(yield* fs.exists(state.paths(workdir).tempDir)).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(services)),
+  );
+});
+
+describe("LegacyProjectState.readProjectRef", () => {
   const workdir = Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -59,7 +87,7 @@ describe("readProjectRefFile", () => {
     Effect.gen(function* () {
       const { dir } = yield* workdir;
       expect(Option.isNone(yield* readRef(dir))).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(services)),
   );
 
   it.effect("returns the trimmed ref when the file holds a value", () =>
@@ -68,7 +96,7 @@ describe("readProjectRefFile", () => {
       yield* fs.makeDirectory(tempDir, { recursive: true });
       yield* fs.writeFileString(refPath, `  ${REF}\n`);
       expect(Option.getOrNull(yield* readRef(dir))).toBe(REF);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(services)),
   );
 
   it.effect("treats a blank project-ref file as None", () =>
@@ -77,21 +105,19 @@ describe("readProjectRefFile", () => {
       yield* fs.makeDirectory(tempDir, { recursive: true });
       yield* fs.writeFileString(refPath, "   \n");
       expect(Option.isNone(yield* readRef(dir))).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(services)),
   );
 
   it.effect("fails with ProjectRefReadError when the ref path is unreadable", () =>
     Effect.gen(function* () {
-      // Returns `failed to load project ref` for a non-not-exist
-      // read error. Seeding project-ref as a DIRECTORY makes the
-      // read fail with EISDIR (a non-NotFound PlatformError), so it must surface, not
-      // collapse to "unlinked".
+      // Seeding project-ref as a directory makes the read fail with EISDIR, which must surface
+      // rather than collapse to "unlinked".
       const { fs, dir, refPath } = yield* workdir;
       yield* fs.makeDirectory(refPath, { recursive: true });
       const error = yield* Effect.flip(readRef(dir));
       expect(error).toBeInstanceOf(ProjectRefReadError);
       expect(error.message).toMatch(/^failed to load project ref: /);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }).pipe(Effect.provide(services)),
   );
 
   it("classifies an unreadable ref file as permission without an unrelated command", () => {

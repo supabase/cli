@@ -1,6 +1,6 @@
 import { DateTime, Effect, type FileSystem, type Path, Schema } from "effect";
 
-import { pgDeltaTempPath } from "../../../command-internal/pgdelta.paths.ts";
+import { legacyProjectStatePaths } from "../../../command-internal/legacy-project-state.paths.ts";
 import type {
   PgDeltaNextDiagnostic,
   PgDeltaNextOperation,
@@ -15,7 +15,7 @@ export interface PgDeltaNextDebugArtifacts {
 
 /** Explicit cache/artifact generation for the bundled pg-delta implementation. */
 export function pgDeltaNextTempPath(path: Path.Path, workdir: string): string {
-  return path.join(pgDeltaTempPath(path, workdir), "v2");
+  return path.join(legacyProjectStatePaths(path, workdir).pgdeltaDir, "v2");
 }
 
 const PrettyJsonString = Schema.fromJsonString(Schema.Unknown, { space: 2 });

@@ -1,5 +1,5 @@
 import type { V1DeleteAProjectOutput } from "@supabase/api/effect";
-import { Effect, FileSystem, Option, Path, Ref } from "effect";
+import { Effect, Option, Ref } from "effect";
 import * as HttpClientError from "effect/http/HttpClientError";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
@@ -12,6 +12,7 @@ import {
 } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
+import { LegacyProjectState } from "../../../command-internal/legacy-project-state.service.ts";
 import { resolveYes } from "../../../command-internal/global-flags.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
@@ -40,8 +41,7 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
   // `resolveYes` also honors `SUPABASE_YES`, not just the `--yes` flag.
   const yes = yield* resolveYes;
   const tty = yield* Tty;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
+  const legacyState = yield* LegacyProjectState;
 
   // Captured so the `Effect.ensuring` cache write below can use whichever ref resolved from
   // the arg or prompt.
@@ -105,15 +105,13 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
 
     // Best-effort: removes `supabase/.temp` only when the linked ref matches the deleted
     // project.
-    const tempDir = path.join(cliSettings.workdir, "supabase", ".temp");
-    const refPath = path.join(tempDir, "project-ref");
     // Compare trimmed content so a corrupt/multi-ref file can't trigger an unintended removal.
-    const matches = yield* fs.readFileString(refPath).pipe(
+    const matches = yield* legacyState.read(cliSettings.workdir, "projectRef").pipe(
       Effect.map((content) => content.trim() === ref),
       Effect.orElseSucceed(() => false),
     );
     if (matches) {
-      yield* fs.remove(tempDir, { recursive: true }).pipe(Effect.ignore);
+      yield* legacyState.removeAll(cliSettings.workdir).pipe(Effect.ignore);
     }
 
     if (output.format === "json" || output.format === "stream-json") {
