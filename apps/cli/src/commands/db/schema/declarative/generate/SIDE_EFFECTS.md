@@ -74,6 +74,9 @@ Targeting the linked project (target = "remote" from <source>)
 `<source>` is `SUPABASE_TARGET`, the `.env*` file that set it (for example `supabase/.env.local` or `.env`), `supabase/config.toml` or `supabase/config.json`.
 Nothing is written when a selector flag decides the target.
 
+With a `local` workspace target and no selector flag, `--password` fails with the mutually-exclusive-flags
+error instead of being silently dropped; pass `--linked` or set `target = "remote"`.
+
 ## Exit Codes
 
 | Code | Condition                                                             |
@@ -81,6 +84,7 @@ Nothing is written when a selector flag decides the target.
 | `0`  | success (files written, or skipped after a declined prompt)           |
 | `1`  | pg-delta not enabled (no `--experimental` / `[experimental.pgdelta]`) |
 | `1`  | conflicting `--db-url`/`--linked`/`--local` (mutually exclusive)      |
+| `1`  | `--password` with a `local` workspace target and no selector flag     |
 | `1`  | non-interactive mode with no explicit target                          |
 | `1`  | local-database bring-up / pg-delta engine / export failure            |
 

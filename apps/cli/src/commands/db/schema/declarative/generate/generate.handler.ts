@@ -7,7 +7,10 @@ import {
 } from "../../../../../command-internal/global-flags.ts";
 import { promptYesNo } from "../../../../../command-internal/prompt-yes-no.ts";
 import { dbTargetSelectionOf } from "../../../../../command-internal/db-target-flags.ts";
-import { resolveDbTarget } from "../../../../../command-internal/workspace-target.ts";
+import {
+  passwordDroppedByWorkspaceTarget,
+  resolveDbTarget,
+} from "../../../../../command-internal/workspace-target.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
@@ -110,6 +113,10 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
       projectRefSet: false,
       legacyDefault: "local",
     });
+    const droppedPassword = passwordDroppedByWorkspaceTarget(resolvedTarget, flags.password);
+    if (droppedPassword !== undefined) {
+      return yield* new DeclarativeMutuallyExclusiveFlagsError({ message: droppedPassword });
+    }
     const workspaceConnType =
       resolvedTarget.source === "workspace" ? resolvedTarget.connType : undefined;
     const linkedSelected = Option.isSome(flags.linked) || workspaceConnType === "linked";

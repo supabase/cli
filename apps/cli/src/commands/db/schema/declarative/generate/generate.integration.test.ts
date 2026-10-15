@@ -898,6 +898,23 @@ describe("db schema declarative generate integration", () => {
       }).pipe(Effect.provide(Layer.mergeAll(s.layer, pinnedEnv)));
     });
 
+    it.effect("target = local rejects --password before any connection", () => {
+      const s = setup(tmp.current, { experimental: true, explicitWorkdir: true });
+      return Effect.gen(function* () {
+        yield* writeConfig(targetConfig("local"));
+        const error = yield* dbSchemaDeclarativeGenerate(
+          flags({ password: Option.some("secret") }),
+        ).pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "DeclarativeMutuallyExclusiveFlagsError",
+          message: expect.stringContaining("--password only applies when targeting the linked"),
+        });
+        expect(s.ensureStartedCalls).toBe(0);
+        expect(s.engineExportCalls).toEqual([]);
+        expect(s.resolverCalls).toEqual([]);
+      }).pipe(Effect.provide(Layer.mergeAll(s.layer, pinnedEnv)));
+    });
+
     it.effect("target = remote exports from the linked project and names the source", () => {
       const s = setup(tmp.current, {
         experimental: true,
