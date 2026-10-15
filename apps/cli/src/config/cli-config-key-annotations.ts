@@ -57,6 +57,8 @@ export const CLI_CONFIG_CODEC_OVERRIDES: Readonly<Record<string, CliConfigCodec<
  */
 export const CLI_CONFIG_SCHEMA_EXCLUDED: Readonly<Record<string, string>> = {
   "experimental.inspect.rules": "a list of tables, not strings; read from the document",
+  "experimental.orioledb_version":
+    "removed; only an empty value is accepted and the loader drops it",
 };
 
 /** Removed `SUPABASE_*` config overrides with the key and variable that replace them; a non-empty value fails config resolution. */

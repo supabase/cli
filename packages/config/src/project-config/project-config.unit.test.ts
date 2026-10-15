@@ -587,6 +587,7 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
       experimental: {
         compute: true,
         stack: true,
+        orioledb_version: "",
         s3_host: "host",
         s3_region: "region",
         pgdelta: { enabled: true },

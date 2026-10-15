@@ -45,6 +45,13 @@ export const experimental = Schema.Struct({
       tags,
     }),
   ),
+  orioledb_version: Schema.optionalKey(
+    Schema.Literal("").annotate({
+      description:
+        "Removed: use `db.orioledb_version` instead. Only an empty value is accepted, for older generated config files.",
+      tags,
+    }),
+  ),
   s3_host: Schema.optionalKey(
     Schema.String.annotate({
       description: "S3 bucket URL.",

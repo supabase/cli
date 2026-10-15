@@ -21,7 +21,7 @@ variables, `.env` files, `[remotes.*]` blocks and `config.toml` combine. They di
   returns a resolved config, memoised per workdir, project ref and flag set within a runtime. The resolved config
   decodes the whole config eagerly, so an invalid value fails every command that loads config
   unless the caller passes `tolerateInvalid`. Load-time warnings (an env value
-  overriding a remote, the `[inbucket]` deprecation) print once per runtime, however many
+  overriding a remote) print once per runtime, however many
   resolved configs it loads. Code that writes config or `.temp` goes through `writeThrough`, which drops
   the memo.
 - The resolved config surface is:

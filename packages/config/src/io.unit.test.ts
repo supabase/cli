@@ -2286,6 +2286,12 @@ describe("config io removed keys", () => {
 project_id = "stagingrefaaaaaaaaaa"
 `;
 
+  test("the config schema accepts only an empty experimental.orioledb_version", () => {
+    const decode = Schema.decodeUnknownSync(CliConfigSchema);
+    expect(() => decode({ experimental: { orioledb_version: "" } })).not.toThrow();
+    expect(() => decode({ experimental: { orioledb_version: "17.0.1.084-orioledb" } })).toThrow();
+  });
+
   test.each([
     {
       name: "[inbucket] whatever its contents",

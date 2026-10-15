@@ -136,6 +136,8 @@ per-function `.env` files are not read, and reserved `SUPABASE_*` entries are ig
 For Stack mode, TOML `edge_runtime.secrets` overrides the shared `.env`; an explicit
 `--env-file` overrides matching shared secrets while retaining other saved values.
 Per-function TOML `env` remains the final override for that function.
+Without a configured `import_map`, a function uses its own `deno.json` or `deno.jsonc`; a
+per-function `import_map.json` is not read and does not fail the command.
 
 - Any legacy Function name positional arguments are accepted and ignored. The command always
   serves every discovered Function, preserving invocations such as

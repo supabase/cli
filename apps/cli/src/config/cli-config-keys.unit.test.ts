@@ -259,8 +259,12 @@ describe("config key registry", () => {
   );
 
   it("keeps every schema leaf in the registry unless it is explicitly excluded", () => {
-    expect(Object.keys(CLI_CONFIG_SCHEMA_EXCLUDED)).toEqual(["experimental.inspect.rules"]);
+    expect(Object.keys(CLI_CONFIG_SCHEMA_EXCLUDED)).toEqual([
+      "experimental.inspect.rules",
+      "experimental.orioledb_version",
+    ]);
     expect(cliConfigRegistry.keyAt("experimental.inspect.rules")).toBeUndefined();
+    expect(cliConfigRegistry.keyAt("experimental.orioledb_version")).toBeUndefined();
     expect(cliConfigRegistry.keyAt("experimental.webhooks.enabled")).toBeDefined();
   });
 

@@ -453,6 +453,7 @@ every removed key in the file, `[remotes.*]` blocks included, with its replaceme
 A remote's keys are reported with their `remotes.<name>.` prefix. An empty
 `experimental.orioledb_version = ""`, which older `supabase init` templates wrote, is ignored: it is
 dropped from `rawDocument` before decoding, so it never appears as a value, origin or difference.
+The published JSON Schema accepts only that empty value, so editors agree with the loader.
 The CLI also rejects a non-empty `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` environment variable; use
 `SUPABASE_DB_ORIOLEDB_VERSION`.
 

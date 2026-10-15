@@ -2420,6 +2420,11 @@
           "type": "boolean",
           "description": "Use the new local stack backend for start, stop, and status, and for --local targets of the db, migration, test db, gen types, inspect, and pull command families."
         },
+        "orioledb_version": {
+          "type": "string",
+          "enum": [""],
+          "description": "Removed: use `db.orioledb_version` instead. Only an empty value is accepted, for older generated config files."
+        },
         "s3_host": {
           "type": "string",
           "description": "S3 bucket URL.",
@@ -4934,6 +4939,11 @@
                       "stack": {
                         "type": "boolean",
                         "description": "Use the new local stack backend for start, stop, and status, and for --local targets of the db, migration, test db, gen types, inspect, and pull command families."
+                      },
+                      "orioledb_version": {
+                        "type": "string",
+                        "enum": [""],
+                        "description": "Removed: use `db.orioledb_version` instead. Only an empty value is accepted, for older generated config files."
                       },
                       "s3_host": {
                         "type": "string",
