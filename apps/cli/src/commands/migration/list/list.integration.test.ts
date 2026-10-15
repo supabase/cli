@@ -31,17 +31,24 @@ import {
   stubManagementApi,
   type StubbedRequest,
 } from "../../../../tests/helpers/permission-real-layers.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
+import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
-import { DbPasswordFlagsError } from "../../../command-internal/db-config.errors.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { MigrationsReadError } from "../../../command-internal/migration.errors.ts";
-import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import type {
+  DbConnectionInput,
+  ResolvedDbConnection,
+} from "../../../command-internal/db-config.types.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
-import { MigrationTargetFlagsError } from "../migration.errors.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import {
+  TargetProjectRefConflictError,
+  TargetSelectorConflictError,
+} from "../../../command-internal/target/target.errors.ts";
 import { migrationList } from "./list.handler.ts";
 import type { MigrationListFlags } from "./list.command.ts";
 
@@ -49,7 +56,6 @@ const LIST_SQL = "SELECT version FROM supabase_migrations.schema_migrations ORDE
 
 interface SetupOpts {
   readonly format?: OutputFormat;
-  readonly args?: ReadonlyArray<string>;
   readonly isLocal?: boolean;
   readonly remote?: ReadonlyArray<string>;
   readonly remoteError?: DbExecError;
@@ -62,10 +68,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
 
-  const resolverCalls: Array<DbConfigFlags> = [];
+  const resolverCalls: Array<DbConnectionInput> = [];
   const resolver = Layer.succeed(DbConfigResolver, {
-    resolve: (flags: DbConfigFlags) => {
-      resolverCalls.push(flags);
+    resolve: () => Effect.die("resolve is not used by this test"),
+    resolveConnection: (input: DbConnectionInput) => {
+      resolverCalls.push(input);
       return Effect.succeed({
         conn: {
           host: "127.0.0.1",
@@ -74,11 +81,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           password: "x",
           database: "postgres",
         },
-        isLocal: opts.isLocal ?? false,
-        ref: Option.some(VALID_REF),
-      } satisfies ResolvedDbConfig);
+        isLocal: opts.isLocal ?? input.target.kind === "local",
+        ref: input.target.kind === "linked" ? Option.some(input.target.ref) : Option.none(),
+        target: input.target,
+      } satisfies ResolvedDbConnection);
     },
-    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 
@@ -106,17 +113,23 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const projectRef = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
-    resolveRef: () => Effect.succeed({ ref: VALID_REF, source: "file", matchesLinkedRef: true }),
+    resolveRef: (flagValue: Option.Option<string>) =>
+      Effect.succeed({
+        ref: Option.getOrElse(flagValue, () => VALID_REF),
+        source: Option.isSome(flagValue) ? "flag" : "file",
+        matchesLinkedRef: Option.isNone(flagValue),
+      }),
     resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
     loadProjectRef: (flagValue: Option.Option<string>) =>
-      Effect.succeed(
-        Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : VALID_REF,
-      ),
+      Effect.succeed(Option.getOrElse(flagValue, () => VALID_REF)),
     promptProjectRef: () => Effect.succeed(VALID_REF),
   });
 
   const http = recordingProjectHttpClient(VALID_REF);
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
+    Layer.succeed(YesFlag, false),
     out.layer,
     telemetry.layer,
     opts.realLayers === true
@@ -136,7 +149,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     projectRef,
     mockCommandSettings({ workdir }),
     Layer.succeed(DnsResolverFlag, "native"),
-    Layer.succeed(CliArgs, { args: opts.args ?? [] }),
+    Layer.succeed(CliArgs, { args: [] }),
     BunServices.layer,
   );
   return {
@@ -151,7 +164,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
 const flags = (over: Partial<MigrationListFlags> = {}): MigrationListFlags => ({
   dbUrl: over.dbUrl ?? Option.none(),
-  linked: over.linked ?? true,
+  linked: over.linked ?? false,
   local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none(),
   password: over.password ?? Option.none(),
@@ -165,24 +178,41 @@ const seedMigrations = Effect.fnUntraced(function* (workdir: string, names: Read
   for (const name of names) yield* fs.writeFileString(path.join(dir, name), "select 1;\n");
 });
 
+const writeConfig = Effect.fnUntraced(function* (workdir: string, body: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+  yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), body);
+});
+
 const tmp = useTempWorkdir();
 
 describe("migration list", () => {
-  it.effect("lists merged local + remote migrations for the linked project by default", () => {
+  it.effect("lists merged local + remote migrations for the local database by default", () => {
     const ctx = setup(tmp.current, {
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
       yield* seedMigrations(tmp.current, ["20240101000000_a.sql", "20240103000000_c.sql"]);
       yield* migrationList(flags());
-      expect(stripAnsi(ctx.out.stderrText)).toContain("Connecting to remote database...");
       const stdout = stripAnsi(ctx.out.stdoutText);
       expect(stdout).toContain("Local");
       expect(stdout).toContain("Time (UTC)");
       expect(stdout).toContain("`20240101000000`");
       expect(stdout).toContain("`20240102000000`");
       expect(stdout).toContain("`20240103000000`");
-      expect(ctx.resolverCalls[0]?.connType).toBe("linked");
+      expect(ctx.resolverCalls[0]?.target).toEqual({ kind: "local" });
+      expect(ctx.cache.cachedRef).toBeUndefined();
+    }).pipe(Effect.provide(ctx.layer));
+  });
+
+  it.effect("lists the linked project and fills the cache when the workspace target is remote", () => {
+    const ctx = setup(tmp.current, { remote: ["20240101000000"] });
+    return Effect.gen(function* () {
+      yield* seedMigrations(tmp.current, ["20240101000000_a.sql"]);
+      yield* writeConfig(tmp.current, 'target = "remote"\n');
+      yield* migrationList(flags());
+      expect(ctx.resolverCalls[0]?.target).toMatchObject({ kind: "linked", ref: VALID_REF });
       expect(ctx.cache.cachedRef).toBe(VALID_REF);
     }).pipe(Effect.provide(ctx.layer));
   });
@@ -218,7 +248,7 @@ describe("migration list", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("lists the project given via --project-ref, overriding the default linked ref", () => {
+  it.effect("lists the project given via --project-ref, which implies --linked", () => {
     // VALID_REF is the fake resolver's fallback; the flag must win over it and drive
     // the cached ref.
     const FLAG_REF = "flagflagflagflagflag";
@@ -231,64 +261,37 @@ describe("migration list", () => {
     }).pipe(Effect.provide(ctx.layer));
   });
 
-  it.effect("rejects --project-ref combined with an explicit --local target", () => {
+  it.effect("rejects --project-ref combined with --local before connecting", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    const ctx = setup(tmp.current, { args: ["--local"], isLocal: true, remote: [] });
+    const ctx = setup(tmp.current, { remote: [] });
     return Effect.gen(function* () {
       yield* seedMigrations(tmp.current, ["20240101000000_a.sql"]);
       const error = yield* migrationList(
-        flags({ linked: false, local: true, projectRef: Option.some(FLAG_REF) }),
+        flags({ local: true, projectRef: Option.some(FLAG_REF) }),
       ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(MigrationTargetFlagsError);
-      expect(error.message).toBe(
-        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      );
+      expect(error).toBeInstanceOf(TargetProjectRefConflictError);
       expect(ctx.resolverCalls).toEqual([]);
       expect(ctx.cache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(ctx.layer));
   });
 
   it.effect("targets the local database with --local and skips the linked cache", () => {
-    const ctx = setup(tmp.current, {
-      args: ["--local"],
-      isLocal: true,
-      remote: [],
-    });
+    const ctx = setup(tmp.current, { remote: [] });
     return Effect.gen(function* () {
       yield* seedMigrations(tmp.current, ["20240101000000_a.sql"]);
-      yield* migrationList(flags({ linked: false, local: true }));
-      expect(ctx.resolverCalls[0]?.connType).toBe("local");
+      yield* migrationList(flags({ local: true }));
+      expect(ctx.resolverCalls[0]?.target).toEqual({ kind: "local" });
       expect(ctx.cache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(ctx.layer));
   });
 
   it.effect("rejects --db-url combined with --linked", () => {
-    const { layer } = setup(tmp.current, { args: ["--db-url", "postgresql://x", "--linked"] });
+    const { layer } = setup(tmp.current);
     return Effect.gen(function* () {
       const error = yield* migrationList(
         flags({ dbUrl: Option.some("postgresql://x"), linked: true }),
       ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(MigrationTargetFlagsError);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("rejects --db-url combined with --password", () => {
-    const { layer } = setup(tmp.current, { args: ["--db-url", "postgresql://x"] });
-    return Effect.gen(function* () {
-      const error = yield* migrationList(
-        flags({ dbUrl: Option.some("postgresql://x"), password: Option.some("pw") }),
-      ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(DbPasswordFlagsError);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("rejects --local combined with --password", () => {
-    const { layer } = setup(tmp.current, { args: ["--local"] });
-    return Effect.gen(function* () {
-      const error = yield* migrationList(
-        flags({ local: true, linked: false, password: Option.some("pw") }),
-      ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(DbPasswordFlagsError);
+      expect(error).toBeInstanceOf(TargetSelectorConflictError);
     }).pipe(Effect.provide(layer));
   });
 
@@ -329,7 +332,6 @@ describe("migration list", () => {
 
   it.effect("mints a login role and fills the cache through the real resolver and cache", () => {
     const ctx = setup(tmp.current, {
-      args: ["migration", "list", "--project-ref", VALID_REF],
       realLayers: true,
       remote: ["20240101000000"],
     });
@@ -362,14 +364,13 @@ describe("migration list", () => {
 
   it.effect("makes no Management API request for --local through the real resolver", () => {
     const ctx = setup(tmp.current, {
-      args: ["migration", "list", "--local"],
       isLocal: true,
       realLayers: true,
     });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
       yield* stubManagementApi(requests, () => undefined);
-      yield* migrationList(flags({ linked: false, local: true }));
+      yield* migrationList(flags({ local: true }));
       expect(requests).toEqual([]);
       expect(ctx.http.calls).toEqual([]);
       assertPermissionDrift({
@@ -387,7 +388,6 @@ describe("migration list", () => {
 
   it.effect("fetches the pooler config but mints no login role when --password is given", () => {
     const ctx = setup(tmp.current, {
-      args: ["migration", "list", "--password", "pw", "--project-ref", VALID_REF],
       realLayers: true,
     });
     const requests: Array<StubbedRequest> = [];
