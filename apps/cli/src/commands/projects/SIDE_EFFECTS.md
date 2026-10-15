@@ -81,10 +81,10 @@ subcommand's own `SIDE_EFFECTS.md`.
   in ANSI; this port emits plain text. The old renderer disabled color when
   stdout/stderr was not a TTY, so piped / CI output matches byte-for-byte; only
   the interactive-terminal appearance differs.
-- **`create` linked cache:** the new project ref is cached on success;
-  `delete` also caches the resolved ref, even though the project is gone — the
-  cache file is `supabase/.temp/linked-project.json`, which `delete` removes along
-  with the rest of `supabase/.temp` when the deleted ref is the linked one.
+- **`create` linked cache:** the new project ref is cached on success. `delete`
+  first removes `supabase/.temp` when the deleted ref is the linked one, then makes
+  a best-effort cache fill (`supabase/.temp/linked-project.json`); the project
+  lookup it needs returns 404 for a deleted project, so nothing is written.
 - **`create` non-interactive errors:** consolidates what used to be per-flag
   "required flag(s) … not set" errors into a single `ProjectsCreateMissingArgError`
   that lists every missing item at once (a deliberate UX improvement over the
