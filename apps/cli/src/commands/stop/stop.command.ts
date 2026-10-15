@@ -2,6 +2,7 @@ import { Layer } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
@@ -52,6 +53,10 @@ const stopRuntimeLayer = Layer.mergeAll(
 export const stopCommand = Command.make("stop", config).pipe(
   Command.withDescription("Stop all local Supabase containers."),
   Command.withShortDescription("Stop all local Supabase containers"),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["project-id", "backup", "no-backup", "all"],
+  }),
   Command.withHandler((flags) =>
     stop(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),

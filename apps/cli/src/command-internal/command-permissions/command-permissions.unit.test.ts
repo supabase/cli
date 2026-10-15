@@ -9,7 +9,6 @@ import { OPERATIONS } from "../../../tests/helpers/operation-table.ts";
 import { readPermissions } from "./command-permissions.annotation.ts";
 import { GLOBAL_NO_API_EFFECT_FLAGS } from "../../../tests/helpers/permission-global-flags.ts";
 import type { CommandPermissions, EntryCondition, OperationEntry } from "./model.ts";
-import { PENDING_COMMANDS } from "../../../tests/helpers/permission-pending-commands.ts";
 import { DB_TARGET_FLAGS } from "../../../tests/helpers/permission-registry.ts";
 import type { PermissionVariant } from "../../../tests/helpers/permission-registry.ts";
 
@@ -18,14 +17,7 @@ import type { PermissionVariant } from "../../../tests/helpers/permission-regist
  * (`db diff --use-pg-schema`, `functions download --legacy-bundle`) stays mapped with a
  * `context` note instead.
  */
-const GO_DELEGATED_PATHS: ReadonlySet<string> = new Set([
-  "db branch create",
-  "db branch delete",
-  "db branch list",
-  "db branch switch",
-  "db remote changes",
-  "gen keys",
-]);
+const GO_DELEGATED_PATHS: ReadonlySet<string> = new Set<string>([]);
 
 /**
  * Operations a declaration may reference although the spec gives them no `x-fga-permissions`,
@@ -68,39 +60,17 @@ function declarationOf(node: TreeNode): CommandPermissions | undefined {
 
 describe("command permission mapping completeness", () => {
   const trees = VARIANTS.map(({ name, variant }) => ({ name, tree: commandTreeFor(variant) }));
-  const everyLeafPath = new Set(
-    trees.flatMap(({ tree }) => [...tree].filter(([, node]) => node.isLeaf).map(([path]) => path)),
-  );
   const everyRealFlag = new Set(
     trees.flatMap(({ tree }) => [...tree.values()].flatMap((node) => [...node.flags])),
   );
-  const pendingPaths = new Set(PENDING_COMMANDS);
-
-  it("lists every pending path once, and only paths that are real leaves", () => {
-    expect(pendingPaths.size, "PENDING_COMMANDS has a duplicate entry").toBe(
-      PENDING_COMMANDS.length,
-    );
-    for (const path of pendingPaths) {
-      expect(
-        everyLeafPath.has(path),
-        `pending path "${path}" is not a leaf in any command tree`,
-      ).toBe(true);
-    }
-  });
 
   for (const { name, tree } of trees) {
     describe(name, () => {
       const leaves = [...tree].filter(([, node]) => node.isLeaf);
 
-      it("declares or pends every leaf, never both", () => {
+      it("declares permissions on every leaf", () => {
         for (const [path, node] of leaves) {
-          const isDeclared = declarationOf(node) !== undefined;
-          const isPending = pendingPaths.has(path);
-          expect(isDeclared || isPending, `"${path}" is neither declared nor pending`).toBe(true);
-          expect(
-            isDeclared && isPending,
-            `"${path}" is both declared and pending — remove it from PENDING_COMMANDS`,
-          ).toBe(false);
+          expect(declarationOf(node), `"${path}" declares no permissions`).toBeDefined();
         }
       });
 
@@ -236,6 +206,25 @@ describe("command permission mapping completeness", () => {
       });
     });
   }
+
+  it("keeps every go-delegation allowlist path a real leaf that is declared unmapped", () => {
+    for (const path of GO_DELEGATED_PATHS) {
+      const declared = trees
+        .flatMap(({ tree }) => [tree.get(path)])
+        .filter((node) => node?.isLeaf === true)
+        .map((node) => (node === undefined ? undefined : declarationOf(node)));
+      expect(
+        declared.length,
+        `allowlist path "${path}" is not a leaf in any command tree`,
+      ).toBeGreaterThan(0);
+      for (const permissions of declared) {
+        expect(
+          permissions?.status,
+          `allowlist path "${path}" isn't declared unmapped — remove it from the allowlist if it was mapped`,
+        ).toBe("unmapped");
+      }
+    }
+  });
 
   it("acknowledges only operations that really lack x-fga-permissions in the bundled spec", () => {
     for (const operationId of OPERATIONS_WITHOUT_FGA.keys()) {

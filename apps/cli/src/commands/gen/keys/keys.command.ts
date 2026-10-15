@@ -1,4 +1,5 @@
 import { Command, Flag } from "effect/cli";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { removedCommand } from "../../../command-internal/removed-command.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -19,6 +20,11 @@ const config = {
 export const genKeysCommand = Command.make("keys", config).pipe(
   Command.withDescription("Removed: use `supabase projects api-keys --project-ref <ref>` instead."),
   Command.withShortDescription("Removed: use `projects api-keys` instead"),
+  // Removed: fails before any Management API call, so no flag changes what it calls.
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["override-name", "project-ref"],
+  }),
   Command.withHandler(() =>
     removedCommand(
       "Use `supabase projects api-keys --project-ref <ref>` to read a project's API keys.",

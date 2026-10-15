@@ -32,6 +32,7 @@ import {
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
 import {
+  mockCommandPlatformApi,
   mockCommandSettings,
   mockTelemetryStateTracked,
   useTempWorkdir,
@@ -40,6 +41,7 @@ import {
   withEmptyConfigEnv,
   withEnvVar,
 } from "../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
 import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { classifyCliCauseActionability } from "../../shared/telemetry/error-actionability.ts";
@@ -477,6 +479,8 @@ interface SetupOpts {
   /** Observes files decoded from the in-memory tar stream passed to `docker cp -`. */
   readonly onSecretCopy?: (containerPath: string, content: string) => void;
   readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>;
+  /** Replaces the factory that dies when a local start reaches for the Management API. */
+  readonly platformApiFactoryLayer?: Layer.Layer<CommandPlatformApiFactory>;
   readonly configuredProjectId?: string;
   /** Raw `config.toml` contents — overrides `configuredProjectId`'s single-line default. */
   readonly configContents?: string;
@@ -529,9 +533,10 @@ const setup = Effect.fnUntraced(function* (opts: SetupOpts = {}) {
     dockerRunLayer.pipe(Layer.provide(child.layer), Layer.provide(mockProcessControl().layer)),
     mockProcessControl().layer,
     mockRuntimeInfo({ platform: "linux" }),
-    Layer.succeed(CommandPlatformApiFactory, {
-      make: Effect.die("CommandPlatformApiFactory should not be used by a local start"),
-    }),
+    opts.platformApiFactoryLayer ??
+      Layer.succeed(CommandPlatformApiFactory, {
+        make: Effect.die("CommandPlatformApiFactory should not be used by a local start"),
+      }),
     Layer.succeed(CliArgs, { args: ["start"] }),
     Layer.succeed(DebugFlag, false),
     Layer.succeed(YesFlag, false),
@@ -2617,14 +2622,22 @@ content_path = "./supabase/templates/custom_notice.html"
     it.effect("seeds a configured bucket on a fresh volume with storage enabled", () =>
       Effect.gen(function* () {
         const http = mockStorageBucketHttpClient();
+        const api = mockCommandPlatformApi();
         const { layer } = yield* setup({
           configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
           route: freshVolumeRoute(defaultRoute()),
           httpClientLayer: http.layer,
+          platformApiFactoryLayer: api.factoryLayer,
         });
 
         yield* start(flags({ exclude: ["edge-runtime"] })).pipe(Effect.provide(layer));
         expect(http.createdBucketRequests).toHaveLength(1);
+        assertPermissionDrift({
+          command: "start",
+          requests: [...http.requests, ...api.requests],
+          activeFlags: { exclude: true },
+          exact: true,
+        });
         // docker.io Storage carries its own Docker healthcheck, so readiness
         // never goes through the gateway.
         expect(http.requests.some((entry) => entry.url.includes("/storage/v1/status"))).toBe(false);

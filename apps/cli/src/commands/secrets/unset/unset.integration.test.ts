@@ -147,7 +147,12 @@ describe("secrets unset integration", () => {
           `Do you want to unset these function secrets from project ${VALID_REF}?\n • FOO\n • BAR\n\n [y/N] y\n`,
         );
         expect(out.stdoutText).toBe("Finished supabase secrets unset.\n");
-        assertPermissionDrift({ command: "secrets unset", requests: api.requests, exact: true });
+        assertPermissionDrift({
+          command: "secrets unset",
+          activeFlags: { all: false, "dry-run": false },
+          requests: api.requests,
+          exact: true,
+        });
       }).pipe(Effect.provide(layer));
     });
 
@@ -247,7 +252,7 @@ describe("secrets unset integration", () => {
       });
       assertPermissionDrift({
         command: "secrets unset",
-        activeFlags: { all: true },
+        activeFlags: { all: true, "dry-run": false },
         requests: api.requests,
         exact: true,
       });
@@ -263,7 +268,7 @@ describe("secrets unset integration", () => {
         expect(api.requests[1]?.body).toEqual(["FOO", "BAR"]);
         assertPermissionDrift({
           command: "secrets unset",
-          activeFlags: { all: true },
+          activeFlags: { all: true, "dry-run": false },
           requests: api.requests,
           exact: true,
         });

@@ -28,11 +28,13 @@ import {
   statusCodeFailure,
   transportFailure,
   mockCommandSettings,
+  mockCommandPlatformApi,
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
   useTempWorkdir,
   withEnvVar,
 } from "../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
 import type { CommandPlatformApiFactoryError } from "../../auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
@@ -319,6 +321,8 @@ interface SetupOpts {
     readonly fail?: unknown;
     readonly makeFails?: CommandPlatformApiFactoryError;
   };
+  /** A ready-made `CommandPlatformApiFactory` layer, e.g. one that records HTTP requests. */
+  readonly apiFactoryLayer?: Layer.Layer<CommandPlatformApiFactory>;
   /** `SUPABASE_PROJECT_ID` for the linked-state chain — defaults to unset. */
   readonly projectId?: Option.Option<string>;
 }
@@ -360,6 +364,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(OutputFlag, opts.outputFlag ?? Option.none()),
     ...(apiMock === undefined ? [] : [apiMock.layer]),
     ...(apiFactoryMock === undefined ? [] : [apiFactoryMock.layer]),
+    ...(opts.apiFactoryLayer === undefined ? [] : [opts.apiFactoryLayer]),
   );
 
   return { workdir, out, telemetry, child, layer, apiMock, apiFactoryMock };
@@ -1553,6 +1558,35 @@ content_path = "./supabase/templates/password_changed_notification.html"
         }).pipe(Effect.provide(layer));
       },
     );
+
+    it.effect.each([
+      {
+        answer: "200",
+        response: { status: 200, body: [LINKED_BRANCH] },
+        branchLine: `  Branch: feature-x (${LINKED_BRANCH_REF})\n`,
+      },
+      {
+        answer: "403",
+        response: { status: 403, body: { message: "forbidden" } },
+        branchLine: `  Branch: ${LINKED_BRANCH_REF}\n`,
+      },
+    ])("branch-linked: the branch lookup answers $answer over HTTP", ({ response, branchLine }) => {
+      const api = mockCommandPlatformApi({ response });
+      const { layer, out, workdir } = setup({ apiFactoryLayer: api.factoryLayer });
+      return Effect.gen(function* () {
+        yield* writeConfig();
+        yield* writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        yield* writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, {
+          name: "Parent Project",
+        });
+        yield* status(flags());
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          `GET https://api.supabase.com/v1/projects/${LINKED_PARENT_REF}/branches`,
+        ]);
+        expect(out.stdoutText).toContain(branchLine);
+        assertPermissionDrift({ command: "status", requests: api.requests });
+      }).pipe(Effect.provide(layer));
+    });
 
     it.effect(
       "branch-linked with the branch lookup failing (status error): RICH degraded block, still succeeds",
