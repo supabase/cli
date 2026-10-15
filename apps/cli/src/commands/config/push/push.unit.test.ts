@@ -7,16 +7,16 @@ const PARENT_REF = "pppppppppppppppppppp";
 
 describe("pushConsentAction", () => {
   test("names a single service", () => {
-    expect(pushConsentAction(["auth"])).toBe("push config changes to Auth");
+    expect(pushConsentAction(["auth"])).toBe("Push config changes to Auth");
   });
 
   test("joins two services with and", () => {
-    expect(pushConsentAction(["api", "storage"])).toBe("push config changes to API and Storage");
+    expect(pushConsentAction(["api", "storage"])).toBe("Push config changes to API and Storage");
   });
 
   test("joins three or more with commas and a final and, including webhooks", () => {
     expect(pushConsentAction(["api", "db.settings", "experimental.webhooks"])).toBe(
-      "push config changes to API, DB and Webhooks",
+      "Push config changes to API, DB and Webhooks",
     );
   });
 });
