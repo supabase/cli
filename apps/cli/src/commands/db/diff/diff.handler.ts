@@ -237,6 +237,9 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // The first migrations endpoint resolved wins: the engine provisions a single migrations
       // shadow/catalog, so only refs resolved before that point should influence it.
       let migrationsToml: DbTomlValues | undefined;
+      // Each linked resolution mints a temporary login role that invalidates the previous one,
+      // so the preflight and every `linked` ref share a single connection.
+      let linkedEndpoint: PgDeltaDatabaseEndpoint | undefined;
       // The preflight target resolve below validates a changed target flag and is stateful: a
       // changed `--linked` resolves the project ref and merges `[remotes.<ref>]`, so the
       // explicit `local`/`migrations` refs below see that override. `--local`/`--db-url` load
@@ -260,6 +263,12 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
             yield* Ref.set(linkedRefForCache, Option.some(preflightRef));
             mergedLinkedRef = preflightRef;
           }
+          linkedEndpoint = {
+            kind: "database",
+            ref: toPostgresURL(preflight.conn),
+            connection: preflight.conn,
+            connectOptions: { isLocal: preflight.isLocal, dnsResolver },
+          };
         }
       }
       // Read config once, after the preflight: the `[remotes.<ref>]`-merged config
@@ -318,6 +327,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
               } satisfies PgDeltaDatabaseEndpoint;
             }
             case "linked": {
+              if (linkedEndpoint !== undefined) return linkedEndpoint;
               const resolved = yield* resolver.resolve({
                 dbUrl: Option.none(),
                 connType: "linked",
@@ -331,12 +341,13 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                 mergedLinkedRef = ref2;
                 cfg = yield* readDbToml(fs, path, cliSettings.workdir, ref2);
               }
-              return {
+              linkedEndpoint = {
                 kind: "database",
                 ref: toPostgresURL(resolved.conn),
                 connection: resolved.conn,
                 connectOptions: { isLocal: resolved.isLocal, dnsResolver },
-              } satisfies PgDeltaDatabaseEndpoint;
+              };
+              return linkedEndpoint;
             }
             case "migrations":
               // Preserve resolution order: the migrations shadow/catalog config must reflect
