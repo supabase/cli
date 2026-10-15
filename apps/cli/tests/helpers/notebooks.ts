@@ -257,6 +257,7 @@ export interface NotebooksSetupOptions {
   readonly workdir: string;
   readonly format?: "text" | "json" | "stream-json";
   readonly interactive?: boolean;
+  /** Picks the mock resolver's linkage; ignored with `realLayers`, where the workdir's ref file decides. */
   readonly linked?: boolean;
   /** Answers the reconciliation prompt: `"keep"`, `"copy"` or `"delete"`. */
   readonly promptSelectResponses?: ReadonlyArray<string>;
@@ -268,7 +269,7 @@ export interface NotebooksSetupOptions {
   /**
    * Runs the real `projectRefLayer` (an unlinked workdir reaches its picker) and the real
    * linked-project cache, so their `GET /v1/projects` and `GET /v1/projects/{ref}` calls go
-   * through `routes`.
+   * through `routes`. Linkage then comes from the workdir's `.temp/project-ref`, not `linked`.
    */
   readonly realLayers?: boolean;
 }
