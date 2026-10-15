@@ -16,6 +16,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { migrationSquashRuntimeLayer } from "../migration.layers.ts";
 import { migrationSquash } from "./squash.handler.ts";
+import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
@@ -23,31 +24,13 @@ const config = {
     Flag.withDescription("Squash up to the specified version."),
     Flag.optional,
   ),
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription(
-      "Squashes migrations of the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Squashes the migration history of the linked project."),
-    Flag.withDefault(false),
-  ),
-  local: Flag.Boolean("local").pipe(
-    Flag.withDescription("Squashes the migration history of the local database."),
-    Flag.withDefault(true),
-  ),
+  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
     description:
       "Database password for the linked project (--linked/--project-ref). Not used with --local or --db-url.",
   }),
-  // TS-only override of the linked project ref — see push.command.ts (db push).
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
 } as const;
 
 export type MigrationSquashFlags = CliCommand.Command.Config.Infer<typeof config>;

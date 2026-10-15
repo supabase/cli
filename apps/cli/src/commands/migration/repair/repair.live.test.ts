@@ -39,6 +39,7 @@ test("amends the migration history status on the remote database", ({
           version,
           "--status",
           "applied",
+          "--yes",
           "--db-url",
           project.dbUrl,
         ]);
@@ -59,6 +60,7 @@ test("amends the migration history status on the remote database", ({
           version,
           "--status",
           "reverted",
+          "--yes",
           "--db-url",
           project.dbUrl,
         ]);
@@ -89,6 +91,7 @@ test("amends the migration history status on the remote database", ({
                       version,
                       "--status",
                       "reverted",
+                      "--yes",
                       "--db-url",
                       project.dbUrl,
                     ]);

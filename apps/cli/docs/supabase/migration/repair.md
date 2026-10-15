@@ -1,8 +1,8 @@
 ## supabase-migration-repair
 
-Repairs the remote migration history table.
+Repairs the migration history table.
 
-Requires your local project to be linked to a remote database by running `supabase link`.
+By default, it repairs your local database. Pass `--linked` (or `--project-ref`) to repair the linked project, which requires running `supabase link`, or `--db-url` to repair a specific database. Repairing a hosted database asks for confirmation before it changes anything (the default answer is No); pass `--yes` to confirm in scripts and other non-interactive runs.
 
 If your local and remote migration history goes out of sync, you can repair the remote history by marking specific migrations as `--status applied` or `--status reverted`. Marking as `reverted` will delete an existing record from the migration history table while marking as `applied` will insert a new record.
 
@@ -30,9 +30,10 @@ $ supabase migration list
 Then mark the remote migration `20230103054303` as reverted.
 
 ```bash
-$ supabase migration repair 20230103054303 --status reverted
-Connecting to remote database...
-Repaired migration history: [20220810154537] => reverted
+$ supabase migration repair 20230103054303 --status reverted --linked
+Target: project My Project (abcdefghijklmnopqrst) · production
+Mark 1 migration as reverted on project My Project (abcdefghijklmnopqrst) · production? [y/N]
+Repaired migration history: [20230103054303] => reverted
 Finished supabase migration repair.
 
 $ supabase migration list
@@ -44,10 +45,7 @@ Now you can run `db pull` again to dump the remote schema as a local migration f
 
 ```bash
 $ supabase db pull
-Connecting to remote database...
 Schema written to supabase/migrations/20240414044403_remote_schema.sql
-Update remote migration history table? [Y/n]
-Repaired migration history: [20240414044403] => applied
 Finished supabase db pull.
 
 $ supabase migration list

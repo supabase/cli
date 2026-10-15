@@ -51,7 +51,7 @@ test("applies a test-written migration to the remote database", ({
       );
 
       const target = Effect.gen(function* () {
-        const applied = yield* cliEffect(["migration", "up", "--db-url", project.dbUrl]);
+        const applied = yield* cliEffect(["migration", "up", "--yes", "--db-url", project.dbUrl]);
         expect(applied.exitCode, applied.stderr).toBe(0);
         expect(applied.stderr, applied.stdout).toContain("Applying migration");
 
@@ -91,6 +91,7 @@ test("applies a test-written migration to the remote database", ({
           version,
           "--status",
           "reverted",
+          "--yes",
           "--db-url",
           project.dbUrl,
         ]);

@@ -2,7 +2,7 @@
 
 Lists migration history in both local and remote databases.
 
-Requires your local project to be linked to a remote database by running `supabase link`. For self-hosted databases, you can pass in the connection parameters using `--db-url` flag.
+By default, it lists the migration history of your local database. Pass `--linked` (or `--project-ref`) to list the linked project instead, or set `target = "remote"` in your project config (or `SUPABASE_TARGET=remote`) to make the linked project the default. Linking requires running `supabase link`. For self-hosted databases, you can pass in the connection parameters using `--db-url` flag.
 
 > Note that URL strings must be escaped according to [RFC 3986](https://www.rfc-editor.org/rfc/rfc3986).
 
