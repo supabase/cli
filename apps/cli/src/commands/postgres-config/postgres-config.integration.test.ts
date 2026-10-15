@@ -485,7 +485,7 @@ describe("postgres-config update", () => {
         assertPermissionDrift({
           command: "postgres-config update",
           activeFlags: { "replace-existing-overrides": true },
-          requests: [{ method: "GET", url: String(api.requests[0]?.url) }],
+          requests: [{ method: "GET", url: CONFIG_URL }],
         }),
       ).toThrow(/condition doesn't hold/);
     }).pipe(Effect.provide(layer));
@@ -877,8 +877,8 @@ describe("postgres-config delete", () => {
         requests: api.requests,
         exact: true,
       });
-      assertBlockDrift(postgresConfigRead, { requests: [api.requests[0]!], exact: true });
-      assertBlockDrift(postgresConfigWrite, { requests: [api.requests[1]!], exact: true });
+      assertBlockDrift(postgresConfigRead, { requests: api.requests.slice(0, 1), exact: true });
+      assertBlockDrift(postgresConfigWrite, { requests: api.requests.slice(1, 2), exact: true });
     }).pipe(Effect.provide(layer));
   });
 

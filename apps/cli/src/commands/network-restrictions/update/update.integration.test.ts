@@ -166,7 +166,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects the POST /apply request when the declaration is read as --append", () => {
+  it.effect("declares POST /apply only when --append is off", () => {
     const { layer, api } = setup({ postResponse: POST_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({ ...baseFlags, dbAllowCidr: ["12.3.4.5/32"] });
@@ -383,7 +383,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects the PATCH request when the declaration is read as replace mode", () => {
+  it.effect("declares PATCH only when --append is on", () => {
     const { layer, api } = setup({ patchResponse: PATCH_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({
