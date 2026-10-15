@@ -39,7 +39,7 @@ function setup(rows: ReadonlyArray<Record<string, unknown>>) {
   const layer = Layer.mergeAll(
     out.layer,
     BunServices.layer,
-    mockCommandSettings({ workdir: "/tmp/inspect-specs-int" }),
+    mockCommandSettings({ workdir: "/tmp/inspect-specs-int", explicitWorkdir: true }),
     Layer.succeed(CliArgs, { args: [] }),
     Layer.succeed(DbConfigResolver, {
       resolve: (_flags: DbConfigFlags) =>

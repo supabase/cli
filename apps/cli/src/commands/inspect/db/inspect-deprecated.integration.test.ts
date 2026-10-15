@@ -46,7 +46,7 @@ function setup() {
     out.layer,
     telemetry.layer,
     BunServices.layer,
-    mockCommandSettings({ workdir: "/tmp/inspect-deprecated-int" }),
+    mockCommandSettings({ workdir: "/tmp/inspect-deprecated-int", explicitWorkdir: true }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: [] }),
     Layer.succeed(DbConfigResolver, {

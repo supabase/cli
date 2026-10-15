@@ -7,7 +7,10 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { dbTargetSelectionOf } from "../../../command-internal/db-target-flags.ts";
-import { resolveDbTarget } from "../../../command-internal/workspace-target.ts";
+import {
+  passwordDroppedByWorkspaceTarget,
+  resolveDbTarget,
+} from "../../../command-internal/workspace-target.ts";
 import {
   loadProjectEnv,
   readDbToml,
@@ -147,7 +150,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
 
     // 3. Resolve the connection: db-url > local > linked, then the workspace target, then
     //    the legacy linked default.
-    const { connType } = yield* resolveDbTarget({
+    const resolvedTarget = yield* resolveDbTarget({
       command: "db dump",
       selection: dbTargetSelectionOf({
         dbUrl: Option.isSome(flags.dbUrl),
@@ -157,6 +160,11 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       projectRefSet: Option.isSome(flags.projectRef),
       legacyDefault: "linked",
     });
+    const connType = resolvedTarget.connType;
+    const droppedPassword = passwordDroppedByWorkspaceTarget(resolvedTarget, flags.password);
+    if (droppedPassword !== undefined) {
+      return yield* new DbDumpMutuallyExclusiveFlagsError({ message: droppedPassword });
+    }
     // `--project-ref` never implies `--linked`; see push.handler.ts's identical guard.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
       return yield* new DbDumpMutuallyExclusiveFlagsError({

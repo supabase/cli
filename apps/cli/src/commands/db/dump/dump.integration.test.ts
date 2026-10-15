@@ -428,6 +428,7 @@ const runtimeInfoLayer = (platform: NodeJS.Platform, arch?: NodeJS.Architecture)
   });
 
 interface SetupOpts {
+  explicitWorkdir?: boolean;
   format?: "text" | "json" | "stream-json";
   conn?: PgConnInput;
   isLocal?: boolean;
@@ -491,6 +492,7 @@ function setup(opts: SetupOpts = {}) {
     unusedStackApi,
     mockCommandSettings({
       workdir,
+      explicitWorkdir: opts.explicitWorkdir,
       projectId: opts.projectId ?? Option.none(),
       ...(opts.realLayers === true ? { projectHost: "invalid" } : {}),
     }),
@@ -1492,7 +1494,7 @@ describe("db dump permissions through the real resolver and cache", () => {
   });
   describe("workspace target", () => {
     const FLIP_WARNING =
-      'Warning: supabase db dump will target the local database by default in the next major version. Pass --linked, or set target = "remote" in supabase/config.toml (or SUPABASE_TARGET=remote), to keep targeting the linked project.';
+      'Warning: supabase db dump will target the local database by default in the next major version. Pass --linked, or set target = "remote" in your Supabase config (or SUPABASE_TARGET=remote), to keep targeting the linked project.';
 
     const writeTarget = (target: string) =>
       Effect.gen(function* () {
@@ -1507,7 +1509,11 @@ describe("db dump permissions through the real resolver and cache", () => {
     it.effect(
       "warns on stderr and keeps targeting the linked project when nothing selects one",
       () => {
-        const { layer, out, resolver } = setup({ workdir: tmp.current, isLocal: false });
+        const { layer, out, resolver } = setup({
+          explicitWorkdir: true,
+          workdir: tmp.current,
+          isLocal: false,
+        });
         return Effect.gen(function* () {
           yield* dbDump(flags({ dryRun: true }));
           expect(resolver.calls[0]?.connType).toBe("linked");
@@ -1519,7 +1525,12 @@ describe("db dump permissions through the real resolver and cache", () => {
     );
 
     it.effect("keeps the warning on stderr in json mode", () => {
-      const { layer, out } = setup({ workdir: tmp.current, isLocal: false, format: "json" });
+      const { layer, out } = setup({
+        explicitWorkdir: true,
+        workdir: tmp.current,
+        isLocal: false,
+        format: "json",
+      });
       return Effect.gen(function* () {
         yield* dbDump(flags({ dryRun: true }));
         expect(out.stderrText).toContain(FLIP_WARNING);
@@ -1529,7 +1540,11 @@ describe("db dump permissions through the real resolver and cache", () => {
     });
 
     it.effect("does not warn when a selector flag is passed", () => {
-      const { layer, out, resolver } = setup({ workdir: tmp.current, isLocal: false });
+      const { layer, out, resolver } = setup({
+        explicitWorkdir: true,
+        workdir: tmp.current,
+        isLocal: false,
+      });
       return Effect.gen(function* () {
         yield* dbDump(flags({ dryRun: true, linked: Option.some(true) }));
         expect(resolver.calls[0]?.connType).toBe("linked");
@@ -1538,7 +1553,11 @@ describe("db dump permissions through the real resolver and cache", () => {
     });
 
     it.effect("targets the linked project without warning when target = remote", () => {
-      const { layer, out, resolver } = setup({ workdir: tmp.current, isLocal: false });
+      const { layer, out, resolver } = setup({
+        explicitWorkdir: true,
+        workdir: tmp.current,
+        isLocal: false,
+      });
       return Effect.gen(function* () {
         yield* writeTarget("remote");
         yield* dbDump(flags({ dryRun: true }));
@@ -1548,7 +1567,11 @@ describe("db dump permissions through the real resolver and cache", () => {
     });
 
     it.effect("targets the local database without warning when target = local", () => {
-      const { layer, out, resolver } = setup({ workdir: tmp.current, isLocal: true });
+      const { layer, out, resolver } = setup({
+        explicitWorkdir: true,
+        workdir: tmp.current,
+        isLocal: true,
+      });
       return Effect.gen(function* () {
         yield* writeTarget("local");
         yield* dbDump(flags({ dryRun: true }));
@@ -1560,6 +1583,7 @@ describe("db dump permissions through the real resolver and cache", () => {
 
     it.effect("lets SUPABASE_TARGET override the config target", () => {
       const { layer, resolver } = setup({
+        explicitWorkdir: true,
         workdir: tmp.current,
         isLocal: true,
         env: { SUPABASE_TARGET: "local" },
@@ -1572,11 +1596,81 @@ describe("db dump permissions through the real resolver and cache", () => {
     });
 
     it.effect("lets an explicit --local override target = remote", () => {
-      const { layer, resolver } = setup({ workdir: tmp.current, isLocal: true });
+      const { layer, resolver } = setup({
+        explicitWorkdir: true,
+        workdir: tmp.current,
+        isLocal: true,
+      });
       return Effect.gen(function* () {
         yield* writeTarget("remote");
         yield* dbDump(flags({ dryRun: true, local: Option.some(true) }));
         expect(resolver.calls[0]?.connType).toBe("local");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("names SUPABASE_TARGET as the source when it selects the linked project", () => {
+      const { layer, out, resolver } = setup({
+        explicitWorkdir: true,
+        workdir: tmp.current,
+        isLocal: false,
+        env: { SUPABASE_TARGET: "remote" },
+      });
+      return Effect.gen(function* () {
+        yield* dbDump(flags({ dryRun: true }));
+        expect(resolver.calls[0]?.connType).toBe("linked");
+        expect(out.stderrText).toContain(
+          'Targeting the linked project (target = "remote" from SUPABASE_TARGET)',
+        );
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("fails instead of dropping --password when target = local", () => {
+      const { layer, resolver } = setup({
+        explicitWorkdir: true,
+        workdir: tmp.current,
+        isLocal: true,
+      });
+      return Effect.gen(function* () {
+        yield* writeTarget("local");
+        const error = yield* dbDump(flags({ dryRun: true, password: Option.some("pw") })).pipe(
+          Effect.flip,
+        );
+        expect(error).toMatchObject({
+          _tag: "DbDumpMutuallyExclusiveFlagsError",
+          message: expect.stringContaining(
+            "--password only applies when targeting the linked project",
+          ),
+        });
+        expect(resolver.calls).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("keeps --password with the linked default and target = remote", () => {
+      const { layer, resolver } = setup({
+        explicitWorkdir: true,
+        workdir: tmp.current,
+        isLocal: false,
+      });
+      return Effect.gen(function* () {
+        yield* writeTarget("remote");
+        yield* dbDump(flags({ dryRun: true, password: Option.some("pw") }));
+        expect(resolver.calls[0]).toMatchObject({
+          connType: "linked",
+          password: Option.some("pw"),
+        });
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("--project-ref resolves to the linked project when target = remote", () => {
+      const { layer, resolver } = setup({
+        explicitWorkdir: true,
+        workdir: tmp.current,
+        isLocal: false,
+      });
+      return Effect.gen(function* () {
+        yield* writeTarget("remote");
+        yield* dbDump(flags({ dryRun: true, projectRef: Option.some("abcdefghijklmnopqrst") }));
+        expect(resolver.calls[0]?.connType).toBe("linked");
       }).pipe(Effect.provide(layer));
     });
   });

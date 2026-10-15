@@ -103,19 +103,29 @@ way `--db-url` does.
 With none of `--local`, `--linked`, `--db-url` or `--project-id`, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
 shell environment first, then `supabase/.env*`), then `target` in `supabase/config.toml` (or
 `config.json`). `remote` targets the linked project through the existing linked path; `local`
-targets the local database. An explicit selector flag always wins over the target. An invalid
+targets the local database. An explicit selector flag always wins over the target, and `--project-id` pins that project and skips target resolution (no warning, no provenance line). An invalid
 `SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. Config is only read for
 the target when no selector flag is given; an unreadable config counts as unset. The warning is written after flag validation and before target resolution, so a later "Must specify one of" or not-linked failure still follows it.
+
+When the target resolves to the linked project, the command writes one line to **stderr** naming where the
+setting came from, so a config-driven target is never silent:
+
+```
+Targeting the linked project (target = "remote" from <source>)
+```
+
+`<source>` is `SUPABASE_TARGET`, `supabase/.env`, `supabase/config.toml` or `supabase/config.json`.
+Nothing is written when a selector flag decides the target.
 
 When neither is set the command keeps targeting the linked project and writes one warning to
 **stderr** (every `--output-format`, never stdout), so scripts depending on today's default keep
 working while the next major version moves it to the local database:
 
 ```
-Warning: supabase gen types will target the local database by default in the next major version. Pass --linked, or set target = "remote" in supabase/config.toml (or SUPABASE_TARGET=remote), to keep targeting the linked project.
+Warning: supabase gen types will target the local database by default in the next major version. Pass --linked, or set target = "remote" in your Supabase config (or SUPABASE_TARGET=remote), to keep targeting the linked project.
 ```
 
-No warning is written when a selector flag, `--project-ref`, `SUPABASE_TARGET` or `target` is set.
+No warning is written when a selector flag, `--project-id`, `SUPABASE_TARGET` or `target` is set.
 
 ## Exit Codes
 

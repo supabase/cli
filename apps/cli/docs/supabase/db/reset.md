@@ -4,7 +4,7 @@ Resets the local database to a clean state.
 
 Requires the local development stack to be started by running `supabase start`.
 
-Without `--local`, `--linked` or `--db-url`, the command targets the local database, unless the workspace target is set to `remote` with `target = "remote"` in `supabase/config.toml` or `SUPABASE_TARGET=remote`, in which case it targets the linked project like `--linked`. A selector flag always wins.
+Without `--local`, `--linked` or `--db-url`, the command targets the local database, unless the workspace target is set to `remote` with `target = "remote"` in `supabase/config.toml` or `SUPABASE_TARGET=remote`, in which case it targets the linked project like `--linked` (including with `--project-ref`) and prints `Targeting the linked project (target = "remote" from <source>)` on stderr. A selector flag always wins.
 
 Recreates the local Postgres container and applies all local migrations found in `supabase/migrations` directory. If test data is defined in `supabase/seed.sql`, it will be seeded after the migrations are run. Any other data or schema changes made during local development will be discarded.
 

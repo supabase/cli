@@ -240,8 +240,7 @@ const runAdvisors = Effect.fnUntraced(function* (
     "advisor.fail_on": failOn,
   });
 
-  // Branches on whether `--linked` was explicitly set: linked → Management
-  // API; otherwise local / `--db-url`.
+  // Branches on the resolved target: linked → Management API; otherwise local / `--db-url`.
   const filtered =
     target.connType === "linked"
       ? yield* runLinked(flags, dnsResolver, advisorType, level)
@@ -255,13 +254,15 @@ export const dbAdvisors = Effect.fn("db.advisors")(function* (flags: DbAdvisorsF
   const dnsResolver = yield* DnsResolverFlag;
   const telemetryState = yield* TelemetryState;
   const cliArgs = yield* CliArgs;
-  const target = yield* resolveDbTarget({
-    command: "db advisors",
-    selection: resolveDbTargetFlags(cliArgs.args),
-    projectRefSet: Option.isSome(flags.projectRef),
-    legacyDefault: "local",
-  });
   // Flush telemetry on success and failure. Command-level instrumentation /
   // JSON error handling are applied by `advisors.command.ts`.
-  yield* runAdvisors(flags, dnsResolver, target).pipe(Effect.ensuring(telemetryState.flush));
+  yield* Effect.gen(function* () {
+    const target = yield* resolveDbTarget({
+      command: "db advisors",
+      selection: resolveDbTargetFlags(cliArgs.args),
+      projectRefSet: Option.isSome(flags.projectRef),
+      legacyDefault: "local",
+    });
+    yield* runAdvisors(flags, dnsResolver, target);
+  }).pipe(Effect.ensuring(telemetryState.flush));
 });

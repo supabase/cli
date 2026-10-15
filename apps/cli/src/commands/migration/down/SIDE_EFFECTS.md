@@ -31,13 +31,24 @@
 
 ## Target selection
 
-With no `--local`, `--linked`, `--db-url` or `--project-ref` flag, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
+With no `--local`, `--linked` or `--db-url` flag, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
 shell environment first, then `supabase/.env*`), then `target` in `supabase/config.toml` (or
 `config.json`), then the local default. `remote` targets the linked project through the existing
 linked path (same prompts and checks as `--linked`). An explicit selector flag always wins over the
-target. An invalid `SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. Config
+target. `--project-ref` is not a selector: a `remote` target resolves it to the linked project, while with no target or
+`target = "local"` it behaves exactly as it did before the target existed. An invalid `SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. Config
 is only read for the target when no selector flag is given; an unreadable config counts as unset.
 No deprecation warning is written: the local default is unchanged.
+
+When the target resolves to the linked project, the command writes one line to **stderr** naming where the
+setting came from, so a config-driven target is never silent:
+
+```
+Targeting the linked project (target = "remote" from <source>)
+```
+
+`<source>` is `SUPABASE_TARGET`, `supabase/.env`, `supabase/config.toml` or `supabase/config.json`.
+Nothing is written when a selector flag decides the target.
 
 ## Exit Codes
 

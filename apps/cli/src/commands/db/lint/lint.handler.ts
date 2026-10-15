@@ -230,12 +230,14 @@ export const dbLint = Effect.fn("db.lint")(function* (flags: DbLintFlags) {
   const dnsResolver = yield* DnsResolverFlag;
   const telemetryState = yield* TelemetryState;
   const cliArgs = yield* CliArgs;
-  const target = yield* resolveDbTarget({
-    command: "db lint",
-    selection: resolveDbTargetFlags(cliArgs.args),
-    projectRefSet: Option.isSome(flags.projectRef),
-    legacyDefault: "local",
-  });
   // Command-level instrumentation/JSON error handling are applied by `lint.command.ts`.
-  yield* runLint(flags, dnsResolver, target).pipe(Effect.ensuring(telemetryState.flush));
+  yield* Effect.gen(function* () {
+    const target = yield* resolveDbTarget({
+      command: "db lint",
+      selection: resolveDbTargetFlags(cliArgs.args),
+      projectRefSet: Option.isSome(flags.projectRef),
+      legacyDefault: "local",
+    });
+    yield* runLint(flags, dnsResolver, target);
+  }).pipe(Effect.ensuring(telemetryState.flush));
 });

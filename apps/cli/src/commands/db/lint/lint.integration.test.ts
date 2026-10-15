@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
+import { Cause, ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 import { vi } from "vitest";
 
 vi.mock("node:net", (importOriginal) =>
@@ -243,6 +243,7 @@ function setup(opts: SetupOpts = {}) {
     BunServices.layer,
     mockCommandSettings({
       workdir: opts.realLayers?.workdir ?? opts.workdir ?? "/tmp/lint-int",
+      explicitWorkdir: true,
     }),
   );
   return { layer, out, resolver, connection, telemetry, processControl, projectRef, cache, http };
@@ -527,6 +528,10 @@ describe("db lint", () => {
   });
 
   describe("workspace target", () => {
+    const OTHER_REF = "abcdefghijklmnopqrst";
+    const pinnedEnv = ConfigProvider.layer(
+      ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true }),
+    );
     const writeTarget = (target: string) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -550,7 +555,7 @@ describe("db lint", () => {
         expect(projectRef.calls).toContain("loadProjectRef");
         expect(cache.cached).toBe(true);
         expect(out.stderrText).toContain("Connecting to remote database...");
-      }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(Layer.mergeAll(layer, pinnedEnv)));
     });
 
     it.effect("lets --local override target = remote", () => {
@@ -564,7 +569,7 @@ describe("db lint", () => {
         yield* dbLint(flags({ schema: ["public"], local: true }));
         expect(resolver.resolveInput?.connType).toBe("local");
         expect(projectRef.calls).toEqual([]);
-      }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(Layer.mergeAll(layer, pinnedEnv)));
     });
 
     it.effect("stays local without a warning when target is unset", () => {
@@ -576,7 +581,62 @@ describe("db lint", () => {
         yield* dbLint(flags({ schema: ["public"] }));
         expect(resolver.resolveInput?.connType).toBe("local");
         expect(out.stderrText).not.toContain("Warning:");
-      }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(Layer.mergeAll(layer, pinnedEnv)));
+    });
+
+    it.effect(
+      "names the config file as the source when target = remote picks the linked project",
+      () => {
+        const { layer, out } = setup({
+          isLocal: false,
+          checkRows: { public: [] },
+          workdir: tempRoot.current,
+        });
+        return Effect.gen(function* () {
+          yield* writeTarget("remote");
+          yield* dbLint(flags({ schema: ["public"] }));
+          expect(out.stderrText).toContain(
+            'Targeting the linked project (target = "remote" from supabase/config.toml)',
+          );
+        }).pipe(Effect.provide(Layer.mergeAll(layer, pinnedEnv)));
+      },
+    );
+
+    it.effect("--project-ref lints that project when target = remote", () => {
+      const { layer, resolver } = setup({
+        isLocal: false,
+        checkRows: { public: [] },
+        workdir: tempRoot.current,
+      });
+      return Effect.gen(function* () {
+        yield* writeTarget("remote");
+        yield* dbLint(flags({ schema: ["public"], projectRef: Option.some(OTHER_REF) }));
+        expect(resolver.resolveInput).toMatchObject({
+          connType: "linked",
+          linkedProjectRef: Option.some(OTHER_REF),
+        });
+      }).pipe(Effect.provide(Layer.mergeAll(layer, pinnedEnv)));
+    });
+
+    it.effect("flushes telemetry when the workspace target is invalid", () => {
+      const { layer, telemetry } = setup({ checkRows: {}, workdir: tempRoot.current });
+      return Effect.gen(function* () {
+        const error = yield* dbLint(flags()).pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "WorkspaceTargetError" });
+        expect(telemetry.flushed).toBe(true);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            ConfigProvider.layer(
+              ConfigProvider.fromEnvRecord(
+                { SUPABASE_TARGET: "prod" },
+                { preserveEmptyStrings: true },
+              ),
+            ),
+          ),
+        ),
+      );
     });
   });
 

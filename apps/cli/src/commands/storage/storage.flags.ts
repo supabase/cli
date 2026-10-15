@@ -9,6 +9,7 @@ import {
 import { resolveDbTarget } from "../../command-internal/workspace-target.ts";
 import { storageCredentials } from "../../command-internal/storage-credentials.ts";
 import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
+import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import { StorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
 
 /**
@@ -67,6 +68,7 @@ export const resolveStorageTarget = Effect.fnUntraced(function* (input: {
   readonly local: boolean;
   readonly projectRef: Option.Option<string>;
 }) {
+  const telemetryState = yield* TelemetryState;
   const setFlags = changedLinkedLocalFlags(input.args);
   const resolved = yield* resolveDbTarget({
     command: input.command,
@@ -78,6 +80,6 @@ export const resolveStorageTarget = Effect.fnUntraced(function* (input: {
     projectRefSet: Option.isSome(input.projectRef),
     legacyDefault: "linked",
     localLabel: "local stack",
-  });
+  }).pipe(Effect.tapError(() => telemetryState.flush));
   return resolved.source === "workspace" ? resolved.connType === "local" : input.local;
 });

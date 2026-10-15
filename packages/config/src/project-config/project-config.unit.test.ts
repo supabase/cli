@@ -151,7 +151,11 @@ function apiEnvelope(attributes: Record<string, unknown>): unknown {
 
 describe("fromConfigDocument", () => {
   test("projecting the default config keeps exactly the hosted sections", () => {
-    const projected = fromConfigDocument(getDefaultCliConfig());
+    const projected = fromConfigDocument({
+      ...getDefaultCliConfig(),
+      project_id: "demo",
+      target: "remote",
+    });
     // `compute` survives as `{}` (an originally-empty container isn't pruned); `realtime` is
     // absent entirely since all of its fields are `DOCUMENT_ONLY_LOCAL_PATHS` entries, always
     // materialized, so the section-emptied-by-exclusion prune removes it.

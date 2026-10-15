@@ -159,11 +159,13 @@ const runUp = Effect.fnUntraced(function* (flags: MigrationUpFlags, target: Reso
 export const migrationUp = Effect.fn("migration.up")(function* (flags: MigrationUpFlags) {
   const telemetryState = yield* TelemetryState;
   const cliArgs = yield* CliArgs;
-  const target = yield* resolveDbTarget({
-    command: "migration up",
-    selection: resolveDbTargetFlags(cliArgs.args),
-    projectRefSet: Option.isSome(flags.projectRef),
-    legacyDefault: "local",
-  });
-  yield* runUp(flags, target).pipe(Effect.ensuring(telemetryState.flush));
+  yield* Effect.gen(function* () {
+    const target = yield* resolveDbTarget({
+      command: "migration up",
+      selection: resolveDbTargetFlags(cliArgs.args),
+      projectRefSet: Option.isSome(flags.projectRef),
+      legacyDefault: "local",
+    });
+    yield* runUp(flags, target);
+  }).pipe(Effect.ensuring(telemetryState.flush));
 });

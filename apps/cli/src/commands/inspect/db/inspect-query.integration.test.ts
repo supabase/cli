@@ -197,7 +197,10 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(DnsResolverFlag, opts.dnsResolver ?? "native"),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
     BunServices.layer,
-    mockCommandSettings({ workdir: opts.realLayers?.workdir ?? "/tmp/inspect-int" }),
+    mockCommandSettings({
+      workdir: opts.realLayers?.workdir ?? "/tmp/inspect-int",
+      explicitWorkdir: true,
+    }),
   );
   return { layer, out, resolver, connection, telemetry };
 }

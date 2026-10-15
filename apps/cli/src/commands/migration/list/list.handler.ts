@@ -10,6 +10,7 @@ import { DbConfigResolver } from "../../../command-internal/db-config.service.ts
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
 import {
+  passwordDroppedByWorkspaceTarget,
   resolveDbTarget,
   type ResolvedDbTarget,
 } from "../../../command-internal/workspace-target.ts";
@@ -46,6 +47,10 @@ const runList = Effect.fnUntraced(function* (flags: MigrationListFlags, target: 
       message:
         "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
     });
+  }
+  const droppedPassword = passwordDroppedByWorkspaceTarget(target, flags.password);
+  if (droppedPassword !== undefined) {
+    return yield* new MigrationPasswordFlagsError({ message: droppedPassword });
   }
 
   // `--project-ref` never implies `--linked` and must not be silently
@@ -112,11 +117,13 @@ const runList = Effect.fnUntraced(function* (flags: MigrationListFlags, target: 
 export const migrationList = Effect.fn("migration.list")(function* (flags: MigrationListFlags) {
   const telemetryState = yield* TelemetryState;
   const cliArgs = yield* CliArgs;
-  const target = yield* resolveDbTarget({
-    command: "migration list",
-    selection: resolveDbTargetFlags(cliArgs.args),
-    projectRefSet: Option.isSome(flags.projectRef),
-    legacyDefault: "linked",
-  });
-  yield* runList(flags, target).pipe(Effect.ensuring(telemetryState.flush));
+  yield* Effect.gen(function* () {
+    const target = yield* resolveDbTarget({
+      command: "migration list",
+      selection: resolveDbTargetFlags(cliArgs.args),
+      projectRefSet: Option.isSome(flags.projectRef),
+      legacyDefault: "linked",
+    });
+    yield* runList(flags, target);
+  }).pipe(Effect.ensuring(telemetryState.flush));
 });

@@ -161,11 +161,13 @@ const runDown = Effect.fnUntraced(function* (flags: MigrationDownFlags, target: 
 export const migrationDown = Effect.fn("migration.down")(function* (flags: MigrationDownFlags) {
   const telemetryState = yield* TelemetryState;
   const cliArgs = yield* CliArgs;
-  const target = yield* resolveDbTarget({
-    command: "migration down",
-    selection: resolveDbTargetFlags(cliArgs.args),
-    projectRefSet: Option.isSome(flags.projectRef),
-    legacyDefault: "local",
-  });
-  yield* runDown(flags, target).pipe(Effect.ensuring(telemetryState.flush));
+  yield* Effect.gen(function* () {
+    const target = yield* resolveDbTarget({
+      command: "migration down",
+      selection: resolveDbTargetFlags(cliArgs.args),
+      projectRefSet: Option.isSome(flags.projectRef),
+      legacyDefault: "local",
+    });
+    yield* runDown(flags, target);
+  }).pipe(Effect.ensuring(telemetryState.flush));
 });

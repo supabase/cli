@@ -603,17 +603,20 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       }
     }
 
-    const resolvedTarget = yield* resolveDbTarget({
-      command: "gen types",
-      selection: dbTargetSelectionOf({
-        dbUrl: Option.isSome(flags.dbUrl),
-        linked: occurrences.has("linked"),
-        local: occurrences.has("local"),
-      }),
-      projectRefSet: Option.isSome(flags.projectId),
-      legacyDefault: "linked",
-    });
-    const fromWorkspace = resolvedTarget.source === "workspace";
+    // `--project-id` pins the project, so neither the workspace target nor the default warning applies.
+    const resolvedTarget = Option.isSome(flags.projectId)
+      ? undefined
+      : yield* resolveDbTarget({
+          command: "gen types",
+          selection: dbTargetSelectionOf({
+            dbUrl: Option.isSome(flags.dbUrl),
+            linked: occurrences.has("linked"),
+            local: occurrences.has("local"),
+          }),
+          projectRefSet: false,
+          legacyDefault: "linked",
+        });
+    const fromWorkspace = resolvedTarget?.source === "workspace";
     const useLocal = flags.local || (fromWorkspace && resolvedTarget.connType === "local");
     const useLinked = flags.linked || (fromWorkspace && resolvedTarget.connType === "linked");
 

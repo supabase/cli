@@ -1,5 +1,5 @@
 import { CliConfigSchema, findCliProjectPaths } from "@supabase/config/effect";
-import { Data, Effect, FileSystem, Path, Schema } from "effect";
+import { Data, Effect, FileSystem, Option, Path, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { Output } from "../shared/output/output.service.ts";
@@ -11,10 +11,11 @@ import {
 import { yellow } from "./colors.ts";
 import { loadProjectEnv } from "./db-config.toml-read.ts";
 import type { DbConnType, DbTargetSelection } from "./db-target-flags.ts";
+import { relativeConfigPath } from "./workdir-project.ts";
 import { shouldSearchAncestors } from "./workdir-search.ts";
 import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
 
-export type WorkspaceTarget = "local" | "remote";
+type WorkspaceTarget = "local" | "remote";
 
 /** Where a resolved target came from: an explicit selector, the workspace setting, or the pre-`target` default. */
 type TargetSource = "selector" | "workspace" | "legacy";
@@ -27,9 +28,17 @@ export class WorkspaceTargetError extends Data.TaggedError("WorkspaceTargetError
   }
 }
 
+/** A workspace `target` and the place it was read from (`SUPABASE_TARGET`, a `.env` file, or the config file). */
+export interface WorkspaceTargetReading {
+  readonly target: WorkspaceTarget;
+  readonly origin: string;
+}
+
 export interface ResolvedDbTarget extends DbTargetSelection {
   readonly connType: DbConnType;
   readonly source: TargetSource;
+  /** Where the workspace target came from; set only when `source` is `"workspace"`. */
+  readonly origin: string | undefined;
   /** True when the default is about to flip from linked to the workspace target and nothing pinned it. */
   readonly warn: boolean;
 }
@@ -40,27 +49,51 @@ const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 const isWorkspaceTarget = (value: string): value is WorkspaceTarget =>
   value === "local" || value === "remote";
 
-/** Picks the connection type: explicit selector, then the workspace target, then `legacyDefault`. */
+/**
+ * Picks the connection type: explicit selector flag, then a `remote` workspace target (which also
+ * lifts `--project-ref` onto the linked project), then `--project-ref` keeping `legacyDefault`,
+ * then a `local` workspace target, then `legacyDefault`.
+ */
 export const selectDbTarget = (input: {
   readonly selection: DbTargetSelection;
   readonly projectRefSet: boolean;
-  readonly workspaceTarget: WorkspaceTarget | undefined;
+  readonly workspace: WorkspaceTargetReading | undefined;
   readonly legacyDefault: "linked" | "local";
 }): ResolvedDbTarget => {
-  const { selection, legacyDefault } = input;
-  if (selection.connType !== undefined || input.projectRefSet) {
+  const { selection, legacyDefault, workspace } = input;
+  if (selection.connType !== undefined) {
     return {
       ...selection,
-      connType: selection.connType ?? legacyDefault,
+      connType: selection.connType,
       source: "selector",
+      origin: undefined,
       warn: false,
     };
   }
-  if (input.workspaceTarget !== undefined) {
+  if (workspace?.target === "remote") {
     return {
       ...selection,
-      connType: input.workspaceTarget === "remote" ? "linked" : "local",
+      connType: "linked",
       source: "workspace",
+      origin: workspace.origin,
+      warn: false,
+    };
+  }
+  if (input.projectRefSet) {
+    return {
+      ...selection,
+      connType: legacyDefault,
+      source: "selector",
+      origin: undefined,
+      warn: false,
+    };
+  }
+  if (workspace !== undefined) {
+    return {
+      ...selection,
+      connType: "local",
+      source: "workspace",
+      origin: workspace.origin,
       warn: false,
     };
   }
@@ -68,6 +101,7 @@ export const selectDbTarget = (input: {
     ...selection,
     connType: legacyDefault,
     source: "legacy",
+    origin: undefined,
     warn: legacyDefault === "linked",
   };
 };
@@ -80,7 +114,9 @@ const readEnvTarget = Effect.fnUntraced(function* (projectEnv: Record<string, st
       message: `SUPABASE_TARGET must be "local" or "remote" when set, got "${raw}"`,
     });
   }
-  return raw;
+  const shellOnly = yield* viperEnvStringWithProjectFallback("SUPABASE_TARGET", {});
+  const origin = raw === shellOnly ? "SUPABASE_TARGET" : "supabase/.env";
+  return { target: raw, origin } satisfies WorkspaceTargetReading;
 });
 
 const readConfigTarget = Effect.fnUntraced(function* (settings: {
@@ -108,12 +144,17 @@ const readConfigTarget = Effect.fnUntraced(function* (settings: {
         }),
     ),
   );
-  return decoded.target;
+  if (decoded.target === undefined) return undefined;
+  return {
+    target: decoded.target,
+    origin: relativeConfigPath(settings.workdir, loaded.configPath),
+  } satisfies WorkspaceTargetReading;
 });
 
 /**
- * Reads the workspace `target`: `SUPABASE_TARGET` (shell env, then project `.env*`), then the
- * `target` key of the config file. An unreadable config is treated as unset; an invalid value fails.
+ * Reads the workspace `target` and where it came from: `SUPABASE_TARGET` (shell env, then project
+ * `.env*`), then the `target` key of the config file. An unreadable config is treated as unset; an
+ * invalid value fails.
  */
 export const readWorkspaceTarget = Effect.fn("WorkspaceTarget.read")(function* () {
   const settings = yield* CommandSettings;
@@ -132,15 +173,34 @@ const emitTargetDefaultFlipWarning = (command: string, localLabel = "local datab
     const output = yield* Output;
     yield* output.raw(
       `${yellow(
-        `Warning: supabase ${command} will target the ${localLabel} by default in the next major version. Pass --linked, or set target = "remote" in supabase/config.toml (or SUPABASE_TARGET=remote), to keep targeting the linked project.`,
+        `Warning: supabase ${command} will target the ${localLabel} by default in the next major version. Pass --linked, or set target = "remote" in your Supabase config (or SUPABASE_TARGET=remote), to keep targeting the linked project.`,
       )}\n`,
       "stderr",
     );
   });
 
+const emitLinkedTargetProvenance = (origin: string) =>
+  Effect.gen(function* () {
+    const output = yield* Output;
+    yield* output.raw(
+      `Targeting the linked project (target = "remote" from ${origin})\n`,
+      "stderr",
+    );
+  });
+
+/** The failure message for a `--password` that a `local` workspace target would drop; `undefined` when it still applies. */
+export const passwordDroppedByWorkspaceTarget = (
+  target: ResolvedDbTarget,
+  password: Option.Option<string>,
+): string | undefined =>
+  Option.isSome(password) && target.source === "workspace" && target.connType === "local"
+    ? `--password only applies when targeting the linked project, but target = "local" is set (${target.origin}); use --linked or set target = "remote"`
+    : undefined;
+
 /**
- * Resolves the connection type for a selectable-instance command and warns on stderr when a
- * linked default is about to flip. The workspace target is only read when no selector was given.
+ * Resolves the connection type for a selectable-instance command. On stderr it warns when a linked
+ * default is about to flip, and names the source when the workspace target picks the linked
+ * project. The workspace target is only read when no selector flag was given.
  */
 export const resolveDbTarget = Effect.fn("WorkspaceTarget.resolve")(function* (input: {
   readonly command: string;
@@ -149,12 +209,12 @@ export const resolveDbTarget = Effect.fn("WorkspaceTarget.resolve")(function* (i
   readonly legacyDefault: "linked" | "local";
   readonly localLabel?: string;
 }) {
-  const pinned = input.selection.connType !== undefined || input.projectRefSet;
-  const workspaceTarget = pinned ? undefined : yield* readWorkspaceTarget();
+  const workspace =
+    input.selection.connType === undefined ? yield* readWorkspaceTarget() : undefined;
   const resolved = selectDbTarget({
     selection: input.selection,
     projectRefSet: input.projectRefSet,
-    workspaceTarget,
+    workspace,
     legacyDefault: input.legacyDefault,
   });
   yield* Effect.annotateCurrentSpan({
@@ -162,5 +222,8 @@ export const resolveDbTarget = Effect.fn("WorkspaceTarget.resolve")(function* (i
     "target.conn_type": resolved.connType,
   });
   if (resolved.warn) yield* emitTargetDefaultFlipWarning(input.command, input.localLabel);
+  if (resolved.origin !== undefined && resolved.connType === "linked") {
+    yield* emitLinkedTargetProvenance(resolved.origin);
+  }
   return resolved;
 });

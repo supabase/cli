@@ -60,19 +60,30 @@ backend — same roles as `storage ls`.
 
 ## Target selection
 
-With no `--local`, `--linked` or `--project-ref` flag, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
+With no `--local` or `--linked` flag, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
 shell environment first, then `supabase/.env*`), then `target` in `supabase/config.toml` (or
 `config.json`). `remote` targets the linked project through the existing linked path; `local`
-targets the local stack. An explicit selector flag always wins over the target. An invalid
+targets the local stack. An explicit selector flag always wins over the target. `--project-ref` is not a selector: a `remote` target resolves it to the linked project, while with no target or
+`target = "local"` it behaves exactly as it did before the target existed. An invalid
 `SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. Config is only read for
 the target when no selector flag is given; an unreadable config counts as unset. The target is resolved once in the command wrapper (after the experimental gate and the `--linked`/`--local` mutex check) and passed to the handler as the effective `--local` value.
+
+When the target resolves to the linked project, the command writes one line to **stderr** naming where the
+setting came from, so a config-driven target is never silent:
+
+```
+Targeting the linked project (target = "remote" from <source>)
+```
+
+`<source>` is `SUPABASE_TARGET`, `supabase/.env`, `supabase/config.toml` or `supabase/config.json`.
+Nothing is written when a selector flag decides the target.
 
 When neither is set the command keeps targeting the linked project and writes one warning to
 **stderr** (every `--output-format`, never stdout), so scripts depending on today's default keep
 working while the next major version moves it to the local stack:
 
 ```
-Warning: supabase storage cp will target the local stack by default in the next major version. Pass --linked, or set target = "remote" in supabase/config.toml (or SUPABASE_TARGET=remote), to keep targeting the linked project.
+Warning: supabase storage cp will target the local stack by default in the next major version. Pass --linked, or set target = "remote" in your Supabase config (or SUPABASE_TARGET=remote), to keep targeting the linked project.
 ```
 
 No warning is written when a selector flag, `--project-ref`, `SUPABASE_TARGET` or `target` is set.

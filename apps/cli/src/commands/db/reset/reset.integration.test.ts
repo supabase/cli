@@ -2,6 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  ConfigProvider,
   Effect,
   Exit,
   FileSystem,
@@ -2589,6 +2590,47 @@ describe("db reset", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("context canceled");
         expect(conn.execs).toHaveLength(0);
+      });
+    });
+
+    describe("workspace target", () => {
+      const pinnedEnv = ConfigProvider.layer(
+        ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true }),
+      );
+      const remoteTargetToml = 'project_id = "test"\ntarget = "remote"\n';
+
+      it.effect("target = remote still stops at the default-No prompt and cancels", () => {
+        const { layer, out, conn } = setup(tmp.current, {
+          toml: remoteTargetToml,
+          args: ["db", "reset"],
+          confirm: [false],
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(
+            Effect.provide(Layer.mergeAll(layer, pinnedEnv)),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("context canceled");
+          expect(conn.execs).toHaveLength(0);
+          expect(out.stderrText).toContain(
+            'Targeting the linked project (target = "remote" from supabase/config.toml)',
+          );
+        });
+      });
+
+      it.effect("target = remote resets the linked project once the prompt is confirmed", () => {
+        const { layer, out, conn, linkedCache } = setup(tmp.current, {
+          toml: remoteTargetToml,
+          args: ["db", "reset"],
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(Layer.mergeAll(layer, pinnedEnv)));
+          expect(out.stderrText).toContain("Resetting remote database...");
+          expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
+          expect(linkedCache.cached).toBe(true);
+        });
       });
     });
 
