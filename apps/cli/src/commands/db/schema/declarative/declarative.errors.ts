@@ -22,10 +22,7 @@ export class DeclarativeNotEnabledError extends Data.TaggedError("DeclarativeNot
   }
 }
 
-/**
- * A target could not be resolved in non-interactive mode; message text is an established output
- * contract, shared by `generate` and the `sync` variants requiring `generate` first.
- */
+/** `sync` found no declarative schema and cannot offer to generate one without a terminal. */
 export class DeclarativeNonInteractiveError extends Data.TaggedError(
   "DeclarativeNonInteractiveError",
 )<{
@@ -36,11 +33,7 @@ export class DeclarativeNonInteractiveError extends Data.TaggedError(
   }
 }
 
-/**
- * A mutually-exclusive flag group was violated: `generate`'s `db-url`/`linked`/`local`, or
- * `sync`'s `apply`/`no-apply`. Message text is an established output contract; both fail before
- * any side effects run.
- */
+/** `sync`'s `--apply` and `--no-apply` were both set; fails before any side effects run. */
 export class DeclarativeMutuallyExclusiveFlagsError extends Data.TaggedError(
   "DeclarativeMutuallyExclusiveFlagsError",
 )<{
@@ -52,8 +45,9 @@ export class DeclarativeMutuallyExclusiveFlagsError extends Data.TaggedError(
 }
 
 /**
- * The interactive custom-database-URL prompt was empty or unparseable; message text is an
- * established output contract.
+ * Retained for its telemetry tag; no command raises it now that no prompt asks for a URL.
+ *
+ * @public
  */
 export class DeclarativeInvalidDbUrlError extends Data.TaggedError("DeclarativeInvalidDbUrlError")<{
   readonly message: string;
