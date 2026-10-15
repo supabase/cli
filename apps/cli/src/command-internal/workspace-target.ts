@@ -9,7 +9,7 @@ import {
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
 import { yellow } from "./colors.ts";
-import { loadProjectEnv } from "./db-config.toml-read.ts";
+import { loadProjectEnvEntries } from "./db-config.toml-read.ts";
 import type { DbConnType, DbTargetSelection } from "./db-target-flags.ts";
 import { relativeConfigPath } from "./workdir-project.ts";
 import { shouldSearchAncestors } from "./workdir-search.ts";
@@ -109,16 +109,25 @@ export const selectDbTarget = (input: {
   };
 };
 
-const readEnvTarget = Effect.fnUntraced(function* (projectEnv: Record<string, string>) {
-  const raw = yield* viperEnvStringWithProjectFallback("SUPABASE_TARGET", projectEnv);
+interface ProjectEnvEntries {
+  readonly values: Record<string, string>;
+  readonly sources: Record<string, string>;
+}
+
+const readEnvTarget = Effect.fnUntraced(function* (projectEnv: ProjectEnvEntries, workdir: string) {
+  const raw = yield* viperEnvStringWithProjectFallback("SUPABASE_TARGET", projectEnv.values);
   if (raw === "") return undefined;
+  const shellOnly = yield* viperEnvStringWithProjectFallback("SUPABASE_TARGET", {});
+  const file = raw === shellOnly ? undefined : projectEnv.sources["SUPABASE_TARGET"];
+  const origin = file === undefined ? "SUPABASE_TARGET" : originFromPath(workdir, file);
   if (!isWorkspaceTarget(raw)) {
     return yield* new WorkspaceTargetError({
-      message: `SUPABASE_TARGET must be "local" or "remote" when set, got "${raw}"`,
+      message:
+        file === undefined
+          ? `SUPABASE_TARGET must be "local" or "remote" when set, got "${raw}"`
+          : `SUPABASE_TARGET in ${origin} must be "local" or "remote" when set, got "${raw}"`,
     });
   }
-  const shellOnly = yield* viperEnvStringWithProjectFallback("SUPABASE_TARGET", {});
-  const origin = raw === shellOnly ? "SUPABASE_TARGET" : "supabase/.env";
   return { target: raw, origin } satisfies WorkspaceTargetReading;
 });
 
@@ -163,10 +172,10 @@ export const readWorkspaceTarget = Effect.fn("WorkspaceTarget.read")(function* (
   const settings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const projectEnv: Record<string, string> = yield* loadProjectEnv(fs, path, settings.workdir).pipe(
-    Effect.orElseSucceed((): Record<string, string> => ({})),
+  const projectEnv = yield* loadProjectEnvEntries(fs, path, settings.workdir).pipe(
+    Effect.orElseSucceed((): ProjectEnvEntries => ({ values: {}, sources: {} })),
   );
-  const fromEnv = yield* readEnvTarget(projectEnv);
+  const fromEnv = yield* readEnvTarget(projectEnv, settings.workdir);
   if (fromEnv !== undefined) return fromEnv;
   return yield* readConfigTarget(settings);
 });

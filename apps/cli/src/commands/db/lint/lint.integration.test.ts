@@ -602,6 +602,23 @@ describe("db lint", () => {
       },
     );
 
+    it.effect("names the workdir .env.local as the source when it sets SUPABASE_TARGET", () => {
+      const { layer, resolver, out } = setup({
+        isLocal: false,
+        checkRows: { public: [] },
+        workdir: tempRoot.current,
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.writeFileString(`${tempRoot.current}/.env.local`, "SUPABASE_TARGET=remote\n");
+        yield* dbLint(flags({ schema: ["public"] }));
+        expect(resolver.resolveInput?.connType).toBe("linked");
+        expect(out.stderrText).toContain(
+          'Targeting the linked project (target = "remote" from .env.local)',
+        );
+      }).pipe(Effect.provide(Layer.mergeAll(layer, pinnedEnv)));
+    });
+
     it.effect("--project-ref lints that project when target = remote", () => {
       const { layer, resolver } = setup({
         isLocal: false,

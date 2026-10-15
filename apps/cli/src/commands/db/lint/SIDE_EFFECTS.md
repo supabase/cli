@@ -73,7 +73,7 @@ setting came from, so a config-driven target is never silent:
 Targeting the linked project (target = "remote" from <source>)
 ```
 
-`<source>` is `SUPABASE_TARGET`, `supabase/.env`, `supabase/config.toml` or `supabase/config.json`.
+`<source>` is `SUPABASE_TARGET`, the `.env*` file that set it (for example `supabase/.env.local` or `.env`), `supabase/config.toml` or `supabase/config.json`.
 Nothing is written when a selector flag decides the target.
 
 ## Exit Codes

@@ -224,6 +224,32 @@ describe("workspace target resolution", () => {
     );
   });
 
+  it.effect("names the file that supplied SUPABASE_TARGET, relative to the workdir", () => {
+    mkdirSync(join(workdir.current, "supabase"), { recursive: true });
+    writeFileSync(join(workdir.current, ".env.local"), "SUPABASE_TARGET=remote\n");
+    writeFileSync(join(workdir.current, ".env"), "SUPABASE_TARGET=local\n");
+    return readWorkspaceTarget().pipe(
+      Effect.tap((reading) =>
+        Effect.sync(() => expect(reading).toEqual({ target: "remote", origin: ".env.local" })),
+      ),
+      Effect.provide(layerFor().layer),
+    );
+  });
+
+  it.effect("prefers supabase/.env.local over a workdir .env.local", () => {
+    mkdirSync(join(workdir.current, "supabase"), { recursive: true });
+    writeFileSync(join(workdir.current, "supabase", ".env.local"), "SUPABASE_TARGET=local\n");
+    writeFileSync(join(workdir.current, ".env.local"), "SUPABASE_TARGET=remote\n");
+    return readWorkspaceTarget().pipe(
+      Effect.tap((reading) =>
+        Effect.sync(() =>
+          expect(reading).toEqual({ target: "local", origin: "supabase/.env.local" }),
+        ),
+      ),
+      Effect.provide(layerFor().layer),
+    );
+  });
+
   it.effect(
     "credits the shell when the shell and the project .env both set SUPABASE_TARGET",
     () => {
@@ -258,6 +284,17 @@ describe("workspace target resolution", () => {
       );
     }).pipe(Effect.provide(layerFor({ SUPABASE_TARGET: "prod" }).layer)),
   );
+
+  it.effect("names the env file that supplied an invalid SUPABASE_TARGET", () => {
+    writeFileSync(join(workdir.current, ".env.local"), "SUPABASE_TARGET=prod\n");
+    return Effect.gen(function* () {
+      const error = yield* readWorkspaceTarget().pipe(Effect.flip);
+      expect(error).toBeInstanceOf(WorkspaceTargetError);
+      expect(error.message).toBe(
+        'SUPABASE_TARGET in .env.local must be "local" or "remote" when set, got "prod"',
+      );
+    }).pipe(Effect.provide(layerFor().layer));
+  });
 
   it.effect("rejects an invalid target in the config file", () => {
     writeConfig('target = "production"\n');

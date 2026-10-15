@@ -797,8 +797,9 @@ export const resolveShellEnv = Effect.fnUntraced(function* (names: Iterable<stri
 /**
  * Loads the project's nested `.env` files into a sparse lookup map without mutating
  * `process.env` (first writer wins; the ambient environment always wins over any file).
+ * `sources` maps each loaded key to the file that supplied it.
  */
-export const loadProjectEnv = Effect.fnUntraced(function* (
+export const loadProjectEnvEntries = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
@@ -814,11 +815,13 @@ export const loadProjectEnv = Effect.fnUntraced(function* (
   // `supabase/` is searched before the repo root; first writer wins.
   const dirs = [path.join(workdir, "supabase"), workdir];
   const loaded: Record<string, string> = {};
+  const sources: Record<string, string> = {};
   for (const dir of dirs) {
     for (const name of filenames) {
+      const filePath = path.join(dir, name);
       // A missing file is skipped; any other read error aborts rather than silently
       // running with a broken env file.
-      const content = yield* fs.readFileString(path.join(dir, name)).pipe(
+      const content = yield* fs.readFileString(filePath).pipe(
         Effect.map(Option.some<string>),
         Effect.catchTag("PlatformError", (error) =>
           Match.value(error.reason).pipe(
@@ -843,11 +846,22 @@ export const loadProjectEnv = Effect.fnUntraced(function* (
         // The shell env and earlier files win; never overrides an already-set key.
         if (loaded[key] !== undefined) continue;
         const ambientValue = yield* configEnvOption(key);
-        if (Option.isNone(ambientValue)) loaded[key] = value;
+        if (Option.isNone(ambientValue)) {
+          loaded[key] = value;
+          sources[key] = filePath;
+        }
       }
     }
   }
-  return loaded;
+  return { values: loaded, sources };
+});
+
+export const loadProjectEnv = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+) {
+  return (yield* loadProjectEnvEntries(fs, path, workdir)).values;
 });
 
 function nonEmptyString(value: unknown): Option.Option<string> {
