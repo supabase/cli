@@ -78,17 +78,9 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "notebooks pull",
   "notebooks push",
 
-  "orgs create",
-  "orgs list",
-
   "postgres-config delete",
   "postgres-config get",
   "postgres-config update",
-
-  "projects api-keys",
-  "projects create",
-  "projects delete",
-  "projects list",
 
   "pull",
 
