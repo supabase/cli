@@ -7,21 +7,4 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "db remote changes",
 
   "gen keys",
-
-  "init",
-
-  "stack destroy",
-  "stack list",
-  "stack logs",
-  "stack prepare",
-  "stack restart",
-  "stack start",
-  "stack status",
-  "stack stop",
-
-  "start",
-
-  "status",
-
-  "stop",
 ];
