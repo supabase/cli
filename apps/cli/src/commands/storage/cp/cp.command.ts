@@ -2,6 +2,8 @@ import { Effect } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
@@ -10,7 +12,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import { storageInvalidJobsMessage } from "../storage.errors.ts";
-import { parseUintBase0 } from "../../../command-internal/parse-uint.ts";
+import { parseUintBase0 } from "../../../shared/config/parse-uint.ts";
 import {
   STORAGE_PERMISSIONS,
   StorageLinkedFlagDef,
@@ -44,8 +46,8 @@ const config = {
     // `withMetavar` keeps the `--jobs, -j integer` help token.
     Flag.withMetavar("integer"),
     Flag.withDescription("Maximum number of parallel jobs. (default 1)"),
-    // `--jobs` is a pflag-style uint: a non-uint token must fail at parse time, before the
-    // experimental gate, the handler, or any telemetry, with pflag's exact message and original
+    // `--jobs` is a uint: a non-uint token must fail at parse time, before the
+    // experimental gate, the handler, or any telemetry, with the exact message and original
     // spelling preserved. `Flag.Int` loses that fidelity (`-0` normalizes to negative zero,
     // which a `value < 0` check would wrongly accept), so this parses the raw token with
     // `parseUintBase0` instead; it must sit before `Flag.optional`, which passes `InvalidValue`
@@ -117,4 +119,6 @@ export const storageCpCommand = Command.make("cp", config).pipe(
     }).pipe(withJsonErrorHandling),
   ),
   Command.provide(storageGatewayRuntimeLayer(["storage", "cp"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

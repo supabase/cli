@@ -27,12 +27,12 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                                                                                                                                                                                                  | Required?                                                                  |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                                                                                                                                                     | no (falls back to keyring → `~/.supabase/access-token`)                    |
-| `SUPABASE_PROFILE`      | selects API base URL: `supabase` → `api.supabase.com`, `supabase-staging` → `api.supabase.green`, `supabase-local` → `http://localhost:8080`. May alternatively be a filesystem path to a YAML profile with at least `api_url:` and optional `name:` (used by the cli-e2e test harness). | no (defaults to `supabase`)                                                |
-| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset                                                                                                                                                                                                                                       | no (also reads `<workdir>/supabase/.temp/project-ref` then prompts on TTY) |
-| `SUPABASE_WORKDIR`      | base directory for the `.temp/project-ref` lookup                                                                                                                                                                                                                                        | no (walks up from CWD looking for `supabase/config.toml`)                  |
+| Variable                | Purpose                                                                                                                                                                                                                                                                                  | Required?                                                                           |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                                                                                                                                                     | no (falls back to keyring → `~/.supabase/access-token`)                             |
+| `SUPABASE_PROFILE`      | selects API base URL: `supabase` → `api.supabase.com`, `supabase-staging` → `api.supabase.green`, `supabase-local` → `http://localhost:8080`. May alternatively be a filesystem path to a YAML profile with at least `api_url:` and optional `name:` (used by the cli-e2e test harness). | no (defaults to `supabase`)                                                         |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset                                                                                                                                                                                                                                       | no (also reads `<workdir>/supabase/.temp/project-ref` then prompts on TTY)          |
+| `SUPABASE_WORKDIR`      | base directory for the `.temp/project-ref` lookup                                                                                                                                                                                                                                        | no (walks up from CWD looking for `supabase/config.toml` or `supabase/config.json`) |
 
 ## Exit Codes
 
@@ -58,7 +58,7 @@ The `--output {pretty,json,yaml,toml,env}` flag and the `--output-format {text,j
 
 ### `--output pretty` (default) / `--output-format text`
 
-For PITR-only projects, prints a Glamour-styled markdown table with columns: `REGION`, `WALG`, `PITR`, `EARLIEST TIMESTAMP`, `LATEST TIMESTAMP`. For projects with logical/physical backups, prints columns: `REGION`, `BACKUP TYPE`, `STATUS`, `CREATED AT (UTC)`. The table is rendered byte-for-byte using `glamour.WithStandardStyle(styles.AsciiStyle)`.
+For PITR-only projects, prints a styled markdown table with columns: `REGION`, `WALG`, `PITR`, `EARLIEST TIMESTAMP`, `LATEST TIMESTAMP`. For projects with logical/physical backups, prints columns: `REGION`, `BACKUP TYPE`, `STATUS`, `CREATED AT (UTC)`.
 
 ### `--output json`
 

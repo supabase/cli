@@ -5,6 +5,7 @@ export const PENDING_COMMANDS: ReadonlyArray<string> = [
   "db branch list",
   "db branch switch",
   "db remote changes",
+  "db remote commit",
 
   "gen keys",
 

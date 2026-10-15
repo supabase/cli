@@ -2,7 +2,7 @@ import type { Effect, Option } from "effect";
 import { Context } from "effect";
 
 import { BRANCH_PROJECT_REF_PATTERN } from "../command-internal/ref-patterns.ts";
-import type { ProjectRefReadError } from "../command-internal/temp-paths.ts";
+import type { ProjectRefReadError } from "../shared/config/temp-paths.ts";
 import type {
   InvalidProjectRefError,
   ProjectRefNotLinkedError,
@@ -20,7 +20,7 @@ interface ProjectRefResolverShape {
   /**
    * Resolution chain used by `supabase link`, skipping the on-disk `project-ref` file:
    * flag → `cliSettings.projectId` (env `SUPABASE_PROJECT_ID`) → (TTY) prompt. Fails with
-   * `ProjectRefRequiredError` on a non-TTY when neither is set, matching cobra's
+   * `ProjectRefRequiredError` on a non-TTY when neither is set, with the
    * `required flag(s) "project-ref" not set` wording.
    */
   readonly resolveForLink: (

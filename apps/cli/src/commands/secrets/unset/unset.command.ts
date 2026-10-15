@@ -21,6 +21,16 @@ const config = {
     Argument.withDescription("Secret names to unset."),
     Argument.variadic(),
   ),
+  all: Flag.Boolean("all").pipe(
+    Flag.withDescription(
+      "Unset every secret except SUPABASE_ ones. Required when no names are given.",
+    ),
+    Flag.withDefault(false),
+  ),
+  dryRun: Flag.Boolean("dry-run").pipe(
+    Flag.withDescription("Print the secrets that would be unset without unsetting them."),
+    Flag.withDefault(false),
+  ),
 } as const;
 
 export type SecretsUnsetFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -37,17 +47,25 @@ export const secretsUnsetCommand = Command.make("unset", config).pipe(
       command: "supabase secrets unset MY_SECRET OTHER_SECRET",
       description: "Unset multiple secrets",
     },
+    {
+      command: "supabase secrets unset --all",
+      description: "Unset every custom secret after confirming",
+    },
+    {
+      command: "supabase secrets unset --all --dry-run",
+      description: "Preview which secrets --all would unset",
+    },
   ]),
   withPermissions(
     compose(
       {
         operations: [
+          { operationId: "v1-list-all-secrets", kind: "required", when: [{ flag: "all", is: true }] },
           {
-            operationId: "v1-list-all-secrets",
+            operationId: "v1-bulk-delete-secrets",
             kind: "required",
-            context: "no secret names are given as arguments",
+            when: [{ flag: "dry-run", is: false }],
           },
-          { operationId: "v1-bulk-delete-secrets", kind: "required" },
         ],
       },
       projectRefPicker,
@@ -57,6 +75,6 @@ export const secretsUnsetCommand = Command.make("unset", config).pipe(
   Command.withHandler((flags) =>
     secretsUnset(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
-  // `stdinLayer`: the confirmation prompt reads piped stdin via `promptYesNo` on a non-TTY stdin.
+  // `promptYesNo` requires `Stdin` even though the handler fails before its non-TTY branch.
   Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["secrets", "unset"]), stdinLayer)),
 );

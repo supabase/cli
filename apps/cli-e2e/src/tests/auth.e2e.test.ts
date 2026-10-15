@@ -5,5 +5,5 @@ import { describe, it } from "vitest";
 // keychain dialog that blocks the subprocess indefinitely.
 
 describe("auth", () => {
-  it.todo("login and logout tests blocked on Go CLI keyring opt-out (see file comment)");
+  it.todo("login and logout tests blocked on keyring opt-out (see file comment)");
 });

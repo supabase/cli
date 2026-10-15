@@ -59,6 +59,7 @@ import { START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import type { StartFlags } from "./start.command.ts";
 import { start } from "./start.handler.ts";
 import { KONG_LOCAL_TLS_CERT, KONG_LOCAL_TLS_KEY } from "./templates/kong-local-tls.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 
 /**
  * Counts real invocations of `resolveLocalConfigValues` across this file (every test delegates
@@ -510,6 +511,7 @@ const setup = Effect.fnUntraced(function* (opts: SetupOpts = {}) {
   const dbSession = fakeDbSession();
   const layer = Layer.mergeAll(
     unusedStackServices,
+    cliConfigValuesTestLayer,
     BunServices.layer,
     out.layer,
     cliSettings,
@@ -838,35 +840,33 @@ describe("start integration", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.effect(
-      "fails on a bucket's invalid file_size_limit even when already running, matching Go's Config.Load",
-      () =>
-        Effect.gen(function* () {
-          // `checkDbToml` runs unconditionally before the already-running short-circuit; later
-          // checks (e.g. storage.analytics.enabled) sit after that early return and never run here.
-          const { layer, child } = yield* setup({
-            configContents:
-              'project_id = "demo"\n[storage.buckets.avatars]\nfile_size_limit = "bogus"\n',
-            route: (args) => {
-              if (args[0] === "container" && args[1] === "inspect") {
-                return { stdout: [HEALTHY_STATE] };
-              }
-              if (args[0] === "ps") return { stdout: [] };
-              return { exitCode: 0 };
-            },
-          });
+    it.effect("fails on a bucket's invalid file_size_limit even when already running", () =>
+      Effect.gen(function* () {
+        // `checkDbToml` runs unconditionally before the already-running short-circuit; later
+        // checks (e.g. storage.analytics.enabled) sit after that early return and never run here.
+        const { layer, child } = yield* setup({
+          configContents:
+            'project_id = "demo"\n[storage.buckets.avatars]\nfile_size_limit = "bogus"\n',
+          route: (args) => {
+            if (args[0] === "container" && args[1] === "inspect") {
+              return { stdout: [HEALTHY_STATE] };
+            }
+            if (args[0] === "ps") return { stdout: [] };
+            return { exitCode: 0 };
+          },
+        });
 
-          const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const serialized = Cause.pretty(exit.cause);
-            expect(serialized).toContain("DbConfigLoadError");
-            expect(serialized).toContain(
-              "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
-            );
-          }
-          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const serialized = Cause.pretty(exit.cause);
+          expect(serialized).toContain("DbConfigLoadError");
+          expect(serialized).toContain(
+            "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
+          );
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
     );
   });
 
@@ -1887,7 +1887,7 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.effect(
-      "fails config loading on an unparseable db.health_timeout before any Docker work, matching Go's Config.Load",
+      "fails config loading on an unparseable db.health_timeout before any Docker work",
       () =>
         Effect.gen(function* () {
           // Decodes in the same unconditional pass as every other duration field, before any
@@ -1907,29 +1907,27 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.effect(
-      "fails on an invalid storage.file_size_limit even when storage is excluded, matching Go's Config.Load",
-      () =>
-        Effect.gen(function* () {
-          const { layer, child } = yield* setup({
-            configContents: 'project_id = "demo"\n[storage]\nfile_size_limit = "not-a-size"\n',
-          });
+    it.effect("fails on an invalid storage.file_size_limit even when storage is excluded", () =>
+      Effect.gen(function* () {
+        const { layer, child } = yield* setup({
+          configContents: 'project_id = "demo"\n[storage]\nfile_size_limit = "not-a-size"\n',
+        });
 
-          const exit = yield* Effect.exit(
-            start(flags({ exclude: ["storage"] })).pipe(Effect.provide(layer)),
-          );
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const serialized = Cause.pretty(exit.cause);
-            expect(serialized).toContain("StartInvalidConfigError");
-            expect(serialized).toContain("invalid config for storage.file_size_limit");
-          }
-          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        const exit = yield* Effect.exit(
+          start(flags({ exclude: ["storage"] })).pipe(Effect.provide(layer)),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const serialized = Cause.pretty(exit.cause);
+          expect(serialized).toContain("StartInvalidConfigError");
+          expect(serialized).toContain("invalid config for storage.file_size_limit");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.effect(
-      "fails on an invalid SUPABASE_STORAGE_S3_PROTOCOL_ENABLED even when storage is excluded, matching Go's Config.Load",
+      "fails on an invalid SUPABASE_STORAGE_S3_PROTOCOL_ENABLED even when storage is excluded",
       () =>
         withEnvVar(
           "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
@@ -1952,7 +1950,7 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.effect(
-      "fails on an invalid SUPABASE_STORAGE_ANALYTICS_ENABLED even when storage is excluded, matching Go's Config.Load",
+      "fails on an invalid SUPABASE_STORAGE_ANALYTICS_ENABLED even when storage is excluded",
       () =>
         withEnvVar(
           "SUPABASE_STORAGE_ANALYTICS_ENABLED",
@@ -1975,7 +1973,7 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.effect(
-      "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES even when storage is excluded, matching Go's Config.Load",
+      "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES even when storage is excluded",
       () =>
         withEnvVar(
           "SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES",
@@ -1998,7 +1996,7 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.effect(
-      "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_TABLES even when storage is excluded, matching Go's Config.Load",
+      "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_TABLES even when storage is excluded",
       () =>
         withEnvVar(
           "SUPABASE_STORAGE_ANALYTICS_MAX_TABLES",
@@ -2021,7 +2019,7 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.effect(
-      "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS even when storage is excluded, matching Go's Config.Load",
+      "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS even when storage is excluded",
       () =>
         withEnvVar(
           "SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS",
@@ -2044,7 +2042,7 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.effect(
-      "fails on an invalid SUPABASE_STORAGE_VECTOR_MAX_BUCKETS even when storage is excluded, matching Go's Config.Load",
+      "fails on an invalid SUPABASE_STORAGE_VECTOR_MAX_BUCKETS even when storage is excluded",
       () =>
         withEnvVar(
           "SUPABASE_STORAGE_VECTOR_MAX_BUCKETS",
@@ -2067,7 +2065,7 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.effect(
-      "fails on an invalid SUPABASE_STORAGE_VECTOR_MAX_INDEXES even when storage is excluded, matching Go's Config.Load",
+      "fails on an invalid SUPABASE_STORAGE_VECTOR_MAX_INDEXES even when storage is excluded",
       () =>
         withEnvVar(
           "SUPABASE_STORAGE_VECTOR_MAX_INDEXES",
@@ -2089,28 +2087,26 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.effect(
-      "fails on an invalid auth.sms.max_frequency even when auth is disabled, matching Go's Config.Load",
-      () =>
-        Effect.gen(function* () {
-          const { layer, child } = yield* setup({
-            configContents:
-              'project_id = "demo"\n[auth]\nenabled = false\n[auth.sms]\nmax_frequency = "not-a-duration"\n',
-          });
+    it.effect("fails on an invalid auth.sms.max_frequency even when auth is disabled", () =>
+      Effect.gen(function* () {
+        const { layer, child } = yield* setup({
+          configContents:
+            'project_id = "demo"\n[auth]\nenabled = false\n[auth.sms]\nmax_frequency = "not-a-duration"\n',
+        });
 
-          const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const serialized = Cause.pretty(exit.cause);
-            expect(serialized).toContain("StartInvalidConfigError");
-            expect(serialized).toContain("invalid config for auth.sms.max_frequency");
-          }
-          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const serialized = Cause.pretty(exit.cause);
+          expect(serialized).toContain("StartInvalidConfigError");
+          expect(serialized).toContain("invalid config for auth.sms.max_frequency");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.effect(
-      "fails on an invalid SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS even when auth is disabled, matching Go's Config.Load",
+      "fails on an invalid SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS even when auth is disabled",
       () =>
         withEnvVar(
           "SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS",
@@ -2133,7 +2129,7 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.effect(
-      "fails on an invalid SUPABASE_AUTH_WEB3_SOLANA_ENABLED even when auth is disabled, matching Go's Config.Load",
+      "fails on an invalid SUPABASE_AUTH_WEB3_SOLANA_ENABLED even when auth is disabled",
       () =>
         withEnvVar(
           "SUPABASE_AUTH_WEB3_SOLANA_ENABLED",
@@ -2156,7 +2152,7 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.effect(
-      "fails on an invalid SUPABASE_AUTH_OAUTH_SERVER_ENABLED even when auth is disabled, matching Go's Config.Load",
+      "fails on an invalid SUPABASE_AUTH_OAUTH_SERVER_ENABLED even when auth is disabled",
       () =>
         withEnvVar(
           "SUPABASE_AUTH_OAUTH_SERVER_ENABLED",
@@ -2179,7 +2175,7 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.effect(
-      "fails on an invalid SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED even when auth is disabled, matching Go's Config.Load",
+      "fails on an invalid SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED even when auth is disabled",
       () =>
         withEnvVar(
           "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
@@ -2201,82 +2197,76 @@ content_path = "./supabase/templates/custom_notice.html"
         ).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.effect(
-      "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
-      () =>
-        Effect.gen(function* () {
-          // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema, so the malformed
-          // value lives directly in config.toml here — there's no schema-level bool coercion to
-          // catch it first, unlike the modeled fields above.
-          const { layer, child } = yield* setup({
-            configContents:
-              'project_id = "demo"\n[auth]\nenabled = false\n[auth.passkey]\nenabled = "bad"\n',
-          });
+    it.effect("fails on an invalid auth.passkey.enabled even when auth is disabled", () =>
+      Effect.gen(function* () {
+        // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema, so the malformed
+        // value lives directly in config.toml here — there's no schema-level bool coercion to
+        // catch it first, unlike the modeled fields above.
+        const { layer, child } = yield* setup({
+          configContents:
+            'project_id = "demo"\n[auth]\nenabled = false\n[auth.passkey]\nenabled = "bad"\n',
+        });
 
-          const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const serialized = Cause.pretty(exit.cause);
-            expect(serialized).toContain("StartInvalidConfigError");
-            expect(serialized).toContain("invalid config for auth.passkey");
-          }
-          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const serialized = Cause.pretty(exit.cause);
+          expect(serialized).toContain("StartInvalidConfigError");
+          expect(serialized).toContain("invalid config for auth.passkey");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("fails on an invalid auth.external.<custom>.enabled even when auth is disabled", () =>
+      Effect.gen(function* () {
+        // `auth.external` is an open-ended provider map — an unmodeled/
+        // custom provider name like `custom` is a legitimate config shape `@supabase/config`'s
+        // schema silently drops at decode time (see the "custom auth.external providers" describe
+        // block below for the accepted-value counterpart), so
+        // `resolveAuthExternalProviders`'s raw-document read is the only place this malformed
+        // value is ever seen — same override-only-throw reasoning as the passkey test above.
+        const { layer, child } = yield* setup({
+          configContents:
+            'project_id = "demo"\n[auth]\nenabled = false\n[auth.external.custom]\nenabled = "bad"\n',
+        });
+
+        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const serialized = Cause.pretty(exit.cause);
+          expect(serialized).toContain("StartInvalidConfigError");
+          expect(serialized).toContain("invalid config for auth.external");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("fails on a per-function env field", () =>
+      Effect.gen(function* () {
+        // A per-function `env` key is rejected unconditionally at config
+        // load, before any Docker work — the established error is
+        // `functions[foo]: unknown keys: env`. `@supabase/config`'s own schema DOES model
+        // `[functions.<slug>.env]` (a legitimate next/-only feature), so this must be a
+        // CLI-side rejection.
+        const { layer, child } = yield* setup({
+          configContents:
+            'project_id = "demo"\n[functions.foo]\nenabled = true\n[functions.foo.env]\nFOO = "env(SOME_VAR)"\n',
+        });
+
+        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const serialized = Cause.pretty(exit.cause);
+          expect(serialized).toContain("StartInvalidConfigError");
+          expect(serialized).toContain("functions[foo]: unknown keys: env");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.effect(
-      "fails on an invalid auth.external.<custom>.enabled even when auth is disabled, matching Go's Config.Load",
-      () =>
-        Effect.gen(function* () {
-          // `auth.external` is an open-ended provider map — an unmodeled/
-          // custom provider name like `custom` is a legitimate config shape `@supabase/config`'s
-          // schema silently drops at decode time (see the "custom auth.external providers" describe
-          // block below for the accepted-value counterpart), so
-          // `resolveAuthExternalProviders`'s raw-document read is the only place this malformed
-          // value is ever seen — same override-only-throw reasoning as the passkey test above.
-          const { layer, child } = yield* setup({
-            configContents:
-              'project_id = "demo"\n[auth]\nenabled = false\n[auth.external.custom]\nenabled = "bad"\n',
-          });
-
-          const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const serialized = Cause.pretty(exit.cause);
-            expect(serialized).toContain("StartInvalidConfigError");
-            expect(serialized).toContain("invalid config for auth.external");
-          }
-          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
-    );
-
-    it.effect(
-      "fails on a per-function env field, matching Go's Config.Load rejecting an unknown functions[slug] key",
-      () =>
-        Effect.gen(function* () {
-          // A per-function `env` key is rejected unconditionally at config
-          // load, before any Docker work — the established error is
-          // `'functions[foo]' has invalid keys: env`. `@supabase/config`'s own schema DOES model
-          // `[functions.<slug>.env]` (a legitimate next/-only feature), so this must be a
-          // CLI-side rejection.
-          const { layer, child } = yield* setup({
-            configContents:
-              'project_id = "demo"\n[functions.foo]\nenabled = true\n[functions.foo.env]\nFOO = "env(SOME_VAR)"\n',
-          });
-
-          const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const serialized = Cause.pretty(exit.cause);
-            expect(serialized).toContain("StartInvalidConfigError");
-            expect(serialized).toContain("'functions[foo]' has invalid keys: env");
-          }
-          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
-    );
-
-    it.effect(
-      "fails on an invalid SUPABASE_EDGE_RUNTIME_POLICY even when edge-runtime is excluded, matching Go's Config.Load",
+      "fails on an invalid SUPABASE_EDGE_RUNTIME_POLICY even when edge-runtime is excluded",
       () =>
         withEnvVar(
           "SUPABASE_EDGE_RUNTIME_POLICY",
@@ -2299,7 +2289,7 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.effect(
-      "fails on an invalid SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT even when edge-runtime is excluded, matching Go's Config.Load",
+      "fails on an invalid SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT even when edge-runtime is excluded",
       () =>
         withEnvVar(
           "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
@@ -2538,53 +2528,49 @@ content_path = "./supabase/templates/custom_notice.html"
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.effect(
-      "fails on an undecryptable [db.vault] secret even on a non-fresh volume, matching Go's Config.Load",
-      () =>
-        // `checkDbToml`'s internal call inside `startSetupLocalDatabase` only runs on a fresh
-        // volume, but every `encrypted:` value decrypts unconditionally regardless of volume
-        // state, so an undecryptable `[db.vault]` secret must still fail eagerly here.
-        withEnvVar(
-          "DOTENV_PRIVATE_KEY",
-          undefined,
-          Effect.gen(function* () {
-            const encrypted =
-              "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
-            const { layer, child } = yield* setup({
-              configContents: `project_id = "demo"\n[db.vault]\nmy_secret = "${encrypted}"\n`,
-            });
-
-            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-            expect(Exit.isFailure(exit)).toBe(true);
-            if (Exit.isFailure(exit)) {
-              const serialized = Cause.pretty(exit.cause);
-              expect(serialized).toContain("failed to parse config: missing private key");
-            }
-            expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-          }).pipe(Effect.provide(BunServices.layer)),
-        ).pipe(Effect.provide(BunServices.layer)),
-    );
-
-    it.effect(
-      "fails on a bucket's invalid file_size_limit even on a non-fresh volume, matching Go's Config.Load",
-      () =>
+    it.effect("fails on an undecryptable [db.vault] secret even on a non-fresh volume", () =>
+      // `checkDbToml`'s internal call inside `startSetupLocalDatabase` only runs on a fresh
+      // volume, but every `encrypted:` value decrypts unconditionally regardless of volume
+      // state, so an undecryptable `[db.vault]` secret must still fail eagerly here.
+      withEnvVar(
+        "DOTENV_PRIVATE_KEY",
+        undefined,
         Effect.gen(function* () {
+          const encrypted =
+            "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
           const { layer, child } = yield* setup({
-            configContents:
-              'project_id = "demo"\n[storage.buckets.avatars]\nfile_size_limit = "bogus"\n',
+            configContents: `project_id = "demo"\n[db.vault]\nmy_secret = "${encrypted}"\n`,
           });
 
           const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = Cause.pretty(exit.cause);
-            expect(serialized).toContain("DbConfigLoadError");
-            expect(serialized).toContain(
-              "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
-            );
+            expect(serialized).toContain("failed to parse config: missing private key");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(Effect.provide(BunServices.layer)),
+      ).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("fails on a bucket's invalid file_size_limit even on a non-fresh volume", () =>
+      Effect.gen(function* () {
+        const { layer, child } = yield* setup({
+          configContents:
+            'project_id = "demo"\n[storage.buckets.avatars]\nfile_size_limit = "bogus"\n',
+        });
+
+        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const serialized = Cause.pretty(exit.cause);
+          expect(serialized).toContain("DbConfigLoadError");
+          expect(serialized).toContain(
+            "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
+          );
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.effect('prints "Starting database..." on a fresh volume, before Postgres is created', () =>
@@ -2937,6 +2923,42 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.effect(
+      "logs 'Skipped serving Function' once for a disabled function when Studio is excluded",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const workdir = tempRoot.current;
+          yield* fs.makeDirectory(path.join(workdir, "supabase", "functions", "foo"), {
+            recursive: true,
+          });
+          yield* fs.writeFileString(
+            path.join(workdir, "supabase", "functions", "foo", "index.ts"),
+            "export {};\n",
+          );
+          const { layer, out } = yield* setup({
+            configContents: 'project_id = "demo"\n[functions.foo]\nenabled = false\n',
+          });
+          return yield* Effect.gen(function* () {
+            yield* start(flags({ exclude: ["studio"] }));
+            expect(out.stderrText.split("Skipped serving Function: foo")).toHaveLength(2);
+          }).pipe(
+            Effect.provide(layer),
+            Effect.ensuring(
+              Effect.gen(function* () {
+                const fs = yield* FileSystem.FileSystem;
+                const path = yield* Path.Path;
+                yield* fs.remove(path.join(workdir, "supabase", "functions"), {
+                  recursive: true,
+                  force: true,
+                });
+              }).pipe(Effect.orDie),
+            ),
+          );
+        }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect(
       "does not pick up an unrelated ancestor project's functions for a config-less --workdir subdirectory",
       () =>
         Effect.gen(function* () {
@@ -2982,6 +3004,38 @@ content_path = "./supabase/templates/custom_notice.html"
               }).pipe(Effect.orDie),
             ),
           );
+        }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect(
+      "fails before pulling images or creating containers when a function has import_map.json and Studio is excluded",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { layer, child, workdir } = yield* setup();
+          const functionDir = path.join(workdir, "supabase", "functions", "hello");
+          yield* fs.makeDirectory(functionDir, { recursive: true });
+          yield* fs.writeFileString(path.join(functionDir, "index.ts"), "export {};\n");
+          yield* fs.writeFileString(path.join(functionDir, "import_map.json"), '{"imports":{}}\n');
+
+          const exit = yield* Effect.exit(
+            start(flags({ exclude: ["studio"] })).pipe(Effect.provide(layer)),
+          );
+
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.pretty(exit.cause)).toContain(
+              "import_map.json in a function directory is no longer supported: hello",
+            );
+          }
+          expect(createdContainerNames(child.spawned)).toEqual([]);
+          expect(edgeRuntimeRunCalls(child.spawned)).toEqual([]);
+          expect(
+            child.spawned.some(
+              (s) => s.args[0] === "pull" || (s.args[0] === "image" && s.args[1] === "inspect"),
+            ),
+          ).toBe(false);
         }).pipe(Effect.provide(BunServices.layer)),
     );
   });
@@ -3067,7 +3121,7 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.effect(
-      "still fails when the daemon dies mid-pre-pull under --ignore-health-check — Go's exit-0 swallow is an unintended quirk this port deliberately does not reproduce (CLI-1987)",
+      "still fails when the daemon dies mid-pre-pull under --ignore-health-check",
       () =>
         Effect.gen(function* () {
           // Models the daemon-becoming-unreachable trigger: `hasLocalImage` fails immediately on
@@ -3112,58 +3166,56 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("rollback on bring-up failure", () => {
-    it.effect(
-      "rolls back on a SIGINT-style interruption mid-bring-up, matching Go's context.Canceled rollback",
-      () =>
-        Effect.gen(function* () {
-          // Rollback on Ctrl-C: every command's context is wrapped so a SIGINT
-          // produces a genuine interrupt, and rollback runs on ANY failure,
-          // including that interrupt. The native
-          // port installs no signal handling of its own, so this relies entirely on the global
-          // `signalAwareProgram` wrapper (`shared/cli/run.ts`) calling `Fiber.interrupt`, and on
-          // rollback being wired via `Effect.onError` (not `Effect.tapError`, which never sees a
-          // pure interrupt's `Cause`).
-          //
-          // Marking `db` never-healthy keeps `bringUp`'s Postgres health-check wait suspended in
-          // its retry loop, rather than the whole synchronous mock bring-up completing before
-          // this test's probe wait is even scheduled — which would make `Fiber.interrupt` a
-          // no-op on an already-succeeded fiber.
-          const neverHealthy = new Set<string>();
-          const route = defaultRoute({ neverHealthy });
-          let dbContainerId: string | undefined;
-          const dbProbed = yield* Deferred.make<void>();
-          const { layer, child } = yield* setup({
-            route: (args) => {
-              if (args[0] === "create") {
-                const name = containerNameFromCreateArgs(args);
-                if (name.includes("_db_")) {
-                  neverHealthy.add(name);
-                  dbContainerId = name;
-                }
+    it.effect("rolls back on a SIGINT-style interruption mid-bring-up", () =>
+      Effect.gen(function* () {
+        // Rollback on Ctrl-C: every command's context is wrapped so a SIGINT
+        // produces a genuine interrupt, and rollback runs on ANY failure,
+        // including that interrupt. The native
+        // port installs no signal handling of its own, so this relies entirely on the global
+        // `signalAwareProgram` wrapper (`shared/cli/run.ts`) calling `Fiber.interrupt`, and on
+        // rollback being wired via `Effect.onError` (not `Effect.tapError`, which never sees a
+        // pure interrupt's `Cause`).
+        //
+        // Marking `db` never-healthy keeps `bringUp`'s Postgres health-check wait suspended in
+        // its retry loop, rather than the whole synchronous mock bring-up completing before
+        // this test's probe wait is even scheduled — which would make `Fiber.interrupt` a
+        // no-op on an already-succeeded fiber.
+        const neverHealthy = new Set<string>();
+        const route = defaultRoute({ neverHealthy });
+        let dbContainerId: string | undefined;
+        const dbProbed = yield* Deferred.make<void>();
+        const { layer, child } = yield* setup({
+          route: (args) => {
+            if (args[0] === "create") {
+              const name = containerNameFromCreateArgs(args);
+              if (name.includes("_db_")) {
+                neverHealthy.add(name);
+                dbContainerId = name;
               }
-              if (
-                dbContainerId !== undefined &&
-                args[0] === "container" &&
-                args[1] === "inspect" &&
-                args[2] === dbContainerId
-              ) {
-                return Deferred.succeed(dbProbed, undefined).pipe(Effect.as(route(args)));
-              }
-              return route(args);
-            },
-          });
-          const fiber = yield* start(flags()).pipe(
-            Effect.provide(layer),
-            Effect.forkChild({ startImmediately: true }),
-          );
-          // Wait until the health check has actually probed the never-healthy `db` container,
-          // proving the fiber is suspended inside the retry loop, not merely past `create`.
-          yield* Deferred.await(dbProbed);
-          // `Fiber.interrupt` only resolves once the target fiber (and its finalizers,
-          // including the `Effect.onError` rollback) has fully completed.
-          yield* Fiber.interrupt(fiber);
-          expect(rollbackWasAttempted(child.spawned)).toBe(true);
-        }).pipe(Effect.provide(BunServices.layer)),
+            }
+            if (
+              dbContainerId !== undefined &&
+              args[0] === "container" &&
+              args[1] === "inspect" &&
+              args[2] === dbContainerId
+            ) {
+              return Deferred.succeed(dbProbed, undefined).pipe(Effect.as(route(args)));
+            }
+            return route(args);
+          },
+        });
+        const fiber = yield* start(flags()).pipe(
+          Effect.provide(layer),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        // Wait until the health check has actually probed the never-healthy `db` container,
+        // proving the fiber is suspended inside the retry loop, not merely past `create`.
+        yield* Deferred.await(dbProbed);
+        // `Fiber.interrupt` only resolves once the target fiber (and its finalizers,
+        // including the `Effect.onError` rollback) has fully completed.
+        yield* Fiber.interrupt(fiber);
+        expect(rollbackWasAttempted(child.spawned)).toBe(true);
+      }).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.effect(
@@ -3299,25 +3351,23 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.effect(
-      "fails on a malformed auth.email.max_frequency before any Docker work, matching Go's Config.Load",
-      () =>
-        Effect.gen(function* () {
-          // Decodes in the same unconditional config-load pass as every other duration field,
-          // before any Docker work.
-          const { layer, child } = yield* setup({
-            configContents: 'project_id = "demo"\n[auth.email]\nmax_frequency = "not-a-duration"\n',
-          });
+    it.effect("fails on a malformed auth.email.max_frequency before any Docker work", () =>
+      Effect.gen(function* () {
+        // Decodes in the same unconditional config-load pass as every other duration field,
+        // before any Docker work.
+        const { layer, child } = yield* setup({
+          configContents: 'project_id = "demo"\n[auth.email]\nmax_frequency = "not-a-duration"\n',
+        });
 
-          const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const serialized = Cause.pretty(exit.cause);
-            expect(serialized).toContain("StartInvalidConfigError");
-            expect(serialized).toContain("invalid config for auth.email.max_frequency");
-          }
-          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(Effect.provide(BunServices.layer)),
+        const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const serialized = Cause.pretty(exit.cause);
+          expect(serialized).toContain("StartInvalidConfigError");
+          expect(serialized).toContain("invalid config for auth.email.max_frequency");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.effect(
@@ -4280,7 +4330,7 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.effect(
-      "fails fast on SUPABASE_AUTH_EMAIL_TEMPLATE_<NAME>_CONTENT with no content_path configured, matching Go's Config.Validate",
+      "fails fast on SUPABASE_AUTH_EMAIL_TEMPLATE_<NAME>_CONTENT with no content_path configured",
       () =>
         // The env override folds into the email template's content field before
         // validation runs, so it is rejected exactly like a raw TOML `content` key with
@@ -4554,6 +4604,31 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_DB_ORIOLEDB_VERSION override", () => {
+    it.effect(
+      "fails before any container work when the removed SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is set",
+      () =>
+        withEnvVar(
+          "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
+          "16.0.0.1",
+          Effect.gen(function* () {
+            const { layer, child } = yield* setup();
+
+            const exit = yield* Effect.exit(start(flags()).pipe(Effect.provide(layer)));
+
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const message = Cause.pretty(exit.cause);
+              expect(message).toContain(
+                "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION (set in the shell environment) is no longer supported. Use SUPABASE_DB_ORIOLEDB_VERSION instead.",
+              );
+              expect(message).not.toContain("invalid config for");
+              expect(message).not.toContain("failed to read config");
+            }
+            expect(child.spawned).toEqual([]);
+          }).pipe(Effect.provide(BunServices.layer)),
+        ).pipe(Effect.provide(BunServices.layer)),
+    );
+
     it.effect(
       "selects the OrioleDB Postgres image and enables the container's S3 env when set only via env",
       () =>

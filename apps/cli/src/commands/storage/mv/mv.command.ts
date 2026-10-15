@@ -2,6 +2,8 @@ import { Effect } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -61,4 +63,6 @@ export const storageMvCommand = Command.make("mv", config).pipe(
     }).pipe(withJsonErrorHandling),
   ),
   Command.provide(storageGatewayRuntimeLayer(["storage", "mv"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );
