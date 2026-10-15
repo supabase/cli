@@ -1868,7 +1868,8 @@ describe("db reset", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
-              _tag: "CliConfigParseError",
+              _tag: "CliConfigLoadError",
+              message: expect.stringContaining("failed to parse supabase"),
             });
           }
           expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
