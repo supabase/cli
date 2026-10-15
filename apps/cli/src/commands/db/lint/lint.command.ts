@@ -15,6 +15,7 @@ import { dbLint } from "./lint.handler.ts";
 import { dbLintRuntimeLayer } from "./lint.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   dbUrl: Flag.String("db-url").pipe(
@@ -93,4 +94,5 @@ export const dbLintCommand = Command.make("lint", config).pipe(
   Command.provide(dbLintRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "none" }),
 );

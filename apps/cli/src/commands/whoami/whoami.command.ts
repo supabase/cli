@@ -6,6 +6,7 @@ import { managementApiRuntimeLayer } from "../../command-internal/management-api
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { whoami } from "./whoami.handler.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 const config = {};
 export type WhoamiFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -34,4 +35,5 @@ export const whoamiCommand = Command.make("whoami", config).pipe(
   ]),
   Command.withHandler(whoamiHandler),
   Command.provide(managementApiRuntimeLayer(["whoami"])),
+  withTargetPolicy({ group: "account", consent: "none" }),
 );

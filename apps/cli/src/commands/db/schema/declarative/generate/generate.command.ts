@@ -22,6 +22,7 @@ import { dbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
 import { dbSchemaDeclarativeGenerate } from "./generate.handler.ts";
 import { dbSchemaDeclarativeGenerateRuntimeLayer } from "./generate.layers.ts";
 import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
 
 const config = {
   overwrite: Flag.Boolean("overwrite").pipe(
@@ -171,4 +172,5 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
   Command.provide(dbSchemaDeclarativeGenerateRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "none" }),
 );

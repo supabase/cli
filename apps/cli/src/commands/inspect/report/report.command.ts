@@ -12,6 +12,7 @@ import { inspectReport } from "./report.handler.ts";
 import { inspectBaseLayer } from "../inspect.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   dbUrl: Flag.String("db-url").pipe(
@@ -67,4 +68,5 @@ export const inspectReportCommand = Command.make("report", config).pipe(
   Command.provide(Layer.merge(inspectBaseLayer, commandRuntimeLayer(["inspect", "report"]))),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "none" }),
 );

@@ -4,6 +4,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryEnable } from "./enable.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {};
 export type TelemetryEnableFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -17,4 +18,5 @@ export const telemetryEnableCommand = Command.make("enable", config).pipe(
     telemetryEnable(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["telemetry", "enable"])),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

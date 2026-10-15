@@ -5,6 +5,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { ssoRemove } from "./remove.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   projectRef: Flag.String("project-ref").pipe(
@@ -36,4 +37,5 @@ export const ssoRemoveCommand = Command.make("remove", config).pipe(
     ),
   ),
   Command.provide(managementApiRuntimeLayer(["sso", "remove"])),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

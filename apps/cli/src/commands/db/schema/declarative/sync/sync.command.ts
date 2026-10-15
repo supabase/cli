@@ -14,6 +14,7 @@ import { dbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
 import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
 import { dbSchemaDeclarativeSyncRuntimeLayer } from "./sync.layers.ts";
 import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
 
 const config = {
   schema: Flag.String("schema").pipe(
@@ -117,4 +118,5 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
   Command.provide(dbSchemaDeclarativeSyncRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

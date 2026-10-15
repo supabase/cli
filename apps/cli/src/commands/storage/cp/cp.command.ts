@@ -18,6 +18,7 @@ import {
   assertStorageTargetsExclusive,
 } from "../storage.flags.ts";
 import { storageCp } from "./cp.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 // Effect CLI renders no flag defaults, so the established `(default …)` tokens are written into
 // the descriptions below (`--content-type`'s actual runtime default is `""` for auto-detect).
@@ -112,4 +113,5 @@ export const storageCpCommand = Command.make("cp", config).pipe(
   Command.provide(storageGatewayRuntimeLayer(["storage", "cp"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

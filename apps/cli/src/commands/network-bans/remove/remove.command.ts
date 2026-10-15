@@ -12,6 +12,7 @@ import {
   withCommandTelemetry,
 } from "../../../telemetry/command-telemetry.ts";
 import { networkBansRemove } from "./remove.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 /**
  * CSV-splits each occurrence (`--db-unban-ip=1.2.3.4,5.6.7.8` → two IPs) and appends across
@@ -51,4 +52,5 @@ export const networkBansRemoveCommand = Command.make("remove", config).pipe(
       );
     }).pipe(withJsonErrorHandling),
   ),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

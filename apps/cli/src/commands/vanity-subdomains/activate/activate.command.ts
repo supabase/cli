@@ -11,6 +11,7 @@ import {
   withCommandTelemetry,
 } from "../../../telemetry/command-telemetry.ts";
 import { vanitySubdomainsActivate } from "./activate.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   projectRef: Flag.String("project-ref").pipe(
@@ -49,4 +50,5 @@ export const vanitySubdomainsActivateCommand = Command.make("activate", config).
       );
     }).pipe(withJsonErrorHandling),
   ),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

@@ -3,6 +3,7 @@ import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackStop } from "./stop.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
   all: Flag.Boolean("all").pipe(
@@ -33,4 +34,5 @@ export const stackStopCommand = Command.make("stop", config).pipe(
   Command.withHandler((flags) =>
     stackStop(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

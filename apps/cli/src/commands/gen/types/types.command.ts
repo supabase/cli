@@ -13,6 +13,7 @@ import { GEN_TYPES_LANGUAGES, genTypesLanguageFlags } from "./types.languages.ts
 import { genTypesRuntimeLayer } from "./types.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   local: Flag.Boolean("local").pipe(
@@ -120,4 +121,5 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
   Command.provide(genTypesRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(commandConfig),
+  withTargetPolicy({ group: "selectable", consent: "none" }),
 );

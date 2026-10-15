@@ -6,6 +6,7 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computeDelete } from "./delete.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 // No local `--yes`: it is a root persistent flag every other confirming command
 // reads through `resolveYes`, so redeclaring it here would shadow the
@@ -41,4 +42,5 @@ export const computeDeleteCommand = Command.make("delete", config).pipe(
   Command.provide(managementApiRuntimeLayer(["compute", "delete"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

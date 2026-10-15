@@ -16,6 +16,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { migrationSquashRuntimeLayer } from "../migration.layers.ts";
 import { migrationSquash } from "./squash.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   version: Flag.String("version").pipe(
@@ -87,4 +88,5 @@ export const migrationSquashCommand = Command.make("squash", config).pipe(
   Command.provide(migrationSquashRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

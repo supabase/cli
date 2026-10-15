@@ -13,6 +13,7 @@ import { functionsServe } from "./serve.handler.ts";
 import { stackApiLayer } from "../../../command-internal/stack-api.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const functionsServeRuntimeLayer = Layer.mergeAll(
@@ -76,4 +77,5 @@ export const functionsServeCommand = Command.make("serve", commandConfig).pipe(
   Command.provide(functionsServeRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(commandConfig),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

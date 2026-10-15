@@ -16,6 +16,7 @@ import {
   assertStorageTargetsExclusive,
 } from "../storage.flags.ts";
 import { storageLs } from "./ls.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   path: Argument.String("path").pipe(
@@ -64,4 +65,5 @@ export const storageLsCommand = Command.make("ls", config).pipe(
   Command.provide(storageGatewayRuntimeLayer(["storage", "ls"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "none" }),
 );

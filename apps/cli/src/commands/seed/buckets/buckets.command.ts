@@ -19,6 +19,7 @@ import { assertSeedTargetsExclusive } from "./buckets.flags.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import { seedBuckets } from "./buckets.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   // TS-only flag; see push.command.ts (db push) for the same pattern.
@@ -76,4 +77,5 @@ export const bucketsCommand = Command.make("buckets", config).pipe(
   Command.provide(Layer.mergeAll(storageGatewayRuntimeLayer(["seed", "buckets"]), stdinLayer)),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

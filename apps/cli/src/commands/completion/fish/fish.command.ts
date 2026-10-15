@@ -5,6 +5,7 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { CompletionNoDescriptionsFlagDef } from "../completion.flags.ts";
 import { completionFish } from "./fish.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   noDescriptions: CompletionNoDescriptionsFlagDef,
@@ -25,4 +26,5 @@ export const completionFishCommand = Command.make("fish", config).pipe(
     completionFish(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["completion", "fish"])),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

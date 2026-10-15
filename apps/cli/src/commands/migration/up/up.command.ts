@@ -15,6 +15,7 @@ import { migrationDbRuntimeLayer } from "../migration.layers.ts";
 import { migrationUp } from "./up.handler.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   includeAll: Flag.Boolean("include-all").pipe(
@@ -75,4 +76,5 @@ export const migrationUpCommand = Command.make("up", config).pipe(
   Command.provide(migrationDbRuntimeLayer(["migration", "up"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

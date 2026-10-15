@@ -14,6 +14,7 @@ import { dbAdvisors } from "./advisors.handler.ts";
 import { dbAdvisorsRuntimeLayer } from "./advisors.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   dbUrl: Flag.String("db-url").pipe(
@@ -111,4 +112,5 @@ export const dbAdvisorsCommand = Command.make("advisors", config).pipe(
   Command.provide(dbAdvisorsRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "none" }),
 );

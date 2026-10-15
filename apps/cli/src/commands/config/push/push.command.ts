@@ -11,6 +11,7 @@ import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { configPush } from "./push.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   // Accepts either a project ref or a branch name/UUID of the linked project; there's no
@@ -64,4 +65,5 @@ export const configPushCommand = Command.make("push", config).pipe(
   Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["config", "push"]), stdinLayer)),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

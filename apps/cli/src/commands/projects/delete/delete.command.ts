@@ -6,6 +6,7 @@ import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { projectsDelete } from "./delete.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   ref: Argument.String("ref").pipe(
@@ -33,4 +34,5 @@ export const projectsDeleteCommand = Command.make("delete", config).pipe(
   // `stdinLayer`: the delete confirmation reads piped stdin via `promptYesNo`
   // on a non-TTY stdin.
   Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["projects", "delete"]), stdinLayer)),
+  withTargetPolicy({ group: "account", consent: "no" }),
 );

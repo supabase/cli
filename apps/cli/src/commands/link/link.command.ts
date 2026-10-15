@@ -11,6 +11,7 @@ import { withJsonErrorHandling } from "../../shared/output/json-error-handling.t
 import { managementApiRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { link } from "./link.handler.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 const config = {
   refOrBranch: Argument.String("ref-or-branch").pipe(
@@ -78,4 +79,5 @@ export const linkCommand = Command.make("link", config).pipe(
   // Outermost, so it runs before the management API runtime resolves the access token.
   Command.provideEffectDiscard((flags) => warnPasswordIgnored(flags)),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

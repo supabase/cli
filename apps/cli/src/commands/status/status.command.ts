@@ -17,6 +17,7 @@ import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { status } from "./status.handler.ts";
 import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 // String-slice flags: each occurrence is CSV-split and accumulated across repeats,
 // so `--override-name a=1,b=2` is two overrides, not one. Malformed CSV fails at parse time.
@@ -95,4 +96,5 @@ export const statusCommand = Command.make("status", config).pipe(
   Command.provide(statusRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

@@ -6,6 +6,7 @@ import { machineErrorContextLayer } from "../../../../shared/output/machine-erro
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackDestroy } from "./destroy.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
   stack: Flag.String("stack").pipe(
@@ -47,4 +48,5 @@ export const stackDestroyCommand = Command.make("destroy", config).pipe(
   // the effect's type requirements only. `machineErrorContextLayer` lists the stacks a
   // partly failed batch did destroy on the JSON/stream-json error envelope.
   Command.provide(Layer.mergeAll(stdinLayer, machineErrorContextLayer)),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

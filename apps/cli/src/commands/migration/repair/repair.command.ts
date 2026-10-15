@@ -15,6 +15,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { migrationDbRuntimeLayer } from "../migration.layers.ts";
 import { migrationRepair } from "./repair.handler.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   versions: Argument.String("version").pipe(
@@ -95,4 +96,5 @@ export const migrationRepairCommand = Command.make("repair", config).pipe(
   Command.provide(migrationDbRuntimeLayer(["migration", "repair"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

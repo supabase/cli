@@ -12,6 +12,7 @@ import {
   withCommandTelemetry,
 } from "../../../telemetry/command-telemetry.ts";
 import { networkRestrictionsUpdate } from "./update.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 /**
  * CSV-splits each occurrence (`--db-allow-cidr=1.2.3.0/24,5.6.7.0/24` → two CIDRs) and
@@ -60,4 +61,5 @@ export const networkRestrictionsUpdateCommand = Command.make("update", config).p
       );
     }).pipe(withJsonErrorHandling),
   ),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

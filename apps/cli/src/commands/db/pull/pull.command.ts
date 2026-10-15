@@ -21,6 +21,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbPull, resolveRemovedExperimental } from "./pull.handler.ts";
 import { dbPullRuntimeLayer } from "./pull.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   name: Argument.String("migration name").pipe(
@@ -176,4 +177,5 @@ export const dbPullCommand = Command.make("pull", config).pipe(
   }),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "sync", consent: "no" }),
 );

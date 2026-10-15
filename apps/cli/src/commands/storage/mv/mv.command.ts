@@ -16,6 +16,7 @@ import {
   assertStorageTargetsExclusive,
 } from "../storage.flags.ts";
 import { storageMv } from "./mv.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   src: Argument.String("src").pipe(Argument.withDescription("Source path to move from.")),
@@ -62,4 +63,5 @@ export const storageMvCommand = Command.make("mv", config).pipe(
   Command.provide(storageGatewayRuntimeLayer(["storage", "mv"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

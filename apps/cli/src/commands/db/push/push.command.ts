@@ -16,6 +16,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbPush } from "./push.handler.ts";
 import { dbPushRuntimeLayer } from "./push.layers.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   includeAll: Flag.Boolean("include-all").pipe(
@@ -122,4 +123,5 @@ export const dbPushCommand = Command.make("push", config).pipe(
   Command.provide(dbPushRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "sync", consent: "no" }),
 );

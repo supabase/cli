@@ -5,6 +5,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { encryptionGetRootKey } from "./get-root-key.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   projectRef: Flag.String("project-ref").pipe(
@@ -26,4 +27,5 @@ export const encryptionGetRootKeyCommand = Command.make("get-root-key", config).
     ),
   ),
   Command.provide(managementApiRuntimeLayer(["encryption", "get-root-key"])),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

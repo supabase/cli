@@ -5,6 +5,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesGet } from "./get.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   name: Argument.String("name").pipe(
@@ -31,4 +32,5 @@ export const branchesGetCommand = Command.make("get", config).pipe(
     ),
   ),
   Command.provide(managementApiRuntimeLayer(["branches", "get"])),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

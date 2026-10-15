@@ -7,6 +7,7 @@ import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { secretsUnset } from "./unset.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   projectRef: Flag.String("project-ref").pipe(
@@ -57,4 +58,5 @@ export const secretsUnsetCommand = Command.make("unset", config).pipe(
   ),
   // `promptYesNo` requires `Stdin` even though the handler fails before its non-TTY branch.
   Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["secrets", "unset"]), stdinLayer)),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

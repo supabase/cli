@@ -2,6 +2,7 @@ import { Command } from "effect/cli";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackList } from "./list.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 export const stackListCommand = Command.make("list").pipe(
   Command.withDescription("List persisted managed local Supabase stacks."),
@@ -9,4 +10,5 @@ export const stackListCommand = Command.make("list").pipe(
   Command.withHandler(() =>
     stackList().pipe(withCommandTelemetry({ flags: {} }), withJsonErrorHandling),
   ),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

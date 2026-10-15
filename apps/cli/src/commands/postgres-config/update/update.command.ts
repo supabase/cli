@@ -12,6 +12,7 @@ import {
   withCommandTelemetry,
 } from "../../../telemetry/command-telemetry.ts";
 import { postgresConfigUpdate } from "./update.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 /**
  * CSV-splits each occurrence into config overrides, failing at parse time with a
@@ -60,4 +61,5 @@ export const postgresConfigUpdateCommand = Command.make("update", config).pipe(
       );
     }).pipe(withJsonErrorHandling),
   ),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

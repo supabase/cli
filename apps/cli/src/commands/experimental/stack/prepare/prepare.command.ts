@@ -6,6 +6,7 @@ import { stackPrepare } from "./prepare.handler.ts";
 import { STACK_PREPARABLE_CAPABILITIES } from "../start/start.options.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
   stack: Flag.String("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
@@ -44,4 +45,5 @@ export const stackPrepareCommand = Command.make("prepare", config).pipe(
   ),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

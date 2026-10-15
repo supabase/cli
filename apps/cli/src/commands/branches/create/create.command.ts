@@ -7,6 +7,7 @@ import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesCreate } from "./create.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const BRANCH_REGIONS = [
   "ap-east-1",
@@ -100,4 +101,5 @@ export const branchesCreateCommand = Command.make("create", config).pipe(
   ),
   // `stdinLayer` lets the confirmation prompt read piped stdin via `promptYesNo` on a non-TTY.
   Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["branches", "create"]), stdinLayer)),
+  withTargetPolicy({ group: "hosted", consent: "yes" }),
 );

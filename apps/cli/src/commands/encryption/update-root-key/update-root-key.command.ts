@@ -8,6 +8,7 @@ import { ttyLayer } from "../../../shared/runtime/tty.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { encryptionUpdateRootKey } from "./update-root-key.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   projectRef: Flag.String("project-ref").pipe(
@@ -37,4 +38,5 @@ export const encryptionUpdateRootKeyCommand = Command.make("update-root-key", co
     ),
   ),
   Command.provide(updateRuntime),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

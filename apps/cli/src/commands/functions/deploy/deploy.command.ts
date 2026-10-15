@@ -9,6 +9,7 @@ import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { functionsDeploy } from "./deploy.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   functionNames: Argument.String("Function name").pipe(
@@ -82,4 +83,5 @@ export const functionsDeployCommand = Command.make("deploy", config).pipe(
   Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["functions", "deploy"]), stdinLayer)),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

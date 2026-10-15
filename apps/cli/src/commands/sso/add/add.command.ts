@@ -7,6 +7,7 @@ import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts"
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
 import { ssoAdd } from "./add.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 // `--domains` is a CSV string-slice flag; malformed CSV reports a diagnostic (see `stringSliceFlag`).
 export const ssoAddDomainsFlag = stringSliceFlag(
@@ -83,4 +84,5 @@ export const ssoAddCommand = Command.make("add", config).pipe(
     ),
   ),
   Command.provide(managementApiRuntimeLayer(["sso", "add"])),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

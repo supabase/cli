@@ -17,6 +17,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbDiff } from "./diff.handler.ts";
 import { dbDiffRuntimeLayer } from "./diff.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   // The engine flags are a mutually-exclusive group, modelled as `Option` so the mutex check keys
@@ -166,4 +167,5 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
   Command.provide(dbDiffRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "none" }),
 );

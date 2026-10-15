@@ -11,6 +11,7 @@ import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { stop } from "./stop.handler.ts";
 import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 const config = {
   projectId: Flag.String("project-id").pipe(
@@ -58,4 +59,5 @@ export const stopCommand = Command.make("stop", config).pipe(
   Command.provide(stopRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

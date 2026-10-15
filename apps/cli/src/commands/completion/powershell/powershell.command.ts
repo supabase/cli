@@ -5,6 +5,7 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { CompletionNoDescriptionsFlagDef } from "../completion.flags.ts";
 import { completionPowershell } from "./powershell.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   noDescriptions: CompletionNoDescriptionsFlagDef,
@@ -24,4 +25,5 @@ export const completionPowershellCommand = Command.make("powershell", config).pi
     completionPowershell(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(commandRuntimeLayer(["completion", "powershell"])),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

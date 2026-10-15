@@ -16,6 +16,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { migrationDbRuntimeLayer } from "../migration.layers.ts";
 import { migrationList } from "./list.handler.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   dbUrl: Flag.String("db-url").pipe(
@@ -80,4 +81,5 @@ export const migrationListCommand = Command.make("list", config).pipe(
   Command.provide(migrationDbRuntimeLayer(["migration", "list"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "none" }),
 );

@@ -11,6 +11,7 @@ import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.t
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { genSigningKey } from "./signing-key.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const ALGORITHM_VALUES = ["ES256", "RS256"] as const;
 
@@ -67,4 +68,5 @@ export const genSigningKeyCommand = Command.make("signing-key", config).pipe(
   Command.provide(genSigningKeyRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

@@ -5,6 +5,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { projectsList } from "./list.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {};
 export type ProjectsListFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -26,4 +27,5 @@ export const projectsListCommand = Command.make("list", config).pipe(
     projectsList(flags).pipe(withCommandTelemetry({ flags, safeFlags: [] }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["projects", "list"])),
+  withTargetPolicy({ group: "account", consent: "none" }),
 );

@@ -6,6 +6,7 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computeList } from "./list.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
   projectRef: Flag.String("project-ref").pipe(
@@ -33,4 +34,5 @@ export const computeListCommand = Command.make("list", config).pipe(
   Command.provide(managementApiRuntimeLayer(["compute", "list"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

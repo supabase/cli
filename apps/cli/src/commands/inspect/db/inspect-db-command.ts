@@ -3,6 +3,7 @@ import { Flag } from "effect/cli";
 
 import { withDbTarget } from "../../../command-internal/command-permissions/model.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import type { InspectConnectionFlags } from "./inspect-query.ts";
@@ -35,6 +36,8 @@ export const INSPECT_DB_FLAGS = {
 
 /** The Management API calls every `inspect db` subcommand makes, all through the database-config resolver. */
 export const INSPECT_DB_PERMISSIONS = withDbTarget(dbConfig, { default: "linked" });
+/** Target policy shared by every `inspect db` command. */
+export const withInspectDbTargetPolicy = withTargetPolicy({ group: "selectable", consent: "none" });
 
 /**
  * Wraps an `inspect db` handler with the standard command-level pipeline: telemetry

@@ -12,6 +12,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { genBearerJwt } from "./bearer-jwt.handler.ts";
 import { parseBearerJwtExp, parseBearerJwtValidFor } from "./bearer-jwt.flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   // `--role` stays optional at parse time so a missing value is enforced in
@@ -65,4 +66,5 @@ export const genBearerJwtCommand = Command.make("bearer-jwt", config).pipe(
   Command.provide(genBearerJwtRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

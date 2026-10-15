@@ -10,6 +10,7 @@ import { cliConfigProviderLayer } from "../../shared/config/cli-config-provider.
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { bootstrapRuntimeLayer } from "./bootstrap.layers.ts";
 import { bootstrap } from "./bootstrap.handler.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 const config = {
   template: Argument.String("template").pipe(
@@ -35,4 +36,5 @@ export const bootstrapCommand = Command.make("bootstrap", config).pipe(
   Command.provide(bootstrapRuntimeLayer.pipe(Layer.provideMerge(cliConfigProviderLayer))),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "account", consent: "yes" }),
 );

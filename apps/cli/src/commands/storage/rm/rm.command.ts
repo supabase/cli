@@ -16,6 +16,7 @@ import {
   assertStorageTargetsExclusive,
 } from "../storage.flags.ts";
 import { storageRm } from "./rm.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   files: Argument.String("file").pipe(
@@ -72,4 +73,5 @@ export const storageRmCommand = Command.make("rm", config).pipe(
   Command.provide(Layer.mergeAll(storageGatewayRuntimeLayer(["storage", "rm"]), stdinLayer)),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

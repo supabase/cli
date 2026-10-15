@@ -16,6 +16,7 @@ import { dbQuery } from "./query.handler.ts";
 import { dbQueryRuntimeLayer } from "./query.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 /**
  * `db query` needs its own `--output`/`-o` (`json|table|csv`), but Effect CLI keeps one global
@@ -97,4 +98,5 @@ export const dbQueryCommand = Command.make("query", config).pipe(
   Command.provide(dbQueryRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );
