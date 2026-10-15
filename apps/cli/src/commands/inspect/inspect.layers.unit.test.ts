@@ -57,6 +57,7 @@ function ambientStubs() {
     }),
     Layer.succeed(DbConfigResolver, {
       resolve: () => Effect.die("db-config-resolver not needed for layer-exposure test"),
+      resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
       resolvePoolerFallback: () =>
         Effect.die("db-config-resolver not needed for layer-exposure test"),
     }),

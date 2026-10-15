@@ -112,6 +112,7 @@ function mockResolver(opts: { ipv6Error?: boolean } = {}) {
           isLocal: flags.connType !== "linked",
         } satisfies ResolvedDbConfig;
       }),
+    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
   return {

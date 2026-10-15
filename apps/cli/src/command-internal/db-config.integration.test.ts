@@ -63,7 +63,9 @@ import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { identityStitchLayer } from "./identity-stitch.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
-import type { DbConfigFlags } from "./db-config.types.ts";
+import type { DbConfigFlags, DbConnectionInput } from "./db-config.types.ts";
+import type { HostedMutationConsent } from "./hosted-consent/hosted-consent.token.ts";
+import type { ResolvedTarget } from "./target/resolve-target.ts";
 import { DbConnectError } from "./db-connection.errors.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
 import { StackApi } from "./stack-api.ts";
@@ -101,9 +103,10 @@ function buildResolver(
     readonly configEnv?: Record<string, string | undefined>;
     readonly stackApi?: Layer.Layer<StackApi>;
     readonly flagPassword?: string;
+    readonly output?: ReturnType<typeof mockOutput>;
   } = {},
 ) {
-  const out = mockOutput();
+  const out = opts.output ?? mockOutput();
   const deps = Layer.mergeAll(
     Layer.succeed(
       CliConfigFlagInputs,
@@ -1979,5 +1982,320 @@ describe("dbConfigResolver (container pooler fallback)", () => {
       expect(requests).toEqual([]);
       assertFallbackDrift(requests, { local: true });
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
+});
+
+describe("dbConfigResolver.resolveConnection", () => {
+  const approval = Option.some({
+    action: "remove network bans",
+    via: "yes",
+  } as unknown as HostedMutationConsent);
+  const inputFor = (
+    target: ResolvedTarget,
+    overrides: Partial<DbConnectionInput> = {},
+  ): DbConnectionInput => ({
+    target,
+    dnsResolver: "native",
+    password: Option.none(),
+    networkBanRemoval: Option.none(),
+    ...overrides,
+  });
+  const resolveConnection = (
+    workdir: string,
+    input: DbConnectionInput,
+    opts?: Parameters<typeof buildResolver>[1],
+  ) =>
+    Effect.gen(function* () {
+      const resolver = yield* DbConfigResolver;
+      return yield* resolver.resolveConnection(input);
+    }).pipe(
+      Effect.provide(buildResolver(workdir, opts)),
+      Effect.provideServiceEffect(
+        ConfigProvider.ConfigProvider,
+        pinnedConfigProvider(explicitEnv(opts?.configEnv)),
+      ),
+    );
+  const linkedTarget = (
+    ref: string,
+    overrides: Partial<Extract<ResolvedTarget, { readonly kind: "linked" }>> = {},
+  ): ResolvedTarget => ({
+    kind: "linked",
+    ref,
+    source: "file",
+    matchesLinkedRef: true,
+    ...overrides,
+  });
+  const failureText = (exit: Exit.Exit<unknown, unknown>) =>
+    Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "";
+  const session: DbSession = {
+    exec: () => Effect.void,
+    execBatch: () => Effect.void,
+    query: () => Effect.succeed([]),
+    extensionExists: () => Effect.succeed(false),
+    copyToCsv: () => Effect.succeed(new Uint8Array()),
+    queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "SELECT 1" }),
+  };
+
+  it.effect("local target connects to the local stack and announces it", () =>
+    Effect.gen(function* () {
+      const output = mockOutput();
+      const dir = yield* withWorkdir(
+        ["[db]", "port = 55555", 'password = "hunter2"', ""].join("\n"),
+      );
+      const r = yield* resolveConnection(dir, inputFor({ kind: "local" }), { output });
+      expect(r.conn).toMatchObject({ host: "127.0.0.1", port: 55555, password: "hunter2" });
+      expect(r.isLocal).toBe(true);
+      expect(r.target).toEqual({ kind: "local" });
+      expect(output.stderrText).toBe("Target: local stack (127.0.0.1:55555)\n");
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("db-url target announces the host and never the credentials", () =>
+    Effect.gen(function* () {
+      const output = mockOutput();
+      const dir = yield* withWorkdir();
+      const url = Redacted.make("postgres://alice:secret@db.example.com:6543/appdb");
+      const r = yield* resolveConnection(dir, inputFor({ kind: "db-url", url }), { output });
+      expect(r.conn).toMatchObject({ host: "db.example.com", port: 6543, user: "alice" });
+      expect(r.isLocal).toBe(false);
+      expect(output.stderrText).toBe("Target: custom Postgres (db.example.com)\n");
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("a db-url that fails to parse echoes the url with the password redacted", () =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir();
+      const url = Redacted.make("postgres://alice:secret@:notaport/appdb");
+      const exit = yield* Effect.exit(resolveConnection(dir, inputFor({ kind: "db-url", url })));
+      expect(failureText(exit)).toContain("DbConfigParseUrlError");
+      expect(failureText(exit)).not.toContain("secret");
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  const directTargets: ReadonlyArray<readonly [string, ResolvedTarget]> = [
+    ["local", { kind: "local" }],
+    [
+      "db-url",
+      { kind: "db-url", url: Redacted.make("postgres://u:p@db.example.com:5432/postgres") },
+    ],
+  ];
+  for (const [label, target] of directTargets) {
+    it.effect(`rejects --password for a ${label} target before announcing it`, () =>
+      Effect.gen(function* () {
+        const output = mockOutput();
+        const dir = yield* withWorkdir();
+        const exit = yield* Effect.exit(
+          resolveConnection(dir, inputFor(target, { password: Option.some("pw") }), { output }),
+        );
+        expect(failureText(exit)).toContain("TargetPasswordConflictError");
+        expect(output.stderrText).toBe("");
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.effect(`accepts an empty --password for a ${label} target`, () =>
+      Effect.gen(function* () {
+        const dir = yield* withWorkdir();
+        yield* resolveConnection(dir, inputFor(target, { password: Option.some("") }));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+  }
+
+  it.effect("a linked target that matches the linked workdir reuses the saved pooler URL", () => {
+    const ref = "savedpoolerrefabcdef";
+    const requests: Array<{ readonly method: string; readonly path: string }> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, () => undefined);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* withWorkdir();
+      yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(dir, "supabase", ".temp", "pooler-url"),
+        `postgres://postgres.${ref}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+      );
+      const output = mockOutput();
+      const target = linkedTarget(ref);
+      const r = yield* resolveConnection(dir, inputFor(target, { password: Option.some("pw") }), {
+        projectHost: "invalid",
+        output,
+      });
+      expect(r.conn).toMatchObject({
+        host: "aws-0-us-east-1.pooler.supabase.com",
+        user: `postgres.${ref}`,
+        password: "pw",
+      });
+      expect(r.ref).toEqual(Option.some(ref));
+      expect(r.target).toEqual(target);
+      expect(requests).toEqual([]);
+      expect(output.stderrText).toBe("");
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
+
+  it.effect("a linked target that is not the linked workdir ignores the saved pooler URL", () => {
+    const linkedRef = "abcdefghijklmnopqrst";
+    const ref = "otherpoolerrefabcdef";
+    const requests: Array<{ readonly method: string; readonly path: string }> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, (method, path) =>
+        method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`
+          ? Response.json(primaryPoolerConfigs(ref))
+          : undefined,
+      );
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* withWorkdir();
+      yield* fs.makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(dir, "supabase", ".temp", "pooler-url"),
+        `postgres://postgres.${linkedRef}:[YOUR-PASSWORD]@stale.pooler.supabase.com:6543/postgres`,
+      );
+      const r = yield* resolveConnection(
+        dir,
+        inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false }), {
+          password: Option.some("pw"),
+        }),
+        { projectHost: "invalid", configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN } },
+      );
+      expect(r.conn).toMatchObject({
+        host: "aws-0-us-east-1.pooler.supabase.com",
+        user: `postgres.${ref}`,
+      });
+      expect(requests).toEqual([
+        { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+  });
+
+  describe("network bans on the temporary login role", () => {
+    const ref = "banrecoveryrefabcdef";
+    const bannedRequests = (
+      requests: Array<{ readonly method: string; readonly path: string }>,
+      bans: ReadonlyArray<string>,
+    ) =>
+      stubManagementApi(requests, (method, path) => {
+        if (method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`) {
+          return Response.json(primaryPoolerConfigs(ref));
+        }
+        if (method === "POST" && path === `/v1/projects/${ref}/cli/login-role`) {
+          return Response.json(
+            { role: "cli_login_role", password: "temporary-role-password", ttl_seconds: 3600 },
+            { status: 201 },
+          );
+        }
+        if (method === "POST" && path === `/v1/projects/${ref}/network-bans/retrieve`) {
+          return Response.json({ banned_ipv4_addresses: bans });
+        }
+        if (method === "DELETE" && path === `/v1/projects/${ref}/network-bans`) {
+          return Response.json({});
+        }
+        return undefined;
+      });
+    const failingConnect = (failures: number) => {
+      const attempts = { count: 0 };
+      const layer = Layer.succeed(DbConnection, {
+        connect: () =>
+          Effect.suspend(() => {
+            attempts.count += 1;
+            return attempts.count <= failures
+              ? Effect.fail(new DbConnectError({ message: "password authentication failed" }))
+              : Effect.succeed(session);
+          }),
+      });
+      return { attempts, layer };
+    };
+    const forkResolve = (input: DbConnectionInput, connection: Layer.Layer<DbConnection>) =>
+      Effect.gen(function* () {
+        const retries = yield* Queue.unbounded<string>();
+        const debugLogger = Layer.succeed(DebugLogger, {
+          debug: (message) =>
+            message.startsWith("Retry (") ? Queue.offer(retries, message) : Effect.void,
+          http: () => Effect.void,
+        });
+        const dir = yield* withWorkdir();
+        const fiber = yield* resolveConnection(dir, input, {
+          projectHost: "invalid",
+          dbConnection: connection,
+          debugLogger,
+          configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        }).pipe(Effect.forkChild({ startImmediately: true }));
+        const advance = (retryMessages: number) =>
+          Effect.gen(function* () {
+            for (let seen = 1; seen <= retryMessages; seen++) {
+              yield* Queue.take(retries).pipe(Effect.raceFirst(Fiber.join(fiber)));
+              yield* TestClock.adjust("10 seconds");
+            }
+          });
+        return { fiber, advance };
+      });
+
+    it.effect("fails with LinkedDbNetworkBannedError and removes nothing without approval", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(3);
+      return Effect.gen(function* () {
+        yield* bannedRequests(requests, ["203.0.113.7"]);
+        const { fiber, advance } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+          connection.layer,
+        );
+        yield* advance(2);
+        const exit = yield* Fiber.await(fiber);
+        expect(failureText(exit)).toContain("LinkedDbNetworkBannedError");
+        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+        expect(error).toEqual(
+          Option.some(
+            expect.objectContaining({
+              message: expect.stringContaining("203.0.113.7"),
+              suggestion: expect.stringContaining("supabase network-bans remove"),
+            }),
+          ),
+        );
+        expect(connection.attempts.count).toBe(3);
+        expect(requests).toContainEqual({
+          method: "POST",
+          path: `/v1/projects/${ref}/network-bans/retrieve`,
+        });
+        expect(requests.some((request) => request.method === "DELETE")).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    });
+
+    it.effect("keeps retrying without removing anything when no ban is listed", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(3);
+      return Effect.gen(function* () {
+        yield* bannedRequests(requests, []);
+        const { fiber, advance } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
+          connection.layer,
+        );
+        yield* advance(3);
+        const r = yield* Fiber.join(fiber);
+        expect(r.conn).toMatchObject({ user: `cli_login_role.${ref}` });
+        expect(connection.attempts.count).toBe(4);
+        expect(requests.some((request) => request.method === "DELETE")).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    });
+
+    it.effect("removes the bans once the caller holds an approval", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(3);
+      return Effect.gen(function* () {
+        yield* bannedRequests(requests, ["203.0.113.7"]);
+        const { fiber, advance } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false }), {
+            networkBanRemoval: approval,
+          }),
+          connection.layer,
+        );
+        yield* advance(3);
+        const r = yield* Fiber.join(fiber);
+        expect(r.conn).toMatchObject({ user: `cli_login_role.${ref}` });
+        expect(connection.attempts.count).toBe(4);
+        expect(requests).toContainEqual({
+          method: "DELETE",
+          path: `/v1/projects/${ref}/network-bans`,
+        });
+        assertDbConfigDrift(requests, { linked: true, "project-ref": ref });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    });
   });
 });

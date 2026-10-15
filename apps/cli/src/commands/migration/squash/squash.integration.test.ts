@@ -341,6 +341,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           : { ref: opts.linkedRef !== undefined ? Option.some(opts.linkedRef) : Option.none() }),
       } satisfies ResolvedDbConfig);
     },
+    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 

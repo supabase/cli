@@ -153,6 +153,20 @@ export class DbConfigConnectTempRoleError extends Data.TaggedError("DbConfigConn
   }
 }
 
+/** The temporary login role cannot connect because the requester is network-banned and removing the ban was not approved. */
+export class LinkedDbNetworkBannedError extends Data.TaggedError("LinkedDbNetworkBannedError")<{
+  readonly message: string;
+  readonly suggestion?: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return {
+      ...actionability.dbConnection,
+      suggestion_type: CliSuggestionType.RunCommand,
+      suggested_command: "supabase network-bans remove",
+    };
+  }
+}
+
 /**
  * The configured pooler connection string does not match the linked project ref, or its domain
  * falls outside the active profile (MITM guard).

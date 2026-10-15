@@ -392,6 +392,7 @@ function makeDbConfigLayers(
         ref: Option.some(VALID_REF),
       });
     },
+    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 

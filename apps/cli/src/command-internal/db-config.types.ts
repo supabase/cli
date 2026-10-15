@@ -1,6 +1,8 @@
 import type { Option } from "effect";
 import type { PgConnInput } from "./db-connection.service.ts";
 import type { DbConnType } from "./db-target-flags.ts";
+import type { HostedMutationConsent } from "./hosted-consent/hosted-consent.token.ts";
+import type { ResolvedTarget } from "./target/resolve-target.ts";
 
 /**
  * The connection-resolution flags shared by `db lint`, `db advisors`, and `test db`.
@@ -61,4 +63,21 @@ export interface ResolvedDbConfig {
    * override fields like `db.major_version` for the container image.
    */
   readonly ref?: Option.Option<string>;
+}
+
+/** What {@link DbConfigResolver.resolveConnection} needs: the resolved target plus how to authenticate. */
+export interface DbConnectionInput {
+  readonly target: ResolvedTarget;
+  readonly dnsResolver: "native" | "https";
+  /** Rejected unless the target is the linked project. */
+  readonly password: Option.Option<string>;
+  readonly resolveVaultSecrets?: boolean;
+  /** Set when the command binds `--password`, so the withheld-password notice can name it. */
+  readonly hasPasswordFlag?: boolean;
+  /** `Some` lets the temp-role retry clear a network ban; `None` fails with `LinkedDbNetworkBannedError` instead. */
+  readonly networkBanRemoval: Option.Option<HostedMutationConsent>;
+}
+
+export interface ResolvedDbConnection extends ResolvedDbConfig {
+  readonly target: ResolvedTarget;
 }

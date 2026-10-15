@@ -171,6 +171,7 @@ function mockResolver(opts: {
                 }) satisfies ResolvedDbConfig,
           );
     },
+    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
     resolvePoolerFallback: () => {
       calls++;
       return Effect.succeed(Option.none());

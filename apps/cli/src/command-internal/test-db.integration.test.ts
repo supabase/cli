@@ -79,6 +79,7 @@ function mockResolver(opts: { conn?: PgConnInput; isLocal?: boolean } = {}) {
       });
       return Effect.succeed({ conn: opts.conn ?? LOCAL_CONN, isLocal: opts.isLocal ?? true });
     },
+    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
   return {

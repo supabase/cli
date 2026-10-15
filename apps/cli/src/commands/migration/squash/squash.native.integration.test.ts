@@ -73,6 +73,7 @@ const testLayer = (root: string) =>
           },
           isLocal: true,
         }),
+      resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
       resolvePoolerFallback: () => Effect.succeed(Option.none()),
     }),
     Layer.succeed(DebugFlag, false),

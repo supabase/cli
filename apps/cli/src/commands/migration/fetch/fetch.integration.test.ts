@@ -93,6 +93,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             isLocal: false,
             ref: Option.some(VALID_REF),
           } satisfies ResolvedDbConfig),
+    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 

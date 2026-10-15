@@ -71,6 +71,7 @@ const CLI_SUGGESTED_COMMANDS = [
   "supabase branches create",
   "supabase link",
   "supabase login",
+  "supabase network-bans remove",
   "supabase seed buckets",
   "supabase start",
   "supabase stop",
@@ -222,6 +223,7 @@ type CliErrorSuggestion =
       readonly suggestion_type: typeof CliSuggestionType.RunCommand;
       readonly suggested_command?:
         | "supabase branches create"
+        | "supabase network-bans remove"
         | "supabase seed buckets"
         | "supabase start"
         | "supabase stop";

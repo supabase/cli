@@ -95,6 +95,7 @@ function mockResolver(
           isLocal: opts.isLocal ?? true,
         } satisfies ResolvedDbConfig;
       }),
+    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
   return { layer, calls };

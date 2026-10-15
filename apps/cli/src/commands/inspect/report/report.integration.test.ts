@@ -91,6 +91,7 @@ function mockResolver(opts: { conn?: PgConnInput; isLocal?: boolean; fails?: boo
         isLocal: opts.isLocal ?? true,
       } satisfies ResolvedDbConfig);
     },
+    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
   return {

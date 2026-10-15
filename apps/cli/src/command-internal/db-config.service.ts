@@ -24,12 +24,19 @@ import type {
   DbConfigUnbanNetworkError,
   DbConfigUnbanStatusError,
   DbPasswordFlagsError,
+  LinkedDbNetworkBannedError,
 } from "./db-config.errors.ts";
-import type { DbConfigFlags, ResolvedDbConfig } from "./db-config.types.ts";
+import type {
+  DbConfigFlags,
+  DbConnectionInput,
+  ResolvedDbConfig,
+  ResolvedDbConnection,
+} from "./db-config.types.ts";
 import type {
   CliConfigFlagConflictError,
   CliConfigValueError,
 } from "../config/cli-config.errors.ts";
+import type { TargetPasswordConflictError } from "./target/target.errors.ts";
 
 /** Every error the resolver can raise across the direct / local / linked paths. */
 export type DbConfigError =
@@ -55,6 +62,8 @@ export type DbConfigError =
   | HttpBody.HttpBodyError
   | DbConfigIpv6Error
   | DbConfigConnectTempRoleError
+  | LinkedDbNetworkBannedError
+  | TargetPasswordConflictError
   | DbConfigPoolerLoginError
   | DbConnectError
   // The `--linked` path resolves the access token lazily via
@@ -73,6 +82,13 @@ export type DbConfigError =
 // `DbConfigError`) rather than a layer-build error channel.
 interface DbConfigResolverShape {
   readonly resolve: (flags: DbConfigFlags) => Effect.Effect<ResolvedDbConfig, DbConfigError>;
+  /**
+   * Connects to an already-resolved target and announces it: the local stack, a `--db-url`
+   * database, or the linked project's temp-role connection.
+   */
+  readonly resolveConnection: (
+    input: DbConnectionInput,
+  ) => Effect.Effect<ResolvedDbConnection, DbConfigError>;
   /**
    * Resolves the IPv4 transaction pooler connection for a linked dump's container-level
    * fallback. Returns `None` when the path is not pooler-eligible (`--linked` only) or no

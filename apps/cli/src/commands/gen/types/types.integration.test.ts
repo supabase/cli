@@ -173,6 +173,7 @@ function mockDbConfigResolver(
             )
         );
       }),
+    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
     resolvePoolerFallback: (flags) =>
       opts.poolerFallbackFails === true
         ? Effect.fail(new DbConfigLoadError({ message: "pooler fallback failed" }))

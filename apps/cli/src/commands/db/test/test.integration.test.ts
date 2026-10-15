@@ -108,6 +108,7 @@ function mockContextualAnalytics() {
 function mockResolver() {
   return Layer.succeed(DbConfigResolver, {
     resolve: () => Effect.succeed({ conn: LOCAL_CONN, isLocal: true }),
+    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 }

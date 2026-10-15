@@ -1,6 +1,6 @@
 import * as net from "node:net";
 import { BunServices } from "@effect/platform-bun";
-import { Crypto, Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Crypto, Duration, Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
@@ -8,6 +8,7 @@ import { type CliConfigKeyOrigin } from "../config/cli-config-key.ts";
 import { CliConfigKeys } from "../config/cli-config-keys.ts";
 import { CliConfigValues, type ResolvedCliConfig } from "../config/cli-config-values.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
+import { projectRefPicker } from "../config/project-ref.layer.ts";
 import { ProjectRefResolver, PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
 import {
   DebugFlag,
@@ -38,7 +39,7 @@ import {
 } from "./db-config.parse.ts";
 import { DbConfigResolver, type DbConfigError } from "./db-config.service.ts";
 import { loadProjectEnvValues, readDbToml } from "./db-config.toml-read.ts";
-import type { DbConfigFlags } from "./db-config.types.ts";
+import type { DbConfigFlags, DbConnectionInput } from "./db-config.types.ts";
 import { rejectPasswordWithDirectTarget } from "./db-target-flags.ts";
 import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { getHostname } from "./hostname.ts";
@@ -47,6 +48,8 @@ import { currentStackBackend } from "./stack-backend.ts";
 import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { stackLocalDatabaseConn } from "./stack-local-database.ts";
 import { block, type OperationEntry } from "./command-permissions/model.ts";
+import { renderDbUrlTarget, renderLocalTarget } from "./target/target-identity.ts";
+import { TargetPasswordConflictError } from "./target/target.errors.ts";
 
 const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
   {
@@ -84,6 +87,7 @@ const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
     context:
       "after three failed attempts to connect through the pooler as the temporary login role",
   },
+  ...projectRefPicker.operations,
 ];
 
 /**
@@ -224,11 +228,18 @@ const initLoginRole = Effect.fn("DbConfig.initLoginRole")(function* (
   return { ...conn, user: role.role, password: role.password };
 });
 
-const listAndUnban = Effect.fnUntraced(function* (ref: string) {
+const listAndUnban = Effect.fnUntraced(function* (ref: string, removeBans: boolean) {
   const api = yield* (yield* CommandPlatformApiFactory).make;
   const bans = yield* api.v1.listAllNetworkBans({ ref }).pipe(Effect.catch(listBansErrorMapper));
   const addrs = bans.banned_ipv4_addresses;
   if (addrs.length === 0) return;
+  if (!removeBans) {
+    return yield* new Errors.LinkedDbNetworkBannedError({
+      message: `Network bans (${addrs.join(", ")}) may be blocking the connection, and removing them needs approval.`,
+      suggestion:
+        "Re-run with --yes to remove the bans, or run supabase network-bans remove --db-unban-ip <ip> first.",
+    });
+  }
   yield* api.v1
     .deleteNetworkBans({ ref, ipv4_addresses: [...addrs], requester_ip: false })
     .pipe(Effect.catch(unbanErrorMapper));
@@ -240,6 +251,7 @@ const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
   ref: string,
   conn: PgConnInput,
   dnsResolver: "native" | "https",
+  removeBans: boolean,
 ) {
   const dbConn = yield* DbConnection;
   const debug = yield* DebugLogger;
@@ -262,18 +274,22 @@ const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
         // From the 3rd failure onward, clear any network ban on the requester. Uses a
         // deterministic backoff curve rather than jittered, since jitter only matters under
         // concurrent pooler refreshes.
-        const unban = n >= 3 ? listAndUnban(ref) : Effect.void;
         const delayMs = Math.min(
           Duration.toMillis(BACKOFF_INITIAL) * 1.5 ** (n - 1),
           Duration.toMillis(BACKOFF_MAX),
         );
         return Effect.gen(function* () {
           // A transient ban-list/unban failure must not propagate out of the retry loop; log
-          // it to --debug, then discard.
-          yield* unban.pipe(
-            Effect.tapError((banError) => debug.debug(banError.message)),
-            Effect.ignore,
-          );
+          // it to --debug, then discard. An unapproved ban removal is the one failure that ends it.
+          if (n >= 3) {
+            yield* listAndUnban(ref, removeBans).pipe(
+              Effect.catch((banError) =>
+                banError._tag === "LinkedDbNetworkBannedError"
+                  ? Effect.fail(banError)
+                  : debug.debug(banError.message),
+              ),
+            );
+          }
           yield* debug.debug(`Retry (${n}/${MAX_RETRIES}): ${cause.message}`);
           yield* Effect.sleep(Duration.millis(delayMs));
           return yield* attempt(n + 1);
@@ -323,6 +339,22 @@ const describePasswordOrigin = (origin: CliConfigKeyOrigin): string => {
  */
 const passwordFlag = (password: Option.Option<string> | undefined): Option.Option<string> =>
   password ?? Option.none();
+
+const rejectTargetPassword = (
+  target: "local" | "db-url",
+  password: Option.Option<string>,
+): Effect.Effect<void, TargetPasswordConflictError> =>
+  Option.isNone(Option.filter(password, (value) => value.length > 0))
+    ? Effect.void
+    : Effect.fail(
+        new TargetPasswordConflictError({
+          target,
+          message:
+            target === "db-url"
+              ? "--password can't be used with --db-url. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres"
+              : "--password only applies to a linked project. The local database uses [db].password from supabase/config.toml.",
+        }),
+      );
 
 const loadFailureToDbConfigError = <E extends { readonly _tag: string; readonly message: string }>(
   error: E,
@@ -402,6 +434,7 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   // `ref` from the Management API instead.
   ignoreSavedUrl = false,
   resolveVaultSecrets = true,
+  removeNetworkBans = true,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -448,7 +481,7 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   const withRole = yield* initLoginRole(ref, poolerConn);
   const finalUser = originalUser.endsWith(`.${ref}`) ? `${withRole.user}.${ref}` : withRole.user;
   const tempConn = { ...withRole, user: finalUser };
-  yield* waitForTempRole(ref, tempConn, dnsResolver);
+  yield* waitForTempRole(ref, tempConn, dnsResolver, removeNetworkBans);
   return Option.some(tempConn);
 });
 
@@ -487,6 +520,8 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     readonly fetchPoolerFromApi?: boolean;
     /** Whether the calling command binds `--password`, so the withheld-password notice can name it. */
     readonly hasPasswordFlag?: boolean;
+    /** When false, a network ban that blocks the temp role fails with `LinkedDbNetworkBannedError` instead of being removed. */
+    readonly removeNetworkBans?: boolean;
   } = {},
 ) {
   const {
@@ -494,6 +529,7 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     resolveVaultSecrets = true,
     fetchPoolerFromApi = false,
     hasPasswordFlag = false,
+    removeNetworkBans = true,
   } = options;
   const dbPassword = yield* resolveLinkedPassword(ref, workdir, explicitPassword, hasPasswordFlag);
   const host = `db.${ref}.${projectHost}`;
@@ -529,6 +565,7 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     adHocProjectRef || fetchPoolerFromApi,
     adHocProjectRef,
     resolveVaultSecrets,
+    removeNetworkBans,
   );
   if (Option.isNone(poolerConn)) {
     return yield* new Errors.DbConfigIpv6Error({
@@ -553,6 +590,7 @@ export const dbConfigResolverLayer = Layer.effect(
     const output = yield* Output;
     const dbConn = yield* DbConnection;
     const configValues = yield* CliConfigValues;
+    const commandTarget = yield* CommandTarget;
     // `resolveLinkedConn`/`resolvePoolerConn` (etc.) are standalone functions that yield their
     // own `FileSystem`/`Path`/`DebugLogger`/`Output`/`DbConnection` (so bootstrap can call them
     // directly from its own ambient context). Calling them from here would otherwise leak those
@@ -598,7 +636,7 @@ export const dbConfigResolverLayer = Layer.effect(
       Layer.succeed(TelemetryRuntime, yield* TelemetryRuntime),
       Layer.succeed(Tty, yield* Tty),
       Layer.succeed(Output, yield* Output),
-      Layer.succeed(CommandTarget, yield* CommandTarget),
+      Layer.succeed(CommandTarget, commandTarget),
       // The per-command identity stitcher, shared with the linked stack's lazy platform-API
       // factory + linked-project cache. Provided to this layer by each command runtime.
       Layer.succeed(IdentityStitch, yield* IdentityStitch),
@@ -628,151 +666,75 @@ export const dbConfigResolverLayer = Layer.effect(
       Effect.provideService(Path.Path, path),
     );
 
-    const resolve = (flags: DbConfigFlags) =>
+    // Honors `SUPABASE_SERVICES_HOSTNAME` / a tcp `DOCKER_HOST` in dev-container or remote-Docker
+    // setups, defaulting to 127.0.0.1. Only env feeds the hostname, so the config file stays unread.
+    const resolveLocalHost = Effect.gen(function* () {
+      const hostConfig = yield* configValues
+        .load({
+          workdir: cliSettings.workdir,
+          projectRef: Option.none(),
+          ignoreConfigFile: true,
+          tolerateInvalid: true,
+        })
+        .pipe(Effect.mapError(loadFailureToDbConfigError));
+      return yield* getHostname(hostConfig).pipe(
+        Effect.provideService(RuntimeInfo, runtimeInfo),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.catchTag("CliConfigLoadError", (error) =>
+          Effect.fail(new Errors.DbConfigLoadError({ message: error.message })),
+        ),
+      );
+    });
+
+    const resolveDbUrl = (dbUrl: string, localHost: string, resolveVaultSecrets: boolean) =>
       Effect.gen(function* () {
-        yield* rejectPasswordWithDirectTarget(flags.connType, flags.password);
-        const resolveVaultSecrets = flags.resolveVaultSecrets ?? true;
-        // Config is read per branch, not unconditionally up front: the linked branch resolves
-        // the ref first and reads the `[remotes.<ref>]`-merged config (below). A base read here
-        // would validate base config (db.major_version, deno_version, …) before the ref is
-        // known, failing a linked run that should succeed once the ref is known. Only
-        // `--db-url`/`--local` read base config, since neither merges a remote block.
-        // Honors `SUPABASE_SERVICES_HOSTNAME` / a tcp `DOCKER_HOST` in dev-container or
-        // remote-Docker setups, defaulting to 127.0.0.1.
-        // Only env feeds the hostname, so the config file stays unread here.
-        const hostConfig = yield* configValues
-          .load({
-            workdir: cliSettings.workdir,
-            projectRef: Option.none(),
-            ignoreConfigFile: true,
-            tolerateInvalid: true,
-          })
-          .pipe(Effect.mapError(loadFailureToDbConfigError));
-        const localHost = yield* getHostname(hostConfig).pipe(
-          Effect.provideService(RuntimeInfo, runtimeInfo),
+        const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, undefined, {
+          resolveVaultSecrets,
+        });
+        // The project `.env*` files populate the environment that the libpq `PG*` fallbacks
+        // read. Layer the project env under the shell env (`loadProjectEnvValues` already excludes
+        // shell-set keys, so the shell still wins) and feed it to the parser.
+        const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
+        const conn = yield* parseConnectionString(dbUrl, yield* layeredParseEnv(projectEnv)).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
-          Effect.provideService(Crypto.Crypto, crypto),
-          Effect.catchTag("CliConfigLoadError", (error) =>
-            Effect.fail(new Errors.DbConfigLoadError({ message: error.message })),
-          ),
         );
-
-        // --db-url (direct) takes precedence.
-        if (flags.connType === "db-url" && Option.isSome(flags.dbUrl)) {
-          const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, undefined, {
-            resolveVaultSecrets,
+        if (conn === undefined) {
+          return yield* new Errors.DbConfigParseUrlError({
+            // Redact the password component before echoing the URL back
+            // (CWE-209): a malformed `--db-url` often still carries a secret.
+            message: `failed to parse connection string: ${redactConnectionString(dbUrl)}`,
           });
-          // The project `.env*` files populate the environment that the libpq `PG*` fallbacks
-          // read. Layer the project env under the shell env (`loadProjectEnvValues` already excludes
-          // shell-set keys, so the shell still wins) and feed it to the parser.
-          const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
-          const conn = yield* parseConnectionString(
-            flags.dbUrl.value,
-            yield* layeredParseEnv(projectEnv),
-          ).pipe(
-            Effect.provideService(FileSystem.FileSystem, fs),
-            Effect.provideService(Path.Path, path),
-          );
-          if (conn === undefined) {
-            return yield* new Errors.DbConfigParseUrlError({
-              // Redact the password component before echoing the URL back
-              // (CWE-209): a malformed `--db-url` often still carries a secret.
-              message: `failed to parse connection string: ${redactConnectionString(flags.dbUrl.value)}`,
-            });
-          }
-          // A multi-host URL stays remote: local disables TLS for every fallback host as well.
-          const singleHost = conn.fallbacks === undefined;
-          const legacyLocal =
-            singleHost &&
-            isLocalDatabase(
-              conn.host,
-              localHost,
-              conn.port,
-              tomlValues.port,
-              tomlValues.shadowPort,
-            );
-          // The stack backend publishes its database on a runtime-assigned port rather than
-          // `[db].port`, so a URL naming the running stack's SQL endpoint is local too.
-          const stackConn =
-            singleHost &&
-            (yield* currentStackBackend).kind === "stack" &&
-            mayBeStackDatabaseHost(conn.host, localHost)
-              ? Option.getOrUndefined(yield* Effect.option(stackDatabaseConn))
-              : undefined;
-          const onStack = stackConn?.host === conn.host && stackConn.port === conn.port;
-          const isLocal = legacyLocal || onStack;
-          // A local direct URL fills an empty password from the local database's own
-          // credentials, so a passwordless DSN like `postgresql://postgres@127.0.0.1:54322/postgres`
-          // still authenticates.
-          const localPassword = onStack ? stackConn.password : tomlValues.password;
-          return {
-            conn:
-              isLocal && conn.password.length === 0 ? { ...conn, password: localPassword } : conn,
-            isLocal,
-          };
         }
+        // A multi-host URL stays remote: local disables TLS for every fallback host as well.
+        const singleHost = conn.fallbacks === undefined;
+        const legacyLocal =
+          singleHost &&
+          isLocalDatabase(conn.host, localHost, conn.port, tomlValues.port, tomlValues.shadowPort);
+        // The stack backend publishes its database on a runtime-assigned port rather than
+        // `[db].port`, so a URL naming the running stack's SQL endpoint is local too.
+        const stackConn =
+          singleHost &&
+          (yield* currentStackBackend).kind === "stack" &&
+          mayBeStackDatabaseHost(conn.host, localHost)
+            ? Option.getOrUndefined(yield* Effect.option(stackDatabaseConn))
+            : undefined;
+        const onStack = stackConn?.host === conn.host && stackConn.port === conn.port;
+        const isLocal = legacyLocal || onStack;
+        // A local direct URL fills an empty password from the local database's own
+        // credentials, so a passwordless DSN like `postgresql://postgres@127.0.0.1:54322/postgres`
+        // still authenticates.
+        const localPassword = onStack ? stackConn.password : tomlValues.password;
+        return {
+          conn: isLocal && conn.password.length === 0 ? { ...conn, password: localPassword } : conn,
+          isLocal,
+        };
+      });
 
-        // --linked. The lazy Management API runtime (project-ref resolver + lazy platform API
-        // factory) is provided here at runtime so it is only built on this branch —
-        // `--local`/`--db-url` never touch it. The factory resolves the access token only on
-        // first use (minting a temp role), so a `--linked --password` invocation stays
-        // auth-free.
-        if (flags.connType === "linked") {
-          const linked = yield* Effect.gen(function* () {
-            const projectRef = yield* ProjectRefResolver;
-            // Load-or-fail with no prompt: use `loadProjectRef` (not the soft
-            // `resolveOptional`, which swallows a read error to `None`) — an unlinked workdir
-            // fails with a not-linked error, a bad ref with the invalid-ref error, and an
-            // unreadable ref file surfaces the filesystem problem, for every caller of this
-            // resolver (`test db --linked`, dump, declarative).
-            const ref = yield* projectRef.loadProjectRef(flags.linkedProjectRef ?? Option.none());
-            // The `[remotes.<ref>]`-merged config (e.g. an unsupported remote
-            // `db.major_version`/`edge_runtime.deno_version`) is validated as a pure config
-            // error before any network work. The base read in `resolve` above only validates
-            // remote `project_id`s, not the ref-merged block — so validate the merged config
-            // here, before the TCP probe / pooler / temp-role Management API calls, rather than
-            // letting those mask (or run side effects ahead of) the real config error.
-            yield* readDbToml(fs, path, cliSettings.workdir, ref, {
-              resolveVaultSecrets,
-            });
-            const resolved = yield* resolveLinkedConn(
-              ref,
-              cliSettings.workdir,
-              cliSettings.projectHost,
-              cliSettings.poolerHost,
-              flags.dnsResolver,
-              passwordFlag(flags.password),
-              {
-                adHocProjectRef: flags.adHocProjectRef ?? false,
-                resolveVaultSecrets,
-                // An explicit ref (the eight `db` commands' `--project-ref`, or
-                // `gen types --project-id`) independently unlocks the Management API
-                // pooler fetch, regardless of `adHocProjectRef`'s saved-URL semantics
-                // — see `DbConfigFlags.linkedProjectRef`'s doc comment.
-                fetchPoolerFromApi: Option.isSome(flags.linkedProjectRef ?? Option.none()),
-                hasPasswordFlag: flags.password !== undefined,
-              },
-            );
-            // The linked-project telemetry cache (GET /v1/projects/{ref}) is not issued here:
-            // it's cached in a post-run hook, after the command's own API calls, so each linked
-            // command owns that GET in its post-run finalizer. Issuing it mid-resolve would
-            // reorder the request log ahead of the command's GETs.
-            return { conn: resolved, ref };
-          }).pipe(
-            Effect.provide(
-              Layer.mergeAll(
-                linkedDbResolverRuntimeLayer(["test", "db"]).pipe(Layer.provide(ambientLayer)),
-                localAmbientServices,
-              ),
-            ),
-          );
-          // Surface the resolved ref so the caller can re-read config with a matching
-          // `[remotes.<ref>]` override applied (merged into the linked config).
-          return { conn: linked.conn, isLocal: false, ref: Option.some(linked.ref) };
-        }
-
-        // --local (default).
+    const resolveLocalStack = (localHost: string, resolveVaultSecrets: boolean) =>
+      Effect.gen(function* () {
         const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, undefined, {
           resolveVaultSecrets,
         });
@@ -790,6 +752,140 @@ export const dbConfigResolverLayer = Layer.effect(
           },
           isLocal: true,
         };
+      });
+
+    // Validates the `[remotes.<ref>]`-merged config before any network work, so a config error is
+    // never masked by the TCP probe, pooler or login-role calls. The linked-project cache GET is
+    // left to each command's post-run hook so it stays after the command's own requests.
+    const resolveLinkedConnection = (
+      ref: string,
+      options: {
+        readonly dnsResolver: "native" | "https";
+        readonly password: Option.Option<string>;
+        readonly resolveVaultSecrets: boolean;
+        readonly adHocProjectRef: boolean;
+        readonly fetchPoolerFromApi: boolean;
+        readonly hasPasswordFlag: boolean;
+        readonly removeNetworkBans: boolean;
+      },
+    ) =>
+      Effect.gen(function* () {
+        yield* readDbToml(fs, path, cliSettings.workdir, ref, {
+          resolveVaultSecrets: options.resolveVaultSecrets,
+        });
+        return yield* resolveLinkedConn(
+          ref,
+          cliSettings.workdir,
+          cliSettings.projectHost,
+          cliSettings.poolerHost,
+          options.dnsResolver,
+          options.password,
+          {
+            adHocProjectRef: options.adHocProjectRef,
+            resolveVaultSecrets: options.resolveVaultSecrets,
+            fetchPoolerFromApi: options.fetchPoolerFromApi,
+            hasPasswordFlag: options.hasPasswordFlag,
+            removeNetworkBans: options.removeNetworkBans,
+          },
+        );
+      });
+
+    // Built per linked call so `--local`/`--db-url` never touch it; the platform API factory
+    // resolves the access token only when a temp role is minted, so `--password` stays auth-free.
+    const withLinkedRuntime = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            linkedDbResolverRuntimeLayer(["test", "db"]).pipe(Layer.provide(ambientLayer)),
+            localAmbientServices,
+          ),
+        ),
+      );
+
+    const resolve = (flags: DbConfigFlags) =>
+      Effect.gen(function* () {
+        yield* rejectPasswordWithDirectTarget(flags.connType, flags.password);
+        const resolveVaultSecrets = flags.resolveVaultSecrets ?? true;
+        // Config is read per branch, not unconditionally up front: the linked branch resolves
+        // the ref first and reads the `[remotes.<ref>]`-merged config. A base read here would
+        // validate base config (db.major_version, deno_version, …) before the ref is known,
+        // failing a linked run that should succeed once the ref is known. Only
+        // `--db-url`/`--local` read base config, since neither merges a remote block.
+        const localHost = yield* resolveLocalHost;
+
+        // --db-url (direct) takes precedence.
+        if (flags.connType === "db-url" && Option.isSome(flags.dbUrl)) {
+          return yield* resolveDbUrl(flags.dbUrl.value, localHost, resolveVaultSecrets);
+        }
+
+        if (flags.connType === "linked") {
+          const linked = yield* withLinkedRuntime(
+            Effect.gen(function* () {
+              const projectRef = yield* ProjectRefResolver;
+              // Load-or-fail with no prompt: use `loadProjectRef` (not the soft
+              // `resolveOptional`, which swallows a read error to `None`) — an unlinked workdir
+              // fails with a not-linked error, a bad ref with the invalid-ref error, and an
+              // unreadable ref file surfaces the filesystem problem, for every caller of this
+              // resolver (`test db --linked`, dump, declarative).
+              const ref = yield* projectRef.loadProjectRef(flags.linkedProjectRef ?? Option.none());
+              const conn = yield* resolveLinkedConnection(ref, {
+                dnsResolver: flags.dnsResolver,
+                password: passwordFlag(flags.password),
+                resolveVaultSecrets,
+                adHocProjectRef: flags.adHocProjectRef ?? false,
+                // An explicit ref (the eight `db` commands' `--project-ref`, or
+                // `gen types --project-id`) independently unlocks the Management API
+                // pooler fetch, regardless of `adHocProjectRef`'s saved-URL semantics
+                // — see `DbConfigFlags.linkedProjectRef`'s doc comment.
+                fetchPoolerFromApi: Option.isSome(flags.linkedProjectRef ?? Option.none()),
+                hasPasswordFlag: flags.password !== undefined,
+                removeNetworkBans: true,
+              });
+              return { conn, ref };
+            }),
+          );
+          // Surface the resolved ref so the caller can re-read config with a matching
+          // `[remotes.<ref>]` override applied (merged into the linked config).
+          return { conn: linked.conn, isLocal: false, ref: Option.some(linked.ref) };
+        }
+
+        return yield* resolveLocalStack(localHost, resolveVaultSecrets);
+      });
+
+    const resolveConnection = (input: DbConnectionInput) =>
+      Effect.gen(function* () {
+        const { target } = input;
+        if (target.kind !== "linked") {
+          yield* rejectTargetPassword(target.kind, input.password);
+        }
+        const resolveVaultSecrets = input.resolveVaultSecrets ?? true;
+        if (target.kind === "linked") {
+          const conn = yield* withLinkedRuntime(
+            resolveLinkedConnection(target.ref, {
+              dnsResolver: input.dnsResolver,
+              password: input.password,
+              resolveVaultSecrets,
+              adHocProjectRef: !target.matchesLinkedRef,
+              fetchPoolerFromApi: target.source === "flag",
+              hasPasswordFlag: input.hasPasswordFlag ?? false,
+              removeNetworkBans: Option.isSome(input.networkBanRemoval),
+            }),
+          );
+          return { conn, isLocal: false, ref: Option.some(target.ref), target };
+        }
+        const localHost = yield* resolveLocalHost;
+        if (target.kind === "db-url") {
+          const resolved = yield* resolveDbUrl(
+            Redacted.value(target.url),
+            localHost,
+            resolveVaultSecrets,
+          );
+          yield* commandTarget.announce(renderDbUrlTarget(resolved.conn.host, resolved.conn.port));
+          return { ...resolved, target };
+        }
+        const resolved = yield* resolveLocalStack(localHost, resolveVaultSecrets);
+        yield* commandTarget.announce(renderLocalTarget(resolved.conn.host, resolved.conn.port));
+        return { ...resolved, target };
       });
 
     // When a linked dump's pg_dump container fails with an IPv6 connectivity error (the direct
@@ -850,6 +946,15 @@ export const dbConfigResolverLayer = Layer.effect(
           Effect.map((r) => ({ ...r, conn: withSuggestion(r.conn) })),
           Effect.withSpan("DbConfig.resolve", {
             attributes: { "db.conn_type": flags.connType ?? "local" },
+          }),
+        ),
+      resolveConnection: (input) =>
+        resolveConnection(input).pipe(
+          Effect.provideService(CliConfigValues, configValues),
+          Effect.tap((r) => Effect.annotateCurrentSpan("db.is_local", r.isLocal)),
+          Effect.map((r) => ({ ...r, conn: withSuggestion(r.conn) })),
+          Effect.withSpan("DbConfig.resolveConnection", {
+            attributes: { "db.conn_type": input.target.kind },
           }),
         ),
       resolvePoolerFallback: (flags) =>

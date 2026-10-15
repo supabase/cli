@@ -418,6 +418,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         ref: ref !== undefined ? Option.some(ref) : Option.none(),
       });
     },
+    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 

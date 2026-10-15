@@ -40,6 +40,7 @@ function setup(rows: ReadonlyArray<Record<string, unknown>>) {
     Layer.succeed(DbConfigResolver, {
       resolve: (_flags: DbConfigFlags) =>
         Effect.succeed({ conn: LOCAL_CONN, isLocal: true } satisfies ResolvedDbConfig),
+      resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
       resolvePoolerFallback: () => Effect.succeed(Option.none()),
     }),
     Layer.succeed(DbConnection, {

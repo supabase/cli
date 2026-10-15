@@ -259,6 +259,7 @@ function mockResolver(opts: {
         ref: ref === undefined ? undefined : Option.some(ref),
       });
     },
+    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
     resolvePoolerFallback: (flags) => {
       fallbackCalls.push(flags);
       return opts.poolerFallbackFails === true

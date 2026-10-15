@@ -338,6 +338,7 @@ LinkParentRefInvalidError
 LinkProjectStatusError
 LinkProjectStatusNetworkError
 LinkRefArgConflictError
+LinkedDbNetworkBannedError
 LocalDbRunningError
 LoginCryptoError
 LoginDecryptError

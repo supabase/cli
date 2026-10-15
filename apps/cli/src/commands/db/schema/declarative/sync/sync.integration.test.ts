@@ -317,6 +317,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         },
         isLocal: false,
       }),
+    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
   const runtimeInfo = mockRuntimeInfo({ platform: "linux" });

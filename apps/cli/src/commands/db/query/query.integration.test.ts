@@ -90,6 +90,7 @@ function mockResolver(isLocal = true, resolveFails = false) {
             }),
           )
         : Effect.succeed({ conn: LOCAL_CONN, isLocal }),
+    resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 }
