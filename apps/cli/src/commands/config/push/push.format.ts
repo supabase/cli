@@ -58,12 +58,12 @@ export interface PushEnvSourced {
 }
 
 const PUSH_UPDATING_PREFIX: Readonly<Record<PushResource, string>> = {
-  api: "Updating API service with config:",
-  "db.settings": "Updating DB service with config:",
-  "db.network_restrictions": "Updating network restrictions with config:",
-  "db.ssl_enforcement": "Updating SSL enforcement with config:",
-  auth: "Updating Auth service with config:",
-  storage: "Updating Storage service with config:",
+  api: "Would update API service with:",
+  "db.settings": "Would update DB service with:",
+  "db.network_restrictions": "Would update network restrictions with:",
+  "db.ssl_enforcement": "Would update SSL enforcement with:",
+  auth: "Would update Auth service with:",
+  storage: "Would update Storage service with:",
 };
 
 const RESOURCE_DISPLAY_NAME: Readonly<Record<PushResource, string>> = {
@@ -174,9 +174,9 @@ export interface PushUpdatingLineInput {
 }
 
 /**
- * The `Updating <resource> service with config:` block for a resource with at least one pushable
- * difference. `changes` renders through the same per-property format `config diff` uses; the
- * combined block always ends on a blank line.
+ * The `Would update <resource> service with:` plan block for a resource with at least one pushable
+ * difference, printed before the consent question. `changes` renders through the same per-property
+ * format `config diff` uses; the combined block always ends on a blank line.
  */
 export function pushUpdatingLine(input: PushUpdatingLineInput): string {
   return (
@@ -451,6 +451,24 @@ export function pushConsentAction(
 /** The price line shown before consent for a paid addon the push would switch on. */
 export function pushCostLine(item: { readonly name: string; readonly price: string }): string {
   return `Enabling ${item.name} will cost you ${item.price}.\n`;
+}
+
+/** The `target` fields only the live probe can settle, overriding the announced identity. */
+export function configPushTargetFields(target: ConfigPushTarget): {
+  readonly environment?: "production" | "branch";
+  readonly parent_project_ref?: string;
+} {
+  switch (target.kind) {
+    case "project":
+      return { environment: "production" };
+    case "branch":
+      return {
+        environment: "branch",
+        ...(target.parentRef === undefined ? {} : { parent_project_ref: target.parentRef }),
+      };
+    case "unknown":
+      return {};
+  }
 }
 
 /** Additive machine-payload fields describing the resolved target. `is_branch` is omitted, not

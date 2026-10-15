@@ -124,5 +124,5 @@ One `result` event whose `data` is the full response object.
   writes nothing. A malformed `--db-allow-cidr` CSV value (e.g. an unterminated quote) also
   writes nothing and fires no telemetry, even with `--experimental` set — it fails during
   flag parsing, before the gate and the handler.
-- After the project ref resolves, one `Target: project <ref> · <identity>` line is printed on stderr in every output format.
+- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
 - Asks `Replace the network restrictions on <target>?` (`Append to the network restrictions on <target>?` with `--append`; default No) before the first write, after printing the IPv4 and IPv6 CIDRs. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.

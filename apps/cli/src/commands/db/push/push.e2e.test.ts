@@ -48,7 +48,7 @@ describe("supabase db push --skip-vault", () => {
           { cwd: projectDir },
         );
         expect(exitCode).toBe(1);
-        expect(stderr).toContain("Target: custom Postgres (127.0.0.1)");
+        expect(stderr).toContain("Target: custom Postgres (127.0.0.1:1)");
         expect(stderr).toContain("failed to connect");
         expect(stderr).not.toContain("failed to parse config:");
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),

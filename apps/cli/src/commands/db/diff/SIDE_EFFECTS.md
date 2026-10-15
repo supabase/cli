@@ -156,7 +156,7 @@ migra/pg-delta-engine-specific).
 ### `--output-format text`
 
 Progress to stderr (the `Target: …` line — linked project `Target: <name> (<ref>)`,
-`Target: local stack (<host>:<port>)` or `Target: custom Postgres (<host>)`, printed once per
+`Target: local stack (<host>:<port>)` or `Target: custom Postgres (<host>:<port>)`, printed once per
 distinct target — then `Creating shadow database...`, `Diffing schemas[: <list>]`,
 `Finished supabase db diff on branch <branch>.`, drop-statement warning, and the
 `--file` write warning). A configured `[db.migrations].schema_paths` also warns

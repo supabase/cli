@@ -1840,7 +1840,7 @@ describe("dbConfigResolver.resolveConnection", () => {
       const r = yield* resolveConnection(dir, inputFor({ kind: "db-url", url }), { output });
       expect(r.conn).toMatchObject({ host: "db.example.com", port: 6543, user: "alice" });
       expect(r.isLocal).toBe(false);
-      expect(output.stderrText).toBe("Target: custom Postgres (db.example.com)\n");
+      expect(output.stderrText).toBe("Target: custom Postgres (db.example.com:6543)\n");
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 

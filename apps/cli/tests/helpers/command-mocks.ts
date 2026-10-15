@@ -85,7 +85,7 @@ export const VALID_REF = "abcdefghijklmnopqrst";
 
 /** The stderr banner a command prints for a linked project with no `linked-project.json` cache. */
 export const unverifiedTargetBanner = (ref: string = VALID_REF): string =>
-  `Target: project ${ref} · identity unverified\n`;
+  `Target: project ${ref}\n`;
 
 export const VALID_TOKEN = "sbp_" + "a".repeat(40);
 export const DEFAULT_API_URL = "https://api.supabase.com";

@@ -72,7 +72,7 @@ const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
 
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-const confirmed = `Confirmed by --yes: Create custom hostname ${CUSTOM_HOSTNAME} on project ${VALID_REF} · identity unverified\n`;
+const confirmed = `Confirmed by --yes: Create custom hostname ${CUSTOM_HOSTNAME} on project ${VALID_REF}\n`;
 
 function apiOptions(opts: SetupOpts): MockCommandPlatformApiOpts {
   const cname = opts.cname ?? "ok";

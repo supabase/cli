@@ -74,7 +74,7 @@ honored (see `command-settings.layer.unit.test.ts`).
 ### `--output-format text`
 
 Diagnostics on **stderr**: the `Target: …` line (linked project `Target: <name> (<ref>)`,
-`Target: local stack (<host>:<port>)`, or `Target: custom Postgres (<host>)`) and
+`Target: local stack (<host>:<port>)`, or `Target: custom Postgres (<host>:<port>)`) and
 `No issues found` (when no lints). The result is a pretty-printed 2-space
 JSON array on **stdout** (struct-order keys, `metadata` omitted when absent,
 trailing newline).

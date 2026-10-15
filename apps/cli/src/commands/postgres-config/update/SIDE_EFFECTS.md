@@ -116,6 +116,6 @@ One `result` event on success.
   (or `SUPABASE_EXPERIMENTAL`), checked before the login check. A closed gate exits 1
   before project-ref resolution, the API calls, the `linked-project.json` write, the
   `telemetry.json` write, and the `cli_command_executed` event.
-- After the project ref resolves, one `Target: project <ref> · <identity>` line is printed on stderr in every output format.
+- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
 - Asks `Update the Postgres config overrides on <target>?` (default No) before the first write, after printing the overrides to set, whether all existing ones are replaced, and whether the restart is skipped. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.
 - The current overrides are fetched (a read) before the confirmation so the plan is known; the `PUT` happens only after it.

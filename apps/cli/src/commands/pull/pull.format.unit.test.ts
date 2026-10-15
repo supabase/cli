@@ -53,16 +53,10 @@ describe("pullPayload", () => {
     });
   });
 
-  it("merges the announced target's identity fields into target, keeping project_ref and branch", () => {
+  it("names the branch it was given next to the project ref", () => {
     const aggregate: PullAggregate = {
       ref: PROJECT_REF,
       branch: "staging",
-      targetIdentity: {
-        kind: "linked",
-        project_ref: "ignored-in-favour-of-ref",
-        environment: "branch",
-        parent_project_ref: "bbbbbbbbbbbbbbbbbbbb",
-      },
       dryRun: true,
       confirmed: false,
       dirtyPaths: [],
@@ -70,10 +64,7 @@ describe("pullPayload", () => {
     };
 
     expect(pullPayload(aggregate)["target"]).toEqual({
-      kind: "linked",
       project_ref: PROJECT_REF,
-      environment: "branch",
-      parent_project_ref: "bbbbbbbbbbbbbbbbbbbb",
       branch: "staging",
     });
   });

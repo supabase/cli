@@ -32,6 +32,7 @@ import {
   isVectorBucketsFeatureNotEnabled,
 } from "../commands/seed/buckets/buckets.classify.ts";
 import { SeedConfigLoadError } from "../commands/seed/buckets/buckets.errors.ts";
+import { describeConfigParseError } from "./workdir-project.ts";
 import { bucketObjectKey } from "../commands/seed/buckets/buckets.upload.ts";
 
 // Re-exported so `stack start` can report a project-context config-load failure with the
@@ -189,7 +190,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* <
             "CliConfigParseError",
             (cause) =>
               new SeedConfigLoadError({
-                message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
+                message: describeConfigParseError(workdir, cause),
               }),
           ),
           Effect.mapError((cause) =>

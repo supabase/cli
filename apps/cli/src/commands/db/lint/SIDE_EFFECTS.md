@@ -76,7 +76,7 @@ container stacks can enable it. Compose uses the Compose Postgres image.
 ### `--output-format text`
 
 Diagnostics on **stderr**: the `Target: …` line (linked project `Target: <name> (<ref>)`,
-`Target: local stack (<host>:<port>)`, or `Target: custom Postgres (<host>)`),
+`Target: local stack (<host>:<port>)`, or `Target: custom Postgres (<host>:<port>)`),
 `Linting schema: <s>`, and `\nNo schema errors found` (when no issues).
 The result is a pretty-printed 2-space JSON array on **stdout** (struct-order
 keys, `omitempty` fields dropped, trailing newline). A filtered-empty result

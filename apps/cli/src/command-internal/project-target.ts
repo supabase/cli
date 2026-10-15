@@ -18,7 +18,7 @@ import { branchRef, resolveBranchProjectRef } from "./branch-ref.resolver.ts";
 import { compose, withCondition } from "./command-permissions/model.ts";
 import { sanitizeInlineName } from "./http-errors.ts";
 import { BRANCH_PROJECT_REF_PATTERN, BRANCH_UUID_PATTERN } from "./ref-patterns.ts";
-import type { ResolvedTarget } from "./target/resolve-target.ts";
+import { type LinkedTarget, linkedTarget } from "./target/resolve-target.ts";
 import { renderBranchTarget } from "./target/target-identity.ts";
 import {
   actionability,
@@ -34,6 +34,11 @@ import {
 export interface ConfigTarget {
   readonly ref: string;
   readonly branch: string | undefined;
+}
+
+/** A {@link ConfigTarget} with the same ref as the linked target connection resolution takes. */
+interface ResolvedConfigTarget extends ConfigTarget {
+  readonly linked: LinkedTarget;
 }
 
 /**
@@ -182,6 +187,7 @@ export const resolveConfigTarget = Effect.fn("ProjectTarget.resolve")(function* 
 
   let ref: string;
   let branch: string | undefined;
+  let linked: LinkedTarget;
   if (Option.isSome(requested) && !BRANCH_PROJECT_REF_PATTERN.test(requested.value)) {
     const target = requested.value;
     branch = target;
@@ -227,34 +233,24 @@ export const resolveConfigTarget = Effect.fn("ProjectTarget.resolve")(function* 
         parentRef: parentProjectRef,
       }),
     );
+    const { workdir } = yield* CommandSettings;
+    const linkedRef = yield* readProjectRefFile(
+      yield* FileSystem.FileSystem,
+      yield* Path.Path,
+      workdir,
+    ).pipe(Effect.orElseSucceed(() => Option.none<string>()));
+    linked = linkedTarget({
+      ref,
+      source: "flag",
+      matchesLinkedRef: Option.contains(linkedRef, ref),
+    });
   } else {
     yield* Effect.annotateCurrentSpan("project_target.kind", "project");
-    ref = yield* resolver.resolve(requested);
+    const resolved = yield* resolver.resolveRef(requested);
+    ref = resolved.ref;
+    linked = linkedTarget(resolved);
   }
 
   yield* Effect.annotateCurrentSpan("project.ref", ref);
-  return { ref, branch };
-});
-
-/**
- * The linked {@link ResolvedTarget} for a ref {@link resolveConfigTarget} already announced, so
- * connection resolution can use it without a second banner. Only `matchesLinkedRef` feeds
- * connection resolution; `source` is informational.
- */
-export const linkedTargetForConfigRef = Effect.fn("ProjectTarget.linkedTarget")(function* (
-  requested: Option.Option<string>,
-  ref: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const { workdir } = yield* CommandSettings;
-  const linkedRef = yield* readProjectRefFile(fs, path, workdir).pipe(
-    Effect.orElseSucceed(() => Option.none<string>()),
-  );
-  return {
-    kind: "linked",
-    ref,
-    source: Option.isSome(requested) ? "flag" : "file",
-    matchesLinkedRef: Option.contains(linkedRef, ref),
-  } satisfies ResolvedTarget;
+  return { ref, branch, linked } satisfies ResolvedConfigTarget;
 });

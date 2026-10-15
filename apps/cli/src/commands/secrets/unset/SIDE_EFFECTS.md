@@ -85,7 +85,7 @@ Single JSON object emitted via `Output.success` with `{project_ref, count, names
 
 With `--dry-run`, the message is `Dry run: no secrets were unset.` and `data` is `{project_ref, count, names, dry_run: true}`.
 
-Every `data` object also carries a `target` object (`kind: "linked"`, `project_ref`, and when known `project_name`, `environment`, `parent_project_ref`). A real unset needs `--yes` or a shell `SUPABASE_YES`, because machine output never prompts.
+Every `data` object also carries a [`target`](../../../../docs/command-target.md) object. A real unset needs `--yes` or a shell `SUPABASE_YES`, because machine output never prompts.
 
 When `--all` resolves to no secrets, the message is `You have not set any function secrets, nothing to do.` and `data` is `{project_ref, count: 0, names: [], dry_run}`.
 

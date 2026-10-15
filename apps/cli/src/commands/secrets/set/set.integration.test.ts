@@ -153,9 +153,7 @@ describe("secrets set integration", () => {
           envFile: Option.none(),
           secrets: ["FOO=hunter2", "BAR=swordfish"],
         });
-        expect(out.promptConfirmCalls[0]?.message).toBe(
-          `Set 2 secrets on project ${VALID_REF} · identity unverified?`,
-        );
+        expect(out.promptConfirmCalls[0]?.message).toBe(`Set 2 secrets on project ${VALID_REF}?`);
         expect(out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
         expect(out.stderrText).toContain("Secrets to set:\n • FOO\n • BAR\n");
         expect(out.stderrText).not.toMatch(/hunter2|swordfish/u);

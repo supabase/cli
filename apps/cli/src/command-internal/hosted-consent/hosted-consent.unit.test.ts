@@ -10,7 +10,10 @@ import {
 import { mockOutput, mockRuntimeInfo, mockTty } from "../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
-import { announceTarget } from "../../shared/output/command-target.service.ts";
+import {
+  announceTarget,
+  type CommandTargetJson,
+} from "../../shared/output/command-target.service.ts";
 import type { OutputFormat } from "../../shared/output/types.ts";
 import { AiTool } from "../../shared/telemetry/ai-tool.service.ts";
 import { classifyCliErrorActionability } from "../../shared/telemetry/error-actionability.ts";
@@ -56,6 +59,12 @@ interface Scenario {
 const REQUEST: HostedMutationRequest = {
   action: "Apply 3 migrations",
   details: ["  20240101_a.sql", "  20240102_b.sql"],
+};
+
+const UNVERIFIED_JSON: CommandTargetJson = {
+  kind: "linked",
+  project_ref: "abcdefghijklmnopqrst",
+  environment: "unverified",
 };
 
 const interactiveTerminal: Scenario = { format: "text", interactive: true, stdinIsTty: true };
@@ -104,7 +113,10 @@ const harness = (scenario: Scenario) => {
     withShellEnv(
       (scenario.announced === undefined
         ? body
-        : Effect.flatMap(announceTarget({ text: scenario.announced, json: {} }), () => body)
+        : Effect.flatMap(
+            announceTarget({ text: scenario.announced, json: UNVERIFIED_JSON }),
+            () => body,
+          )
       ).pipe(Effect.provide(layer)),
     );
   return { out, prepare };

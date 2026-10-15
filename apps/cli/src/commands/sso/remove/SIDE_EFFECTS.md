@@ -76,5 +76,5 @@ Single `success` event with the removed provider's details as data.
 
 - Removing a provider will prevent existing SSO users from logging in.
 - The `<provider-id>` argument must be a valid UUID; UUIDs are accepted case-insensitively.
-- After the project ref resolves, one `Target: project <ref> · <identity>` line is printed on stderr in every output format.
+- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
 - Asks `Remove SSO provider <id> on <target>?` (default No) before the first write. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.

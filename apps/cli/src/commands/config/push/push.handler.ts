@@ -10,6 +10,7 @@ import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { withAnnouncedTarget } from "../../../shared/output/command-target.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { assertDecryptableSecrets } from "../../../command-internal/db-config.toml-read.ts";
 import { resolveLinkedParentRef } from "../../../command-internal/parent-project-ref.ts";
@@ -80,6 +81,7 @@ import {
 } from "./push.errors.ts";
 import {
   configPushPayloadFields,
+  configPushTargetFields,
   pushConsentAction,
   pushCostLine,
   pushEnvSourcedLine,
@@ -585,7 +587,10 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       }
     }
     if (webhooksEnabled) {
-      yield* output.raw(`Enabling webhooks for project: ${sanitizeInlineName(ref)}\n`, "stderr");
+      yield* output.raw(
+        `Would enable webhooks for project: ${sanitizeInlineName(ref)}\n`,
+        "stderr",
+      );
     }
 
     // 11. One consent covers every write; nothing is sent before it.
@@ -725,10 +730,14 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
           originFor,
         ),
       };
-      yield* output.success(pushSummaryMessage(payloadInput), {
-        ...pushPayload(payloadInput),
-        ...configPushPayloadFields(target),
-      });
+      yield* output.success(
+        pushSummaryMessage(payloadInput),
+        yield* withAnnouncedTarget({
+          ...pushPayload(payloadInput),
+          ...configPushPayloadFields(target),
+          target: configPushTargetFields(target),
+        }),
+      );
     }
   }).pipe(
     Effect.ensuring(

@@ -54,7 +54,7 @@ const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
     Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
   );
 
-const confirmed = `Confirmed by --yes: Start a PITR restore without a recovery time target on project ${VALID_REF} · identity unverified\n`;
+const confirmed = `Confirmed by --yes: Start a PITR restore without a recovery time target on project ${VALID_REF}\n`;
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });

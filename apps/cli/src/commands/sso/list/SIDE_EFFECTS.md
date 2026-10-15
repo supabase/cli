@@ -72,4 +72,4 @@ Single `success` event with `{providers: items}` as data.
 
 - The `SAML 2.0 EntityID` header label is rendered as plain text, without inline-code backticks.
 - Upgrade-gate side calls only fire on 4xx.
-- After the project ref resolves, one `Target: project <ref> · <identity>` line is printed on stderr in every output format.
+- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).

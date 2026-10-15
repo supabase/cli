@@ -78,7 +78,7 @@ Fails immediately with `SecretsEnvNotSupportedError("--output env flag is not su
 
 ### `--output-format json`
 
-Single JSON object emitted via `Output.success` with `{secrets: [...]}` as the `data` field, plus a `target` object (`kind: "linked"`, `project_ref`, and when known `project_name`, `environment`, `parent_project_ref`).
+Single JSON object emitted via `Output.success` with `{secrets: [...]}` as the `data` field, plus a [`target`](../../../../docs/command-target.md) object.
 
 ### `--output-format stream-json`
 

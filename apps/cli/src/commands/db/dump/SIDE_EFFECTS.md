@@ -66,7 +66,7 @@ a custom database. It only reads, so it never asks for confirmation, on any targ
 SQL goes to **stdout** (or `--file`) in **all** `--output-format` modes — there is
 no machine envelope for `db dump` (same rationale as `test db`). Diagnostics go
 to **stderr**: the `Target: …` line (linked project `Target: <name> (<ref>)`,
-`Target: local stack (<host>:<port>)`, or `Target: custom Postgres (<host>)`),
+`Target: local stack (<host>:<port>)`, or `Target: custom Postgres (<host>:<port>)`),
 `Dumping {schemas|data| roles} from {local|remote} database...`,
 the `--dry-run` notice, and the `Dumped schema to <abs>.` confirmation when
 `--file` is used. `--dry-run` prints the env-expanded script to stdout without

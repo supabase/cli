@@ -35,8 +35,8 @@ import type { DbConnectError } from "../../../command-internal/db-connection.err
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { tempPaths } from "../../../shared/config/temp-paths.ts";
 import {
+  describeConfigParseError,
   missingProjectConfigMessageEffect,
-  relativeConfigPath,
 } from "../../../command-internal/workdir-project.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
@@ -257,8 +257,6 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   const lang = flags.lang;
   const languageOptions = languageOptionValues(flags);
 
-  const toRelativeConfigPath = (path: string) => relativeConfigPath(cliSettings.workdir, path);
-
   // `projectRef` is passed only for the linked path, so a matching `[remotes.*]` overlay is
   // merged in the same load; omitted for the local and `--db-url` paths.
   const loadApiSchemas = (projectRef?: string) =>
@@ -275,7 +273,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         Effect.catchTags({
           CliConfigParseError: (cause) =>
             new GenTypesParseConfigError({
-              message: `failed to parse ${toRelativeConfigPath(cause.path)}: ${String(cause.cause)}`,
+              message: describeConfigParseError(cliSettings.workdir, cause),
             }),
           DuplicateRemoteProjectIdError: (cause) =>
             new GenTypesParseConfigError({ message: cause.message }),

@@ -157,12 +157,12 @@ cannot be resolved from either the read or the file — reported in their own
 ### `--output-format text`
 
 All diagnostics on **stderr**, no stdout. The `Target:` banner prints first
-(`Target: project <name> (<ref>) · production`, `Target: project <name> (<parent ref>) ·
-branch (<ref>)` for a branch, or `Target: project <ref> · identity unverified` when the
-live probe could not tell). When a `[remotes.<name>]` block matches the target ref,
+(`Target: project <name> (<ref>) · production`, `Target: project <parent ref> · branch <name>
+(<ref>)` for a branch named with `--project-ref`, or `Target: project <ref>` when nothing vouches
+for the project; see [Command target](../../../../docs/command-target.md)). When a `[remotes.<name>]` block matches the target ref,
 `Loading config override: [remotes.<name>]` follows. No target shape is gated separately: a
-branch is confirmed through the one consent question below, which names the branch and its
-parent project, whether it was resolved implicitly or named with `--project-ref`.
+branch is confirmed through the one consent question below, which names the target the banner
+announced.
 Then `Comparison scope: <present> (not returned:
 <missing>)` — printed EVERY run, not just when a block is missing (family consistency
 with `config diff`/`config pull`). When a `SUPABASE_*` variable supplied any value about to be
@@ -180,7 +180,7 @@ ends `(from <VAR>)` or `(from <VAR> in <file>)`. Then, per resource, one of:
 - the diff block:
 
 ```
-Updating <X> service with config:
+Would update <X> service with:
 <path> [update]
   local:  <value>
   remote: <value>
@@ -207,7 +207,7 @@ consent question); `[content]` is a mailer template/notification body with no co
 own; `[group-write]` is an undeclared companion the endpoint required alongside a
 declared change, sent at its schema default because the read didn't report the
 project's current value for it. Secret values never appear in output. Every block ends
-on a blank line. Experimental prints `Enabling webhooks for project: <ref>`. Every
+on a blank line. Experimental prints `Would enable webhooks for project: <ref>`. Every
 diff is printed before anything is written, so the consent question always follows the
 full plan.
 
@@ -248,9 +248,10 @@ something to write needs `--yes` or a shell `SUPABASE_YES`; without them the com
 (exit `1`) with this command's standard machine error envelope (`{_tag: "Error", error:
 {...}}` in `json` mode, a `{type: "error", ...}` NDJSON event in `stream-json` mode) and no
 success payload. A structured summary is emitted on stdout via `output.success(message,
-data)`, and carries a `target` object (`kind: "linked"`, `project_ref`, and when known
-`project_name`, `environment` — `production`, `branch` or `unverified` — and
-`parent_project_ref`) next to the push summary.
+data)`, and carries a [`target`](../../../../docs/command-target.md) object next to the push
+summary. Its `environment` and `parent_project_ref` come from the live target probe (`production`
+for a project, `branch` for a branch); when the probe could not tell, the announced identity's
+`unverified` stands.
 
 `env_sourced` is additive and present only when a `SUPABASE_*` variable supplied a pushed value:
 `[{path: [...], origin: {source: "shell" | "project_env", env_variable, file?}}]`.

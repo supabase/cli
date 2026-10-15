@@ -63,7 +63,7 @@ stack never prompts.
 The query payload goes to **stdout** in every `--output-format` mode (there is no
 `--output-format` for `db query`; there is no machine envelope around the
 payload). Diagnostics go to **stderr**: the `Target: …` line (linked project
-`Target: <name> (<ref>)`, `Target: local stack (<host>:<port>)`, `Target: custom Postgres (<host>)`)
+`Target: <name> (<ref>)`, `Target: local stack (<host>:<port>)`, `Target: custom Postgres (<host>:<port>)`)
 and the confirmation question. DDL/DML with no result columns prints the command tag.
 
 - **table** (default for humans): `olekukonko/tablewriter` v1 box layout, NULL for nil.
