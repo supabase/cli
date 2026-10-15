@@ -41,11 +41,11 @@ Managed stack `--local` prove runs the catalog `pg_prove` tool through the ownin
 
 ## API Routes (`--linked` only)
 
-| Method | Path                                | Auth         | Request body                              | Response (used fields)      |
-| ------ | ----------------------------------- | ------------ | ----------------------------------------- | --------------------------- |
-| POST   | `/v1/projects/{ref}/cli/login-role` | access token | `{ read_only: false }`                    | `{ role, password }`        |
-| GET    | `/v1/projects/{ref}/network-bans`   | access token | —                                         | `{ banned_ipv4_addresses }` |
-| DELETE | `/v1/projects/{ref}/network-bans`   | access token | `{ ipv4_addresses, requester_ip: false }` | —                           |
+| Method | Path                                       | Auth         | Request body                              | Response (used fields)      |
+| ------ | ------------------------------------------ | ------------ | ----------------------------------------- | --------------------------- |
+| POST   | `/v1/projects/{ref}/cli/login-role`        | access token | `{ read_only: false }`                    | `{ role, password }`        |
+| POST   | `/v1/projects/{ref}/network-bans/retrieve` | access token | —                                         | `{ banned_ipv4_addresses }` |
+| DELETE | `/v1/projects/{ref}/network-bans`          | access token | `{ ipv4_addresses, requester_ip: false }` | —                           |
 
 ## Environment Variables
 
