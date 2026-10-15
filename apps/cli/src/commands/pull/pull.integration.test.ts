@@ -2341,6 +2341,34 @@ describe("pull permissions through the real layers", () => {
     );
   });
 
+  it.effect("--with-migration-history on a populated directory resolves the database again", () => {
+    const { layer, api, projectHttp } = setup({
+      yes: true,
+      realLayers: true,
+      api: { functionSlugs: ["hello"] },
+      remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
+    });
+    const stubbed: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(stubbed, serveLinkedDatabase(VALID_REF));
+      yield* writeConfig();
+      yield* seedLocalMigration("20260101000000", "init");
+      yield* runPull(pullFlags({ withMigrationHistory: true }));
+
+      expect(asLines(stubbed)).toEqual(FULL_RUN_SEQUENCE);
+      assertPermissionDrift({
+        command: "pull",
+        activeFlags: { ...STEP_SWITCHES, "with-migration-history": true },
+        requests: [...api.requests, ...asRecordedRequests(stubbed), ...projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
   it.effect("retries the schema diff through the pooler after an IPv6 failure", () => {
     let diffs = 0;
     const { layer, api, projectHttp } = setup({
