@@ -532,7 +532,8 @@
         "api_url": "http://127.0.0.1",
         "enabled": true,
         "port": 54323
-      }
+      },
+      "target": "local"
     },
     "dbUrl": "postgresql://postgres:postgres@127.0.0.1:57322/postgres",
     "debug": false,
