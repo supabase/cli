@@ -4,6 +4,8 @@ import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { ProjectRefResolver, type ProjectRefSource } from "../../config/project-ref.service.ts";
+import { CliConfigLoadError } from "../../shared/config/cli-config-load.errors.ts";
+import { relativeConfigPath } from "../workdir-project.ts";
 import { parseTargetSelector, type TargetSelectorInput } from "./target-selector.ts";
 import { TargetPolicy } from "./target-policy.ts";
 
@@ -68,10 +70,17 @@ export const resolveTarget = Effect.fn("Target.resolve")(function* (input: Targe
     return yield* finish(yield* linked(Option.none()), "default");
   }
   const { workdir } = yield* CommandSettings;
-  const resolvedConfig = yield* (yield* CliConfigValues).load({
-    workdir,
-    projectRef: Option.none(),
-  });
+  const resolvedConfig = yield* (yield* CliConfigValues)
+    .load({ workdir, projectRef: Option.none() })
+    .pipe(
+      Effect.catchTag("CliConfigParseError", (error) =>
+        Effect.fail(
+          new CliConfigLoadError({
+            message: `failed to parse ${relativeConfigPath(workdir, error.path)}: ${String(error.cause)}`,
+          }),
+        ),
+      ),
+    );
   const workspaceTarget = yield* resolvedConfig.get(CliConfigKeys.target);
   const selectedBy: TargetSelection =
     workspaceTarget.origin.tier === "shell" || workspaceTarget.origin.tier === "projectEnv"

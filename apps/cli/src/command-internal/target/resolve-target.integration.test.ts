@@ -233,6 +233,17 @@ describe("resolveTarget (selectable)", () => {
       expect(JSON.stringify(result.exit)).toContain("TargetSelectorConflictError");
     }),
   );
+
+  it.effect("names the file when the workspace config cannot be parsed", () =>
+    Effect.gen(function* () {
+      const result = yield* run("selectable", none, { toml: "[db\nport = " });
+      const failure = Exit.isFailure(result.exit) ? Cause.squash(result.exit.cause) : undefined;
+      expect(failure).toMatchObject({
+        _tag: "CliConfigLoadError",
+        message: expect.stringMatching(/^failed to parse supabase[/\\]config\.toml: ./),
+      });
+    }),
+  );
 });
 
 describe("resolveTarget (sync)", () => {
