@@ -1,8 +1,11 @@
 # `supabase seed buckets`
 
 Seeds Supabase Storage buckets from `[storage.buckets]` and
-`[storage.vector]` in `supabase/config.toml`. Without `--linked` the local
-stack is used; with `--linked` the remote project is used.
+`[storage.vector]` in `supabase/config.toml`. With no target flag the command follows the
+workspace target (`SUPABASE_TARGET`, then `target` in `config.toml`, default `local`; see
+[ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md)); `--local` selects the local stack, and `--linked` or
+`--project-ref` the remote project. A run against the remote project asks for consent before its
+first write.
 
 The local path resolves the Storage gateway through the `experimental.stack`
 feature flag, same `SUPABASE_EXPERIMENTAL_STACK=1|0` env precedence as
@@ -14,20 +17,20 @@ credential, capability-state, and error behavior. `db reset --local`'s bucket se
 
 ## Files Read
 
-| Path                                          | Format      | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| --------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `<workdir>/supabase/config.toml`              | TOML        | always, to read `[storage.buckets]` / `[storage.vector]` config; on `--linked`, the matching `[remotes.<name>]` block (whose `project_id` equals the resolved project ref) is merged over the base config before decode, so remote-specific storage config takes effect. With an explicit `--workdir`/`SUPABASE_WORKDIR` that holds no project config, the standalone `seed buckets` command now fails (`SeedMissingProjectConfigError`) instead of authenticating and seeding nothing while still exiting `0`; a DEFAULTED workdir keeps the embedded-default fallback, and `start`/`db reset`'s reuse of this seeding core (which supplies its own already-resolved config) is unaffected either way |
-| `<workdir>/supabase/<objects_path>/**`        | any (bytes) | per configured bucket with a non-empty `objects_path`, recursively; a relative `objects_path` resolves under `supabase/`, an absolute path is used as-is                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `<workdir>/supabase/<api.tls.cert_path>`      | PEM text    | legacy backend, local runs only, when `[api.tls] enabled = true` AND `api.tls.cert_path` is set; the file is read to obtain the CA certificate for trusting the local Kong HTTPS gateway. If `cert_path` is not set, the embedded `kong.local.crt` constant is used instead (no file read). Not read on the stack backend — the stack owns its own gateway CA.                                                                                                                                                                                                                                                                                                                                         |
-| `<workdir>/supabase/<api.tls.key_path>`       | PEM text    | legacy backend, local runs only, when `[api.tls] enabled = true` AND `api.tls.key_path` is set; read purely to validate the cert/key pairing — the key content is not used by the CLI. If `cert_path` is set without `key_path` (or vice-versa), the command exits `1`. Not read on the stack backend.                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `<workdir>/supabase/.temp/project-ref`        | plain text  | `--linked` only, to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv      | once per run, unless the caller already resolved the map (`db reset --local`, the legacy `start` command, and `stack start`'s first-create seeding all pass their own `resolvedConfig`/`projectEnvValues` through): resolves `SUPABASE_YES` for the overwrite/prune prompts on either target (CLI-1878) and, on local, legacy-backend runs, the `SUPABASE_API_*` overrides for the gateway URL and TLS material (#6452) plus the `SUPABASE_AUTH_{JWT_SECRET,SERVICE_ROLE_KEY}` overrides for the service-role key                                                                                                                                                                                      |
+| Path                                          | Format      | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`              | TOML        | always, to read `[storage.buckets]` / `[storage.vector]` config; on a linked target, the matching `[remotes.<name>]` block (whose `project_id` equals the resolved project ref) is merged over the base config before decode, so remote-specific storage config takes effect. With an explicit `--workdir`/`SUPABASE_WORKDIR` that holds no project config, the standalone `seed buckets` command now fails (`SeedMissingProjectConfigError`) instead of authenticating and seeding nothing while still exiting `0`; a DEFAULTED workdir keeps the embedded-default fallback, and `start`/`db reset`'s reuse of this seeding core (which supplies its own already-resolved config) is unaffected either way |
+| `<workdir>/supabase/<objects_path>/**`        | any (bytes) | per configured bucket with a non-empty `objects_path`, recursively; a relative `objects_path` resolves under `supabase/`, an absolute path is used as-is                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `<workdir>/supabase/<api.tls.cert_path>`      | PEM text    | legacy backend, local runs only, when `[api.tls] enabled = true` AND `api.tls.cert_path` is set; the file is read to obtain the CA certificate for trusting the local Kong HTTPS gateway. If `cert_path` is not set, the embedded `kong.local.crt` constant is used instead (no file read). Not read on the stack backend — the stack owns its own gateway CA.                                                                                                                                                                                                                                                                                                                                              |
+| `<workdir>/supabase/<api.tls.key_path>`       | PEM text    | legacy backend, local runs only, when `[api.tls] enabled = true` AND `api.tls.key_path` is set; read purely to validate the cert/key pairing — the key content is not used by the CLI. If `cert_path` is set without `key_path` (or vice-versa), the command exits `1`. Not read on the stack backend.                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `<workdir>/supabase/.temp/project-ref`        | plain text  | linked target only, to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv      | once per run, unless the caller already resolved the map (`db reset --local`, the legacy `start` command, and `stack start`'s first-create seeding all pass their own `resolvedConfig`/`projectEnvValues` through): resolves `SUPABASE_YES` for the overwrite/prune prompts on either target (CLI-1878) and, on local, legacy-backend runs, the `SUPABASE_API_*` overrides for the gateway URL and TLS material (#6452) plus the `SUPABASE_AUTH_{JWT_SECRET,SERVICE_ROLE_KEY}` overrides for the service-role key                                                                                                                                                                                           |
 
 ## Files Written
 
-| Path                                           | Format | When                                                                                                                                                      |
-| ---------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | `--linked` only, once the project ref resolves and no cache exists yet. Best-effort (auth/network/write errors are swallowed). Local runs never write it. |
+| Path                                           | Format | When                                                                                                                                                         |
+| ---------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | linked target only, once the project ref resolves and no cache exists yet. Best-effort (auth/network/write errors are swallowed). Local runs never write it. |
 
 ## API Routes
 
@@ -74,9 +77,9 @@ before any Storage call.
 `allowed_mime_types` is omitted when empty.
 
 Analytics bucket routes (`/storage/v1/iceberg/...`) are only reached when
-`[storage.analytics].enabled = true` AND `--linked` is passed.
+`[storage.analytics].enabled = true` AND the target is linked.
 
-### Management API routes (remote `--linked` only, when env var not set)
+### Management API routes (remote linked target only, when env var not set)
 
 | Method | Path                                      | When                                        | Response (used fields)                         |
 | ------ | ----------------------------------------- | ------------------------------------------- | ---------------------------------------------- |
@@ -91,7 +94,7 @@ Analytics bucket routes (`/storage/v1/iceberg/...`) are only reached when
 | `DOCKER_HOST`                                                                                                                                                   | legacy backend only, shell env only (a project `.env*` value is ignored): when a `tcp://host:port` endpoint, the local services host falls back to it before `127.0.0.1`                                                                                                                         | no                                   |
 | `SUPABASE_AUTH_SERVICE_ROLE_KEY`                                                                                                                                | when set and non-empty: for `--linked`, used as the service-role key (skips Management API key fetch; shell env only); for local, legacy-backend runs, used as the service-role key instead of `auth.service_role_key` — shell env OR project dotenv (shell wins), `encrypted:` values decrypted | no                                   |
 | `SUPABASE_AUTH_JWT_SECRET`                                                                                                                                      | local, legacy-backend runs only: when set and non-empty, overrides `auth.jwt_secret` for service-role key derivation — shell env OR project dotenv (shell wins), `encrypted:` values decrypted                                                                                                   | no                                   |
-| `SUPABASE_YES`                                                                                                                                                  | auto-confirms the overwrite/prune prompts, same as `--yes`; read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` files (shell wins; CLI-1878)                                                                                                                         | no                                   |
+| `SUPABASE_YES`                                                                                                                                                  | local runs: auto-confirms the overwrite/prune prompts, same as `--yes`, read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` files (shell wins); remote runs: grants the hosted consent, shell env only (a project `.env` value does not count)                       | no                                   |
 | `SUPABASE_API_PORT`, `SUPABASE_API_EXTERNAL_URL`, `SUPABASE_API_TLS_ENABLED`, `SUPABASE_API_TLS_CERT_PATH`, `SUPABASE_API_TLS_KEY_PATH`, `SUPABASE_API_ENABLED` | legacy backend, local runs only: override the matching `[api]` config fields for the gateway URL derivation and TLS validation, shell env OR project dotenv files (shell wins; #6452)                                                                                                            | no                                   |
 
 ## Exit Codes
@@ -112,7 +115,8 @@ Analytics bucket routes (`/storage/v1/iceberg/...`) are only reached when
 | `1`  | network / connection failure to the Storage gateway                                                                                                                                                                                                                                                                           |
 | `1`  | malformed list response (a 200 body whose shape doesn't decode)                                                                                                                                                                                                                                                               |
 | `1`  | unreadable `objects_path` (filesystem error during walk/upload)                                                                                                                                                                                                                                                               |
-| `1`  | `--project-ref` set without `--linked` (see Notes)                                                                                                                                                                                                                                                                            |
+| `1`  | `--local` with `--linked`, or `--project-ref` with `--local` (`TargetSelectorConflictError`, `TargetProjectRefConflictError`) — after the workdir checks and before any Storage call                                                                                                                                          |
+| `1`  | remote run without consent: a JSON, piped or non-interactive run without `--yes`/shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`), or a declined prompt (`HostedMutationDeclinedError`) — nothing is written                                                                                                       |
 | `1`  | stack backend: Storage disabled or its stack `failed`/`stopped` (`StackStorageCapabilityError`)                                                                                                                                                                                                                               |
 | `1`  | stack backend: stack is not registered/ready, has no primary database, or the stack API is unavailable (`StackStorageUnavailableError`); a missing Storage endpoint is a capability failure (`StackStorageCapabilityError`)                                                                                                   |
 
@@ -131,6 +135,7 @@ No custom telemetry events beyond `cli_command_executed`.
 All progress is written to **stderr** (stdout stays empty):
 
 ```
+Target: <linked project> | local stack (<host>:<port>)
 Creating Storage bucket: <name>
 Updating Storage bucket: <id>
 Updating analytics buckets...
@@ -148,18 +153,32 @@ WARNING: Vector buckets are not available in this project's region yet. Skipping
 WARNING: Vector buckets are not available in the local storage service. If this project is linked, run `supabase link` to update service versions, then restart the local stack. Skipping vector bucket seeding.
 ```
 
-Interactive (TTY) prompts:
+Interactive (TTY) prompts on the local stack:
 
 ```
 Bucket <id> already exists. Do you want to overwrite its properties? [Y/n]
 Bucket <name> not found in supabase/config.toml. Do you want to prune it? [y/N]
 ```
 
+A remote run asks one question instead, after printing what it will write (default No):
+
+```
+Create buckets: <names>
+Overwrite the properties of buckets: <names>
+Upload objects, overwriting existing ones, to buckets: <names>
+Create analytics buckets: <names>
+Delete analytics buckets not declared in supabase/config.toml: <names>
+Create vector buckets: <names>
+Delete vector buckets not declared in supabase/config.toml: <names>
+Seed storage buckets on <target>? [y/N]
+```
+
 ### `--output-format json`
 
 A final `result` object summarising the run is
-emitted on stdout; progress/prompts are suppressed (prompts use their defaults:
-overwrite → yes, prune → no).
+emitted on stdout; progress/prompts are suppressed. On the local stack the per-item prompts use
+their defaults (overwrite → yes, prune → no); a remote run needs `--yes` or a shell `SUPABASE_YES`
+and otherwise fails with `HostedMutationConsentRequiredError` before writing anything.
 
 ### `--output-format stream-json`
 
@@ -168,10 +187,22 @@ stdout and a terminal `result`/`error` event is emitted.
 
 ## Notes
 
-- **`--project-ref`** overrides ONLY the linked-ref resolution used above
-  (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies
-  `--linked`: passing it without `--linked` (i.e. targeting local) is a hard
-  error rather than a silently discarded flag.
+- **Target.** `--local`, `--linked` and `--project-ref` go through the shared target selector:
+  `--local` and `--linked` are mutually exclusive, `--project-ref` selects the linked project and
+  conflicts with `--local`, and a `false` switch counts as absent. `--project-ref` only supplies the
+  ref (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). With no selector the workspace target
+  decides. `--linked`/`--local` are scoped globals on the `seed` group, so they are also accepted
+  before the subcommand token.
+- **Target banner.** A linked target prints `Target: …` to stderr once its ref resolves; the local
+  target prints `Target: local stack (<host>:<port>)` once the Storage endpoint is known, before the
+  first Storage request. `start` and `db reset` seed through the same core without this banner.
+- **Remote consent.** After listing the existing buckets and before the first write, a remote run
+  asks once, with default No, listing every create, overwrite, upload and prune it will make. The one
+  answer covers all of them, so no per-bucket overwrite or prune prompt follows; a run that would
+  write nothing does not ask. `--yes` or a shell `SUPABASE_YES` grants it and echoes
+  `Confirmed by --yes: …` to stderr; otherwise only an interactive text-mode terminal is asked. A
+  piped answer on stdin and a `SUPABASE_YES` in `supabase/.env` do not count. The local stack never
+  asks for consent and keeps its per-item prompts.
 - **Remote (`--linked`) — config override merge.** The project ref is resolved
   BEFORE config is loaded. The config load then merges the `[remotes.<name>]`
   block whose `project_id` equals the resolved ref over the base config (including
@@ -194,13 +225,13 @@ stdout and a terminal `result`/`error` event is emitted.
   rejection applies to the resolved secret (env or config value). Like the
   `[api]` checks, these run on the empty-config short-circuit too.
 - **Analytics buckets.** Analytics bucket upsert (`/storage/v1/iceberg/...`) is
-  gated on `[storage.analytics].enabled = true` AND `--linked`. It is never
+  gated on `[storage.analytics].enabled = true` AND a linked target. It is never
   reached for local runs. Errors from analytics routes propagate (no graceful skip).
 - **Vector graceful skip.** When vector buckets are configured but the local
   service does not support them (`FeatureNotEnabled`, `Vector service not
 configured`, or a 404 on `ListVectorBuckets`), a WARNING is printed and object
   upload still proceeds; the command exits `0`.
-- **Idempotent.** Existing buckets are updated (after an overwrite confirm),
+- **Idempotent.** Existing buckets are updated (after an overwrite confirm locally, or the remote consent),
   objects are uploaded with `x-upsert: true`.
 - **Content-Type** for uploaded objects: the first
   512 bytes are sniffed using the WHATWG-style content-type sniffing algorithm

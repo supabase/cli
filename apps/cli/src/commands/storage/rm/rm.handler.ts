@@ -66,9 +66,8 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
     if (projectRef !== "") {
       yield* Ref.set(linkedRef, Option.some(projectRef));
     }
-    // A local delete keeps its per-bucket prompt, which honours a project `.env` `SUPABASE_YES`;
-    // a hosted delete asks for consent instead. Loading it after the target resolves makes an
-    // unlinked workdir fail with the not-linked message, not an env-parse error.
+    // Only the local per-bucket prompt honours a project `.env` `SUPABASE_YES`; loaded after the
+    // target so an unlinked workdir fails as not linked, not as an env-parse error.
     const localYes =
       target.kind === "local"
         ? yield* resolveYesWithProjectEnv(

@@ -3,7 +3,13 @@ import { Cause, Effect, Exit, Option, Predicate } from "effect";
 
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
 import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
-import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import {
+  setupStorage,
+  STORAGE_TEST_JWT_SECRET,
+  storageConsentApi,
+  storageConsentServices,
+} from "../../../../tests/helpers/storage.ts";
 import { VALID_REF, useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
 import { storageMv } from "./mv.handler.ts";
 import type { StorageMvFlags } from "./mv.command.ts";
@@ -21,7 +27,7 @@ function mvFlags(opts: {
     src: opts.src,
     dst: opts.dst,
     recursive: opts.recursive ?? false,
-    linked: true,
+    linked: opts.local === false,
     local: opts.local ?? true,
     projectRef: Option.none(),
   };
@@ -266,6 +272,7 @@ describe("storage mv", () => {
   it.effect("targets the linked project's Storage host and flushes telemetry", () => {
     const { layer, requests, telemetry, linkedCache } = setupStorage(tmp.current, {
       // No `--local`, so the linked path resolves the ref + service-role key.
+      yes: true,
       routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
     });
     return Effect.gen(function* () {
@@ -284,6 +291,7 @@ describe("storage mv", () => {
     // The fake's default projectRef is VALID_REF; the flag must win over it.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, requests, linkedCache } = setupStorage(tmp.current, {
+      yes: true,
       routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
     });
     return Effect.gen(function* () {
@@ -315,7 +323,7 @@ describe("storage mv", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain(
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+          "--project-ref selects a linked project and cannot be combined with --local.",
         );
       }
       expect(requests).toHaveLength(0);
@@ -462,4 +470,22 @@ describe("stack backend", () => {
       });
     },
   );
+});
+
+describeHostedConsent("storage mv", {
+  api: storageConsentApi,
+  invoke: ({ workdir }) => {
+    const storage = storageConsentServices(workdir, [
+      { method: "POST", match: MOVE, body: { message: "Successfully moved" } },
+    ]);
+    return {
+      run: storageMv({
+        ...mvFlags({ src: "ss:///private/a", dst: "ss:///private/b" }),
+        local: false,
+        linked: false,
+        projectRef: Option.some(VALID_REF),
+      }).pipe(Effect.provide(storage.layer)),
+      mutations: storage.writes,
+    };
+  },
 });

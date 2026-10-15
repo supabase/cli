@@ -86,7 +86,7 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
           expect(Option.isSome(failure)).toBe(true);
           const causeText = Cause.pretty(exit.cause);
           expect(causeText).not.toContain("must set the --experimental flag to run this command");
-          expect(causeText).not.toContain("StorageMutuallyExclusiveFlags");
+          expect(causeText).not.toContain("TargetSelectorConflictError");
           // `normalizeCause` is the same rendering path `runCli` uses for parse failures.
           expect(normalizeCause(exit.cause).message).toBe(
             'invalid argument "-1" for "-j, --jobs" flag: expected an unsigned integer',

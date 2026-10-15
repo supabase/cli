@@ -153,7 +153,6 @@ function localGatewayHint(port: string): string {
 
 /** Announces the local Storage API endpoint as the run's target. */
 export const announceLocalStorageTarget = (baseUrl: string) => {
-  if (!URL.canParse(baseUrl)) return Effect.void;
   const { hostname, port, protocol } = new URL(baseUrl);
   const defaultPort = protocol === "https:" ? 443 : 80;
   return announceTarget(

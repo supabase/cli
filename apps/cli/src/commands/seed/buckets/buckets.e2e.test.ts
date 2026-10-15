@@ -22,7 +22,7 @@ const makeProjectDir = Effect.fnUntraced(function* (prefix: string) {
  * Golden-path e2e: exercises the real compiled-binary boundary for the two
  * network-free paths of `seed buckets`:
  *  - an empty `[storage]` config is a no-op (exit 0, no stdout);
- *  - `--local --linked` is rejected by the mutually-exclusive flag check.
+ *  - `--local --linked` is rejected by the shared target selector.
  * Bucket/object seeding is covered by the integration and unit suites.
  */
 describe("supabase seed buckets", () => {
@@ -51,7 +51,7 @@ describe("supabase seed buckets", () => {
         );
         expect(exitCode).toBe(1);
         expect(`${stdout}${stderr}`).toContain(
-          "if any flags in the group [local linked] are set none of the others can be",
+          "Only one of --local, --linked and --db-url can be set; got --local and --linked.",
         );
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     E2E_TIMEOUT_MS,
@@ -86,7 +86,7 @@ describe("supabase seed buckets", () => {
         );
         expect(exitCode).toBe(1);
         expect(`${stdout}${stderr}`).toContain(
-          "if any flags in the group [local linked] are set none of the others can be",
+          "Only one of --local, --linked and --db-url can be set; got --local and --linked.",
         );
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     E2E_TIMEOUT_MS,
