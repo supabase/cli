@@ -96,7 +96,8 @@ export const functionsDeployCommand = Command.make("deploy", config).pipe(
             operationId: "v1-deploy-a-function",
             kind: "required",
             when: [...dockerPath],
-            context: "Docker isn't running (deploy falls back to API bundling)",
+            context:
+              "Docker is not running and local bundling was not explicitly selected (default API fallback)",
           },
           {
             operationId: "v1-list-all-functions",
@@ -109,7 +110,7 @@ export const functionsDeployCommand = Command.make("deploy", config).pipe(
             kind: "required",
             when: [{ flag: "no-verify-jwt", is: false }],
             context:
-              "on the API path (--use-api, --use-docker=false, or Docker not running), when an enabled function has no verify_jwt in config.toml",
+              "on the API path (--use-api, --use-docker=false, or default fallback when Docker is not running), when an enabled function has no verify_jwt in config.toml",
           },
           {
             operationId: "v1-list-all-functions",

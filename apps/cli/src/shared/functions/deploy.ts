@@ -2452,9 +2452,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   const styleIdentifier = dependencies.styleIdentifier ?? ((text: string) => text);
   const styleEmphasis = dependencies.styleEmphasis ?? ((text: string) => text);
   const commandPath = ["functions", "deploy"] as const;
-  // Presence-based (true for `--use-api=false`, not just bare `--use-api`) — used only for
-  // the mutual-exclusivity check below. Behavior branches (bundler routing, --jobs guard) key
-  // off the resolved `flags.useApi` value instead.
+  // Presence also distinguishes explicitly disabled API bundling from the default mode.
   const explicitUseApi = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-api");
   const explicitUseDocker = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-docker");
   const explicitLegacyBundle = hasExplicitLongFlag(
@@ -2586,6 +2584,16 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   const deployed = useLocalBundler
     ? yield* Effect.gen(function* () {
         if (!(yield* isDockerRunning())) {
+          if (
+            explicitUseApi ||
+            (explicitUseDocker && flags.useDocker) ||
+            (explicitLegacyBundle && flags.legacyBundle)
+          ) {
+            return yield* new FunctionDeployError({
+              message:
+                "Docker is not running; explicitly selected local bundling cannot fall back to API bundling.",
+            });
+          }
           yield* output.raw(`${styleWarning("WARNING:")} Docker is not running\n`, "stderr");
           return yield* deployWithApi;
         }
