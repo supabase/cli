@@ -5,6 +5,7 @@ import {
   Layer,
   Option,
   PlatformError,
+  Predicate,
   Redacted,
   Semaphore,
 } from "effect";
@@ -81,10 +82,9 @@ export const fileTransportLayer = (path: string) =>
       // A file we did not create may belong to someone else; owner-only mode is then best-effort.
       yield* Effect.ignore(fs.chmod(path, 0o600));
       return HttpClient.make((request) => {
-        const write =
-          request.body._tag === "Uint8Array"
-            ? fs.writeFile(path, appendNewline(request.body.body), { flag: "a", mode: 0o600 })
-            : Effect.void;
+        const write = Predicate.isTagged(request.body, "Uint8Array")
+          ? fs.writeFile(path, appendNewline(request.body.body), { flag: "a", mode: 0o600 })
+          : Effect.void;
         return lock
           .withPermits(1)(write)
           .pipe(

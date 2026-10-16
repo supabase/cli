@@ -28,7 +28,8 @@ export function parseSemver(version: string): ParsedSemver | undefined {
     /^(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?(?:\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)?(?![\s\S])/.exec(
       version,
     );
-  if (match === null) return undefined;
+  const major = match?.[1];
+  if (match === null || major === undefined) return undefined;
   const prerelease = match[4] ?? "";
   if (
     prerelease
@@ -40,7 +41,7 @@ export function parseSemver(version: string): ParsedSemver | undefined {
     return undefined;
   }
   return {
-    nums: [match[1]!, match[2] ?? "0", match[3] ?? "0"],
+    nums: [major, match[2] ?? "0", match[3] ?? "0"],
     prerelease,
   };
 }

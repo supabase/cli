@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Fiber, Schema } from "effect";
 import { feedbackClientLayer } from "./feedback-client.layer.ts";
 import type { FeedbackSubmission } from "./feedback-client.service.ts";
-import { FeedbackClient } from "./feedback-client.service.ts";
+import { FeedbackBackendError, FeedbackClient } from "./feedback-client.service.ts";
 import { actionability, ErrorActionabilityId } from "../telemetry/error-actionability.ts";
 
 // The layer only needs a url/key shape — no request leaves the test, so the
@@ -72,7 +72,7 @@ function layerWith(transport: ReturnType<typeof recordingFetch>) {
 
 describe("feedbackClientLayer", () => {
   describe("submit", () => {
-    it.live("submits through the RPC and returns the server-issued delete token", () => {
+    it.effect("submits through the RPC and returns the server-issued delete token", () => {
       const transport = recordingFetch(() => jsonResponse(TOKEN));
       return Effect.gen(function* () {
         const client = yield* FeedbackClient;
@@ -101,7 +101,7 @@ describe("feedbackClientLayer", () => {
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
-    it.live("omits project_ref and agent_name for an unlinked non-agent run", () => {
+    it.effect("omits project_ref and agent_name for an unlinked non-agent run", () => {
       const transport = recordingFetch(() => jsonResponse(TOKEN));
       return Effect.gen(function* () {
         const client = yield* FeedbackClient;
@@ -131,7 +131,7 @@ describe("feedbackClientLayer", () => {
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
-    it.live("maps a PostgREST error response to FeedbackBackendError", () => {
+    it.effect("maps a PostgREST error response to FeedbackBackendError", () => {
       // Shape PostgREST returns when execute is denied on the RPC.
       const transport = recordingFetch(() =>
         jsonResponse(
@@ -148,7 +148,7 @@ describe("feedbackClientLayer", () => {
         const client = yield* FeedbackClient;
         const error = yield* client.submit(SUBMISSION).pipe(Effect.flip);
 
-        expect(error._tag).toBe("FeedbackBackendError");
+        expect(error).toBeInstanceOf(FeedbackBackendError);
         expect(error.operation).toBe("submit");
         expect(error.message).toContain("permission denied");
         // The backend answered: an API-status failure, not a network outage.
@@ -160,7 +160,7 @@ describe("feedbackClientLayer", () => {
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
-    it.live("maps a network failure to FeedbackBackendError", () => {
+    it.effect("maps a network failure to FeedbackBackendError", () => {
       const transport = recordingFetch(() => {
         throw new Error("network down");
       });
@@ -168,7 +168,7 @@ describe("feedbackClientLayer", () => {
         const client = yield* FeedbackClient;
         const error = yield* client.submit(SUBMISSION).pipe(Effect.flip);
 
-        expect(error._tag).toBe("FeedbackBackendError");
+        expect(error).toBeInstanceOf(FeedbackBackendError);
         expect(error.operation).toBe("submit");
         // The fetch threw: a transport failure, classified as network.
         expect(error.reason).toBe("transport");
@@ -176,7 +176,7 @@ describe("feedbackClientLayer", () => {
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
-    it.live("aborts the in-flight request when the fiber is interrupted", () => {
+    it.effect("aborts the in-flight request when the fiber is interrupted", () => {
       // Ctrl-C during submission must abort the HTTP request, not let the
       // insert commit after the command was cancelled. The fake fetch behaves
       // like a real one: it settles only when its abort signal fires.
@@ -199,20 +199,20 @@ describe("feedbackClientLayer", () => {
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
-    it.live("fails when the backend returns no delete token", () => {
+    it.effect("fails when the backend returns no delete token", () => {
       const transport = recordingFetch(() => jsonResponse(null));
       return Effect.gen(function* () {
         const client = yield* FeedbackClient;
         const error = yield* client.submit(SUBMISSION).pipe(Effect.flip);
 
-        expect(error._tag).toBe("FeedbackBackendError");
+        expect(error).toBeInstanceOf(FeedbackBackendError);
         expect(error.message).toContain("no delete token");
       }).pipe(Effect.provide(layerWith(transport)));
     });
   });
 
   describe("delete", () => {
-    it.live("deletes with the token filter, capability headers, and an exact count", () => {
+    it.effect("deletes with the token filter, capability headers, and an exact count", () => {
       const transport = recordingFetch(
         () => new Response(null, { status: 204, headers: { "content-range": "*/1" } }),
       );
@@ -233,7 +233,7 @@ describe("feedbackClientLayer", () => {
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
-    it.live("reports deleted: false when the delete matched zero rows", () => {
+    it.effect("reports deleted: false when the delete matched zero rows", () => {
       // Wrong/stale token or a project-ref/user-id context mismatch: RLS
       // matches nothing and PostgREST reports an empty range.
       const transport = recordingFetch(
@@ -249,7 +249,7 @@ describe("feedbackClientLayer", () => {
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
-    it.live("maps a network failure to FeedbackBackendError", () => {
+    it.effect("maps a network failure to FeedbackBackendError", () => {
       const transport = recordingFetch(() => {
         throw new Error("network down");
       });
@@ -257,7 +257,7 @@ describe("feedbackClientLayer", () => {
         const client = yield* FeedbackClient;
         const error = yield* client.delete(TOKEN).pipe(Effect.flip);
 
-        expect(error._tag).toBe("FeedbackBackendError");
+        expect(error).toBeInstanceOf(FeedbackBackendError);
         expect(error.operation).toBe("delete");
       }).pipe(Effect.provide(layerWith(transport)));
     });

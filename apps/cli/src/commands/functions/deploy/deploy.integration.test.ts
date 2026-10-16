@@ -2,7 +2,9 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  Clock,
   Deferred,
+  Duration,
   Effect,
   Exit,
   Fiber,
@@ -11,10 +13,12 @@ import {
   Option,
   Path,
   Predicate,
+  Queue,
   Schema,
   Stdio,
 } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { TestClock } from "effect/testing";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { stripControlSequences } from "../../../shared/output/strip-control-sequences.ts";
@@ -757,12 +761,37 @@ describe("functions deploy", () => {
   function apiDeployHarness(
     handler: ApiHandler,
     args: ReadonlyArray<string> = ["functions", "deploy", "hello-world", "--use-api"],
+    rateLimitNotices?: Queue.Enqueue<string>,
   ) {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ handler });
     const layer = Layer.mergeAll(
       buildTestRuntime({
-        out,
+        out:
+          rateLimitNotices === undefined
+            ? out
+            : {
+                ...out,
+                layer: Layer.effect(
+                  Output,
+                  Effect.gen(function* () {
+                    const output = yield* Output;
+                    return {
+                      ...output,
+                      raw: (text: string, stream?: "stdout" | "stderr") =>
+                        output
+                          .raw(text, stream)
+                          .pipe(
+                            Effect.tap(() =>
+                              text.startsWith("Rate limit exceeded")
+                                ? Queue.offer(rateLimitNotices, text)
+                                : Effect.void,
+                            ),
+                          ),
+                    };
+                  }),
+                ).pipe(Layer.provide(out.layer)),
+              },
         api,
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
@@ -993,6 +1022,85 @@ describe("functions deploy", () => {
       expect(out.stderrText).toContain("Rate limit exceeded while deploying function hello-world.");
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
+
+  it.effect("gives up on a persistent rate limit after the command's backoff schedule", () =>
+    Effect.gen(function* () {
+      const notices = yield* Queue.unbounded<string>();
+      const deployTimes: Array<number> = [];
+      const { layer } = apiDeployHarness(
+        (request) =>
+          request.method === "GET"
+            ? Effect.succeed(jsonResponse(request, 200, []))
+            : Effect.gen(function* () {
+                deployTimes.push(yield* Clock.currentTimeMillis);
+                return HttpClientResponse.fromWeb(request, new Response("{}", { status: 429 }));
+              }),
+        undefined,
+        notices,
+      );
+
+      yield* Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        const deploy = yield* Effect.forkChild(functionsDeploy(baseFlags));
+        for (const seconds of [1, 2, 4, 8, 16, 32, 32, 32]) {
+          expect(yield* Queue.take(notices)).toBe(
+            `Rate limit exceeded while deploying function hello-world. Retrying in ${seconds}s.\n`,
+          );
+          yield* TestClock.adjust(Duration.seconds(seconds));
+        }
+        const error = yield* Fiber.join(deploy).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(FunctionsApiStatusError);
+        expect(error).toMatchObject({ status: 429 });
+        expect(deployTimes).toEqual([
+          0, 1_000, 3_000, 7_000, 15_000, 31_000, 63_000, 95_000, 127_000,
+        ]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    }),
+  );
+
+  it.effect("waits for the server's retry-after before retrying a rate-limited deploy", () =>
+    Effect.gen(function* () {
+      const notices = yield* Queue.unbounded<string>();
+      let deployAttempts = 0;
+      const { layer, api } = apiDeployHarness(
+        (request, recorded) => {
+          if (request.method === "GET") return Effect.succeed(jsonResponse(request, 200, []));
+          deployAttempts += 1;
+          if (deployAttempts === 1) {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response("{}", { status: 429, headers: { "retry-after": "3" } }),
+              ),
+            );
+          }
+          return deployedHelloWorld(request, recorded);
+        },
+        undefined,
+        notices,
+      );
+      const deployRequests = () => api.requests.filter((request) => request.method === "POST");
+
+      yield* Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        const deploy = yield* Effect.forkChild(functionsDeploy(baseFlags));
+        expect(yield* Queue.take(notices)).toBe(
+          "Rate limit exceeded while deploying function hello-world. Retrying in 3s.\n",
+        );
+        yield* TestClock.adjust(Duration.millis(2_999));
+        expect(deployRequests()).toHaveLength(1);
+        yield* TestClock.adjust(Duration.millis(1));
+        yield* Fiber.join(deploy);
+
+        expect(deployRequests()).toHaveLength(2);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    }),
+  );
 
   it.effect("reports a malformed functions list with the schema decoder's message", () => {
     const { layer } = apiDeployHarness((request) =>

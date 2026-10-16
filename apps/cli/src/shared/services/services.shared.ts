@@ -509,6 +509,7 @@ export function formatServicesWarning(message: string, textMode: boolean): strin
 
 export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
   return Effect.gen(function* () {
+    const noLinkedVersions: Partial<Record<RemoteServiceName, string>> = {};
     const exit = yield* Effect.gen(function* () {
       // Malformed refs are rejected before reaching the management API path param or the
       // tenant gateway hostname; the test-only override bypasses this check.
@@ -516,7 +517,7 @@ export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
         input.tenantBaseUrlOverride === undefined &&
         !PROJECT_REF_PATTERN.test(input.projectRef)
       ) {
-        return {} as Partial<Record<RemoteServiceName, string>>;
+        return noLinkedVersions;
       }
 
       const client = yield* makeConfiguredApiClient(input);
@@ -526,7 +527,7 @@ export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
         .getProjectApiKeys({ ref: input.projectRef, reveal: true })
         .pipe(Effect.exit);
       if (!Exit.isSuccess(apiKeysExit) || !hasProjectAccessKey(apiKeysExit.value)) {
-        return {} as Partial<Record<RemoteServiceName, string>>;
+        return noLinkedVersions;
       }
 
       let versions: Partial<Record<RemoteServiceName, string>> = {};
@@ -577,7 +578,7 @@ export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
 
       return versions;
     }).pipe(Effect.exit);
-    return Exit.isSuccess(exit) ? exit.value : ({} as Partial<Record<RemoteServiceName, string>>);
+    return Exit.isSuccess(exit) ? exit.value : noLinkedVersions;
   }).pipe(
     Effect.withSpan("Services.fetchLinkedVersions", {
       attributes: { "project.ref": input.projectRef },

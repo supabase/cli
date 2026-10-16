@@ -59,7 +59,7 @@ function buildLayer(
 
 describe("cliSettingsLayer", () => {
   for (const optOut of ["SUPABASE_TELEMETRY_DISABLED", "DO_NOT_TRACK"]) {
-    it.live(`honors injected ${optOut} alongside discovered project settings`, () =>
+    it.effect(`honors injected ${optOut} alongside discovered project settings`, () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -83,7 +83,7 @@ describe("cliSettingsLayer", () => {
     );
   }
 
-  it.live("falls back to ambient env when no Supabase project is found", () =>
+  it.effect("falls back to ambient env when no Supabase project is found", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const tempDir = yield* makeTempDir;
@@ -106,7 +106,7 @@ describe("cliSettingsLayer", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "uses the nearest discovered project and loads supabase/.env.local over supabase/.env",
     () =>
       Effect.gen(function* () {
@@ -157,7 +157,7 @@ describe("cliSettingsLayer", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("lets ambient env override discovered project env", () =>
+  it.effect("lets ambient env override discovered project env", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -198,7 +198,7 @@ describe("cliSettingsLayer", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("has no PostHog key when nothing is injected or overridden", () =>
+  it.effect("has no PostHog key when nothing is injected or overridden", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const tempDir = yield* makeTempDir;
@@ -237,7 +237,7 @@ describe("cliSettingsLayer", () => {
     }).pipe(Effect.provide(settingsLayer));
   });
 
-  it.live("prefers SUPABASE_TELEMETRY_POSTHOG_KEY over the shipped default", () =>
+  it.effect("prefers SUPABASE_TELEMETRY_POSTHOG_KEY over the shipped default", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const tempDir = yield* makeTempDir;
@@ -256,7 +256,7 @@ describe("cliSettingsLayer", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("uses SUPABASE_HOME (trimmed) when configured", () =>
+  it.effect("uses SUPABASE_HOME (trimmed) when configured", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const tempDir = yield* makeTempDir;
@@ -272,7 +272,7 @@ describe("cliSettingsLayer", () => {
   );
 
   for (const value of ["", "   "]) {
-    it.live(
+    it.effect(
       `falls back to <homeDir>/.supabase when SUPABASE_HOME is ${JSON.stringify(value)}`,
       () =>
         Effect.gen(function* () {
@@ -290,7 +290,7 @@ describe("cliSettingsLayer", () => {
     );
   }
 
-  it.live("uses the build-injected PostHog key and host when no runtime override is set", () =>
+  it.effect("uses the build-injected PostHog key and host when no runtime override is set", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const tempDir = yield* makeTempDir;
