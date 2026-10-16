@@ -16,7 +16,11 @@ describe("emitComputeMachineOutput", () => {
         const created = yield* makeComputeProject({
           "supabase/config.toml": `project_id = "demo"\n`,
         });
-        const { layer, out } = setupCompute({ workdir: created.dir, goOutput: "env", routes: {} });
+        const { layer, out } = setupCompute({
+          workdir: created.dir,
+          outputFlag: "env",
+          routes: {},
+        });
         const error = yield* emitComputeMachineOutput({
           project_ref: "demo",
           compute: [],

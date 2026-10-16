@@ -3,6 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { vi } from "vitest";
 
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 import { DebugFlag, NetworkIdFlag } from "./global-flags.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
@@ -38,7 +39,6 @@ function fakeDocker(result: { exitCode: number; stdout?: string; stderr?: string
 // falls back to the default tag.
 function makeCliSettings(workdir = "/nonexistent-workdir") {
   return Layer.succeed(CommandSettings, {
-    dbPassword: Option.none(),
     githubToken: Option.none(),
     workdirEnvValue: Option.none(),
     profile: "supabase",
@@ -77,6 +77,7 @@ function setup(
         Layer.succeed(DebugFlag, false),
         Layer.succeed(NetworkIdFlag, Option.none<string>()),
         BunServices.layer,
+        cliConfigValuesTestLayer,
       ),
     ),
   );

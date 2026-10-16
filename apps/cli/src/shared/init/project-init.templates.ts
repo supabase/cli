@@ -322,7 +322,7 @@ max_frequency = "5s"
 
 # Use an external OAuth provider. The full list of providers are: \`apple\`, \`azure\`, \`bitbucket\`,
 # \`discord\`, \`facebook\`, \`github\`, \`gitlab\`, \`google\`, \`keycloak\`, \`linkedin_oidc\`, \`notion\`, \`twitch\`,
-# \`twitter\`, \`x\`, \`slack\`, \`spotify\`, \`workos\`, \`zoom\`.
+# \`twitter\`, \`x\`, \`slack_oidc\`, \`spotify\`, \`workos\`, \`zoom\`.
 [auth.external.apple]
 enabled = false
 client_id = ""
@@ -406,7 +406,7 @@ s3_access_key = "env(S3_ACCESS_KEY)"
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
 s3_secret_key = "env(S3_SECRET_KEY)"
 
-# pg-delta is the schema diff engine for db diff / db pull / db remote commit.
+# pg-delta is the schema diff engine for db diff / db pull.
 # Set enabled = false to fall back to the legacy migra engine.
 [experimental.pgdelta]
 enabled = true

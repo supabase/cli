@@ -20,7 +20,7 @@ import {
 } from "effect";
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
-import { viperEnvBoolWithProjectFallback } from "../viper-env.ts";
+import { supabaseEnvBoolWithProjectFallback } from "../supabase-env.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { containerCliExitCode, describeContainerCliFailure } from "../container-cli.ts";
 import { DbConnection } from "../db-connection.service.ts";
@@ -60,7 +60,7 @@ import {
 
 type Spawner = ChildProcessSpawner["Service"];
 
-/** `SUPABASE_SHADOW_CACHE` — opt-out gate (viper bool when set; unset is ON). */
+/** `SUPABASE_SHADOW_CACHE` — opt-out gate (parsed as a boolean when set; unset is ON). */
 export const SHADOW_CACHE_ENV = "SUPABASE_SHADOW_CACHE";
 
 /**
@@ -435,7 +435,7 @@ const SHADOW_PARTIAL_ABANDON_MS = 5 * 60 * 1000;
  */
 const sweepAbandonedShadowBaselinePartials = <E>(input: ShadowSetupInput<E>): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const cacheDir = shadowBaselineCacheDir(input.path);
+    const cacheDir = yield* shadowBaselineCacheDir(input.path);
     const entries = yield* input.fs
       .readDirectory(cacheDir)
       .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
@@ -465,7 +465,7 @@ const sweepShadowBaselineRetention = <E>(
   retainFileName?: string,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const cacheDir = shadowBaselineCacheDir(input.path);
+    const cacheDir = yield* shadowBaselineCacheDir(input.path);
     const names = yield* input.fs
       .readDirectory(cacheDir)
       .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
@@ -570,7 +570,7 @@ const writeShadowBaselineTar = <E>(
         const published = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
         if (published) return;
       }
-      const cacheDir = shadowBaselineCacheDir(input.path);
+      const cacheDir = yield* shadowBaselineCacheDir(input.path);
       yield* input.fs
         .makeDirectory(cacheDir, { recursive: true, mode: 0o700 })
         .pipe(
@@ -688,7 +688,7 @@ export const peekShadowBaseline = <E>(
   Effect.gen(function* () {
     if (
       opts.bypassCache === true ||
-      !(yield* viperEnvBoolWithProjectFallback(
+      !(yield* supabaseEnvBoolWithProjectFallback(
         SHADOW_CACHE_ENV,
         input.setup.projectEnvValues ?? {},
       ))
@@ -699,7 +699,7 @@ export const peekShadowBaseline = <E>(
     if (Option.isNone(keyInputs)) return { state: "uncachable" } as const;
     const key = shadowCacheKey(keyInputs.value);
     const tarPath = input.path.join(
-      shadowBaselineCacheDir(input.path),
+      yield* shadowBaselineCacheDir(input.path),
       shadowBaselineTarFileName(key),
     );
     const cached = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
@@ -871,7 +871,7 @@ export const acquireShadowDatabase = <E>(
   Effect.gen(function* () {
     if (
       opts.bypassCache === true ||
-      !(yield* viperEnvBoolWithProjectFallback(
+      !(yield* supabaseEnvBoolWithProjectFallback(
         SHADOW_CACHE_ENV,
         input.setup.projectEnvValues ?? {},
         {
@@ -899,7 +899,7 @@ export const acquireShadowDatabase = <E>(
     // can't be written. The mkdir alone isn't a sufficient probe — it succeeds on an
     // already-existing directory regardless of permission — so `access(W_OK)` catches a
     // pre-existing read-only root (EACCES, EROFS, a root-squashing NFS server).
-    const cacheDir = shadowBaselineCacheDir(input.path);
+    const cacheDir = yield* shadowBaselineCacheDir(input.path);
     const cacheRoot = yield* Effect.result(
       input.fs
         .makeDirectory(cacheDir, { recursive: true, mode: 0o700 })

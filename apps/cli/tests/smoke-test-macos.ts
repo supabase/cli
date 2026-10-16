@@ -1,5 +1,4 @@
 import { $ } from "bun";
-import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
@@ -59,9 +58,6 @@ console.log("=".repeat(60));
   const arch = process.arch;
   const binDir = path.join(root, "packages", `cli-darwin-${arch}`, "bin");
   const binaries = ["supabase"];
-  if (existsSync(path.join(binDir, "supabase-go"))) {
-    binaries.push("supabase-go");
-  }
 
   for (const binary of binaries) {
     const name = `native-darwin-${arch}-signature-${binary}`;

@@ -38,7 +38,12 @@ BranchesUnpauseNetworkError
 BranchesUnpauseUnexpectedStatusError
 BranchesUpdateNetworkError
 BranchesUpdateUnexpectedStatusError
+CliConfigFlagConflictError
+CliConfigLoadError
 CliConfigParseError
+CliConfigRemovedEnvError
+CliConfigRemovedKeyError
+CliConfigValueError
 CliConfigWriteError
 CliProjectEnvParseError
 CliProjectHomeNotDirectoryError
@@ -174,6 +179,7 @@ DbLintListSchemasError
 DbLintMalformedJsonError
 DbLintMutuallyExclusiveFlagsError
 DbLintQueryError
+DbPasswordFlagsError
 DbPullDumpError
 DbPullEngineConflictError
 DbPullInSyncError
@@ -295,7 +301,6 @@ GenTypesToolFailedError
 GenTypesToolNotInstalledError
 GenTypesUnexpectedStatusError
 GenTypesWorkdirError
-GoChildExitError
 HealthCheckProbeError
 HealthCheckTimeoutError
 HostPostgresClientError
@@ -353,7 +358,6 @@ MigrationLastZeroError
 MigrationMissingLocalError
 MigrationMissingRemoteError
 MigrationNewWriteError
-MigrationPasswordFlagsError
 MigrationRepairUpdateError
 MigrationSeedError
 MigrationSquashBaselineError
@@ -449,6 +453,7 @@ PullParentRefInvalidError
 PullUncommittedChangesError
 PullWorkdirError
 RemoteJwksError
+RemovedSurfaceError
 ResetLocalDbFailedError
 ResetLocalDbNotRunningError
 ResetReplicationSlotsError
@@ -463,9 +468,12 @@ SecretsSetInputError
 SecretsSetNetworkError
 SecretsSetUnexpectedStatusError
 SecretsUnsetCancelledError
+SecretsUnsetConfirmationRequiredError
+SecretsUnsetInputError
 SecretsUnsetNetworkError
 SecretsUnsetUnexpectedStatusError
 SeedConfigLoadError
+SeedConsentRequiredError
 SeedMissingProjectConfigError
 SeedMutuallyExclusiveFlagsError
 SeedWorkdirError

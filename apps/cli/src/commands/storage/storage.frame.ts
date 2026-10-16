@@ -1,7 +1,10 @@
-import { CliConfigSchema, type CliConfig } from "@supabase/config/effect";
-import { loadCliConfig, type InternalLoadCliConfigOptions } from "@supabase/config/internal";
-import { Effect, FileSystem, Schema } from "effect";
+import { findCliProjectPaths, type CliConfig } from "@supabase/config/effect";
+import { Effect, FileSystem, Option } from "effect";
 
+import {
+  describeConfigLoadFailure,
+  loadResolvedConfigContext,
+} from "../../command-internal/resolved-config-context.ts";
 import {
   resolveStorageCredentials,
   withStorageGatewayFetch,
@@ -9,13 +12,12 @@ import {
 import { withStackStorageGuidance } from "../../command-internal/stack-storage.ts";
 import { makeStorageGateway, type StorageGateway } from "../../command-internal/storage-gateway.ts";
 import {
-  GoUrlParseError,
+  UrlParseError,
   StorageUrlPatternError,
   parseStorageUrl,
 } from "../../command-internal/storage-url.ts";
 import { StorageConfigError } from "../../command-internal/storage-credentials.errors.ts";
 import { missingProjectConfigMessageEffect } from "../../command-internal/workdir-project.ts";
-import { shouldSearchAncestors } from "../../command-internal/workdir-search.ts";
 import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
 import {
   StorageInvalidUrlError,
@@ -29,8 +31,6 @@ import {
  * (`--local`'s value decides local vs linked) and building the gateway client.
  */
 
-const decodeDefaultCliConfig = Schema.decodeEffect(CliConfigSchema);
-
 interface LoadedStorageConfig {
   readonly config: CliConfig;
   readonly document: Record<string, unknown> | undefined;
@@ -38,22 +38,29 @@ interface LoadedStorageConfig {
 }
 
 /**
- * Loads `supabase/config.toml`, falling back to the embedded defaults when it's
- * missing — except for a local target with an explicit `--workdir`, which raises
- * `StorageMissingProjectConfigError` instead (see that error's doc for why). A
- * remote target never hard-fails this way, since credential resolution doesn't
- * read `config` at all. `appliedRemote` is set when a `[remotes.<name>]` block
- * matches the linked ref.
+ * Loads the config through `CliConfigValues` (flags, env and the `[remotes.<name>]` block matching
+ * `projectRef` applied), falling back to the embedded defaults when no project file exists —
+ * except for a local target with an explicit `--workdir`, which raises
+ * `StorageMissingProjectConfigError` instead (see that error's doc for why). A remote target
+ * never hard-fails this way, since credential resolution doesn't read `config` at all.
+ * `appliedRemote` is set when a `[remotes.<name>]` block matches the linked ref.
  */
 export const loadStorageConfig = Effect.fn("Storage.loadConfig")(function* (
   cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
   projectRef: string,
 ) {
-  const loadOptions: InternalLoadCliConfigOptions =
-    projectRef !== ""
-      ? { projectRef, goViperCompat: true, search: shouldSearchAncestors(cliSettings) }
-      : { goViperCompat: true, search: shouldSearchAncestors(cliSettings) };
-  const loaded = yield* loadCliConfig(cliSettings.workdir, loadOptions).pipe(
+  if (cliSettings.explicitWorkdir && projectRef === "") {
+    const paths = yield* findCliProjectPaths(cliSettings.workdir, { search: false });
+    if (paths === null) {
+      return yield* new StorageMissingProjectConfigError({
+        message: yield* missingProjectConfigMessageEffect(cliSettings),
+      });
+    }
+  }
+  const context = yield* loadResolvedConfigContext(
+    cliSettings.workdir,
+    projectRef === "" ? Option.none() : Option.some(projectRef),
+  ).pipe(
     Effect.catchTag(
       "CliConfigParseError",
       (cause) =>
@@ -61,23 +68,16 @@ export const loadStorageConfig = Effect.fn("Storage.loadConfig")(function* (
           message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
         }),
     ),
+    Effect.mapError((cause) =>
+      cause instanceof StorageConfigError
+        ? cause
+        : new StorageConfigError({ message: describeConfigLoadFailure(cause) }),
+    ),
   );
-  if (loaded === null) {
-    if (cliSettings.explicitWorkdir && projectRef === "") {
-      return yield* new StorageMissingProjectConfigError({
-        message: yield* missingProjectConfigMessageEffect(cliSettings),
-      });
-    }
-    return {
-      config: yield* decodeDefaultCliConfig({}).pipe(Effect.orDie),
-      document: undefined,
-      appliedRemote: undefined,
-    } satisfies LoadedStorageConfig;
-  }
   return {
-    config: loaded.config,
-    document: loaded.document,
-    appliedRemote: loaded.appliedRemote,
+    config: context.config,
+    document: context.document,
+    appliedRemote: Option.getOrUndefined(context.resolvedConfig.appliedRemote),
   } satisfies LoadedStorageConfig;
 });
 
@@ -101,10 +101,7 @@ export const connectStorageGateway = <E, R>(
   body: (gateway: StorageGateway) => Effect.Effect<void, E, R>,
 ) =>
   Effect.gen(function* () {
-    const credentials = yield* resolveStorageCredentials({
-      projectRef: opts.projectRef,
-      config: opts.config,
-    });
+    const credentials = yield* resolveStorageCredentials({ projectRef: opts.projectRef });
     const gatewayOps = Effect.gen(function* () {
       const gateway = yield* makeStorageGateway({
         baseUrl: credentials.baseUrl,
@@ -130,7 +127,7 @@ export const parseStorageUrlEffect = (objectUrl: string) =>
       if (cause instanceof StorageUrlPatternError) {
         return new StorageInvalidUrlError();
       }
-      const message = cause instanceof GoUrlParseError ? cause.message : String(cause);
+      const message = cause instanceof UrlParseError ? cause.message : String(cause);
       return new StorageUrlParseError({ message: `failed to parse storage url: ${message}` });
     },
   });
