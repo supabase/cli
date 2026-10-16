@@ -36,7 +36,7 @@ const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   status?: number;
   network?: "fail";
 }
@@ -55,7 +55,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -91,7 +91,7 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("writes 'Started PITR restore: <ref>\\n' to stderr in text mode (Go parity)", () => {
+  it.effect("writes 'Started PITR restore: <ref>\\n' to stderr in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* backupsRestore({
@@ -128,8 +128,8 @@ describe("backups restore integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("emits indented JSON to stdout for --output json (Go-compat)", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("emits indented JSON to stdout for --output json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* backupsRestore({
         projectRef: Option.none(),
@@ -142,9 +142,9 @@ describe("backups restore integration", () => {
   });
 
   it.effect(
-    "renders the stderr text line for --output {pretty,yaml,toml,env} (Go ignores --output)",
+    "renders the stderr text line for --output {pretty,yaml,toml,env} (--output is ignored)",
     () => {
-      const { layer, out } = setup({ goOutput: "yaml" });
+      const { layer, out } = setup({ outputFlag: "yaml" });
       return Effect.gen(function* () {
         yield* backupsRestore({
           projectRef: Option.none(),

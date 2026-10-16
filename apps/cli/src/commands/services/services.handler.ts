@@ -7,25 +7,23 @@ import {
 } from "../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
-import {
-  readDbToml,
-  warnDeprecatedOrioleDBVersionEnv,
-} from "../../command-internal/db-config.toml-read.ts";
+import { failOnInvalidConfigValue } from "../../command-internal/config-value-passthrough.ts";
+import { readDbToml } from "../../command-internal/db-config.toml-read.ts";
 import { resolveDbImage } from "../../command-internal/db-image.ts";
 import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
 import { readServiceVersionOverrides } from "../../command-internal/service-version-overrides.ts";
 import { currentStackBackend } from "../../command-internal/stack-backend.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../command-internal/go-output.encoders.ts";
+import { encodeSortedJson } from "../../command-internal/output.encoders.ts";
 import {
-  encodeGoToml,
-  encodeGoYaml,
-  goSlice,
-  goString,
-  goStruct,
-  goTomlListWrapper,
-} from "../../command-internal/go-struct-output.encoders.ts";
+  encodeStructToml,
+  encodeStructYaml,
+  shapeSlice,
+  shapeString,
+  shapeStruct,
+  shapeTomlListWrapper,
+} from "../../command-internal/struct-output.encoders.ts";
 import {
   fetchLinkedServiceVersions,
   formatServicesWarning,
@@ -45,19 +43,19 @@ import { stackServiceVersions } from "./services-local-stack.ts";
  * Struct shape for `imageVersion`: field order is name, local, remote (not
  * alphabetical), and `remote` is always emitted even when empty.
  */
-const GO_IMAGE_VERSION = goStruct([
-  ["name", goString],
-  ["local", goString],
-  ["remote", goString],
+const IMAGE_VERSION_SHAPE = shapeStruct([
+  ["name", shapeString],
+  ["local", shapeString],
+  ["remote", shapeString],
 ]);
 
-const GO_SERVICES_LIST = goSlice(GO_IMAGE_VERSION);
+const SERVICES_LIST_SHAPE = shapeSlice(IMAGE_VERSION_SHAPE);
 
-const GO_SERVICES_TOML_WRAPPER = goTomlListWrapper("services", GO_IMAGE_VERSION);
+const SERVICES_TOML_WRAPPER_SHAPE = shapeTomlListWrapper("services", IMAGE_VERSION_SHAPE);
 
 export const services = Effect.fn("services")(function* (_flags: ServicesFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const cliSettings = yield* CommandSettings;
   const credentials = yield* CommandCredentials;
   const linkedProjectCache = yield* LinkedProjectCache;
@@ -138,6 +136,7 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
       }
       rows = result.rows;
     } else {
+      yield* failOnInvalidConfigValue(cliSettings.workdir, linkedProjectRef);
       const tomlValues = yield* readDbToml(
         fs,
         path,
@@ -149,7 +148,6 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
           output.raw(`${error.message}\n`, "stderr").pipe(Effect.as(null)),
         ),
       );
-      if (tomlValues !== null) yield* warnDeprecatedOrioleDBVersionEnv(tomlValues.envLookup);
       const serviceVersions =
         tomlValues === null
           ? {}
@@ -217,30 +215,30 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
       yield* output.raw(formatServicesWarning(warning, output.format === "text"), "stderr");
     }
 
-    const goOutput = Option.getOrUndefined(goOutputFlag);
+    const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-    if (goOutput === "env") {
+    if (outputFlagFormat === "env") {
       return yield* new ServicesEnvNotSupportedError({
         message: "--output env flag is not supported",
       });
     }
 
-    if (goOutput === "json") {
-      yield* output.raw(encodeGoJson(rows));
+    if (outputFlagFormat === "json") {
+      yield* output.raw(encodeSortedJson(rows));
       return;
     }
 
-    if (goOutput === "yaml") {
-      yield* output.raw(encodeGoYaml(rows, GO_SERVICES_LIST));
+    if (outputFlagFormat === "yaml") {
+      yield* output.raw(encodeStructYaml(rows, SERVICES_LIST_SHAPE));
       return;
     }
 
-    if (goOutput === "toml") {
-      yield* output.raw(encodeGoToml({ services: rows }, GO_SERVICES_TOML_WRAPPER));
+    if (outputFlagFormat === "toml") {
+      yield* output.raw(encodeStructToml({ services: rows }, SERVICES_TOML_WRAPPER_SHAPE));
       return;
     }
 
-    // goOutput is undefined or "pretty" — defer to --output-format for machine
+    // outputFlagFormat is undefined or "pretty" — defer to --output-format for machine
     // output, otherwise render the `--output pretty` table. This keeps
     // `--output pretty --output-format json` emitting JSON.
     if (output.format === "json" || output.format === "stream-json") {

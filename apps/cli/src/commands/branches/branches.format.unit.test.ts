@@ -60,7 +60,7 @@ describe("renderBranchesListTable", () => {
     expect(out).toContain("git|pipe");
   });
 
-  it("renders empty git_branch as a single space (Go parity)", () => {
+  it("renders empty git_branch as a single space", () => {
     const out = renderBranchesListTable([
       {
         id: "id",

@@ -22,6 +22,7 @@ import { ExperimentalFlag, YesFlag } from "../../../../command-internal/global-f
 import { stackStart } from "./start.handler.ts";
 import { stackPrepare } from "../prepare/prepare.handler.ts";
 import { destroyTestStacks } from "../../../../../tests/helpers/stack-cleanup.ts";
+import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 
 const excluded = [
   "rest",
@@ -194,6 +195,7 @@ const makeLayers = (root: string, apiLayer = liveStackApi, workdir = root) => {
     output,
     telemetry,
     layer: Layer.mergeAll(
+      cliConfigValuesTestLayer,
       FetchHttpClient.layer,
       runtimeInfoLayer,
       settings,
@@ -510,12 +512,14 @@ describe("experimental stack start native lifecycle", () => {
               expect(yield* stack.services.list).toHaveLength(0);
               expect((yield* stack.composition.describe).members).toHaveLength(0);
             }
-            // A stopped stack now reads its project config before reopening the stack, to carry a
-            // changed endpoint into the owner's own startup; an invalid config rejects here without
-            // spawning another owner, leaving `ownerPids[2]` unset.
+            // A stopped stack reads its project config before reopening, so an invalid config
+            // rejects without spawning another owner (`ownerPids[2]` stays unset). The resolved
+            // config is memoised per runtime, so the rewritten file needs a fresh service.
             yield* fs.writeFileString(path.join(root, "supabase", "config.toml"), "project_id = [");
             activeAttempt = 2;
-            const invalidConfigStart = yield* Effect.scoped(Effect.exit(stackStart(flags([]))));
+            const invalidConfigStart = yield* Effect.scoped(
+              Effect.exit(stackStart(flags([]))),
+            ).pipe(Effect.provide(cliConfigValuesTestLayer));
             expect(Exit.isFailure(invalidConfigStart)).toBe(true);
             if (!Exit.isFailure(invalidConfigStart)) return;
             const configError = Cause.findErrorOption(invalidConfigStart.cause);
@@ -640,11 +644,14 @@ describe("experimental stack start native lifecycle", () => {
             yield* stack.stop;
             // The config drops the fixed API port and now excludes Auth too: REST alone remains,
             // so Auth's still-saved fixed port must not anchor REST's shared port back to it.
+            // The resolved config is memoised per runtime, so the rewritten file needs a fresh service.
             yield* fs.writeFileString(
               path.join(root, "supabase", "config.toml"),
               n2ProjectConfig(undefined),
             );
-            const restartedId = yield* stackStart(flags(onlyRest));
+            const restartedId = yield* stackStart(flags(onlyRest)).pipe(
+              Effect.provide(cliConfigValuesTestLayer),
+            );
             expect(restartedId).toBe(stackId);
             const restarted = yield* api.open({ id: restartedId, ...locations(root) });
             const restAfter = (yield* restarted.services.list).find(

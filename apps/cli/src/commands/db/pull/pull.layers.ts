@@ -11,7 +11,7 @@ import {
   pgDeltaDbConfigRuntimeLayer,
 } from "../../../command-internal/pgdelta-engine-runtime.layer.ts";
 
-export const dbSchemaPullRuntimeLayer = (command: ReadonlyArray<string>) =>
+const dbSchemaPullRuntimeLayer = (command: ReadonlyArray<string>) =>
   Layer.mergeAll(
     pgDeltaDbConfigRuntimeLayer,
     pgDeltaCommandRuntimeLayer,
