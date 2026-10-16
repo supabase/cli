@@ -1,4 +1,5 @@
 import { StackError } from "@supabase/stack/effect";
+import { PlatformError } from "effect";
 import { describe, expect, it } from "vitest";
 import { LocalDbRunningError } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { DbSetupError } from "../../../command-internal/db-bootstrap/db-setup.ts";
@@ -79,13 +80,52 @@ describe("new stack error telemetry", () => {
     ).toMatchObject({ error_fingerprint: "tag:ExperimentalStackDestroyError:release_mismatch" });
   });
 
-  it("reports a kind from a newer release as unclassified instead of failing", () => {
-    const cause = new StackError({ operation: "start", message: "x", kind: "from-the-future" });
+  it("names an unclassified stack failure by its failed operation, or a newer kind as unclassified", () => {
+    const wrap = (operation: string) =>
+      new StackCommandStartError({
+        reason: "stack",
+        message: "x",
+        cause: new StackError({ operation, message: "x", kind: "from-the-future" }),
+      });
 
-    expect(classify(new StackCommandStartError({ reason: "stack", message: "x", cause }))).toEqual({
+    expect(classify(wrap("startComposition"))).toEqual({
+      error_fingerprint: "tag:ExperimentalStackStartError:unclassified_start_composition",
+      error_kind: "unknown",
+      error_category: "unknown",
+    });
+    expect(classify(wrap("a-newer-operation"))).toEqual({
       error_fingerprint: "tag:ExperimentalStackStartError:unclassified",
       error_kind: "unknown",
       error_category: "unknown",
+    });
+  });
+
+  it("fingerprints each start configuration check, and a directory failure by its cause", () => {
+    const configError = (configIssue: "saved-stack-changes" | "missing-credentials") =>
+      classify(new StackCommandStartError({ reason: "invalid-config", configIssue, message: "x" }));
+    const directoryError = new StackCommandStartError({
+      reason: "invalid-config",
+      configIssue: "project-directory",
+      message: "x",
+      cause: PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "makeDirectory",
+      }),
+    });
+
+    expect(configError("saved-stack-changes")).toEqual({
+      error_fingerprint: "tag:ExperimentalStackStartError:saved_stack_changes",
+      error_kind: "user_actionable",
+      error_category: "invalid_config",
+    });
+    expect(configError("missing-credentials")).toMatchObject({
+      error_fingerprint: "tag:ExperimentalStackStartError:missing_credentials",
+    });
+    expect(classify(directoryError)).toEqual({
+      error_fingerprint: "tag:ExperimentalStackStartError:filesystem",
+      error_kind: "user_actionable",
+      error_category: "permission",
     });
   });
 

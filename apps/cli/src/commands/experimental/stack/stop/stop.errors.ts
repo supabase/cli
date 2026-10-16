@@ -21,7 +21,7 @@ export class StackCommandStopError extends Data.TaggedError("ExperimentalStackSt
       case "invalid-config":
         return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
       case "stack":
-        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability;
+        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability(this.cause);
     }
   }
 }

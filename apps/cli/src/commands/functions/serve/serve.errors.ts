@@ -40,7 +40,7 @@ export class FunctionsServeStackError extends Data.TaggedError("FunctionsServeSt
           "runtime_stopped",
         );
       case "stack":
-        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability;
+        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability(this.cause);
     }
   }
 }

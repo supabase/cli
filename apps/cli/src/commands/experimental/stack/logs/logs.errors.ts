@@ -22,7 +22,7 @@ export class StackCommandLogsError extends Data.TaggedError("ExperimentalStackLo
       case "lifecycle":
         return { ...actionability.invalidConfig, fingerprint_suffix: "lifecycle" };
       case "stack":
-        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability;
+        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability(this.cause);
     }
   }
 }

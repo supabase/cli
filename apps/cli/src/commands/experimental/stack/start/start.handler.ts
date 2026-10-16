@@ -210,6 +210,7 @@ const loadStartConfig = Effect.fn("experimental.stack.start.loadConfig")(
     (error) =>
       new StackCommandStartError({
         reason: "invalid-config",
+        configIssue: "project-config",
         message: error.message,
         cause: error,
       }),
@@ -455,6 +456,7 @@ const incompatibleChange = (
     command: replannable ? undefined : command,
     error: new StackCommandStartError({
       reason: "invalid-config",
+      configIssue: "saved-stack-changes",
       message: `The saved stack cannot adopt these changes: ${lines.join("; ")}`,
       suggestion,
     }),
@@ -576,6 +578,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             (error) =>
               new StackCommandStartError({
                 reason: "invalid-config",
+                configIssue: "service-config",
                 message: error.message,
                 cause: error,
               }),
@@ -589,6 +592,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             (cause) =>
               new StackCommandStartError({
                 reason: "invalid-config",
+                configIssue: "functions-env",
                 message: cause.message,
                 cause,
               }),
@@ -818,6 +822,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       if (rootKey !== undefined && Redacted.value(rootKey) !== savedCredentials.postgresRootKey)
         return yield* new StackCommandStartError({
           reason: "invalid-config",
+          configIssue: "credentials-conflict",
           message: "The configured Postgres root key conflicts with the saved stack credentials",
         });
     }
@@ -834,6 +839,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             (cause) =>
               new StackCommandStartError({
                 reason: "invalid-config",
+                configIssue: "project-directory",
                 message: `Unable to create the Storage uploads directory: ${cause.message}`,
                 cause,
               }),
@@ -847,6 +853,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             (cause) =>
               new StackCommandStartError({
                 reason: "invalid-config",
+                configIssue: "project-directory",
                 message: `Unable to create the Functions directory: ${cause.message}`,
                 cause,
               }),
@@ -860,6 +867,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             (cause) =>
               new StackCommandStartError({
                 reason: "invalid-config",
+                configIssue: "project-directory",
                 message: `Unable to create the Studio snippets directory: ${cause.message}`,
                 cause,
               }),
@@ -980,6 +988,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     if (database === undefined)
       return yield* new StackCommandStartError({
         reason: "invalid-config",
+        configIssue: "missing-database",
         message: "The stack composition has no database service",
       });
     const preparation =
@@ -1002,6 +1011,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     if (stackCredentials === undefined)
       return yield* new StackCommandStartError({
         reason: "invalid-config",
+        configIssue: "missing-credentials",
         message: "The stack has no saved credentials",
       });
     if (initialComposition || serviceKindsChanged) {
