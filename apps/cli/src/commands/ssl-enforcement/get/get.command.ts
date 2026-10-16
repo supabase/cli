@@ -2,6 +2,10 @@ import { Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/go-output-flag.ts";
@@ -24,6 +28,15 @@ export type SslEnforcementGetFlags = CliCommand.Command.Config.Infer<typeof conf
 export const sslEnforcementGetCommand = Command.make("get", config).pipe(
   Command.withDescription("Get the current SSL enforcement configuration."),
   Command.withShortDescription("Get SSL enforcement configuration"),
+  withPermissions(
+    compose(
+      {
+        operations: [{ operationId: "v1-get-ssl-enforcement-config", kind: "required" }],
+      },
+      projectRefPicker,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // An invalid `-o` value must be rejected before the missing

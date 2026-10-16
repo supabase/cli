@@ -139,6 +139,10 @@ pins it. A hotfix PR opened before the upgrade appeared is left as is. Merge it 
 upgrade and the upgrade PR conflicts until the next run for that service rewrites it; merge the
 upgrade first and the hotfix PR is superseded and must be closed by hand.
 
+A service listed in the planner's `UPGRADE_HOLDS` never gets an upgrade: the planner warns with
+the hold's reason instead and still plans hotfixes for the pinned upstream. Removing the entry
+resumes upgrades; the manual `--release` invocation is unaffected.
+
 A service with a single pin and no engine variants has a single line, which accepts any comparable
 newer upstream: a Studio year rollover or a postgrest major bump moves that line forward. Only
 postgres, which has additional pins and engine variants, assigns each release tag to a line, even

@@ -1,6 +1,7 @@
 import { Layer } from "effect";
 import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
 import { Argument, Command, Flag } from "effect/cli";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { FUNCTIONS_SERVE_INSPECT_MODES } from "../../../shared/functions/serve.ts";
@@ -68,6 +69,18 @@ const commandConfig = {
 export const functionsServeCommand = Command.make("serve", commandConfig).pipe(
   Command.withDescription("Serve all Functions locally."),
   Command.withShortDescription("Serve all Functions locally"),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: [
+      "no-verify-jwt",
+      "env-file",
+      "import-map",
+      "inspect",
+      "inspect-mode",
+      "inspect-main",
+      "all",
+    ],
+  }),
   Command.withHandler((flags) =>
     functionsServe(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),

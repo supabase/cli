@@ -452,6 +452,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       cacheRoot: options.cacheRoot,
       runtime,
       helpers,
+      claimNativePort: network.claimNativePort,
       ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
       ...(options.engineTarget === undefined ? {} : { engineTarget: options.engineTarget }),
     }).pipe(Effect.provideContext(services));

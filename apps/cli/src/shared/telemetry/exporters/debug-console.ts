@@ -1,4 +1,4 @@
-import { Cause, DateTime, Effect, Exit, Option, Schema } from "effect";
+import { Cause, DateTime, Effect, Exit, Option, Predicate, Schema } from "effect";
 import type { PlatformError, Tracer } from "effect";
 import type { TraceSanitizer } from "../trace-sanitize.ts";
 
@@ -30,7 +30,11 @@ const isSameSpan = (span: Tracer.AnySpan, other: Option.Option<Tracer.AnySpan>):
 function spanDepth(span: Tracer.Span, root: Option.Option<Tracer.AnySpan>): number {
   let depth = 0;
   let parent = span.parent;
-  while (Option.isSome(parent) && parent.value._tag === "Span" && !isSameSpan(parent.value, root)) {
+  while (
+    Option.isSome(parent) &&
+    Predicate.isTagged(parent.value, "Span") &&
+    !isSameSpan(parent.value, root)
+  ) {
     depth += 1;
     parent = parent.value.parent;
   }
@@ -39,7 +43,7 @@ function spanDepth(span: Tracer.Span, root: Option.Option<Tracer.AnySpan>): numb
 
 function spanFailed(span: Tracer.Span): boolean {
   return (
-    span.status._tag === "Ended" &&
+    Predicate.isTagged(span.status, "Ended") &&
     Exit.isFailure(span.status.exit) &&
     !Cause.hasInterruptsOnly(span.status.exit.cause)
   );
@@ -51,7 +55,7 @@ export const formatSpanForDebugConsole = Effect.fnUntraced(function* (
   root: Option.Option<Tracer.AnySpan> = Option.none(),
 ) {
   const status = span.status;
-  if (status._tag !== "Ended") return Option.none<string>();
+  if (!Predicate.isTagged(status, "Ended")) return Option.none<string>();
   const depth = spanDepth(span, root);
   const failed = spanFailed(span);
   if (depth > MAX_PRINTED_DEPTH && !failed) return Option.none<string>();

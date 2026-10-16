@@ -1,6 +1,7 @@
 import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
@@ -38,6 +39,7 @@ const functionsNewRuntimeLayer = Layer.mergeAll(
 export const functionsNewCommand = Command.make("new", config).pipe(
   Command.withDescription("Create a new Function locally."),
   Command.withShortDescription("Create a new Function locally"),
+  withPermissions({ operations: [], noApiEffectFlags: ["auth"] }),
   Command.withHandler((flags) =>
     functionsNew(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),

@@ -8,6 +8,8 @@ import {
   computeRoute,
   COMPUTE_PROJECT_REF,
 } from "../../../../../tests/helpers/compute.ts";
+import { assertPermissionDrift } from "../../../../../tests/helpers/permission-drift.ts";
+import { projectResponse } from "../../../../../tests/helpers/permission-real-layers.ts";
 import { ProjectRefNotLinkedError } from "../../../../config/project-ref.errors.ts";
 import { ComputeEnvNotSupportedError } from "../compute.errors.ts";
 import {
@@ -38,7 +40,7 @@ describe("compute list", () => {
   it.effect("shows configured and deployed compute as one inventory", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer, out } = setupCompute({
+      const { layer, out, http } = setupCompute({
         workdir: repo.dir,
         routes: {
           [listRoute]: {
@@ -75,6 +77,56 @@ describe("compute list", () => {
         expect(stdout).not.toContain("https://");
         expect(rows[1]).toContain("sandbox");
         expect(rows[2]).toContain("not deployed");
+        expect(http.routeKeys).toEqual([listRoute]);
+        assertPermissionDrift({
+          command: "compute list",
+          variant: { computeEnabled: true },
+          requests: http.driftRequests,
+          exact: true,
+        });
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("picks the project, lists its compute and records the linked project", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out, http } = setupCompute({
+        workdir: repo.dir,
+        realLayers: true,
+        interactive: true,
+        promptSelectResponses: [COMPUTE_PROJECT_REF],
+        routes: {
+          "GET /v1/projects": { status: 200, body: [projectResponse(COMPUTE_PROJECT_REF)] },
+          [`GET /v1/projects/${COMPUTE_PROJECT_REF}`]: {
+            status: 200,
+            body: projectResponse(COMPUTE_PROJECT_REF),
+          },
+          [listRoute]: {
+            status: 200,
+            body: { data: [computeResource({ name: "api", runtime: "node" })] },
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* computeList({ projectRef: Option.none() });
+
+        expect(http.routeKeys).toEqual([
+          "GET /v1/projects",
+          listRoute,
+          `GET /v1/projects/${COMPUTE_PROJECT_REF}`,
+        ]);
+        expect(out.promptSelectCalls).toHaveLength(1);
+        expect(out.stdoutText).toContain("api");
+        expect(yield* fs.exists(`${repo.dir}/supabase/.temp/linked-project.json`)).toBe(true);
+        assertPermissionDrift({
+          command: "compute list",
+          variant: { computeEnabled: true },
+          requests: http.driftRequests,
+          exact: true,
+        });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -439,7 +491,7 @@ describe("compute list", () => {
   it.effect("surfaces an unexpected status rather than showing an empty list", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer } = setupCompute({
+      const { layer, http } = setupCompute({
         workdir: repo.dir,
         routes: { [listRoute]: { status: 500, body: { message: "boom" } } },
       });
@@ -448,6 +500,12 @@ describe("compute list", () => {
         const error = yield* computeList({ projectRef: Option.none() }).pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(ComputeApiUnexpectedStatusError);
+        expect(http.routeKeys).toEqual([listRoute]);
+        assertPermissionDrift({
+          command: "compute list",
+          variant: { computeEnabled: true },
+          requests: http.driftRequests,
+        });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -467,6 +525,13 @@ describe("compute list", () => {
         yield* computeList({ projectRef: Option.some("qrstuvwxyzabcdefghij") });
 
         expect(http.routeKeys).toEqual(["GET /v2/projects/qrstuvwxyzabcdefghij/compute"]);
+        assertPermissionDrift({
+          command: "compute list",
+          variant: { computeEnabled: true },
+          activeFlags: { "project-ref": "qrstuvwxyzabcdefghij" },
+          requests: http.driftRequests,
+          exact: true,
+        });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );

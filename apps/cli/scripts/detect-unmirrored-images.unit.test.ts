@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  inspectResultIsMirrored,
   MIRROR_REGISTRIES,
   mirrorImageTarget,
   mirrorImageTargets,
@@ -58,5 +59,22 @@ describe("detect unmirrored images", () => {
 
     expect(missing).toEqual([]);
     expect(mirrored).toEqual(["postgrest/postgrest:v14.14", "supabase/logflare:1.45.6"]);
+  });
+
+  test("only a registry not-found marks an image as unmirrored", () => {
+    const target = "public.ecr.aws/supabase/realtime:v2.144.2";
+
+    expect(inspectResultIsMirrored(target, 0, "")).toBe(true);
+    expect(inspectResultIsMirrored(target, 1, `ERROR: ${target}: not found\n`)).toBe(false);
+  });
+
+  test("a failed registry probe aborts detection with the registry error", () => {
+    const target = "public.ecr.aws/supabase/realtime:v2.144.2";
+    const stderr =
+      'ERROR: failed to do request: Head "https://public.ecr.aws/v2/supabase/realtime/manifests/v2.144.2": dial tcp: i/o timeout\n';
+
+    expect(() => inspectResultIsMirrored(target, 1, stderr)).toThrow(
+      `could not inspect ${target} (exit 1): ${stderr.trim()}`,
+    );
   });
 });

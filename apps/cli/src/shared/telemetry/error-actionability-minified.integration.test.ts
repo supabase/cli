@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 const encodeSpecifier = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 
 describe("release-minified error fingerprints", () => {
-  it.live("keeps a declared tagged error's source identifier", () =>
+  it.effect("keeps a declared tagged error's source identifier", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;

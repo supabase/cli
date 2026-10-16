@@ -9,6 +9,7 @@ import {
   Fiber,
   Path,
   PlatformError,
+  Predicate,
   Ref,
   Result,
   Schema,
@@ -160,12 +161,12 @@ describe("writeTelemetryConfig", () => {
             expect(platformError.reason.description).toContain("EACCES");
             expect(platformError.reason.description).not.toContain("FileSystem.rename");
           }
-          expect(
+          const wrapsPermissionDenied =
             platformError instanceof PlatformError.PlatformError &&
-              platformError.reason._tag === "PermissionDenied" &&
-              platformError.cause instanceof PlatformError.PlatformError &&
-              platformError.cause.cause === originalCause,
-          ).toBe(true);
+            Predicate.isTagged(platformError.reason, "PermissionDenied") &&
+            platformError.cause instanceof PlatformError.PlatformError &&
+            platformError.cause.cause === originalCause;
+          expect(wrapsPermissionDenied).toBe(true);
         }
       }
       expect(yield* Ref.get(calls)).toBe(13);

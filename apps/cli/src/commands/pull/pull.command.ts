@@ -2,7 +2,17 @@ import { Option } from "effect";
 import type * as CliCommand from "effect/cli/Command";
 import { Command, Flag } from "effect/cli";
 
+import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose, withCondition } from "../../command-internal/command-permissions/model.ts";
+import { configPullRun } from "../../command-internal/config-pull-run.ts";
+import {
+  dbConfigLinked,
+  dbConfigPoolerFallbackLinked,
+} from "../../command-internal/db-config.layer.ts";
+import { configTarget } from "../../command-internal/project-target.ts";
 import { PROJECT_REF_PATTERN } from "../../config/project-ref.service.ts";
+import { functionsDownload } from "../../shared/functions/download.ts";
+import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { GLOBAL_OUTPUT_FORMATS } from "../../command-internal/global-flags.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
@@ -40,6 +50,10 @@ const config = {
     Flag.withDefault(false),
   ),
 } as const;
+
+// `--dry-run` returns after the target and config reads, so the database and function steps run
+// only without it.
+const stepsRun = { flag: "dry-run", is: false } as const;
 
 export type PullFlags = CliCommand.Command.Config.Infer<typeof config>;
 
@@ -82,6 +96,28 @@ export const pullCommand = Command.make("pull", config).pipe(
       description: "Preview what would be pulled without writing anything",
     },
   ]),
+  withPermissions(
+    compose(
+      configTarget,
+      configPullRun,
+      linkedProjectCache,
+      {
+        operations: [
+          {
+            operationId: "v1-get-pooler-config",
+            kind: "required",
+            when: [stepsRun],
+            context:
+              "the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url; the database steps get the resolved ref, so this needs no --project-ref",
+          },
+        ],
+        noApiEffectFlags: ["remote-label", "force", "with-migration-history"],
+      },
+      withCondition(dbConfigLinked, stepsRun),
+      withCondition(dbConfigPoolerFallbackLinked, stepsRun),
+      withCondition(functionsDownload, stepsRun),
+    ),
+  ),
   Command.withHandler(pullHandler),
   Command.provide(pullRuntimeLayer),
 );

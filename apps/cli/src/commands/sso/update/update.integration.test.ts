@@ -16,7 +16,6 @@ import {
 } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import {
   mockAnalytics,
   mockOutput,
@@ -1510,9 +1509,6 @@ describe("sso update integration", () => {
     return path;
   });
 
-  const withProfileEnv = <A, E, R>(value: string | undefined, body: Effect.Effect<A, E, R>) =>
-    withEnvVar("SUPABASE_PROFILE", value, body);
-
   it.effect(
     "profile emulation: repeated --profile resolves last-wins — GET and PUT both target the last file's host",
     () =>
@@ -1536,7 +1532,7 @@ describe("sso update integration", () => {
           expect(get?.headers["authorization"]).toMatch(/^Bearer sbp_/);
           expect(put?.headers["authorization"]).toMatch(/^Bearer sbp_/);
           expect(cache.cachedApiUrl).toBe("http://second.example");
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+        }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1568,7 +1564,7 @@ describe("sso update integration", () => {
           expect(dump).toContain("Access token not provided. Supply an access token by running");
         }
         expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+      }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1604,7 +1600,7 @@ describe("sso update integration", () => {
           expect(dump).not.toContain("Access token not provided");
         }
         expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+      }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1623,7 +1619,7 @@ describe("sso update integration", () => {
           expect(dump).toContain(`failed to read profile: Unsupported Config Type ""`);
         }
         expect(api.requests.length).toBe(0);
-      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -1661,7 +1657,7 @@ describe("sso update integration", () => {
             requests: api.requests,
             apiUrl: "http://second.example",
           });
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+        }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1682,6 +1678,6 @@ describe("sso update integration", () => {
         ).toBe(false);
       }
       expect(api.requests.length).toBe(0);
-    }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+    }).pipe(Effect.provide(layer));
   });
 });

@@ -1,6 +1,7 @@
 import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { dbBranchCreate } from "./create.handler.ts";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {
   branchName: Argument.String("branch name").pipe(
@@ -13,5 +14,6 @@ export type DbBranchCreateFlags = CliCommand.Command.Config.Infer<typeof config>
 export const dbBranchCreateCommand = Command.make("create", config).pipe(
   Command.withDescription("Create a branch."),
   Command.withShortDescription("Create a branch"),
+  withPermissions({ status: "unmapped", reason: "go-delegated" }),
   Command.withHandler((flags) => dbBranchCreate(flags)),
 );

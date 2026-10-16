@@ -1,6 +1,7 @@
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { genKeys } from "./keys.handler.ts";
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {
   projectRef: Flag.String("project-ref").pipe(
@@ -20,5 +21,6 @@ export const genKeysCommand = Command.make("keys", config).pipe(
     'Generate keys for preview branch. Deprecated: use "gen signing-key" instead.',
   ),
   Command.withShortDescription("Generate keys for preview branch (experimental)"),
+  withPermissions({ status: "unmapped", reason: "go-delegated" }),
   Command.withHandler((flags) => genKeys(flags)),
 );

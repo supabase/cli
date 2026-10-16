@@ -31,7 +31,7 @@ const writeHead = Effect.fnUntraced(function* (root: string, contents: string) {
 });
 
 describe("detectGitBranch", () => {
-  it.live("returns $GITHUB_HEAD_REF when set", () =>
+  it.effect("returns $GITHUB_HEAD_REF when set", () =>
     Effect.gen(function* () {
       const root = yield* makeTempDir("git-branch-ci-");
       const got = yield* detectGitBranch().pipe(
@@ -41,7 +41,7 @@ describe("detectGitBranch", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("ignores an empty $GITHUB_HEAD_REF and falls back to .git/HEAD", () =>
+  it.effect("ignores an empty $GITHUB_HEAD_REF and falls back to .git/HEAD", () =>
     Effect.gen(function* () {
       const root = yield* makeTempDir("git-branch-empty-ref-");
       yield* writeHead(root, "ref: refs/heads/feature-x\n");
@@ -52,7 +52,7 @@ describe("detectGitBranch", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("parses ref: refs/heads/<name> from .git/HEAD in CWD", () =>
+  it.effect("parses ref: refs/heads/<name> from .git/HEAD in CWD", () =>
     Effect.gen(function* () {
       const root = yield* makeTempDir("git-branch-");
       yield* writeHead(root, "ref: refs/heads/feature-x\n");
@@ -61,7 +61,7 @@ describe("detectGitBranch", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("walks up parent directories until .git/HEAD is found", () =>
+  it.effect("walks up parent directories until .git/HEAD is found", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -74,7 +74,7 @@ describe("detectGitBranch", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("returns none when no .git/HEAD is ever found", () =>
+  it.effect("returns none when no .git/HEAD is ever found", () =>
     Effect.gen(function* () {
       const root = yield* makeTempDir("git-branch-none-");
       const got = yield* detectGitBranch().pipe(Effect.provide(withCwd(root)));
@@ -82,7 +82,7 @@ describe("detectGitBranch", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("returns none when .git/HEAD points at a detached commit (no ref: line)", () =>
+  it.effect("returns none when .git/HEAD points at a detached commit (no ref: line)", () =>
     Effect.gen(function* () {
       const root = yield* makeTempDir("git-branch-detached-");
       yield* writeHead(root, "deadbeef\n");
@@ -91,7 +91,7 @@ describe("detectGitBranch", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("walks from an explicit startDir instead of the runtime CWD", () =>
+  it.effect("walks from an explicit startDir instead of the runtime CWD", () =>
     Effect.gen(function* () {
       // The project repo (with .git/HEAD) is the startDir; the runtime CWD is an
       // unrelated dir with no repo, mirroring `supabase --workdir <project>` run
@@ -104,7 +104,7 @@ describe("detectGitBranch", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("resolves a worktree's `.git` gitlink file to its own HEAD", () =>
+  it.effect("resolves a worktree's `.git` gitlink file to its own HEAD", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -122,7 +122,7 @@ describe("detectGitBranch", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("resolves a relative gitdir in a `.git` gitlink against its directory", () =>
+  it.effect("resolves a relative gitdir in a `.git` gitlink against its directory", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -136,7 +136,7 @@ describe("detectGitBranch", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("stops at the nearest .git instead of a detached HEAD's parent checkout", () =>
+  it.effect("stops at the nearest .git instead of a detached HEAD's parent checkout", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
