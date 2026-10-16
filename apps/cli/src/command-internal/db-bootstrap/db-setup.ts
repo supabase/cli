@@ -439,12 +439,10 @@ const runStartMigrateJob = Effect.fn("DbSetup.runMigrateJob")(function* (
       ),
     );
   if (result.exitCode !== 0) {
-    return yield* Effect.fail(
-      new DbSetupError({
-        message: `error running container: exit ${result.exitCode}`,
-        reason: "database",
-      }),
-    );
+    return yield* new DbSetupError({
+      message: `error running container: exit ${result.exitCode}`,
+      reason: "database",
+    });
   }
 });
 
@@ -709,43 +707,24 @@ export const removeDatabaseWebhooks = Effect.fnUntraced(function* (
  * separately from {@link startSetupLocalDatabase} because callers invoke it unconditionally, not
  * just on a fresh volume.
  */
-export const startInitCurrentBranch = Effect.fnUntraced(function* (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  workdir: string,
-) {
-  const currentBranchPath = path.join(workdir, "supabase", ".branches", "_current_branch");
-  const exists = yield* fs.exists(currentBranchPath).pipe(
-    Effect.mapError(
-      (error) =>
-        new DbSetupError({
-          message: `failed init current branch: ${errMessage(error)}`,
-          reason: "filesystem",
-        }),
-    ),
-  );
-  if (exists) return;
-  yield* fs.makeDirectory(path.dirname(currentBranchPath), { recursive: true }).pipe(
-    Effect.mapError(
-      (error) =>
-        new DbSetupError({
-          message: `failed init current branch: ${errMessage(error)}`,
-          reason: "filesystem",
-        }),
-    ),
-  );
-  // Explicit mode: without it, `writeFileString` falls back to Node's default (`0666` before the
-  // umask), which under a permissive umask could leave this file group/world-writable.
-  yield* fs.writeFileString(currentBranchPath, "main", { mode: 0o644 }).pipe(
-    Effect.mapError(
-      (error) =>
-        new DbSetupError({
-          message: `failed init current branch: ${errMessage(error)}`,
-          reason: "filesystem",
-        }),
-    ),
-  );
-});
+export const startInitCurrentBranch = Effect.fnUntraced(
+  function* (fs: FileSystem.FileSystem, path: Path.Path, workdir: string) {
+    const currentBranchPath = path.join(workdir, "supabase", ".branches", "_current_branch");
+    const exists = yield* fs.exists(currentBranchPath);
+    if (exists) return;
+    yield* fs.makeDirectory(path.dirname(currentBranchPath), { recursive: true });
+    // Explicit mode: without it, `writeFileString` falls back to Node's default (`0666` before the
+    // umask), which under a permissive umask could leave this file group/world-writable.
+    yield* fs.writeFileString(currentBranchPath, "main", { mode: 0o644 });
+  },
+  Effect.mapError(
+    (error) =>
+      new DbSetupError({
+        message: `failed init current branch: ${errMessage(error)}`,
+        reason: "filesystem",
+      }),
+  ),
+);
 
 export interface ApplyDatabaseOverlayInput {
   readonly webhooksEnabled: boolean;
@@ -945,36 +924,35 @@ export interface FreshDbSetupInput<E> {
   readonly debug: boolean;
 }
 
-const connectLocalPostgres = (input: {
+const connectLocalPostgres = Effect.fn("DbSetup.connectLocalPostgres")(function* (input: {
   readonly hostname: string;
   readonly dbPort: number;
   readonly password: string;
-}) =>
-  Effect.gen(function* () {
-    const dbConnection = yield* DbConnection;
-    let attempts = 0;
-    return yield* Effect.suspend(() => {
-      attempts += 1;
-      return dbConnection.connect(
-        {
-          host: input.hostname,
-          port: input.dbPort,
-          user: "postgres",
-          password: input.password,
-          database: "postgres",
-        },
-        { isLocal: true, dnsResolver: "native" },
-      );
-    }).pipe(
-      Effect.retry({
-        schedule: Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(10)]),
-        while: (error) => error.retryable === true,
-      }),
-      Effect.ensuring(
-        Effect.suspend(() => Effect.annotateCurrentSpan("retry.attempt_count", attempts)),
-      ),
+}) {
+  const dbConnection = yield* DbConnection;
+  let attempts = 0;
+  return yield* Effect.suspend(() => {
+    attempts += 1;
+    return dbConnection.connect(
+      {
+        host: input.hostname,
+        port: input.dbPort,
+        user: "postgres",
+        password: input.password,
+        database: "postgres",
+      },
+      { isLocal: true, dnsResolver: "native" },
     );
-  }).pipe(Effect.withSpan("DbSetup.connectLocalPostgres"));
+  }).pipe(
+    Effect.retry({
+      schedule: Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(10)]),
+      while: (error) => error.retryable === true,
+    }),
+    Effect.ensuring(
+      Effect.suspend(() => Effect.annotateCurrentSpan("retry.attempt_count", attempts)),
+    ),
+  );
+});
 
 /** Converges pg_net while preserving extensions installed by user migrations. */
 export const runDatabaseWebhooksSetup = (input: {

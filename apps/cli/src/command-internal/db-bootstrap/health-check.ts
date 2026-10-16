@@ -315,7 +315,7 @@ export function waitForHealthyServices(
         );
         stillWatching = failures.map((failure) => failure.containerId);
         if (failures.length > 0) {
-          return yield* Effect.fail(new HealthCheckProbeError({ failures }));
+          return yield* new HealthCheckProbeError({ failures });
         }
       },
     ).pipe(Effect.withTracerEnabled(false), Effect.provideService(ChildTracePropagation, false));
@@ -342,15 +342,13 @@ export function waitForHealthyServices(
             opts.images,
             scans.find((scan) => scan.runtime !== undefined)?.runtime ?? "docker",
           );
-          return yield* Effect.fail(
-            new HealthCheckTimeoutError({
-              message: probeError.failures
-                .map((failure) => `${failure.containerId} ${failure.reason}`)
-                .join("\n"),
-              unhealthy: probeError.failures,
-              ...(suggestion === undefined ? {} : { suggestion }),
-            }),
-          );
+          return yield* new HealthCheckTimeoutError({
+            message: probeError.failures
+              .map((failure) => `${failure.containerId} ${failure.reason}`)
+              .join("\n"),
+            unhealthy: probeError.failures,
+            ...(suggestion === undefined ? {} : { suggestion }),
+          });
         }),
       ),
       Effect.ensuring(
@@ -482,13 +480,11 @@ export function waitForShadowReady(
                   scan.runtime ?? "docker",
                 )
               : undefined;
-          return yield* Effect.fail(
-            new HealthCheckTimeoutError({
-              message: `${containerId} ${failure.reason}`,
-              unhealthy: [{ containerId, reason: failure.reason }],
-              ...(suggestion === undefined ? {} : { suggestion }),
-            }),
-          );
+          return yield* new HealthCheckTimeoutError({
+            message: `${containerId} ${failure.reason}`,
+            unhealthy: [{ containerId, reason: failure.reason }],
+            ...(suggestion === undefined ? {} : { suggestion }),
+          });
         }),
       ),
       Effect.ensuring(
