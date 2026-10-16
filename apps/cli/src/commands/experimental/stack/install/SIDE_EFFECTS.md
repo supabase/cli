@@ -17,6 +17,10 @@ project lease `supabase/.supabase.lock.lease`:
 - `--frozen`, or the `CI` environment variable (not empty, `false` or `0`) with an existing lock,
   fails instead of writing: a missing lock fails with `supabase/supabase.lock not found`, a stale one
   with `is stale for: <service> (<reason>)`. Nothing is downloaded after a lock failure.
+- A `linked` service follows the hosted version `supabase link` recorded, resolved on the release
+  host only; install never calls the Management API or needs a login. A `.link.json` that targets
+  another remote than the lock observed, or a newer bundled revision of a locked version, prints a
+  warning (see `start`).
 - A project without `supabase/config.toml` uses the versions bundled with the CLI and writes no lock;
   with `--frozen` it fails with `supabase/supabase.lock not found` instead, before anything is downloaded.
   With `CI` set and an existing lock but no `supabase/config.toml`, the lock cannot be checked, so it

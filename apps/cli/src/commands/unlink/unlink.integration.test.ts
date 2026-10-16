@@ -2,8 +2,22 @@ import { LegacyProjectState } from "../../command-internal/legacy-project-state.
 import { legacyProjectStateLayer } from "../../command-internal/legacy-project-state.layer.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { holdLock } from "@supabase/stack/effect";
+import {
+  Cause,
+  Clock,
+  Effect,
+  Exit,
+  FileSystem,
+  Fiber,
+  Layer,
+  Option,
+  Path,
+  Queue,
+  Scope,
+} from "effect";
 import { badArgument } from "effect/PlatformError";
+import { TestClock } from "effect/testing";
 import * as HttpClient from "effect/http/HttpClient";
 
 import { mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
@@ -235,6 +249,95 @@ describe("unlink integration", () => {
         expect(yield* linkDocumentExists(workdir)).toBe(false);
         expect(credentials.deletedRefs).toEqual(["branchprojectrefabcd"]);
         expect(out.stdoutText).toContain("Finished supabase unlink.");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("reports not linked without creating supabase/ when the project has none", () => {
+      const { layer, credentials, workdir } = setup({ stack: true });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        const error = yield* unlink().pipe(Effect.flip);
+
+        expect(error).toMatchObject({ _tag: "ProjectRefNotLinkedError" });
+        expect(yield* fs.exists(path.join(workdir, "supabase"))).toBe(false);
+        expect(credentials.deletedRefs).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("fails on a busy project lease before removing the link or its credential", () => {
+      const { layer, credentials, workdir } = setup({ stack: true });
+      return Effect.gen(function* () {
+        yield* seedLinkDocument(workdir, VALID_REF);
+        yield* holdLock(`${workdir}/supabase/.supabase.lock.lease`, "1 hour", "supabase.lock");
+        // The lease wait runs on the test clock; the lock stays held, so the outcome is fixed.
+        yield* TestClock.adjust("1 second").pipe(
+          Effect.andThen(Effect.yieldNow),
+          Effect.forever,
+          Effect.forkScoped,
+        );
+
+        const error = yield* unlink().pipe(Effect.flip);
+
+        expect(error).toMatchObject({ _tag: "LockResolutionError", reason: "lease-busy" });
+        expect(yield* linkDocumentExists(workdir)).toBe(true);
+        expect(credentials.deletedRefs).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("acts on the link document it reads under the lease, not one read before it", () => {
+      const { layer, out, credentials, workdir } = setup({ stack: true });
+      return Effect.gen(function* () {
+        const concurrentLink = yield* Scope.make();
+        yield* seedLinkDocument(workdir, "firstprojectrefabcdef");
+        yield* holdLock(`${workdir}/supabase/.supabase.lock.lease`, "1 hour", "supabase.lock").pipe(
+          Scope.provide(concurrentLink),
+        );
+        // Each sleep the lease wait registers on the test clock is announced here.
+        const sleeps = yield* Queue.unbounded<void>();
+        const unlinking = yield* Clock.clockWith((clock) =>
+          unlink().pipe(
+            Effect.provideService(Clock.Clock, {
+              currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
+              currentTimeMillis: clock.currentTimeMillis,
+              currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+              currentTimeNanos: clock.currentTimeNanos,
+              monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+              monotonicTimeNanos: clock.monotonicTimeNanos,
+              sleep: (duration) =>
+                Queue.offer(sleeps, undefined).pipe(Effect.andThen(clock.sleep(duration))),
+            }),
+            Effect.forkScoped,
+          ),
+        );
+
+        yield* Queue.take(sleeps);
+
+        yield* seedLinkDocument(workdir, "secondprojectrefabcde");
+        yield* Scope.close(concurrentLink, Exit.void);
+        const wakeOnEachSleep = TestClock.adjust("50 millis").pipe(
+          Effect.andThen(Queue.take(sleeps)),
+          Effect.forever,
+        );
+        yield* Effect.race(Fiber.join(unlinking), wakeOnEachSleep);
+
+        expect(out.stderrText).toContain("Unlinking project: secondprojectrefabcde");
+        expect(credentials.deletedRefs).toEqual(["secondprojectrefabcde"]);
+        expect(yield* linkDocumentExists(workdir)).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("leaves supabase/supabase.lock untouched", () => {
+      const { layer, workdir } = setup({ stack: true });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const lock = path.join(workdir, "supabase", "supabase.lock");
+        yield* seedLinkDocument(workdir, VALID_REF);
+        yield* fs.writeFileString(lock, '{"linked":"kept"}\n');
+        yield* unlink();
+        expect(yield* fs.readFileString(lock)).toBe('{"linked":"kept"}\n');
       }).pipe(Effect.provide(layer));
     });
 

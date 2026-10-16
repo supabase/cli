@@ -91,6 +91,7 @@ const stackOutdatedCommand = stackOutdatedCommandBase.pipe(
 );
 const stackUpdateCommand = stackUpdateCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "update"])),
+  Command.provide(stackStartRuntimeLayer),
 );
 
 export const stackCommand = Command.make("stack").pipe(

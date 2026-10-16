@@ -1,4 +1,4 @@
-import { Effect, Option, Predicate, Result } from "effect";
+import { Effect, FileSystem, Option, Path, Predicate, Result } from "effect";
 
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import { CredentialDeleteError } from "../../auth/errors.ts";
@@ -10,6 +10,7 @@ import { Output } from "../../shared/output/output.service.ts";
 import { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
 import { currentProjectStateMode } from "../../command-internal/project-state-mode.ts";
 import { readProjectLink, removeProjectLink } from "../../command-internal/project-link.ts";
+import { withProjectLease } from "../../command-internal/stack-lock.ts";
 import { UnlinkRefReadError, UnlinkTempRemovalError } from "./unlink.errors.ts";
 
 const readLegacyLinkRef = Effect.fn("unlink.readLegacyRef")(function* (
@@ -62,10 +63,13 @@ export const unlink = Effect.fn("unlink")(function* () {
   const legacyState = yield* LegacyProjectState;
   const workdir = cliSettings.workdir;
   const stackState = (yield* currentProjectStateMode) === "stack";
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
-  yield* Effect.gen(function* () {
+  const run = Effect.gen(function* () {
     // 1. Load the linked project ref. An absent file means not-linked; any other
-    // read failure surfaces verbatim.
+    // read failure surfaces verbatim. In stack mode the read, the removal, and the credential
+    // delete share one project lease, so a concurrent `link` cannot swap the target in between.
     const projectRef = stackState
       ? yield* readStackLinkRef(workdir)
       : yield* readLegacyLinkRef(legacyState, workdir);
@@ -81,25 +85,25 @@ export const unlink = Effect.fn("unlink")(function* () {
     // attempted regardless of either failing; their errors are joined below.
     const collected: Array<UnlinkTempRemovalError | CredentialDeleteError> = [];
 
-    const removed = yield* (
-      stackState
-        ? removeProjectLink(workdir).pipe(
-            Effect.mapError(
-              (cause) =>
-                new UnlinkTempRemovalError({
-                  message: `failed to remove project link: ${cause.message}`,
-                }),
-            ),
-          )
-        : legacyState.removeAll(workdir).pipe(
-            Effect.mapError(
-              (cause) =>
-                new UnlinkTempRemovalError({
-                  message: `failed to remove temp directory: ${String(cause)}`,
-                }),
-            ),
-          )
-    ).pipe(Effect.result);
+    const removed = yield* stackState
+      ? removeProjectLink(workdir).pipe(
+          Effect.mapError(
+            (cause) =>
+              new UnlinkTempRemovalError({
+                message: `failed to remove project link: ${cause.message}`,
+              }),
+          ),
+          Effect.result,
+        )
+      : legacyState.removeAll(workdir).pipe(
+          Effect.mapError(
+            (cause) =>
+              new UnlinkTempRemovalError({
+                message: `failed to remove temp directory: ${String(cause)}`,
+              }),
+          ),
+          Effect.result,
+        );
     if (Result.isFailure(removed)) collected.push(removed.failure);
 
     if (projectRef !== undefined) {
@@ -127,5 +131,18 @@ export const unlink = Effect.fn("unlink")(function* () {
     } else {
       yield* output.success("", { project_ref: projectRef ?? null });
     }
-  }).pipe(Effect.ensuring(telemetryState.flush));
+  });
+
+  // The lease file lives in `supabase/`; without it no link exists, and nothing is read unleased.
+  const hasProjectDir =
+    stackState &&
+    (yield* fs.exists(path.join(workdir, "supabase")).pipe(Effect.orElseSucceed(() => true)));
+  // A busy project lease fails the command before anything is read or removed.
+  yield* (
+    !stackState
+      ? run
+      : hasProjectDir
+        ? withProjectLease(workdir, run)
+        : Effect.fail(new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
+  ).pipe(Effect.ensuring(telemetryState.flush));
 });

@@ -26,9 +26,6 @@
         "branch": {
           "type": "object",
           "properties": {
-            "name": {
-              "type": "string"
-            },
             "ref": {
               "type": "string"
             },
@@ -37,7 +34,6 @@
             }
           },
           "required": [
-            "name",
             "ref",
             "isDefault"
           ],

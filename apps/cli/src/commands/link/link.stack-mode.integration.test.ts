@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
+import { holdLock } from "@supabase/stack/effect";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
+import { TestClock } from "effect/testing";
 
 import { mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
@@ -83,10 +85,12 @@ const FEATURE_BRANCH: (typeof V1ListAllBranchesOutput.Type)[number] = {
   with_data: true,
 };
 
-// Stack mode never probes tenant services, so any tenant request fails the test loudly.
+// These projects have no supabase/config.toml, so there is no lock to record and no tenant probe.
 const noTenantHttp = Layer.succeed(
   HttpClient.HttpClient,
-  HttpClient.make(() => Effect.die("stack-mode link must not call tenant endpoints")),
+  HttpClient.make(() =>
+    Effect.die("stack-mode link without a config must not call tenant endpoints"),
+  ),
 );
 
 const tempRoot = useTempWorkdir("supabase-link-stack-int-");
@@ -125,6 +129,7 @@ const flags = (overrides: Partial<LinkFlags> = {}): LinkFlags => ({
   projectRef: Option.some(VALID_REF),
   password: Option.none(),
   skipPooler: false,
+  frozen: false,
   ...overrides,
 });
 
@@ -191,6 +196,37 @@ describe("link integration in stack mode", () => {
       expect(yield* fs.readFileString(outside)).toBe("[user]\n\tname = kept\n");
       expect(yield* fs.readLink(gitignore)).toBe(outside);
       expect(Option.isSome(yield* readProjectLink(workdir))).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails on a busy project lease without replacing the existing link", () => {
+    const { layer, workdir } = setup();
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      yield* seedLink(workdir, {
+        project: { ref: "previousprojectrefabc" },
+        active_branch: { ref: "previousprojectrefabc" },
+        fetchedAt: "2026-01-01T00:00:00.000Z",
+      });
+      yield* holdLock(
+        path.join(workdir, "supabase", ".supabase.lock.lease"),
+        "1 hour",
+        "supabase.lock",
+      );
+
+      // The lease wait runs on the test clock; the lock stays held, so the outcome is fixed.
+      const error = yield* link(flags()).pipe(
+        Effect.flip,
+        Effect.raceFirst(
+          TestClock.adjust("61 seconds").pipe(Effect.andThen(Effect.yieldNow), Effect.forever),
+        ),
+      );
+
+      expect(error).toMatchObject({ _tag: "LockResolutionError", reason: "lease-busy" });
+      const document = yield* readProjectLink(workdir);
+      expect(Option.map(document, (value) => value.project.ref)).toEqual(
+        Option.some("previousprojectrefabc"),
+      );
     }).pipe(Effect.provide(layer));
   });
 

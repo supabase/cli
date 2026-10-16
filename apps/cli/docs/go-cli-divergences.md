@@ -96,6 +96,8 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   a timeout, or any transport/status/decode failure (fail-safe: an unverifiable divergent cache is
   untrustworthy). Both are best-effort and never affect `link`'s own outcome — see
   `link/SIDE_EFFECTS.md`.
+- `link` has a TS-only `--frozen` flag (no Go equivalent) that leaves `supabase/supabase.lock`
+  untouched in stack mode; it is a no-op in legacy mode, which has no lock.
 
 ## Behavioral divergences from the Go reference
 

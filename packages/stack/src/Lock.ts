@@ -67,7 +67,7 @@ const DatabaseLock = Schema.Struct({
 /** The remote the `linked` observations belong to: a project plus one of its branches. */
 const LinkedRemote = Schema.Struct({
   project: Schema.String,
-  branch: Schema.Struct({ name: Schema.String, ref: Schema.String, isDefault: Schema.Boolean }),
+  branch: Schema.Struct({ ref: Schema.String, isDefault: Schema.Boolean }),
   observedAt: Schema.String,
 });
 

@@ -7,12 +7,15 @@ downloads no artifact.
 
 ## What it reports
 
-Each row has the service, the specifier from the lock, the locked release, the update (absent when
+Each row has the service, the specifier from the lock, the hosted version the lock last observed
+(`-` when none), the locked release, the update (absent when
 `stack update` would keep the entry), the release bundled with this CLI, and a status:
 
 - `up to date`: `stack update` would keep the entry.
 - `update available`: the specifier is `<upstream>` and a newer revision is published, or the
-  specifier is `bundled` or `linked` and this CLI bundles a different release.
+  specifier is `bundled` and this CLI bundles a different release, or the specifier is `linked` and
+  its stored observation now resolves to a different release or resolution (for example a version
+  slim-services has since published).
 - `stale`: the entry no longer answers `config.toml`; the reason is listed under the table. It is
   not probed, because `supabase start` re-resolves it.
 - `probe failed`: the newest release could not be determined, for example when the release host
@@ -35,9 +38,12 @@ project without `supabase/config.toml`.
 
 ## Network and subprocesses
 
-Each `<upstream>` entry that is not stale is probed against the slim-services GitHub releases and
-registry (`SUPABASE_INTERNAL_SLIM_RELEASES_URL` and `SUPABASE_INTERNAL_SLIM_REGISTRY_URL` redirect
-them), up to four at a time. No archive or image is downloaded and no subprocess runs.
+Each `<upstream>` entry, and each `linked` entry with an observation, that is not stale is probed
+against the slim-services GitHub releases and registry (`SUPABASE_INTERNAL_SLIM_RELEASES_URL` and
+`SUPABASE_INTERNAL_SLIM_REGISTRY_URL` redirect them), up to four at a time. It never calls the
+Management API or a tenant host and needs no login, so a hosted version that moved since
+`supabase link` shows only after `supabase stack update`. No archive or image is downloaded and no
+subprocess runs.
 
 ## Flags and output
 
@@ -46,7 +52,7 @@ The legacy `-o/--output` flag is rejected; use `--output-format`.
 Text output prints the table, one line per stale or failed row, and a hint naming
 `supabase stack update` or `supabase start` when either applies.
 
-JSON output returns `file`, `services` (`service`, `specifier`, `resolution`, `locked`, `update`,
+JSON output returns `file`, `services` (`service`, `specifier`, `resolution`, `hosted`, `locked`, `update`,
 `bundled`, `stale`, `error`; `null` when absent), and the `updatable`, `stale` and `failed` counts.
 
 ## Exit codes

@@ -20,7 +20,8 @@ export type StackUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const stackUpdateCommand = Command.make("update", config).pipe(
   Command.withDescription(
     "Re-resolve the named local service versions (all when none are named) in supabase/supabase.lock, even when their entries are up to date: " +
-      "a release specifier moves to its newest published revision, bundled and linked entries to this CLI's pin, and an exact revision stays. " +
+      "a release specifier moves to its newest published revision, a bundled entry to this CLI's pin, and an exact revision stays. " +
+      "A linked entry re-probes the linked project or branch, which needs a login, and observed or published versions are retried. " +
       "Nothing is downloaded; supabase start and supabase stack install fetch what the lock names.",
   ),
   Command.withShortDescription("Update locked local service versions"),
@@ -34,7 +35,26 @@ export const stackUpdateCommand = Command.make("update", config).pipe(
       description: "Update only auth and studio",
     },
   ]),
-  withPermissions({ operations: [] }),
+  withPermissions({
+    operations: [
+      {
+        operationId: "v1-get-project",
+        kind: "best-effort",
+        context: "supabase/.link.json exists and a linked service is re-resolved",
+      },
+      {
+        operationId: "v1-get-project-api-keys",
+        kind: "best-effort",
+        request: { query: { reveal: "true" } },
+        context: "supabase/.link.json exists and a linked service is re-resolved",
+      },
+      {
+        operationId: "v1-get-a-branch-config",
+        kind: "best-effort",
+        context: "the linked ref is a branch",
+      },
+    ],
+  }),
   Command.withHandler((flags) =>
     stackUpdate(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),

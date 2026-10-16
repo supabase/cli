@@ -68,6 +68,7 @@ import {
   DbConnection,
   type DbSession,
 } from "../../../../command-internal/db-connection.service.ts";
+import { writeProjectLink } from "../../../../command-internal/project-link.ts";
 import { StackCatalogSetup } from "../../../../command-internal/stack-catalog-setup.ts";
 import { ExperimentalFlag, YesFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
@@ -2646,6 +2647,13 @@ const infoMessages = (output: ReturnType<typeof mockOutput>) =>
 const resolvedReports = (output: ReturnType<typeof mockOutput>) =>
   infoMessages(output).filter((message) => message.startsWith("Resolved service versions:"));
 
+const LINKED_BRANCH_REF = "branchprojectrefabcd";
+
+const LINKED_MAIN = {
+  project: "projectrefabcdefghijk",
+  branch: { ref: "projectrefabcdefghijk", isDefault: true },
+};
+
 const COMMIT_WARNING = "Commit supabase/supabase.lock so CI and your team run the same versions.";
 
 describe("experimental stack start service lock", () => {
@@ -2718,6 +2726,94 @@ describe("experimental stack start service lock", () => {
         rest: undefined,
       });
       expect(resolvedReports(output)[0]).toContain("specifier linked ≠ locked v99.0.0");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("restores the linked version when the override is removed, without a new probe", () =>
+    Effect.gen(function* () {
+      const host = yield* startReleaseFixture;
+      publishRest(host);
+      const root = yield* lockProject(REST_OVERRIDE);
+      yield* lockedStart(root, { host }).run;
+      const overridden = yield* readProjectLock(root);
+      yield* writeLock(root, {
+        ...overridden,
+        linked: { ...LINKED_MAIN, observedAt: "2026-01-01T00:00:00.000Z" },
+        services: {
+          ...overridden.services,
+          rest: { ...overridden.services.rest, linked: { raw: "99.0.0", version: "v99.0.0" } },
+        },
+      });
+
+      yield* setConfig(root, "");
+      yield* lockedStart(root, { host, existing: false }).run;
+
+      const lock = yield* readProjectLock(root);
+      expect(lock.linked).toEqual({ ...LINKED_MAIN, observedAt: "2026-01-01T00:00:00.000Z" });
+      expect(lock.services.rest).toMatchObject({
+        specifier: "linked",
+        resolution: "resolved",
+        linked: { version: "v99.0.0" },
+        resolved: { upstreamVersion: "v99.0.0", revision: 1 },
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("warns when the checkout targets another remote than the lock observed", () =>
+    Effect.gen(function* () {
+      const root = yield* lockProject();
+      yield* lockedStart(root).run;
+      const lock = yield* readProjectLock(root);
+      yield* writeLock(root, {
+        ...lock,
+        linked: { ...LINKED_MAIN, observedAt: "2026-01-01T00:00:00.000Z" },
+      });
+      yield* writeProjectLink(root, {
+        project: { ref: LINKED_MAIN.project },
+        active_branch: { ref: LINKED_BRANCH_REF, is_default: false },
+        fetchedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      const { output, run } = lockedStart(root, { existing: false });
+      yield* run;
+
+      expect(output.messages).toContainEqual({
+        type: "warn",
+        message: `lock observed ${LINKED_MAIN.project}, this checkout targets ${LINKED_MAIN.project}/${LINKED_BRANCH_REF}; run supabase stack update`,
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("warns when this CLI bundles a newer revision of a locked version, offline", () =>
+    Effect.gen(function* () {
+      const root = yield* lockProject();
+      yield* lockedStart(root).run;
+      const lock = yield* readProjectLock(root);
+      const { database } = lock.services;
+      expect(database.resolved.revision).toBeGreaterThan(0);
+      yield* writeLock(root, {
+        ...lock,
+        services: {
+          ...lock.services,
+          database: {
+            ...database,
+            resolved: {
+              ...database.resolved,
+              revision: 0,
+              image: database.resolved.image.replace(/-r\d+@/u, "-r0@"),
+            },
+          },
+        },
+      });
+
+      const { output, run } = lockedStart(root, { existing: false });
+      yield* run;
+
+      const { upstreamVersion, revision } = database.resolved;
+      expect(output.messages).toContainEqual({
+        type: "warn",
+        message: `This CLI bundles newer revisions of locked versions: database ${upstreamVersion}-r0 → ${upstreamVersion}-r${revision}. Run supabase stack outdated to review, supabase stack update to adopt them.`,
+      });
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

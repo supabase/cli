@@ -15,6 +15,7 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { LegacyProjectState } from "../../../command-internal/legacy-project-state.service.ts";
 import { currentProjectStateMode } from "../../../command-internal/project-state-mode.ts";
 import { readProjectLink, removeProjectLink } from "../../../command-internal/project-link.ts";
+import { withProjectLease } from "../../../command-internal/stack-lock.ts";
 import { resolveYes } from "../../../command-internal/global-flags.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
@@ -111,14 +112,23 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
     // linked ref matches the deleted project.
     // Compare trimmed content so a corrupt/multi-ref file can't trigger an unintended removal.
     if (stackState) {
-      const link = yield* readProjectLink(cliSettings.workdir).pipe(
+      const linkedTo = readProjectLink(cliSettings.workdir).pipe(
         Effect.map(
           Option.filter((value) => value.project.ref === ref || value.active_branch.ref === ref),
         ),
         Effect.orElseSucceed(() => Option.none()),
       );
-      if (Option.isSome(link)) {
-        yield* removeProjectLink(cliSettings.workdir).pipe(Effect.ignore);
+      // A concurrent `link` publishes under the project lease, so the match is checked again
+      // under it before the file is removed.
+      if (Option.isSome(yield* linkedTo)) {
+        yield* withProjectLease(
+          cliSettings.workdir,
+          Effect.gen(function* () {
+            if (Option.isSome(yield* linkedTo)) {
+              yield* removeProjectLink(cliSettings.workdir).pipe(Effect.ignore);
+            }
+          }),
+        );
       }
     } else {
       const matches = yield* legacyState.read(cliSettings.workdir, "projectRef").pipe(

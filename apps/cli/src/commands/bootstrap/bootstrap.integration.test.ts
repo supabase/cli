@@ -1,6 +1,8 @@
 import { legacyProjectStateLayer } from "../../command-internal/legacy-project-state.layer.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
+import { holdLock } from "@supabase/stack/effect";
+import { TestClock } from "effect/testing";
 import {
   Cause,
   ConfigProvider,
@@ -370,6 +372,35 @@ describe("bootstrap integration", () => {
           },
         ]);
       }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("fails on a busy project lease without publishing supabase/.link.json", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const s = setup(path, { env: { SUPABASE_EXPERIMENTAL_STACK: "1" } });
+      yield* fs.makeDirectory(path.join(s.workdir, "supabase"), { recursive: true });
+      yield* holdLock(
+        path.join(s.workdir, "supabase", ".supabase.lock.lease"),
+        "1 hour",
+        "supabase.lock",
+      );
+
+      // The lease wait runs on the test clock; the lock stays held, so the outcome is fixed.
+      const error = yield* bootstrap(
+        flags({ template: Option.some("scratch") }),
+        FAST_BACKOFF,
+      ).pipe(
+        Effect.provide(s.layer),
+        Effect.flip,
+        Effect.raceFirst(
+          TestClock.adjust("61 seconds").pipe(Effect.andThen(Effect.yieldNow), Effect.forever),
+        ),
+      );
+
+      expect(error).toMatchObject({ _tag: "LockResolutionError", reason: "lease-busy" });
+      expect(Option.isNone(yield* readProjectLink(s.workdir))).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("a downloaded template fails closed on an invalid SUPABASE_EXPERIMENTAL_STACK", () =>

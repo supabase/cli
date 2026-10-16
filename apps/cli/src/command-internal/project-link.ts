@@ -188,6 +188,24 @@ export const writeProjectLink = Effect.fn("ProjectLink.write")(function* (
   );
 });
 
+/** Creates `supabase/`, where the link document and the project lease live. */
+export const ensureProjectDirectory = Effect.fn("ProjectLink.ensureDirectory")(function* (
+  workdir: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const directory = path.dirname(projectLinkPath(path, workdir));
+  yield* fs.makeDirectory(directory, { recursive: true }).pipe(
+    Effect.mapError(
+      (error) =>
+        new ProjectLinkIoError({
+          path: directory,
+          message: `failed to create ${directory}: ${error.message}`,
+        }),
+    ),
+  );
+});
+
 /** Removes the link document; an absent file is not an error. */
 export const removeProjectLink = Effect.fn("ProjectLink.remove")(function* (workdir: string) {
   const fs = yield* FileSystem.FileSystem;

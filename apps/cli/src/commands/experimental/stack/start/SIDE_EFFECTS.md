@@ -139,7 +139,12 @@ lock, unless `--frozen` is set, which fails the start.
 
 A specifier is `linked`, `bundled`, `<upstream>` (the highest published revision) or
 `<upstream>-r<N>` (exactly that revision). `linked` and `bundled` pin the version bundled with the
-CLI; `linked` records `unlinked` because no hosted version is observed in stack mode yet. A release
+CLI. `linked` follows the hosted version that `supabase link` recorded in the entry's `linked` field
+for the project it observed, and takes the bundled pin, recorded as `unlinked`, when the project was
+never linked; a service the platform did not report keeps the bundled pin as `unobserved`, and a
+hosted version slim-services does not publish as `unpublished`. Start never probes the hosted
+project, needs no login and never calls the Management API: removing an override of a service
+that was observed restores the linked version from the stored observation. A release
 specifier probes the slim-services GitHub releases and the registry, verifies the published
 digests, and records them. `SUPABASE_INTERNAL_SLIM_RELEASES_URL` and
 `SUPABASE_INTERNAL_SLIM_REGISTRY_URL` redirect those hosts.
@@ -161,11 +166,19 @@ pins without starting a stack; see [`../install/SIDE_EFFECTS.md`](../install/SID
 reports what it would change; see [`../update/SIDE_EFFECTS.md`](../update/SIDE_EFFECTS.md) and
 [`../outdated/SIDE_EFFECTS.md`](../outdated/SIDE_EFFECTS.md).
 
+When `supabase/.link.json` targets a project or branch other than the one the lock observed, start
+and `stack install` warn `lock observed <project>/<branch>, this checkout targets
+<project>/<branch>; run supabase stack update`; this is a warning, never staleness. They also warn,
+without any network, when this CLI bundles a newer revision of a version the lock holds
+(`supabase stack outdated` and `supabase stack update` review and adopt it), excluding exact
+`<upstream>-r<N>` specifiers.
+
 Resolving a release specifier needs the network: a first start with an explicit upstream version
 (`<upstream>` or `<upstream>-r<N>`, even one the CLI bundles) or with `[db] orioledb_version` (even
 a bundled build) fetches the release manifests and fails when the host is unreachable, because a
 bare upstream version never takes a shortcut through the bundled catalog. A first start whose
-specifiers are all `linked` or `bundled` (the default) needs no network. A failed resolution fails
+specifiers are all `linked` or `bundled` (the default) needs no network, unless the project was
+linked, when a `linked` service resolves its observed release from the release host. A failed resolution fails
 the start with reason `lock` and writes nothing; the cause is unpublished (`invalid_config`),
 transient (`network`) or an integrity mismatch (`asset_checksum`). A saved database whose pin comes
 from `[local.services]` reports its changes as `[local.services.database] version`.

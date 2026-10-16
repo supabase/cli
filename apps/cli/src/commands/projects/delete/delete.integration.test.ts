@@ -1,6 +1,8 @@
 import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
+import { holdLock } from "@supabase/stack/effect";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { TestClock } from "effect/testing";
 
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -363,6 +365,41 @@ describe("projects delete integration", () => {
         yield* writeLinkDocument(OTHER_REF, VALID_REF);
         yield* projectsDelete({ ref: Option.some(VALID_REF) });
         expect(yield* linkDocumentExists()).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("fails on a busy project lease and keeps the link document", () => {
+      const { layer } = setup({ yes: true, stack: true });
+      return Effect.gen(function* () {
+        yield* writeLinkDocument(VALID_REF);
+        yield* holdLock(
+          `${tempRoot.current}/supabase/.supabase.lock.lease`,
+          "1 hour",
+          "supabase.lock",
+        );
+        // The lease wait runs on the test clock; the lock stays held, so the outcome is fixed.
+        yield* TestClock.adjust("1 second").pipe(
+          Effect.andThen(Effect.yieldNow),
+          Effect.forever,
+          Effect.forkScoped,
+        );
+
+        const error = yield* projectsDelete({ ref: Option.some(VALID_REF) }).pipe(Effect.flip);
+
+        expect(error).toMatchObject({ _tag: "LockResolutionError", reason: "lease-busy" });
+        expect(yield* linkDocumentExists()).toBe(true);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("deletes the project without creating supabase/ when the project has none", () => {
+      const { layer } = setup({ yes: true, stack: true });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        yield* projectsDelete({ ref: Option.some(VALID_REF) });
+
+        expect(yield* fs.exists(path.join(tempRoot.current, "supabase"))).toBe(false);
       }).pipe(Effect.provide(layer));
     });
 

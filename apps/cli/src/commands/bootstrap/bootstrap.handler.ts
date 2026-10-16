@@ -41,7 +41,8 @@ import {
   ProjectStateModeContext,
   projectStateMode,
 } from "../../command-internal/project-state-mode.ts";
-import { writeProjectLink } from "../../command-internal/project-link.ts";
+import { ensureProjectDirectory, writeProjectLink } from "../../command-internal/project-link.ts";
+import { withProjectLease } from "../../command-internal/stack-lock.ts";
 import { projectCreateCore } from "../../command-internal/project-create-core.ts";
 import { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
 import { extractServiceKeys } from "../../command-internal/tenant-keys.ts";
@@ -261,19 +262,23 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
           Effect.option,
           Effect.map(Option.flatten),
         );
-        yield* writeProjectLink(workdir, {
-          project: {
-            ref: projectRef,
-            name: created.name,
-            organization_id: created.organizationId,
-            organization_slug: created.organizationSlug,
-          },
-          active_branch: {
-            ref: projectRef,
-            ...(Option.isSome(poolerUrl) ? { pooler_url: poolerUrl.value } : {}),
-          },
-          fetchedAt: DateTime.formatIso(yield* DateTime.now),
-        });
+        yield* ensureProjectDirectory(workdir);
+        yield* withProjectLease(
+          workdir,
+          writeProjectLink(workdir, {
+            project: {
+              ref: projectRef,
+              name: created.name,
+              organization_id: created.organizationId,
+              organization_slug: created.organizationSlug,
+            },
+            active_branch: {
+              ref: projectRef,
+              ...(Option.isSome(poolerUrl) ? { pooler_url: poolerUrl.value } : {}),
+            },
+            fetchedAt: DateTime.formatIso(yield* DateTime.now),
+          }),
+        );
         yield* identifyProjectGroups(analytics, {
           ref: projectRef,
           name: created.name,

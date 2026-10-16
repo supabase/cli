@@ -1,4 +1,5 @@
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
+import { defaultArtifactSelection } from "@supabase/stack/defaults";
 import { DateTime, Duration, Effect, Option, Ref, Schema } from "effect";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
@@ -33,9 +34,20 @@ import { currentProjectStateMode } from "../../command-internal/project-state-mo
 import {
   type ProjectLink,
   readProjectLink,
+  ensureProjectDirectory,
   writeProjectLink,
 } from "../../command-internal/project-link.ts";
 import { extractServiceKeys } from "../../command-internal/tenant-keys.ts";
+import { linkRemote, observeHostedVersions } from "../../command-internal/hosted-versions.ts";
+import { loadLocalProjectContext } from "../../command-internal/local-project-context.ts";
+import { loadStackConfig, StackConfigError } from "../../command-internal/stack-config.ts";
+import {
+  LOCK_FILE,
+  linkedLock,
+  type LinkedLock,
+  type LockRequest,
+  withProjectLease,
+} from "../../command-internal/stack-lock.ts";
 import { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
 import {
   LinkApiKeysNetworkError,
@@ -248,6 +260,93 @@ const resolveStackLinkParent = Effect.fn("link.resolveStackParent")(function* (i
   return verified ? existingProject.value : { ref: input.ref };
 });
 
+const renderLinkedLock = (result: LinkedLock) => {
+  const rows = result.services.map(({ service, hosted, locked, resolution }) => [
+    service,
+    hosted ?? "-",
+    locked,
+    resolution,
+  ]);
+  const header = ["service", "hosted", "locked", "resolution"];
+  const widths = header.map((title, column) =>
+    Math.max(title.length, ...rows.map((row) => row[column]?.length ?? 0)),
+  );
+  const line = (cells: ReadonlyArray<string>) =>
+    `  ${cells.map((cell, column) => cell.padEnd(widths[column] ?? 0)).join("  ")}`.trimEnd();
+  const changed = result.services.filter(({ changed }) => changed).length;
+  return [
+    "Hosted versions:",
+    line(header),
+    ...rows.map(line),
+    result.frozen
+      ? `${LOCK_FILE} was left untouched.`
+      : result.written
+        ? `Updated ${LOCK_FILE}${result.observing === undefined ? "" : `: now observing ${result.observing}`} (${changed} ${changed === 1 ? "version change" : "version changes"}). Review and commit it.`
+        : `${LOCK_FILE} is already up to date.`,
+  ].join("\n");
+};
+
+/**
+ * Publishes a stack-mode link and records its hosted versions in `supabase/supabase.lock`: the
+ * project config is validated first, then, under the project lease, the project or branch is
+ * probed, the lock written, and `.link.json` published. `undefined` when the project has no
+ * `supabase/config.toml`, so there is no lock to keep and only `.link.json` is published.
+ */
+const publishStackLink = Effect.fn("link.lock")(function* (input: {
+  readonly ref: string;
+  readonly link: ProjectLink;
+  readonly serviceKey: string;
+  /** The version `getProject` reported; absent when the ref is a branch. */
+  readonly databaseVersion: Option.Option<string>;
+  readonly frozen: boolean;
+}) {
+  const output = yield* Output;
+  const api = yield* CommandPlatformApi;
+  const { workdir } = yield* CommandSettings;
+  const publishLink = writeProjectLink(workdir, input.link);
+  const context = yield* loadLocalProjectContext(
+    workdir,
+    (message) => new StackConfigError({ message }),
+  );
+  if (context.loaded === null) {
+    yield* ensureProjectDirectory(workdir);
+    yield* withProjectLease(workdir, publishLink);
+    return undefined;
+  }
+
+  // The loader offers the lock request only part-way through validating the config, so the
+  // request is taken from it and the lock is resolved once the whole config has validated.
+  const requested = yield* Ref.make(Option.none<LockRequest>());
+  yield* loadStackConfig(workdir, {
+    context,
+    selection: (request) =>
+      Ref.set(requested, Option.some(request)).pipe(Effect.as(defaultArtifactSelection())),
+  });
+  const request = yield* Ref.get(requested).pipe(Effect.flatMap(Effect.fromOption), Effect.orDie);
+  const result = yield* linkedLock({
+    frozen: input.frozen,
+    probe: observeHostedVersions({
+      api,
+      ref: input.ref,
+      serviceKey: input.serviceKey,
+      databaseVersion: input.databaseVersion,
+    }).pipe(Effect.map((observations) => ({ remote: linkRemote(input.link), observations }))),
+    commit: (locked) =>
+      (output.format === "text" ? output.info(renderLinkedLock(locked)) : Effect.void).pipe(
+        Effect.andThen(publishLink),
+      ),
+    output,
+  })(request);
+  yield* Effect.annotateCurrentSpan({
+    "link.resolved_count": result.services.length,
+    "link.unobserved_count": result.services.filter(({ resolution }) => resolution === "unobserved")
+      .length,
+    "link.kept_count": result.kept.length,
+    "link.lock_written": result.written,
+  });
+  return result;
+});
+
 export const link = Effect.fn("link")(function* (flags: LinkFlags) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
@@ -354,7 +453,9 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
           workdir,
         }).pipe(Effect.as(Option.none<string>()));
 
-    // 4. Save the link (mandatory — a write failure fails the command).
+    // 4. Save the link (mandatory — a write failure fails the command). In stack mode the lock and
+    // the link are published together under the lock lease, the lock first.
+    let stackLock: LinkedLock | undefined;
     if (stackState) {
       const parent = Option.isSome(project)
         ? {
@@ -373,12 +474,21 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
                 name: branchResolution.value.branchName,
                 is_default: branchResolution.value.isDefault,
               }
-            : {}),
+            : // A ref that is not a project is a non-default branch, even when its parent is unknown.
+              Option.isNone(project)
+              ? { is_default: false }
+              : {}),
           ...(Option.isSome(poolerUrl) ? { pooler_url: poolerUrl.value } : {}),
         },
         fetchedAt: DateTime.formatIso(yield* DateTime.now),
       };
-      yield* writeProjectLink(workdir, link);
+      stackLock = yield* publishStackLink({
+        ref,
+        link,
+        serviceKey: serviceRole,
+        databaseVersion: Option.map(project, (found) => found.database.version),
+        frozen: flags.frozen,
+      });
     } else {
       yield* legacyState.write(workdir, "projectRef", ref);
     }
@@ -489,6 +599,20 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
     } else {
       yield* output.success("", {
         project_ref: ref,
+        ...(stackLock === undefined
+          ? {}
+          : {
+              lock: {
+                file: LOCK_FILE,
+                written: stackLock.written,
+                services: stackLock.services.map(({ service, hosted, locked, resolution }) => ({
+                  service,
+                  hosted: hosted ?? null,
+                  locked,
+                  resolution,
+                })),
+              },
+            }),
         // Present only when a branch name/UUID was resolved above; absent for a plain
         // project-ref link.
         ...(Option.isSome(branchResolution)

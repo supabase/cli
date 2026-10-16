@@ -7,7 +7,7 @@ import {
 } from "../../../../shared/telemetry/error-actionability.ts";
 
 export class StackCommandUpdateError extends Data.TaggedError("ExperimentalStackUpdateError")<{
-  readonly reason: "flags" | "invalid-config" | "lock";
+  readonly reason: "flags" | "invalid-config" | "lock" | "hosted";
   readonly message: string;
   readonly suggestion?: string;
   readonly cause?: unknown;
@@ -18,6 +18,13 @@ export class StackCommandUpdateError extends Data.TaggedError("ExperimentalStack
         return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
       case "invalid-config":
         return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
+      case "hosted":
+        return (
+          causeDeclaration(this.cause) ?? {
+            ...actionability.externalNetwork,
+            fingerprint_suffix: "network",
+          }
+        );
       case "lock":
         return (
           causeDeclaration(this.cause) ?? {

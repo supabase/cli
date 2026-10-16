@@ -27,10 +27,11 @@ const status = (row: OutdatedService) =>
 
 const render = (rows: ReadonlyArray<OutdatedService>) => {
   const table = renderGlamourTable(
-    ["SERVICE", "SPECIFIER", "LOCKED", "UPDATE", "BUNDLED", "STATUS"],
+    ["SERVICE", "SPECIFIER", "HOSTED", "LOCKED", "UPDATE", "BUNDLED", "STATUS"],
     rows.map((row) => [
       row.service,
       row.specifier,
+      row.hosted ?? "-",
       row.locked,
       row.update ?? "-",
       row.bundled,
@@ -52,7 +53,10 @@ const render = (rows: ReadonlyArray<OutdatedService>) => {
   return `${[table, ...(details.length === 0 ? [] : ["", ...details]), ...(hints.length === 0 ? [] : ["", ...hints])].join("\n")}\n`;
 };
 
-/** Reports which locked service versions a `stack update` would change, without writing or downloading anything. */
+/**
+ * Reports which locked service versions a `stack update` would change, without writing or downloading
+ * anything. Hosted versions are the stored observations; only `stack update` re-probes the project.
+ */
 export const stackOutdated = Effect.fn("experimental.stack.outdated")(function* () {
   const telemetryState = yield* TelemetryState;
   const body = Effect.gen(function* () {
@@ -113,6 +117,7 @@ export const stackOutdated = Effect.fn("experimental.stack.outdated")(function* 
           service: row.service,
           specifier: row.specifier,
           resolution: row.resolution,
+          hosted: row.hosted ?? null,
           locked: row.locked,
           update: row.update ?? null,
           bundled: row.bundled,

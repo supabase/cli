@@ -7,6 +7,8 @@ import {
   type ServiceKind,
 } from "@supabase/stack/internal/artifacts";
 import { Effect, FileSystem, Layer, Option } from "effect";
+import * as HttpClient from "effect/http/HttpClient";
+import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -62,6 +64,12 @@ const layer = (root: string, output: ReturnType<typeof mockOutput>) =>
     mockTelemetryStateTracked().layer,
     mockCommandSettings({ workdir: root }),
     Layer.succeed(ExperimentalFlag, false),
+    // No linked entry is re-resolved here, so nothing asks the hosted project.
+    Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
+    Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make(() => Effect.die("unused")),
+    ),
   );
 
 const seed = (root: string, host: ReleaseFixture, edit?: Parameters<typeof seedLock>[1]) =>

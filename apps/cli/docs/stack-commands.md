@@ -52,11 +52,13 @@ supabase stack install --frozen --runtime native --output-format json
 ```
 
 `supabase stack update [service...]` re-resolves the named services, or all of them, even when the
-lock is fresh: an upstream version moves to its newest revision, `bundled` and `linked` move to the
-version this CLI bundles, and an exact `-r<N>` pin stays. It prints the diff and rewrites the lock
-without downloading anything; `CI` does not freeze it. `supabase stack outdated` is the read-only
+lock is fresh: an upstream version moves to its newest revision, `bundled` moves to the version this
+CLI bundles, `linked` probes the linked project or branch again (this needs a login, like `supabase
+link`), and an exact `-r<N>` pin stays. It prints the diff and rewrites the lock without
+downloading anything; `CI` does not freeze it. `supabase stack outdated` is the read-only
 counterpart: it reports each service's locked and would-be version without a lease, a write, or a
-download, and reports a failed probe per row without failing.
+download, and reports a failed probe per row without failing. It reads only the lock and the
+release host, so a hosted version that moved since `supabase link` appears after `stack update`.
 
 ```sh
 supabase stack outdated
@@ -319,10 +321,15 @@ version = "v2.197.0" # an upstream version: the highest published revision
 version = "v1.30.2-r1" # exactly revision 1 of that upstream version
 ```
 
-`linked` follows the linked hosted project, which stack mode does not observe yet, so it pins the
-version bundled with the CLI and records it as `unlinked`. `bundled` pins the bundled version
-explicitly. An upstream version, optionally with a `-r<N>` revision suffix, is resolved against the
-published slim-services releases and pinned by content. `[db] orioledb_version` is shorthand for
+`linked` follows the hosted project: `supabase link` (in stack mode) probes the linked project or
+branch and records the version each service runs in the lock, then resolves `linked` entries to
+those releases. A project that was never linked pins the bundled version and records it as
+`unlinked`; a service the platform does not report, or a version slim-services does not publish,
+pins the bundled version as `unobserved` or `unpublished`. `supabase link --frozen`, or `link` under
+`CI` with an existing lock, records the link without changing the lock and warns when the hosted
+versions differ. `bundled` pins the bundled version explicitly. An upstream version, optionally
+with a `-r<N>` revision suffix, is resolved against the published slim-services releases and pinned
+by content. `[db] orioledb_version` is shorthand for
 the `database` specifier of that OrioleDB build, and a database version must match
 `db.major_version`.
 
@@ -332,8 +339,10 @@ the other pins where they are. Resolving a release specifier needs the network, 
 with an explicit service version or `[db] orioledb_version` cannot run offline, even when the CLI
 bundles that version; a first start that keeps `linked` or `bundled` does not need it. `supabase
 start --frozen` fails instead of resolving when the lock is missing or stale; it is implied when
-`CI` is set and a lock exists. A lock that is malformed, does not match the format, or comes from a
-newer CLI always fails the start. The lock's JSON Schema is published at
+`CI` is set and a lock exists. A start never calls the Management API and needs no login: it warns when `supabase/.link.json`
+targets another project or branch than the lock observed (run `supabase stack update`), and when
+this CLI bundles a newer revision of a locked version. A lock that is malformed, does not match the
+format, or comes from a newer CLI always fails the start. The lock's JSON Schema is published at
 `https://supabase.com/docs/cli/supabase-lock/v1.schema.json`. A database with initialized data keeps
 its build: changing its major or release line asks to destroy the stack, while a database that never
 initialized adopts the change. See the [`start` side

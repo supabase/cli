@@ -1,8 +1,8 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { holdLock } from "@supabase/stack/effect";
+import { holdLock, readLock, writeLock } from "@supabase/stack/effect";
 import { catalogPins, type ServiceKind } from "@supabase/stack/internal/artifacts";
-import { Effect, FileSystem, Layer } from "effect";
+import { Effect, FileSystem, Layer, Option } from "effect";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -114,6 +114,7 @@ describe("experimental stack outdated", () => {
               locked: `${UPSTREAM}-r0`,
               update: `${UPSTREAM}-r1`,
               bundled: expect.stringMatching(/-r\d+$/u),
+              hosted: null,
               stale: null,
               error: null,
             },
@@ -146,6 +147,57 @@ describe("experimental stack outdated", () => {
       expect(output.stdoutText).toContain("probe failed");
       expect(output.stdoutText).toContain("auth:");
       expect(output.stdoutText).toContain(`${UPSTREAM}-r1`);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("reports a release outage on a linked entry as a failed probe and keeps its pin", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const host = yield* startReleaseFixture;
+      const root = yield* project({ auth: UPSTREAM });
+      publish(host, "auth", 0);
+      yield* seed(root, host);
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, configToml({ auth: "linked" }));
+      const lock = yield* readLock(root).pipe(Effect.map(Option.getOrThrow));
+      yield* writeLock(root, {
+        ...lock,
+        linked: {
+          project: "projectrefabcdefghijk",
+          branch: { ref: "projectrefabcdefghijk", isDefault: true },
+          observedAt: "2026-01-01T00:00:00.000Z",
+        },
+        services: {
+          ...lock.services,
+          auth: {
+            ...lock.services.auth,
+            specifier: "linked",
+            linked: { raw: UPSTREAM, version: UPSTREAM },
+          },
+        },
+      }).pipe(Effect.orDie);
+      const written = yield* fs.readFileString(lockPath(root));
+      host.failing.set("/releases/auth-v99.0.0-r0/SHA256SUMS", 503);
+
+      const { output, run } = outdated(root, host, "json");
+      yield* run;
+
+      const result = output.messages.find((entry) => entry.type === "success");
+      const data = result?.type === "success" ? result.data : undefined;
+      expect(data).toMatchObject({
+        updatable: 0,
+        failed: 1,
+        services: expect.arrayContaining([
+          expect.objectContaining({
+            service: "auth",
+            specifier: "linked",
+            hosted: UPSTREAM,
+            locked: `${UPSTREAM}-r0`,
+            update: null,
+            error: expect.stringContaining("the slim-services release host could not be reached"),
+          }),
+        ]),
+      });
+      expect(yield* fs.readFileString(lockPath(root))).toBe(written);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

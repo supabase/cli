@@ -1,6 +1,9 @@
 import { defaultArtifactSelection } from "@supabase/stack/defaults";
 import { artifactServiceKinds, type ServiceKind } from "@supabase/stack/internal/artifacts";
-import { Effect, Ref, Schema } from "effect";
+import { Effect, Option, Ref, Schema } from "effect";
+import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
+import { probeLinkedTarget } from "../../../../command-internal/hosted-versions.ts";
+import { readProjectLink } from "../../../../command-internal/project-link.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { loadLocalProjectContext } from "../../../../command-internal/local-project-context.ts";
 import { loadStackConfig, StackConfigError } from "../../../../command-internal/stack-config.ts";
@@ -74,7 +77,24 @@ export const stackUpdate = Effect.fn("experimental.stack.update")(function* (
     const services: ReadonlyArray<ServiceKind> = yield* serviceKinds(flags.services);
 
     const updated = yield* Ref.make<LockUpdate | undefined>(undefined);
-    const update = updatedLock({ services });
+    // The hosted probe needs a login, so it runs only when a linked entry is re-resolved.
+    const probe = Effect.gen(function* () {
+      const link = yield* readProjectLink(settings.workdir);
+      if (Option.isNone(link)) return Option.none();
+      const api = yield* (yield* CommandPlatformApiFactory).make;
+      return Option.some(yield* probeLinkedTarget(api, link.value));
+    }).pipe(
+      Effect.mapError(
+        (error) =>
+          new StackCommandUpdateError({
+            reason: "hosted",
+            message: `Could not read the hosted versions of the linked project: ${error.message}`,
+            suggestion: "Run supabase login, then supabase link, and retry.",
+            cause: error,
+          }),
+      ),
+    );
+    const update = updatedLock({ services, probe, output });
     yield* Effect.gen(function* () {
       const context = yield* loadLocalProjectContext(
         settings.workdir,
@@ -89,13 +109,14 @@ export const stackUpdate = Effect.fn("experimental.stack.update")(function* (
           ),
       });
     }).pipe(
-      Effect.mapError(
-        (error) =>
-          new StackCommandUpdateError({
-            reason: Schema.is(LockResolutionError)(error) ? "lock" : "invalid-config",
-            message: error.message,
-            cause: error,
-          }),
+      Effect.mapError((error) =>
+        error instanceof StackCommandUpdateError
+          ? error
+          : new StackCommandUpdateError({
+              reason: Schema.is(LockResolutionError)(error) ? "lock" : "invalid-config",
+              message: error.message,
+              cause: error,
+            }),
       ),
       Effect.withSpan("update.resolve"),
     );
