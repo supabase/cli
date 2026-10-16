@@ -171,16 +171,14 @@ describe("local container inputs precedence goldens", () => {
           Effect.die("the container inputs prelude must not spawn a process"),
         );
 
-        const inputs = yield* Effect.gen(function* () {
-          return yield* buildLocalDbContainerInputs(
-            spawner,
-            workdir,
-            Option.none(),
-            "linux",
-            false,
-            TARGET_REF,
-          );
-        }).pipe(Effect.provide(layer));
+        const inputs = yield* buildLocalDbContainerInputs(
+          spawner,
+          workdir,
+          Option.none(),
+          "linux",
+          false,
+          TARGET_REF,
+        ).pipe(Effect.provide(layer));
 
         const { context, setup, ...rest } = inputs;
         const golden = {
