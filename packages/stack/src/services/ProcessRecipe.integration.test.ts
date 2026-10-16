@@ -2,6 +2,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   PlatformError,
+  Context,
   Crypto,
   Deferred,
   Effect,
@@ -25,7 +26,7 @@ import * as Net from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the collision fixture owns a local HTTP listener.
 import * as NodeHttp from "node:http";
 import { catalogPins, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
-import { nativePortBase, nativePortSpan } from "../Ports.ts";
+import { makeScopedPorts, nativePortBase, nativePortSpan } from "../Ports.ts";
 import {
   makeArtifactStore,
   type ArtifactRequest,
@@ -39,6 +40,7 @@ import {
   type ContainerRuntime,
 } from "../runtime/Container.ts";
 import { ServiceError } from "../Service.ts";
+import * as StackNamespace from "../StackNamespace.ts";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
 import {
@@ -76,6 +78,7 @@ const options: CatalogOptions = {
   root: "/tmp/process-recipe-test",
   cacheRoot: "/tmp/process-recipe-test-cache",
   runtime: "docker",
+  claimNativePort: () => Effect.succeed(true),
 };
 
 const spec: ProcessRecipeSpec<TestCreation> = {
@@ -462,6 +465,7 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
       root: "/unused",
       cacheRoot: "/unused/cache",
       runtime: "docker",
+      claimNativePort: () => Effect.succeed(true),
     },
     {
       borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
@@ -656,6 +660,7 @@ const nativeRestRecipe = Effect.fn(function* (
   spawner: ChildProcessSpawnerService["Service"],
   env: Readonly<Record<string, string>> = {},
   nativeReadinessOutput?: ProcessRecipeSpec<TestCreation>["nativeReadinessOutput"],
+  catalog: Partial<CatalogOptions> = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -670,6 +675,7 @@ const nativeRestRecipe = Effect.fn(function* (
       cacheRoot,
       runtime: "native",
       platform: { os: process.platform, arch: process.arch },
+      ...catalog,
     },
     {
       borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
@@ -769,6 +775,63 @@ describe("process recipe startup", () => {
         );
         expect(yield* response.text).toBe("owned-fixture");
         yield* service.stop;
+      }),
+    ).pipe(Effect.provide(platform)),
+  );
+
+  it.live("claims a native service's port across stacks while it runs and frees it on stop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const crypto = yield* Crypto.Crypto;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-claim-" });
+        const state = Context.get(
+          yield* Layer.build(StackNamespace.layer({ root: `${root}/state` })),
+          StackNamespace.Service,
+        );
+        const owner = `recipe-claim-owner-${yield* crypto.randomUUIDv4}`;
+        const other = `recipe-claim-other-${yield* crypto.randomUUIDv4}`;
+        for (const id of [owner, other])
+          yield* state.save({
+            id,
+            runtime: "native",
+            identity: { projectRoot: root, branchContext: "test", stackName: id },
+            instances: [],
+            lifetime: "detached",
+            composition: { members: [], dependencies: [] },
+          });
+        yield* state.acquireLease(owner);
+        const ports = yield* makeScopedPorts(state);
+        yield* Effect.addFinalizer(() =>
+          Effect.forEach([owner, other], (id) => ports.releaseStack(id)).pipe(Effect.ignore),
+        );
+        const recipe = yield* nativeRestRecipe(
+          root,
+          `const http = require("node:http");\n` +
+            `http.createServer((_request, response) => response.end("claimed-fixture"))` +
+            `.listen(Number(process.env.PORT), "127.0.0.1");\n`,
+          spawner,
+          {},
+          undefined,
+          { claimNativePort: (key, port) => ports.claimNative(owner, key, port) },
+        );
+        const service = yield* makeStandaloneService(recipe.definition, {
+          id: "rest",
+          config: creation,
+        });
+
+        yield* service.start;
+        yield* service.ready;
+        const endpoint = (yield* Ref.get(recipe.endpoints)).get("http");
+        if (endpoint === undefined) return yield* Effect.die("rest published no http endpoint");
+
+        const whileRunning = yield* Effect.scoped(ports.claimNative(other, "probe", endpoint.port));
+        yield* service.stop;
+        const afterStop = yield* Effect.scoped(ports.claimNative(other, "probe", endpoint.port));
+
+        expect(whileRunning).toBe(false);
+        expect(afterStop).toBe(true);
       }),
     ).pipe(Effect.provide(platform)),
   );
@@ -955,6 +1018,7 @@ describe("process recipe startup", () => {
             cacheRoot,
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
+            claimNativePort: () => Effect.succeed(true),
           },
           {
             borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
@@ -1032,6 +1096,7 @@ describe("process recipe startup", () => {
             cacheRoot,
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
+            claimNativePort: () => Effect.succeed(true),
           },
           {
             borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
@@ -1169,6 +1234,7 @@ describe("process recipe startup", () => {
             cacheRoot,
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
+            claimNativePort: () => Effect.succeed(true),
           },
           {
             borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
@@ -1236,6 +1302,7 @@ describe("process recipe startup", () => {
             cacheRoot,
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
+            claimNativePort: () => Effect.succeed(true),
           },
           {
             borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
@@ -1345,6 +1412,7 @@ describe("process recipe startup", () => {
             cacheRoot,
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
+            claimNativePort: () => Effect.succeed(true),
           },
           {
             borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
