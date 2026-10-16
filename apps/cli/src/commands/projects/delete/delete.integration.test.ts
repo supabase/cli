@@ -253,7 +253,7 @@ describe("projects delete integration", () => {
     );
   });
 
-  it.effect("non-TTY with piped `y` confirms like Go", () => {
+  it.effect("non-TTY with piped `y` confirms", () => {
     const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "y\n" });
     return Effect.gen(function* () {
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
@@ -274,7 +274,7 @@ describe("projects delete integration", () => {
     });
   }
 
-  it.effect("non-TTY with piped `n` declines like Go", () => {
+  it.effect("non-TTY with piped `n` declines", () => {
     const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "n\n" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));

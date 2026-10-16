@@ -751,8 +751,8 @@ const migrateShadowDatabaseWith = <E>(
   );
 
 /**
- * Migrates a shadow for migra and the legacy pg-delta engine. Those Go-backed
- * workflows historically include `pg_net` in the platform baseline regardless of
+ * Migrates a shadow for migra and the legacy pg-delta engine. Those
+ * workflows include `pg_net` in the platform baseline regardless of
  * project config, so preserve that baseline while sharing the native TS setup path.
  */
 export const migrateShadowDatabase = <E>(

@@ -55,7 +55,7 @@
 
 ### `--output-format text`
 
-Prints a Glamour-style ASCII table with columns `ID`, `NAME`, `SLUG`, `STATUS`, `VERSION`, and `UPDATED_AT (UTC)`.
+Prints a styled ASCII table with columns `ID`, `NAME`, `SLUG`, `STATUS`, `VERSION`, and `UPDATED_AT (UTC)`.
 
 ### `--output-format json`
 
@@ -68,7 +68,7 @@ Prints a structured success result shaped as `{ "functions": [...] }`.
 ## Notes
 
 - Requires a linked project (`--project-ref`, `SUPABASE_PROJECT_ID`, or `<workdir>/supabase/.temp/project-ref`).
-- Native TypeScript port using the Management API.
+- Uses the Management API.
 - `--output` behavior:
   - `json` emits the raw array.
   - `yaml` emits the raw array.

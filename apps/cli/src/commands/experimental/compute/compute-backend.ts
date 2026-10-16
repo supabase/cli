@@ -9,7 +9,6 @@ import { extractCommandPath, hasRootVersionFlag } from "../../../shared/cli/run.
 export const resolveComputeEnabled = (input: {
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
-  readonly env: Readonly<Record<string, string | undefined>>;
 }): Effect.Effect<boolean, ExperimentalFeatureFlagError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const routingArgs =
@@ -30,6 +29,5 @@ export const resolveComputeEnabled = (input: {
         ...input,
         args: routingArgs,
       }),
-      env: input.env,
     });
   });
