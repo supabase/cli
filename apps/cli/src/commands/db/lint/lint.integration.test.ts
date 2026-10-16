@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 import { vi } from "vitest";
 
 vi.mock("node:net", (importOriginal) =>
@@ -199,8 +199,6 @@ interface SetupOpts {
   args?: ReadonlyArray<string>;
   /** Runs the real `DbConfigResolver` and linked-project cache against the temp `workdir`. */
   realLayers?: { readonly workdir: string };
-  /** Workdir whose `supabase/config.toml` may set the workspace `target`. */
-  workdir?: string;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -240,11 +238,6 @@ function setup(opts: SetupOpts = {}) {
         }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
-    BunServices.layer,
-    mockCommandSettings({
-      workdir: opts.realLayers?.workdir ?? opts.workdir ?? "/tmp/lint-int",
-      explicitWorkdir: true,
-    }),
   );
   return { layer, out, resolver, connection, telemetry, processControl, projectRef, cache, http };
 }
@@ -525,136 +518,6 @@ describe("db lint", () => {
       expect(projectRef.calls).toContain("loadProjectRef");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
-  });
-
-  describe("workspace target", () => {
-    const OTHER_REF = "abcdefghijklmnopqrst";
-    const pinnedEnv = ConfigProvider.layer(
-      ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true }),
-    );
-    const writeTarget = (target: string) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        yield* fs.makeDirectory(`${tempRoot.current}/supabase`, { recursive: true });
-        yield* fs.writeFileString(
-          `${tempRoot.current}/supabase/config.toml`,
-          `project_id = "demo"\ntarget = "${target}"\n`,
-        );
-      });
-
-    it.effect("lints the linked project when target = remote and no selector is passed", () => {
-      const { layer, resolver, projectRef, cache, out } = setup({
-        isLocal: false,
-        checkRows: { public: [] },
-        workdir: tempRoot.current,
-      });
-      return Effect.gen(function* () {
-        yield* writeTarget("remote");
-        yield* dbLint(flags({ schema: ["public"] }));
-        expect(resolver.resolveInput?.connType).toBe("linked");
-        expect(projectRef.calls).toContain("loadProjectRef");
-        expect(cache.cached).toBe(true);
-        expect(out.stderrText).toContain("Connecting to remote database...");
-      }).pipe(Effect.provide(Layer.mergeAll(layer, pinnedEnv)));
-    });
-
-    it.effect("lets --local override target = remote", () => {
-      const { layer, resolver, projectRef } = setup({
-        checkRows: { public: [] },
-        args: ["--local"],
-        workdir: tempRoot.current,
-      });
-      return Effect.gen(function* () {
-        yield* writeTarget("remote");
-        yield* dbLint(flags({ schema: ["public"], local: true }));
-        expect(resolver.resolveInput?.connType).toBe("local");
-        expect(projectRef.calls).toEqual([]);
-      }).pipe(Effect.provide(Layer.mergeAll(layer, pinnedEnv)));
-    });
-
-    it.effect("stays local without a warning when target is unset", () => {
-      const { layer, resolver, out } = setup({
-        checkRows: { public: [] },
-        workdir: tempRoot.current,
-      });
-      return Effect.gen(function* () {
-        yield* dbLint(flags({ schema: ["public"] }));
-        expect(resolver.resolveInput?.connType).toBe("local");
-        expect(out.stderrText).not.toContain("Warning:");
-      }).pipe(Effect.provide(Layer.mergeAll(layer, pinnedEnv)));
-    });
-
-    it.effect(
-      "names the config file as the source when target = remote picks the linked project",
-      () => {
-        const { layer, out } = setup({
-          isLocal: false,
-          checkRows: { public: [] },
-          workdir: tempRoot.current,
-        });
-        return Effect.gen(function* () {
-          yield* writeTarget("remote");
-          yield* dbLint(flags({ schema: ["public"] }));
-          expect(out.stderrText).toContain(
-            'Targeting the linked project (target = "remote" from supabase/config.toml)',
-          );
-        }).pipe(Effect.provide(Layer.mergeAll(layer, pinnedEnv)));
-      },
-    );
-
-    it.effect("names the workdir .env.local as the source when it sets SUPABASE_TARGET", () => {
-      const { layer, resolver, out } = setup({
-        isLocal: false,
-        checkRows: { public: [] },
-        workdir: tempRoot.current,
-      });
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        yield* fs.writeFileString(`${tempRoot.current}/.env.local`, "SUPABASE_TARGET=remote\n");
-        yield* dbLint(flags({ schema: ["public"] }));
-        expect(resolver.resolveInput?.connType).toBe("linked");
-        expect(out.stderrText).toContain(
-          'Targeting the linked project (target = "remote" from .env.local)',
-        );
-      }).pipe(Effect.provide(Layer.mergeAll(layer, pinnedEnv)));
-    });
-
-    it.effect("--project-ref lints that project when target = remote", () => {
-      const { layer, resolver } = setup({
-        isLocal: false,
-        checkRows: { public: [] },
-        workdir: tempRoot.current,
-      });
-      return Effect.gen(function* () {
-        yield* writeTarget("remote");
-        yield* dbLint(flags({ schema: ["public"], projectRef: Option.some(OTHER_REF) }));
-        expect(resolver.resolveInput).toMatchObject({
-          connType: "linked",
-          linkedProjectRef: Option.some(OTHER_REF),
-        });
-      }).pipe(Effect.provide(Layer.mergeAll(layer, pinnedEnv)));
-    });
-
-    it.effect("flushes telemetry when the workspace target is invalid", () => {
-      const { layer, telemetry } = setup({ checkRows: {}, workdir: tempRoot.current });
-      return Effect.gen(function* () {
-        const error = yield* dbLint(flags()).pipe(Effect.flip);
-        expect(error).toMatchObject({ _tag: "WorkspaceTargetError" });
-        expect(telemetry.flushed).toBe(true);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            layer,
-            ConfigProvider.layer(
-              ConfigProvider.fromEnvRecord(
-                { SUPABASE_TARGET: "prod" },
-                { preserveEmptyStrings: true },
-              ),
-            ),
-          ),
-        ),
-      );
-    });
   });
 
   it.effect("lints the project given via --project-ref, overriding the workdir's own ref", () => {

@@ -15,10 +15,7 @@ import type { DbSession } from "../../../command-internal/db-connection.service.
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
-import {
-  resolveDbTarget,
-  type ResolvedDbTarget,
-} from "../../../command-internal/workspace-target.ts";
+import type { DbTargetSelection } from "../../../command-internal/db-target-flags.ts";
 import type { DbAdvisorsFlags } from "./advisors.command.ts";
 import {
   DbAdvisorsBeginTxError,
@@ -70,7 +67,7 @@ const runLocal = Effect.fn("db.advisors.runLocal")(function* (
   dnsResolver: "native" | "https",
   advisorType: string,
   level: string,
-  target: ResolvedDbTarget,
+  target: DbTargetSelection,
 ) {
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
@@ -210,7 +207,7 @@ const outputAndCheck = Effect.fnUntraced(function* (
 const runAdvisors = Effect.fnUntraced(function* (
   flags: DbAdvisorsFlags,
   dnsResolver: "native" | "https",
-  target: ResolvedDbTarget,
+  target: DbTargetSelection,
 ) {
   // Mutually-exclusive db-url/linked/local group, keyed off the
   // explicitly-set flags, not the `--local` default value.
@@ -234,13 +231,14 @@ const runAdvisors = Effect.fnUntraced(function* (
   const level = Option.getOrElse(flags.level, () => "warn");
   const failOn = Option.getOrElse(flags.failOn, () => "none");
   yield* Effect.annotateCurrentSpan({
-    "db.conn_type": target.connType,
+    "db.conn_type": target.connType ?? "local",
     "advisor.type": advisorType,
     "advisor.level": level,
     "advisor.fail_on": failOn,
   });
 
-  // Branches on the resolved target: linked → Management API; otherwise local / `--db-url`.
+  // Branches on whether `--linked` was explicitly set: linked → Management
+  // API; otherwise local / `--db-url`.
   const filtered =
     target.connType === "linked"
       ? yield* runLinked(flags, dnsResolver, advisorType, level)
@@ -254,15 +252,8 @@ export const dbAdvisors = Effect.fn("db.advisors")(function* (flags: DbAdvisorsF
   const dnsResolver = yield* DnsResolverFlag;
   const telemetryState = yield* TelemetryState;
   const cliArgs = yield* CliArgs;
+  const target = resolveDbTargetFlags(cliArgs.args);
   // Flush telemetry on success and failure. Command-level instrumentation /
   // JSON error handling are applied by `advisors.command.ts`.
-  yield* Effect.gen(function* () {
-    const target = yield* resolveDbTarget({
-      command: "db advisors",
-      selection: resolveDbTargetFlags(cliArgs.args),
-      projectRefSet: Option.isSome(flags.projectRef),
-      legacyDefault: "local",
-    });
-    yield* runAdvisors(flags, dnsResolver, target);
-  }).pipe(Effect.ensuring(telemetryState.flush));
+  yield* runAdvisors(flags, dnsResolver, target).pipe(Effect.ensuring(telemetryState.flush));
 });

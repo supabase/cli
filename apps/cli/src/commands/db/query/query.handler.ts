@@ -43,8 +43,6 @@ import {
   toCsv,
 } from "./query.format.ts";
 import { resolveAgentMode } from "../../../command-internal/agent-mode.ts";
-import { dbTargetSelectionOf } from "../../../command-internal/db-target-flags.ts";
-import { resolveDbTarget } from "../../../command-internal/workspace-target.ts";
 
 /** The output formats `db query` selects: `json|table|csv`. */
 type ResolvedFormat = "json" | "table" | "csv";
@@ -237,21 +235,9 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
       });
     }
 
-    const target = yield* resolveDbTarget({
-      command: "db query",
-      selection: dbTargetSelectionOf({
-        dbUrl: Option.isSome(flags.dbUrl),
-        linked: Option.isSome(flags.linked),
-        local: Option.isSome(flags.local),
-      }),
-      projectRefSet: Option.isSome(flags.projectRef),
-      legacyDefault: "local",
-    });
-    const useLinked = target.connType === "linked";
-
     // `--project-ref` only applies to the linked target; it must not be silently ignored when
     // targeting `--local`/`--db-url`.
-    if (Option.isSome(flags.projectRef) && !useLinked) {
+    if (Option.isSome(flags.projectRef) && Option.isNone(flags.linked)) {
       return yield* new DbQueryMutuallyExclusiveFlagsError({
         message:
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
@@ -262,7 +248,7 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     // resolved, so a missing `--file` or a blocking stdin pipe doesn't mask a login/not-linked
     // error.
     let linkedRef: string | undefined;
-    if (useLinked) {
+    if (Option.isSome(flags.linked)) {
       const credentials = yield* CommandCredentials;
       const projectRef = yield* ProjectRefResolver;
       // Config is resolved before the token check, so an unlinked-project/invalid-config/pooler

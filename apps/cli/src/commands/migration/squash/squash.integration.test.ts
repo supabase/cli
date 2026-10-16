@@ -65,7 +65,6 @@ import { dumpSchemaScript } from "../../../command-internal/pg-dump.scripts.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
-import { WorkspaceTargetError } from "../../../command-internal/workspace-target.ts";
 import {
   DbConnection,
   type DbSession,
@@ -231,7 +230,6 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
 );
 
 interface SetupOpts {
-  readonly explicitWorkdir?: boolean;
   /** Runs the real `DbConfigResolver` and linked-project cache against `workdir`. */
   readonly realLayers?: boolean;
   readonly format?: OutputFormat;
@@ -399,7 +397,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     }),
     debugLogger,
     alwaysReadyHttpClientLayer,
-    mockCommandSettings({ workdir, explicitWorkdir: opts.explicitWorkdir }),
+    mockCommandSettings({ workdir }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(DebugFlag, false),
     Layer.succeed(ExperimentalFlag, false),
@@ -1625,86 +1623,6 @@ describe("migration squash", () => {
           baselinedVersion: "1",
         });
       }).pipe(Effect.provide(s.layer));
-    });
-  });
-
-  describe("workspace target", () => {
-    const OTHER_REF = "abcdefghijklmnopqrst";
-    const envLayer = (env: Record<string, string> = {}) =>
-      ConfigProvider.layer(ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true }));
-    const writeTarget = (target: string) =>
-      writeProjectFile(tmp.current, "config.toml", `target = "${target}"\n`);
-
-    it.effect("target = remote squashes against the linked project and names the source", () => {
-      const s = setup(tmp.current, { explicitWorkdir: true, isLocal: false, linkedRef: VALID_REF });
-      return Effect.gen(function* () {
-        yield* writeTarget("remote");
-        const error = yield* migrationSquash(flags({ version: Option.some("bad") })).pipe(
-          Effect.flip,
-        );
-        expect(error).toBeInstanceOf(MigrationInvalidVersionError);
-        expect(s.resolverCalls[0]?.connType).toBe("linked");
-        expect(s.cache.cachedRef).toBe(VALID_REF);
-        expect(stderr(s.out)).toContain(
-          'Targeting the linked project (target = "remote" from supabase/config.toml)',
-        );
-      }).pipe(Effect.provide(Layer.mergeAll(s.layer, envLayer())));
-    });
-
-    it.effect("fails instead of dropping --password when target = local", () => {
-      const s = setup(tmp.current, { explicitWorkdir: true });
-      return Effect.gen(function* () {
-        yield* writeTarget("local");
-        const error = yield* migrationSquash(flags({ password: Option.some("pw") })).pipe(
-          Effect.flip,
-        );
-        expect(error).toBeInstanceOf(MigrationPasswordFlagsError);
-        expect(error.message).toContain(
-          "--password only applies when targeting the linked project",
-        );
-        expect(s.resolverCalls).toEqual([]);
-        expect(s.shadowSpawned).toEqual([]);
-      }).pipe(Effect.provide(Layer.mergeAll(s.layer, envLayer())));
-    });
-
-    it.effect("--project-ref resolves to the linked project when target = remote", () => {
-      const s = setup(tmp.current, { explicitWorkdir: true, isLocal: false, linkedRef: OTHER_REF });
-      return Effect.gen(function* () {
-        yield* writeTarget("remote");
-        const error = yield* migrationSquash(
-          flags({ projectRef: Option.some(OTHER_REF), version: Option.some("bad") }),
-        ).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(MigrationInvalidVersionError);
-        expect(s.resolverCalls[0]).toMatchObject({
-          connType: "linked",
-          linkedProjectRef: Option.some(OTHER_REF),
-        });
-        expect(s.cache.cachedRef).toBe(OTHER_REF);
-      }).pipe(Effect.provide(Layer.mergeAll(s.layer, envLayer())));
-    });
-
-    it.effect(
-      "--project-ref stays rejected on the default local target when target = local",
-      () => {
-        const s = setup(tmp.current, { explicitWorkdir: true });
-        return Effect.gen(function* () {
-          yield* writeTarget("local");
-          const error = yield* migrationSquash(flags({ projectRef: Option.some(OTHER_REF) })).pipe(
-            Effect.flip,
-          );
-          expect(error).toBeInstanceOf(MigrationTargetFlagsError);
-          expect(s.resolverCalls).toEqual([]);
-        }).pipe(Effect.provide(Layer.mergeAll(s.layer, envLayer())));
-      },
-    );
-
-    it.effect("flushes telemetry when the workspace target is invalid", () => {
-      const s = setup(tmp.current, { explicitWorkdir: true });
-      return Effect.gen(function* () {
-        const error = yield* migrationSquash(flags()).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(WorkspaceTargetError);
-        expect(s.telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(Layer.mergeAll(s.layer, envLayer({ SUPABASE_TARGET: "prod" }))));
     });
   });
 });

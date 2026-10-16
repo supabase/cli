@@ -39,8 +39,6 @@ import {
   relativeConfigPath,
 } from "../../../command-internal/workdir-project.ts";
 import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
-import { dbTargetSelectionOf } from "../../../command-internal/db-target-flags.ts";
-import { resolveDbTarget } from "../../../command-internal/workspace-target.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -603,26 +601,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       }
     }
 
-    // `--project-id` pins the project, so neither the workspace target nor the default warning applies.
-    const resolvedTarget = Option.isSome(flags.projectId)
-      ? undefined
-      : yield* resolveDbTarget({
-          command: "gen types",
-          selection: dbTargetSelectionOf({
-            dbUrl: Option.isSome(flags.dbUrl),
-            linked: occurrences.has("linked"),
-            local: occurrences.has("local"),
-          }),
-          projectRefSet: false,
-          legacyDefault: "linked",
-        });
-    const fromWorkspace = resolvedTarget?.source === "workspace";
-    const useLocal = flags.local || (fromWorkspace && resolvedTarget.connType === "local");
-    const useLinked = flags.linked || (fromWorkspace && resolvedTarget.connType === "linked");
-
     yield* Effect.annotateCurrentSpan("typegen.lang", lang);
 
-    if (useLocal) {
+    if (flags.local) {
       yield* Effect.annotateCurrentSpan({
         "typegen.source": "local",
         "stack.backend": backend.kind,
@@ -713,7 +694,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       return;
     }
 
-    if (useLinked) {
+    if (flags.linked) {
       yield* Effect.annotateCurrentSpan("typegen.source", "linked");
       const ref = yield* projectRef.resolve(Option.none());
       const loaded = schemas.length > 0 ? null : yield* loadConfig(ref);

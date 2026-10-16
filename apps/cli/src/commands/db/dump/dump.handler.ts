@@ -6,11 +6,7 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import { dbTargetSelectionOf } from "../../../command-internal/db-target-flags.ts";
-import {
-  passwordDroppedByWorkspaceTarget,
-  resolveDbTarget,
-} from "../../../command-internal/workspace-target.ts";
+import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
 import {
   loadProjectEnv,
   readDbToml,
@@ -148,23 +144,14 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       }
     }
 
-    // 3. Resolve the connection: db-url > local > linked, then the workspace target, then
-    //    the legacy linked default.
-    const resolvedTarget = yield* resolveDbTarget({
-      command: "db dump",
-      selection: dbTargetSelectionOf({
-        dbUrl: Option.isSome(flags.dbUrl),
-        linked: Option.isSome(flags.linked),
-        local: Option.isSome(flags.local),
-      }),
-      projectRefSet: Option.isSome(flags.projectRef),
-      legacyDefault: "linked",
-    });
-    const connType = resolvedTarget.connType;
-    const droppedPassword = passwordDroppedByWorkspaceTarget(resolvedTarget, flags.password);
-    if (droppedPassword !== undefined) {
-      return yield* new DbDumpMutuallyExclusiveFlagsError({ message: droppedPassword });
-    }
+    // 3. Resolve the connection: db-url > local > linked, defaulting to linked when
+    //    neither is set (unlike other db subcommands, which default to local).
+    const useLocal = Option.isNone(flags.dbUrl) && Option.isSome(flags.local);
+    const connType: DbConnType = Option.isSome(flags.dbUrl)
+      ? "db-url"
+      : useLocal
+        ? "local"
+        : "linked";
     // `--project-ref` never implies `--linked`; see push.handler.ts's identical guard.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
       return yield* new DbDumpMutuallyExclusiveFlagsError({

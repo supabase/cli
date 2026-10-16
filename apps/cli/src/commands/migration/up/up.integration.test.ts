@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { vi } from "vitest";
 
 vi.mock("node:net", (importOriginal) =>
@@ -42,7 +42,6 @@ import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import { type DbSession, DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { MigrationApplyError } from "../../../command-internal/migration-apply.ts";
 import { MigrationVaultError } from "../../../command-internal/vault.ts";
-import { WorkspaceTargetError } from "../../../command-internal/workspace-target.ts";
 import { MigrationTargetFlagsError } from "../migration.errors.ts";
 import { MigrationMissingLocalError, MigrationMissingRemoteError } from "./up.errors.ts";
 import { migrationUp } from "./up.handler.ts";
@@ -52,7 +51,6 @@ const LIST_SQL = "SELECT version FROM supabase_migrations.schema_migrations ORDE
 const READ_VAULT = "SELECT id, name FROM vault.secrets WHERE name = ANY($1)";
 
 interface SetupOpts {
-  readonly explicitWorkdir?: boolean;
   /** Runs the real `DbConfigResolver` and linked-project cache against `workdir`. */
   readonly realLayers?: boolean;
   readonly format?: OutputFormat;
@@ -69,24 +67,20 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const cache = mockLinkedProjectCacheTracked();
   const execs: Array<string> = [];
   const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
-  const resolveCalls: Array<DbConfigFlags> = [];
 
   const resolver = Layer.succeed(DbConfigResolver, {
-    resolve: (resolveFlags: DbConfigFlags) =>
-      Effect.sync(() => {
-        resolveCalls.push(resolveFlags);
-        return {
-          conn: {
-            host: "127.0.0.1",
-            port: 54322,
-            user: "postgres",
-            password: "x",
-            database: "postgres",
-          },
-          isLocal: true,
-          ref: Option.none(),
-        } satisfies ResolvedDbConfig;
-      }),
+    resolve: (_flags: DbConfigFlags) =>
+      Effect.succeed({
+        conn: {
+          host: "127.0.0.1",
+          port: 54322,
+          user: "postgres",
+          password: "x",
+          database: "postgres",
+        },
+        isLocal: true,
+        ref: Option.none(),
+      } satisfies ResolvedDbConfig),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 
@@ -155,12 +149,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       : resolver,
     connection,
     projectRef,
-    mockCommandSettings({ workdir, explicitWorkdir: opts.explicitWorkdir }),
+    mockCommandSettings({ workdir }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     BunServices.layer,
   );
-  return { layer, http, out, telemetry, execs, queries, cache, resolveCalls };
+  return { layer, http, out, telemetry, execs, queries, cache };
 }
 
 const flags = (over: Partial<MigrationUpFlags> = {}): MigrationUpFlags => ({
@@ -479,95 +473,5 @@ describe("migration up", () => {
       Effect.provide(ctx.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
-  });
-
-  describe("workspace target", () => {
-    const OTHER_REF = "abcdefghijklmnopqrst";
-    const envLayer = (env: Record<string, string> = {}) =>
-      ConfigProvider.layer(ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true }));
-    const writeTarget = (target: string) =>
-      writeProjectFile(tmp.current, "config.toml", `target = "${target}"\n`);
-
-    it.effect(
-      "target = remote applies migrations to the linked project and names the source",
-      () => {
-        const { layer, out, resolveCalls, cache, queries } = setup(tmp.current, {
-          explicitWorkdir: true,
-          remote: [],
-        });
-        return Effect.gen(function* () {
-          yield* writeTarget("remote");
-          yield* seed(tmp.current, "20240101000000_a.sql");
-          yield* migrationUp(flags());
-          expect(resolveCalls[0]?.connType).toBe("linked");
-          expect(cache.cached).toBe(true);
-          expect(insertedVersions(queries)).toEqual(["20240101000000"]);
-          expect(out.stderrText).toContain(
-            'Targeting the linked project (target = "remote" from supabase/config.toml)',
-          );
-        }).pipe(Effect.provide(Layer.mergeAll(layer, envLayer())));
-      },
-    );
-
-    it.effect("SUPABASE_TARGET overrides the config target and is named as the source", () => {
-      const { layer, out, resolveCalls } = setup(tmp.current, { explicitWorkdir: true });
-      return Effect.gen(function* () {
-        yield* writeTarget("local");
-        yield* migrationUp(flags());
-        expect(resolveCalls[0]?.connType).toBe("linked");
-        expect(out.stderrText).toContain(
-          'Targeting the linked project (target = "remote" from SUPABASE_TARGET)',
-        );
-      }).pipe(Effect.provide(Layer.mergeAll(layer, envLayer({ SUPABASE_TARGET: "remote" }))));
-    });
-
-    it.effect("an explicit --local wins over target = remote", () => {
-      const { layer, out, resolveCalls } = setup(tmp.current, {
-        explicitWorkdir: true,
-        args: ["migration", "up", "--local"],
-      });
-      return Effect.gen(function* () {
-        yield* writeTarget("remote");
-        yield* migrationUp(flags());
-        expect(resolveCalls[0]?.connType).toBe("local");
-        expect(out.stderrText).not.toContain("Targeting the linked project");
-      }).pipe(Effect.provide(Layer.mergeAll(layer, envLayer())));
-    });
-
-    it.effect("--project-ref resolves to the linked project when target = remote", () => {
-      const { layer, resolveCalls } = setup(tmp.current, { explicitWorkdir: true });
-      return Effect.gen(function* () {
-        yield* writeTarget("remote");
-        yield* migrationUp(flags({ projectRef: Option.some(OTHER_REF) }));
-        expect(resolveCalls[0]).toMatchObject({
-          connType: "linked",
-          linkedProjectRef: Option.some(OTHER_REF),
-        });
-      }).pipe(Effect.provide(Layer.mergeAll(layer, envLayer())));
-    });
-
-    it.effect("--project-ref still requires --linked when target is local or unset", () => {
-      const { layer } = setup(tmp.current, { explicitWorkdir: true });
-      return Effect.gen(function* () {
-        const unset = yield* migrationUp(flags({ projectRef: Option.some(OTHER_REF) })).pipe(
-          Effect.flip,
-        );
-        expect(unset).toBeInstanceOf(MigrationTargetFlagsError);
-        yield* writeTarget("local");
-        const local = yield* migrationUp(flags({ projectRef: Option.some(OTHER_REF) })).pipe(
-          Effect.flip,
-        );
-        expect(local).toBeInstanceOf(MigrationTargetFlagsError);
-      }).pipe(Effect.provide(Layer.mergeAll(layer, envLayer())));
-    });
-
-    it.effect("flushes telemetry when the workspace target is invalid", () => {
-      const { layer, telemetry } = setup(tmp.current, { explicitWorkdir: true });
-      return Effect.gen(function* () {
-        const error = yield* migrationUp(flags()).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(WorkspaceTargetError);
-        expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(Layer.mergeAll(layer, envLayer({ SUPABASE_TARGET: "prod" }))));
-    });
   });
 });

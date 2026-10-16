@@ -151,8 +151,6 @@ interface SetupOpts {
   stdoutIsTty?: boolean;
   cwd?: string;
   workdir?: string;
-  /** Replaces the process env with an empty one so ambient `SUPABASE_*` values cannot leak in. */
-  isolatedEnv?: boolean;
   /** Raw CLI args slice, used to detect which flags were explicitly passed. */
   cliArgs?: ReadonlyArray<string>;
   /** Runs the real `DbConfigResolver` against `workdir`. */
@@ -186,20 +184,18 @@ function setupReport(opts: SetupOpts = {}) {
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
     opts.workdir === undefined
-      ? tempDirLayer("supabase-report-workdir-", (workdir) =>
-          mockCommandSettings({ workdir, explicitWorkdir: true }),
-        )
-      : mockCommandSettings({ workdir: opts.workdir, explicitWorkdir: true }),
+      ? tempDirLayer("supabase-report-workdir-", (workdir) => mockCommandSettings({ workdir }))
+      : mockCommandSettings({ workdir: opts.workdir }),
     opts.cwd === undefined
       ? tempDirLayer("supabase-report-cwd-", (cwd) => mockRuntimeInfo({ cwd }))
       : mockRuntimeInfo({ cwd: opts.cwd }),
     mockTty({ stdoutIsTty: opts.stdoutIsTty ?? false }),
     BunServices.layer,
-    opts.realLayers !== true && opts.isolatedEnv !== true
+    opts.realLayers !== true
       ? cliConfigProviderLayer
       : ConfigProvider.layer(
           ConfigProvider.fromEnvRecord(
-            opts.realLayers === true ? { SUPABASE_ACCESS_TOKEN: VALID_TOKEN } : {},
+            { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
             { preserveEmptyStrings: true },
           ),
         ),
@@ -553,11 +549,7 @@ describe("inspect report", () => {
   );
 
   it.effect("emits a structured result and writes CSVs but no table in json mode", () => {
-    const { layer, out } = setupReport({
-      format: "json",
-      csvs: DEFAULT_RULE_CSVS,
-      cliArgs: ["--local"],
-    });
+    const { layer, out } = setupReport({ format: "json", csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
       const base = yield* tempDir("supabase-report-out-");
       yield* inspectReport(flags({ outputDir: base }));
@@ -571,23 +563,6 @@ describe("inspect report", () => {
       expect(data?.rules).toHaveLength(13);
       expect((yield* dateFolderContents(base)).files.length).toBe(14);
       expect(out.stderrText).toBe("");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("warns on stderr only, in json mode, that the default target will flip", () => {
-    const { layer, out } = setupReport({
-      format: "json",
-      csvs: DEFAULT_RULE_CSVS,
-      isolatedEnv: true,
-    });
-    return Effect.gen(function* () {
-      const base = yield* tempDir("supabase-report-out-");
-      yield* inspectReport(flags({ outputDir: base }));
-      expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toContain(
-        "Warning: supabase inspect report will target the local database by default in the next major version.",
-      );
-      expect(out.messages.filter((m) => m.type === "warn")).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 

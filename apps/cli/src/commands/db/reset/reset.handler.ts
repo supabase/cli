@@ -26,7 +26,6 @@ import { parseMigrationVersion } from "../../../command-internal/migration-times
 import { listLocalMigrations } from "../../../command-internal/migration-list.ts";
 import { pathMatch } from "../../../command-internal/path-match.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
-import { resolveDbTarget } from "../../../command-internal/workspace-target.ts";
 import { getPendingSeeds, seedData } from "../../../command-internal/seed-ops.ts";
 import { upsertVaultSecrets } from "../../../command-internal/vault.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
@@ -80,12 +79,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
   const linkedRefForCache = yield* Ref.make(Option.none<string>());
 
   const body = Effect.gen(function* () {
-    const target = yield* resolveDbTarget({
-      command: "db reset",
-      selection: resolveDbTargetFlags(cliArgs.args),
-      projectRefSet: Option.isSome(flags.projectRef),
-      legacyDefault: "local",
-    });
+    const target = resolveDbTargetFlags(cliArgs.args);
     // Mutually-exclusive db-url/linked/local group.
     if (target.setFlags.length > 1) {
       return yield* new DbResetTargetFlagsError({
@@ -123,13 +117,13 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
         suggestion: `Pass a non-empty file path or glob pattern to ${aqua("--sql-paths")}.`,
       });
     }
-    // A remote target + --sql-paths warns about the seed override.
+    // A remote target flag + --sql-paths warns about the seed override.
     if (
       flags.sqlPaths.length > 0 &&
-      (target.connType === "linked" || target.connType === "db-url")
+      (target.setFlags.includes("linked") || target.setFlags.includes("db-url"))
     ) {
       yield* output.raw(
-        `${yellow("WARNING:")} --sql-paths overrides [db.seed].sql_paths and seeds the remote database this reset targets.\n`,
+        `${yellow("WARNING:")} --sql-paths overrides [db.seed].sql_paths and seeds the remote database selected by --linked or --db-url.\n`,
         "stderr",
       );
     }
@@ -172,7 +166,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       resolvedVersion = versions[total - last - 1] ?? "-";
     }
 
-    const connType = target.connType;
+    const connType = target.connType ?? "local";
 
     // `--project-ref` only applies to the linked target; it must not be silently ignored when
     // targeting `--local`/`--db-url`.

@@ -311,18 +311,6 @@ instances = 3
 		assert.NoError(t, config.Load("", fsys))
 	})
 
-	t.Run("accepts the TS-owned target key", func(t *testing.T) {
-		config := NewConfig()
-		fsys := fs.MapFS{
-			"supabase/config.toml": &fs.MapFile{Data: []byte(`
-project_id = "test"
-target = "remote"
-`)},
-		}
-
-		assert.NoError(t, config.Load("", fsys))
-	})
-
 	for _, tt := range []struct {
 		name       string
 		configData string

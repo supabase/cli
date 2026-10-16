@@ -14,7 +14,6 @@ import {
   StorageLocalFlagDef,
   StorageProjectRefFlagDef,
   assertStorageTargetsExclusive,
-  resolveStorageTarget,
 } from "../storage.flags.ts";
 import { storageRm } from "./rm.handler.ts";
 
@@ -53,12 +52,6 @@ export const storageRmCommand = Command.make("rm", config).pipe(
       yield* requireExperimental;
       const cliArgs = yield* CliArgs;
       yield* assertStorageTargetsExclusive(cliArgs.args);
-      const local = yield* resolveStorageTarget({
-        command: "storage rm",
-        args: cliArgs.args,
-        local: flags.local,
-        projectRef: flags.projectRef,
-      });
       const telemetryFlags = {
         recursive: flags.recursive,
         linked: flags.linked,
@@ -69,7 +62,7 @@ export const storageRmCommand = Command.make("rm", config).pipe(
         files: flags.files.map(String),
         recursive: flags.recursive,
         linked: flags.linked,
-        local,
+        local: flags.local,
         projectRef: flags.projectRef,
       }).pipe(
         // project-ref isn't on the safe-flags allowlist, so it stays redacted in telemetry.

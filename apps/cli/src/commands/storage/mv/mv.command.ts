@@ -14,7 +14,6 @@ import {
   StorageLocalFlagDef,
   StorageProjectRefFlagDef,
   assertStorageTargetsExclusive,
-  resolveStorageTarget,
 } from "../storage.flags.ts";
 import { storageMv } from "./mv.handler.ts";
 
@@ -49,19 +48,13 @@ export const storageMvCommand = Command.make("mv", config).pipe(
       yield* requireExperimental;
       const cliArgs = yield* CliArgs;
       yield* assertStorageTargetsExclusive(cliArgs.args);
-      const local = yield* resolveStorageTarget({
-        command: "storage mv",
-        args: cliArgs.args,
-        local: flags.local,
-        projectRef: flags.projectRef,
-      });
       const telemetryFlags = {
         recursive: flags.recursive,
         linked: flags.linked,
         local: flags.local,
         "project-ref": flags.projectRef,
       };
-      return yield* storageMv({ ...flags, local }).pipe(
+      return yield* storageMv(flags).pipe(
         // Not in the safe-flags allowlist, so `--project-ref` stays redacted.
         withCommandTelemetry({ flags: telemetryFlags }),
       );

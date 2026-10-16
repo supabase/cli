@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Redacted } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted } from "effect";
 import { vi } from "vitest";
 
 vi.mock("node:net", (importOriginal) =>
@@ -272,7 +272,6 @@ function setup(opts: SetupOpts = {}) {
 
   const cliSettings = mockCommandSettings({
     workdir: opts.realLayers?.workdir ?? "/tmp/advisors-int",
-    explicitWorkdir: true,
     accessToken: opts.loggedIn === false ? Option.none() : undefined,
   });
   const credentials = mockCredentials({
@@ -300,7 +299,6 @@ function setup(opts: SetupOpts = {}) {
     api.factoryLayer,
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
-    BunServices.layer,
   );
   return {
     layer,
@@ -323,42 +321,6 @@ const flags = (over: Partial<DbAdvisorsFlags> = {}): DbAdvisorsFlags => ({
   type: over.type ?? Option.none<"all" | "security" | "performance">(),
   level: over.level ?? Option.none<"info" | "warn" | "error">(),
   failOn: over.failOn ?? Option.none<"none" | "info" | "warn" | "error">(),
-});
-
-describe("db advisors — workspace target", () => {
-  const pinnedEnv = ConfigProvider.layer(
-    ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true }),
-  );
-
-  it.effect("flushes telemetry when the workspace target is invalid", () => {
-    const { layer, telemetry } = setup({ rows: [] });
-    return Effect.gen(function* () {
-      const error = yield* dbAdvisors(flags()).pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "WorkspaceTargetError" });
-      expect(telemetry.flushed).toBe(true);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layer,
-          ConfigProvider.layer(
-            ConfigProvider.fromEnvRecord(
-              { SUPABASE_TARGET: "prod" },
-              { preserveEmptyStrings: true },
-            ),
-          ),
-        ),
-      ),
-    );
-  });
-
-  it.effect("stays on the local database without a warning when no target is set", () => {
-    const { layer, out } = setup({ rows: [] });
-    return Effect.gen(function* () {
-      yield* dbAdvisors(flags());
-      expect(out.stderrText).not.toContain("Warning:");
-      expect(out.stderrText).not.toContain("Targeting the linked project");
-    }).pipe(Effect.provide(Layer.mergeAll(layer, pinnedEnv)));
-  });
 });
 
 describe("db advisors — local", () => {

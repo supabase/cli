@@ -39,50 +39,20 @@ Auth: `apikey` header always; `Authorization: Bearer <key>` unless the key is `s
 
 ## Environment Variables
 
-| Variable                                                                                                                                                        | Purpose                                                                                                                                      | Required?                                                    |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `SUPABASE_AUTH_SERVICE_ROLE_KEY`                                                                                                                                | linked: bypass tenant key fetch (shell env only); local: explicit key, shell or project dotenv, `encrypted:` decrypted — legacy backend only | no                                                           |
-| `SUPABASE_AUTH_JWT_SECRET`                                                                                                                                      | local: derive service-role key, shell or project dotenv, `encrypted:` decrypted — legacy backend only                                        | no (→ `auth.jwt_secret` → default)                           |
-| `SUPABASE_ACCESS_TOKEN`                                                                                                                                         | linked: Management API auth                                                                                                                  | no (→ `~/.supabase/access-token`)                            |
-| `SUPABASE_PROJECT_ID`                                                                                                                                           | linked: project-ref resolution, superseded by `--project-ref` when set                                                                       | no                                                           |
-| `SUPABASE_SERVICES_HOSTNAME`                                                                                                                                    | local baseUrl host — legacy backend only                                                                                                     | no (→ Docker host → `127.0.0.1`)                             |
-| `SUPABASE_API_PORT`, `SUPABASE_API_EXTERNAL_URL`, `SUPABASE_API_TLS_ENABLED`, `SUPABASE_API_TLS_CERT_PATH`, `SUPABASE_API_TLS_KEY_PATH`, `SUPABASE_API_ENABLED` | local: override the matching `[api]` fields for the gateway URL/TLS, shell env or project dotenv (shell wins; #6452) — legacy backend only   | no                                                           |
-| `SUPABASE_EXPERIMENTAL_STACK`                                                                                                                                   | `1`/`0` selects the stack backend for `--local`, overriding `experimental.stack`                                                             | no (→ `experimental.stack` → legacy)                         |
-| `SUPABASE_EXPERIMENTAL`                                                                                                                                         | experimental gate: `--experimental` equivalent                                                                                               | yes, unless `--experimental` given                           |
-| `SUPABASE_TARGET`                                                                                                                                               | workspace target (`local` or `remote`) used when no selector flag is given; overrides `target` in `supabase/config.toml`                     | no (falls back to config `target`, then the command default) |
+| Variable                                                                                                                                                        | Purpose                                                                                                                                      | Required?                            |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `SUPABASE_AUTH_SERVICE_ROLE_KEY`                                                                                                                                | linked: bypass tenant key fetch (shell env only); local: explicit key, shell or project dotenv, `encrypted:` decrypted — legacy backend only | no                                   |
+| `SUPABASE_AUTH_JWT_SECRET`                                                                                                                                      | local: derive service-role key, shell or project dotenv, `encrypted:` decrypted — legacy backend only                                        | no (→ `auth.jwt_secret` → default)   |
+| `SUPABASE_ACCESS_TOKEN`                                                                                                                                         | linked: Management API auth                                                                                                                  | no (→ `~/.supabase/access-token`)    |
+| `SUPABASE_PROJECT_ID`                                                                                                                                           | linked: project-ref resolution, superseded by `--project-ref` when set                                                                       | no                                   |
+| `SUPABASE_SERVICES_HOSTNAME`                                                                                                                                    | local baseUrl host — legacy backend only                                                                                                     | no (→ Docker host → `127.0.0.1`)     |
+| `SUPABASE_API_PORT`, `SUPABASE_API_EXTERNAL_URL`, `SUPABASE_API_TLS_ENABLED`, `SUPABASE_API_TLS_CERT_PATH`, `SUPABASE_API_TLS_KEY_PATH`, `SUPABASE_API_ENABLED` | local: override the matching `[api]` fields for the gateway URL/TLS, shell env or project dotenv (shell wins; #6452) — legacy backend only   | no                                   |
+| `SUPABASE_EXPERIMENTAL_STACK`                                                                                                                                   | `1`/`0` selects the stack backend for `--local`, overriding `experimental.stack`                                                             | no (→ `experimental.stack` → legacy) |
+| `SUPABASE_EXPERIMENTAL`                                                                                                                                         | experimental gate: `--experimental` equivalent                                                                                               | yes, unless `--experimental` given   |
 
 `storage` is an experimental command: every subcommand requires
 `--experimental` (or `SUPABASE_EXPERIMENTAL`), else it exits 1 with
 `must set the --experimental flag to run this command` before any other work.
-
-## Target selection
-
-With no `--local` or `--linked` flag, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
-shell environment first, then the project `.env*` files), then `target` in `supabase/config.toml` (or
-`config.json`). `remote` targets the linked project through the existing linked path; `local`
-targets the local stack. An explicit selector flag always wins over the target. `--project-ref` is not a selector: a `remote` target resolves it to the linked project, while with no target or
-`target = "local"` it behaves exactly as it did before the target existed. An invalid
-`SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. The project `.env*` files and the config are only read for the target when no selector flag is given; an unreadable or malformed one exits `1` with `DbConfigLoadError` instead of counting as unset. The target is resolved once in the command wrapper (after the experimental gate and the `--linked`/`--local` mutex check) and passed to the handler as the effective `--local` value.
-
-When the target resolves to the linked project, the command writes one line to **stderr** naming where the
-setting came from, so a config-driven target is never silent:
-
-```
-Targeting the linked project (target = "remote" from <source>)
-```
-
-`<source>` is `SUPABASE_TARGET`, the `.env*` file that set it (for example `supabase/.env.local` or `.env`), `supabase/config.toml` or `supabase/config.json`.
-Nothing is written when a selector flag decides the target.
-
-When neither is set the command keeps targeting the linked project and writes one warning to
-**stderr** (every `--output-format`, never stdout), so scripts depending on today's default keep
-working while the next major version moves it to the local stack:
-
-```
-Warning: supabase storage ls will target the local stack by default in the next major version. Pass --linked to keep targeting the linked project. Setting target = "remote" in your Supabase config (or SUPABASE_TARGET=remote) also works, but applies to every database command that can run locally, including db reset.
-```
-
-No warning is written when a selector flag, `--project-ref`, `SUPABASE_TARGET` or `target` is set.
 
 ## Exit Codes
 

@@ -30,31 +30,10 @@ the result as a table or JSON.
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                                  |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `SUPABASE_ACCESS_TOKEN` | `--linked` auth                                                                                                          |
-| agent-detection signals | `--agent=auto` (e.g. `CURSOR_*`, `CLAUDECODE`, …) via `@vercel/detect-agent`                                             |
-| `SUPABASE_TARGET`       | workspace target (`local` or `remote`) used when no selector flag is given; overrides `target` in `supabase/config.toml` |
-
-## Target selection
-
-With no `--local`, `--linked` or `--db-url` flag, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
-shell environment first, then the project `.env*` files), then `target` in `supabase/config.toml` (or
-`config.json`), then the local default. `remote` targets the linked project through the existing
-linked path (same prompts and checks as `--linked`). An explicit selector flag always wins over the
-target. `--project-ref` is not a selector: a `remote` target resolves it to the linked project, while with no target or
-`target = "local"` it behaves exactly as it did before the target existed. An invalid `SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. The project `.env*` files and the config are only read for the target when no selector flag is given; an unreadable or malformed one exits `1` with `DbConfigLoadError` instead of counting as unset.
-No deprecation warning is written: the local default is unchanged.
-
-When the target resolves to the linked project, the command writes one line to **stderr** naming where the
-setting came from, so a config-driven target is never silent:
-
-```
-Targeting the linked project (target = "remote" from <source>)
-```
-
-`<source>` is `SUPABASE_TARGET`, the `.env*` file that set it (for example `supabase/.env.local` or `.env`), `supabase/config.toml` or `supabase/config.json`.
-Nothing is written when a selector flag decides the target.
+| Variable                | Purpose                                                                      |
+| ----------------------- | ---------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | `--linked` auth                                                              |
+| agent-detection signals | `--agent=auto` (e.g. `CURSOR_*`, `CLAUDECODE`, …) via `@vercel/detect-agent` |
 
 ## Exit Codes
 

@@ -1,17 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import {
-  ConfigProvider,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-  Redacted,
-  Schema,
-  Stream,
-} from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schema, Stream } from "effect";
 import { StackError, type DatabaseInstance, type Stack } from "@supabase/stack/effect";
 import { vi } from "vitest";
 
@@ -94,7 +83,6 @@ import type { DbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
 import { dbSchemaDeclarativeGenerate } from "./generate.handler.ts";
 
 interface SetupOpts {
-  explicitWorkdir?: boolean;
   experimental?: boolean;
   args?: ReadonlyArray<string>;
   yes?: boolean;
@@ -374,11 +362,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       : resolver,
     proxy,
     dbConn,
-    mockCommandSettings({
-      workdir,
-      explicitWorkdir: opts.explicitWorkdir,
-      projectId: opts.projectId ?? Option.some("test"),
-    }),
+    mockCommandSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(opts.stdinIsTty ?? false),
     experimentalFlag,
@@ -862,92 +846,6 @@ describe("db schema declarative generate integration", () => {
       expect(written).toBe("create table players ();");
       expect(s.engineExportCalls[0]?.projectRef).toBe(ref);
     }).pipe(Effect.provide(s.layer));
-  });
-
-  describe("workspace target", () => {
-    const pinnedEnv = ConfigProvider.layer(
-      ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true }),
-    );
-    const ref = "abcdefghijklmnopqrst";
-    const targetConfig = (target: string) =>
-      [
-        'project_id = "demo"',
-        `target = "${target}"`,
-        "[experimental.pgdelta]",
-        "enabled = true",
-        "",
-      ].join("\n");
-    const writeConfig = (contents: string) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        yield* fs.makeDirectory(`${tmp.current}/supabase`, { recursive: true });
-        yield* fs.writeFileString(`${tmp.current}/supabase/config.toml`, contents);
-      });
-
-    it.effect("target = local exports from the local database and starts the stack", () => {
-      const s = setup(tmp.current, { experimental: true, explicitWorkdir: true });
-      return Effect.gen(function* () {
-        yield* writeConfig(targetConfig("local"));
-        yield* dbSchemaDeclarativeGenerate(flags());
-        expect(s.engineExportCalls[0]?.targetRef).toContain(
-          "postgresql://postgres:postgres@127.0.0.1:54322",
-        );
-        expect(s.ensureStartedCalls).toBe(1);
-        expect(s.resolverCalls).toEqual([]);
-        expect(s.out.stderrText).not.toContain("Targeting the linked project");
-      }).pipe(Effect.provide(Layer.mergeAll(s.layer, pinnedEnv)));
-    });
-
-    it.effect("target = local rejects --password before any connection", () => {
-      const s = setup(tmp.current, { experimental: true, explicitWorkdir: true });
-      return Effect.gen(function* () {
-        yield* writeConfig(targetConfig("local"));
-        const error = yield* dbSchemaDeclarativeGenerate(
-          flags({ password: Option.some("secret") }),
-        ).pipe(Effect.flip);
-        expect(error).toMatchObject({
-          _tag: "DeclarativeMutuallyExclusiveFlagsError",
-          message: expect.stringContaining("--password only applies when targeting the linked"),
-        });
-        expect(s.ensureStartedCalls).toBe(0);
-        expect(s.engineExportCalls).toEqual([]);
-        expect(s.resolverCalls).toEqual([]);
-      }).pipe(Effect.provide(Layer.mergeAll(s.layer, pinnedEnv)));
-    });
-
-    it.effect("target = remote exports from the linked project and names the source", () => {
-      const s = setup(tmp.current, {
-        experimental: true,
-        explicitWorkdir: true,
-        projectId: Option.some(ref),
-      });
-      return Effect.gen(function* () {
-        yield* writeConfig(targetConfig("remote"));
-        yield* dbSchemaDeclarativeGenerate(flags());
-        expect(s.resolverCalls).toContainEqual(expect.objectContaining({ connType: "linked" }));
-        expect(s.engineExportCalls[0]?.projectRef).toBe(ref);
-        expect(s.ensureStartedCalls).toBe(0);
-        expect(s.cache.cached).toBe(true);
-        expect(s.out.stderrText).toContain(
-          'Targeting the linked project (target = "remote" from supabase/config.toml)',
-        );
-      }).pipe(Effect.provide(Layer.mergeAll(s.layer, pinnedEnv)));
-    });
-
-    it.effect("an explicit --local wins over target = remote", () => {
-      const s = setup(tmp.current, {
-        experimental: true,
-        explicitWorkdir: true,
-        projectId: Option.some(ref),
-      });
-      return Effect.gen(function* () {
-        yield* writeConfig(targetConfig("remote"));
-        yield* dbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
-        expect(s.ensureStartedCalls).toBe(1);
-        expect(s.resolverCalls).not.toContainEqual(expect.objectContaining({ connType: "linked" }));
-        expect(s.out.stderrText).not.toContain("Targeting the linked project");
-      }).pipe(Effect.provide(Layer.mergeAll(s.layer, pinnedEnv)));
-    });
   });
 
   it.effect("--linked=false is an explicit linked target (Go gates on flag.Changed)", () => {

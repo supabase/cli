@@ -15,7 +15,6 @@ import { commandTreeFor } from "../../../../tests/helpers/command-flags.ts";
 import {
   VALID_REF,
   VALID_TOKEN,
-  mockCommandSettings,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
@@ -196,11 +195,6 @@ function setup(opts: SetupOpts = {}) {
     telemetry.layer,
     Layer.succeed(DnsResolverFlag, opts.dnsResolver ?? "native"),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
-    BunServices.layer,
-    mockCommandSettings({
-      workdir: opts.realLayers?.workdir ?? "/tmp/inspect-int",
-      explicitWorkdir: true,
-    }),
   );
   return { layer, out, resolver, connection, telemetry };
 }

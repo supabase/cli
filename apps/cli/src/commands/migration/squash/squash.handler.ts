@@ -40,11 +40,6 @@ import {
 import type { ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
-import {
-  passwordDroppedByWorkspaceTarget,
-  resolveDbTarget,
-  type ResolvedDbTarget,
-} from "../../../command-internal/workspace-target.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
 import { errorMessage, relativizeErrorMessage } from "../../../command-internal/error-message.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
@@ -457,7 +452,7 @@ const baselineMigrations = Effect.fn("MigrationSquash.baselineMigrations")(funct
 
 const runSquash = Effect.fnUntraced(function* (
   flags: MigrationSquashFlags,
-  target: ResolvedDbTarget,
+  target: ReturnType<typeof resolveDbTargetFlags>,
 ) {
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
@@ -487,13 +482,9 @@ const runSquash = Effect.fnUntraced(function* (
         message: cobraMutuallyExclusiveErrorMessage(["db-url", "password"], ["db-url", "password"]),
       });
     }
-    const droppedPassword = passwordDroppedByWorkspaceTarget(target, flags.password);
-    if (droppedPassword !== undefined) {
-      return yield* new MigrationPasswordFlagsError({ message: droppedPassword });
-    }
 
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
-    const connType = target.connType;
+    const connType = target.connType ?? "local";
 
     // `--project-ref` never implies `--linked` and must not be silently
     // discarded on a non-linked target; see push.handler.ts's identical guard.
@@ -642,13 +633,6 @@ export const migrationSquash = Effect.fn("migration.squash")(function* (
 ) {
   const telemetryState = yield* TelemetryState;
   const cliArgs = yield* CliArgs;
-  yield* Effect.gen(function* () {
-    const target = yield* resolveDbTarget({
-      command: "migration squash",
-      selection: resolveDbTargetFlags(cliArgs.args),
-      projectRefSet: Option.isSome(flags.projectRef),
-      legacyDefault: "local",
-    });
-    yield* runSquash(flags, target);
-  }).pipe(Effect.ensuring(telemetryState.flush));
+  const target = resolveDbTargetFlags(cliArgs.args);
+  yield* runSquash(flags, target).pipe(Effect.ensuring(telemetryState.flush));
 });

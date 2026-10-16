@@ -22,8 +22,7 @@ import {
   type DbTomlValues,
 } from "../../../command-internal/db-config.toml-read.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import { dbTargetSelectionOf, type DbConnType } from "../../../command-internal/db-target-flags.ts";
-import { resolveDbTarget } from "../../../command-internal/workspace-target.ts";
+import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import { makeDir } from "../../../command-internal/make-dir.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
@@ -123,7 +122,7 @@ const declarativeBaselineNote = (displayPath: string) =>
  * TS/container equivalent. The explicit `--from`/`--to` and engine mutex are already handled
  * before this runs, so it just forwards `--use-pg-schema` plus the target/schema/file flags.
  */
-const rebuildPgSchemaDelegateArgs = (flags: DbDiffFlags, forwardLinked: boolean): Array<string> => {
+const rebuildPgSchemaDelegateArgs = (flags: DbDiffFlags): Array<string> => {
   const args = ["db", "diff", "--use-pg-schema"];
   const pushTarget = (name: string, value: Option.Option<boolean>) => {
     // The child binary treats an explicitly passed `--flag=false` as selecting that target, so
@@ -133,7 +132,6 @@ const rebuildPgSchemaDelegateArgs = (flags: DbDiffFlags, forwardLinked: boolean)
   if (Option.isSome(flags.dbUrl)) args.push("--db-url", flags.dbUrl.value);
   pushTarget("linked", flags.linked);
   pushTarget("local", flags.local);
-  if (forwardLinked) args.push("--linked");
   if (Option.isSome(flags.file)) args.push("--file", flags.file.value);
   if (Option.isSome(flags.output)) args.push("--output", flags.output.value);
   // Re-encoded as a CSV field so the child's pflag CSV parser doesn't re-split a
@@ -428,20 +426,12 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       return;
     }
 
-    // The target resolves before the `--use-pg-schema` delegation and its `--project-ref` guard,
-    // so a workspace target reaches the delegated engine.
+    // `--use-pg-schema` is an explicit engine selection that doesn't depend on config, so it
+    // short-circuits before the target resolve (disabling the child's telemetry so only this
+    // command's instrumentation fires). `--use-pgadmin` doesn't short-circuit: it needs the same
+    // config validation and target resolve as the other native engines, further down.
     const usePgAdmin = Option.getOrElse(flags.usePgAdmin, () => false);
     const usePgSchema = Option.getOrElse(flags.usePgSchema, () => false);
-    const resolvedTarget = yield* resolveDbTarget({
-      command: "db diff",
-      selection: dbTargetSelectionOf({
-        dbUrl: Option.isSome(flags.dbUrl),
-        linked: Option.isSome(flags.linked),
-        local: Option.isSome(flags.local),
-      }),
-      projectRefSet: Option.isSome(flags.projectRef),
-      legacyDefault: "local",
-    });
     // The pg-schema engine delegates to the bundled Go binary, whose `db diff` never registered
     // `--project-ref`, so forwarding it would silently drop the flag and diff the workdir's own
     // linked ref instead. Fail up front rather than risk the wrong project.
@@ -451,8 +441,6 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       });
     }
     if (usePgSchema) {
-      const forwardLinked =
-        resolvedTarget.source === "workspace" && resolvedTarget.connType === "linked";
       // TS-only deprecation notice, printed before delegating (diagnostics stay stderr-only in
       // every mode). The delegated Go `db diff --use-pg-schema` still prints its own
       // experimental warning; this is additive, not a replacement, so don't drop it.
@@ -477,13 +465,10 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // child owns any `--file` write, so the written path isn't introspectable here (`file:
       // null`).
       if (output.format !== "text") {
-        const captured = yield* proxy.execCapture(
-          rebuildPgSchemaDelegateArgs(flags, forwardLinked),
-          {
-            env,
-            suppressChildTelemetry: true,
-          },
-        );
+        const captured = yield* proxy.execCapture(rebuildPgSchemaDelegateArgs(flags), {
+          env,
+          suppressChildTelemetry: true,
+        });
         yield* output.success("Diff complete.", {
           diff: captured,
           file: null,
@@ -492,15 +477,16 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         });
         return;
       }
-      yield* proxy.exec(rebuildPgSchemaDelegateArgs(flags, forwardLinked), {
-        env,
-        suppressChildTelemetry: true,
-      });
+      yield* proxy.exec(rebuildPgSchemaDelegateArgs(flags), { env, suppressChildTelemetry: true });
       return;
     }
 
     // Native path: resolve the target, provision a live shadow source, then diff.
-    const connType: DbConnType = resolvedTarget.connType;
+    const connType: DbConnType = Option.isSome(flags.dbUrl)
+      ? "db-url"
+      : Option.isSome(flags.linked)
+        ? "linked"
+        : "local";
 
     // `--project-ref` never implies `--linked` and must not be silently discarded on a
     // non-linked target (see push.handler.ts's identical guard; explicit mode has its own).

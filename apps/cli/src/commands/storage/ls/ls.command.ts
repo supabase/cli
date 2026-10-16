@@ -14,7 +14,6 @@ import {
   StorageLocalFlagDef,
   StorageProjectRefFlagDef,
   assertStorageTargetsExclusive,
-  resolveStorageTarget,
 } from "../storage.flags.ts";
 import { storageLs } from "./ls.handler.ts";
 
@@ -51,19 +50,13 @@ export const storageLsCommand = Command.make("ls", config).pipe(
       yield* requireExperimental;
       const cliArgs = yield* CliArgs;
       yield* assertStorageTargetsExclusive(cliArgs.args);
-      const local = yield* resolveStorageTarget({
-        command: "storage ls",
-        args: cliArgs.args,
-        local: flags.local,
-        projectRef: flags.projectRef,
-      });
       const telemetryFlags = {
         recursive: flags.recursive,
         linked: flags.linked,
         local: flags.local,
         "project-ref": flags.projectRef,
       };
-      return yield* storageLs({ ...flags, local }).pipe(
+      return yield* storageLs(flags).pipe(
         // Not in the safe-flags allowlist, so `--project-ref` stays redacted.
         withCommandTelemetry({ flags: telemetryFlags }),
       );

@@ -90,29 +90,6 @@ live shadow available.
 `SUPABASE_INTERNAL_IMAGE_REGISTRY`, `SUPABASE_USE_SLIM_IMAGES` (current-pin shadow Postgres and PG15+ realtime/storage/auth migrate-job images → slim `ghcr.io/supabase/cli`; historical pins, PG14, OrioleDB tags the catalog does not pin, flag-off `15.8.1.085` stay on docker.io), `SUPABASE_PROJECT_ID`, `SUPABASE_DEBUG`,
 `SUPABASE_EXPERIMENTAL`, `SUPABASE_SHADOW_CACHE` (stack shadow baseline cache; on by default, falsy disables restore and publication).
 
-## Target selection
-
-With no `--local`, `--linked` or `--db-url` flag, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
-shell environment first, then the project `.env*` files), then `target` in `supabase/config.toml` (or
-`config.json`), then the local default. `remote` targets the linked project through the existing
-linked path (same prompts and checks as `--linked`). An explicit selector flag always wins over the
-target. `--project-ref` is not a selector: a `remote` target resolves it to the linked project, while with no target or
-`target = "local"` it behaves exactly as it did before the target existed. An invalid `SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. The project `.env*` files and the config are only read for the target when no selector flag is given; an unreadable or malformed one exits `1` with `DbConfigLoadError` instead of counting as unset.
-No deprecation warning is written: the local default is unchanged.
-
-When the target resolves to the linked project, the command writes one line to **stderr** naming where the
-setting came from, so a config-driven target is never silent:
-
-```
-Targeting the linked project (target = "remote" from <source>)
-```
-
-`<source>` is `SUPABASE_TARGET`, the `.env*` file that set it (for example `supabase/.env.local` or `.env`), `supabase/config.toml` or `supabase/config.json`.
-Nothing is written when a selector flag decides the target.
-
-With a `local` workspace target and no selector flag, `--password` fails with the command's password-flag error
-instead of being silently dropped; pass `--linked` or set `target = "remote"`.
-
 ## Exit Codes
 
 | Code  | Condition                                                                                                                                                                                                                                                     |

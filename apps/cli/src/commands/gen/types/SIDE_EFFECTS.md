@@ -96,35 +96,6 @@ way `--db-url` does.
 | `SUPABASE_WORKDIR`                                                                                                                                                                               | working directory `supabase/config.toml`/`config.json` is read from (`--workdir` takes priority)                                                                                                                                           | no — when unset, the CLI walks up from cwd looking for `supabase/config.toml`; when SET (flag or env) the directory is used exactly as given and **no ancestor is searched** |
 | `PATH`, `PATHEXT`, `ComSpec`                                                                                                                                                                     | find the tool of an out-of-process `--lang`; `PATHEXT` and `ComSpec` matter on Windows only                                                                                                                                                | no (`PATHEXT` defaults to `.COM;.EXE;.BAT;.CMD`, `ComSpec` to `cmd.exe`; without `PATH` the tool is reported as not installed)                                               |
 | `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION`                                                                                                                                                         | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.` | no                                                                                                                                                                           |
-| `SUPABASE_TARGET`                                                                                                                                                                                | workspace target (`local` or `remote`) used when no selector flag is given; overrides `target` in `supabase/config.toml`                                                                                                                   | no (falls back to config `target`, then the command default)                                                                                                                 |
-
-## Target selection
-
-With none of `--local`, `--linked`, `--db-url` or `--project-id`, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
-shell environment first, then the project `.env*` files), then `target` in `supabase/config.toml` (or
-`config.json`). `remote` targets the linked project through the existing linked path; `local`
-targets the local database. An explicit selector flag always wins over the target, and `--project-id` pins that project and skips target resolution (no warning, no provenance line). An invalid
-`SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. The project `.env*` files and the config are only read for the target when no selector flag is given; an unreadable or malformed one exits `1` with `DbConfigLoadError` instead of counting as unset. The warning is written after flag validation and before target resolution, so a later "Must specify one of" or not-linked failure still follows it.
-
-When the target resolves to the linked project, the command writes one line to **stderr** naming where the
-setting came from, so a config-driven target is never silent:
-
-```
-Targeting the linked project (target = "remote" from <source>)
-```
-
-`<source>` is `SUPABASE_TARGET`, the `.env*` file that set it (for example `supabase/.env.local` or `.env`), `supabase/config.toml` or `supabase/config.json`.
-Nothing is written when a selector flag decides the target.
-
-When neither is set the command keeps targeting the linked project and writes one warning to
-**stderr** (every `--output-format`, never stdout), so scripts depending on today's default keep
-working while the next major version moves it to the local database:
-
-```
-Warning: supabase gen types will target the local database by default in the next major version. Pass --linked to keep targeting the linked project. Setting target = "remote" in your Supabase config (or SUPABASE_TARGET=remote) also works, but applies to every database command that can run locally, including db reset.
-```
-
-No warning is written when a selector flag, `--project-id`, `SUPABASE_TARGET` or `target` is set.
 
 ## Exit Codes
 

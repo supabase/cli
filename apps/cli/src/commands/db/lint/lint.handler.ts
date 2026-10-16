@@ -12,10 +12,7 @@ import type { DbSession } from "../../../command-internal/db-connection.service.
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
-import {
-  resolveDbTarget,
-  type ResolvedDbTarget,
-} from "../../../command-internal/workspace-target.ts";
+import type { DbTargetSelection } from "../../../command-internal/db-target-flags.ts";
 import type { DbLintFlags } from "./lint.command.ts";
 import {
   DbLintBeginTxError,
@@ -104,7 +101,7 @@ const lintDatabase = Effect.fn("DbLint.lintDatabase")(function* (
 const runLint = Effect.fnUntraced(function* (
   flags: DbLintFlags,
   dnsResolver: "native" | "https",
-  target: ResolvedDbTarget,
+  target: DbTargetSelection,
 ) {
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
@@ -136,9 +133,11 @@ const runLint = Effect.fnUntraced(function* (
   const schemaFlags = flags.schema;
 
   const lintBody = Effect.gen(function* () {
+    // connType passes straight through; the resolver applies db-url > linked >
+    // local precedence and handles `--local`'s default.
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
-      connType: target.connType,
+      connType: target.connType ?? "local",
       dnsResolver,
       linkedProjectRef: flags.projectRef,
     });
@@ -230,14 +229,7 @@ export const dbLint = Effect.fn("db.lint")(function* (flags: DbLintFlags) {
   const dnsResolver = yield* DnsResolverFlag;
   const telemetryState = yield* TelemetryState;
   const cliArgs = yield* CliArgs;
+  const target = resolveDbTargetFlags(cliArgs.args);
   // Command-level instrumentation/JSON error handling are applied by `lint.command.ts`.
-  yield* Effect.gen(function* () {
-    const target = yield* resolveDbTarget({
-      command: "db lint",
-      selection: resolveDbTargetFlags(cliArgs.args),
-      projectRefSet: Option.isSome(flags.projectRef),
-      legacyDefault: "local",
-    });
-    yield* runLint(flags, dnsResolver, target);
-  }).pipe(Effect.ensuring(telemetryState.flush));
+  yield* runLint(flags, dnsResolver, target).pipe(Effect.ensuring(telemetryState.flush));
 });

@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { vi } from "vitest";
 
 vi.mock("node:net", (importOriginal) =>
@@ -42,11 +42,9 @@ import { DbConfigResolver } from "../../../command-internal/db-config.service.ts
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import { type DbSession, DbConnection } from "../../../command-internal/db-connection.service.ts";
-import { WorkspaceTargetError } from "../../../command-internal/workspace-target.ts";
 import {
   MigrationFileNotFoundError,
   MigrationInvalidVersionError,
-  MigrationPasswordFlagsError,
   MigrationTargetFlagsError,
   OperationCanceledError,
 } from "../migration.errors.ts";
@@ -54,7 +52,6 @@ import { MigrationRepairUpdateError } from "./repair.errors.ts";
 import { migrationRepair, type MigrationRepairInput } from "./repair.handler.ts";
 
 interface SetupOpts {
-  readonly explicitWorkdir?: boolean;
   /** Runs the real `DbConfigResolver` and linked-project cache against `workdir`. */
   readonly realLayers?: boolean;
   readonly format?: OutputFormat;
@@ -77,30 +74,26 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   const execs: Array<string> = [];
   const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
-  const resolverCalls: Array<DbConfigFlags> = [];
 
   const resolver = Layer.succeed(DbConfigResolver, {
-    resolve: (flags: DbConfigFlags) =>
-      Effect.suspend(() => {
-        resolverCalls.push(flags);
-        return opts.failResolve === true
-          ? Effect.fail(
-              new ProjectRefNotLinkedError({
-                message: "Cannot find project ref. Have you run link?",
-              }),
-            )
-          : Effect.succeed({
-              conn: {
-                host: "127.0.0.1",
-                port: 54322,
-                user: "postgres",
-                password: "x",
-                database: "postgres",
-              },
-              isLocal: false,
-              ref: Option.some(VALID_REF),
-            } satisfies ResolvedDbConfig);
-      }),
+    resolve: (_flags: DbConfigFlags) =>
+      opts.failResolve === true
+        ? Effect.fail(
+            new ProjectRefNotLinkedError({
+              message: "Cannot find project ref. Have you run link?",
+            }),
+          )
+        : Effect.succeed({
+            conn: {
+              host: "127.0.0.1",
+              port: 54322,
+              user: "postgres",
+              password: "x",
+              database: "postgres",
+            },
+            isLocal: false,
+            ref: Option.some(VALID_REF),
+          } satisfies ResolvedDbConfig),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 
@@ -163,7 +156,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       : resolver,
     connection,
     projectRef,
-    mockCommandSettings({ workdir, explicitWorkdir: opts.explicitWorkdir }),
+    mockCommandSettings({ workdir }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
@@ -175,7 +168,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     ),
     BunServices.layer,
   );
-  return { layer, http, out, telemetry, execs, queries, cache, resolverCalls };
+  return { layer, http, out, telemetry, execs, queries, cache };
 }
 
 const input = (over: Partial<MigrationRepairInput> = {}): MigrationRepairInput => ({
@@ -597,69 +590,5 @@ describe("migration repair", () => {
       Effect.provide(ctx.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
-  });
-
-  describe("workspace target", () => {
-    const OTHER_REF = "abcdefghijklmnopqrst";
-    const envLayer = (env: Record<string, string> = {}) =>
-      ConfigProvider.layer(ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true }));
-    const writeTarget = (target: string) =>
-      writeProjectFile(tmp.current, "config.toml", `target = "${target}"\n`);
-
-    it.effect("target = remote repairs the linked project and names the source", () => {
-      const ctx = setup(tmp.current, { explicitWorkdir: true });
-      return Effect.gen(function* () {
-        yield* writeTarget("remote");
-        yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
-        yield* migrationRepair(input({ versions: ["20240101000000"], status: "applied" }));
-        expect(ctx.resolverCalls[0]?.connType).toBe("linked");
-        expect(ctx.out.stderrText).toContain(
-          'Targeting the linked project (target = "remote" from supabase/config.toml)',
-        );
-        expect(ctx.out.stderrText).not.toContain("Warning:");
-      }).pipe(Effect.provide(Layer.mergeAll(ctx.layer, envLayer())));
-    });
-
-    it.effect("fails instead of dropping --password when target = local", () => {
-      const ctx = setup(tmp.current, { explicitWorkdir: true });
-      return Effect.gen(function* () {
-        yield* writeTarget("local");
-        const error = yield* migrationRepair(
-          input({ versions: ["20240101000000"], password: Option.some("pw") }),
-        ).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(MigrationPasswordFlagsError);
-        expect(error.message).toContain(
-          "--password only applies when targeting the linked project",
-        );
-        expect(ctx.resolverCalls).toEqual([]);
-      }).pipe(Effect.provide(Layer.mergeAll(ctx.layer, envLayer())));
-    });
-
-    it.effect("--project-ref resolves to the linked project when target = remote", () => {
-      const ctx = setup(tmp.current, { explicitWorkdir: true });
-      return Effect.gen(function* () {
-        yield* writeTarget("remote");
-        yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
-        yield* migrationRepair(
-          input({ versions: ["20240101000000"], projectRef: Option.some(OTHER_REF) }),
-        );
-        expect(ctx.resolverCalls[0]).toMatchObject({
-          connType: "linked",
-          linkedProjectRef: Option.some(OTHER_REF),
-        });
-        expect(ctx.cache.cachedRef).toBe(OTHER_REF);
-      }).pipe(Effect.provide(Layer.mergeAll(ctx.layer, envLayer())));
-    });
-
-    it.effect("flushes telemetry when the workspace target is invalid", () => {
-      const ctx = setup(tmp.current, { explicitWorkdir: true });
-      return Effect.gen(function* () {
-        const error = yield* migrationRepair(input({ versions: ["20240101000000"] })).pipe(
-          Effect.flip,
-        );
-        expect(error).toBeInstanceOf(WorkspaceTargetError);
-        expect(ctx.telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(Layer.mergeAll(ctx.layer, envLayer({ SUPABASE_TARGET: "prod" }))));
-    });
   });
 });

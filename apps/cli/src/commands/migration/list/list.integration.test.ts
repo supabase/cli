@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { vi } from "vitest";
 
 vi.mock("node:net", (importOriginal) =>
@@ -38,10 +38,8 @@ import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { MigrationsReadError } from "../../../command-internal/migration.errors.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
-import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
-import { WorkspaceTargetError } from "../../../command-internal/workspace-target.ts";
 import { MigrationPasswordFlagsError, MigrationTargetFlagsError } from "../migration.errors.ts";
 import { migrationList } from "./list.handler.ts";
 import type { MigrationListFlags } from "./list.command.ts";
@@ -49,7 +47,6 @@ import type { MigrationListFlags } from "./list.command.ts";
 const LIST_SQL = "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
 
 interface SetupOpts {
-  readonly explicitWorkdir?: boolean;
   readonly format?: OutputFormat;
   readonly args?: ReadonlyArray<string>;
   readonly isLocal?: boolean;
@@ -134,7 +131,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       : resolver,
     connection,
     projectRef,
-    mockCommandSettings({ workdir, explicitWorkdir: opts.explicitWorkdir }),
+    mockCommandSettings({ workdir }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     BunServices.layer,
@@ -400,138 +397,5 @@ describe("migration list", () => {
       Effect.provide(ctx.layer),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
-  });
-
-  describe("workspace target", () => {
-    const OTHER_REF = "abcdefghijklmnopqrst";
-    const envLayer = (env: Record<string, string> = {}) =>
-      ConfigProvider.layer(ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true }));
-    const writeTarget = Effect.fnUntraced(function* (target: string) {
-      const fs = yield* FileSystem.FileSystem;
-      yield* fs.makeDirectory(`${tmp.current}/supabase`, { recursive: true });
-      yield* fs.writeFileString(`${tmp.current}/supabase/config.toml`, `target = "${target}"\n`);
-    });
-
-    it.effect("target = local lists the local database without a warning", () => {
-      const ctx = setup(tmp.current, { explicitWorkdir: true, isLocal: true });
-      return Effect.gen(function* () {
-        yield* writeTarget("local");
-        yield* migrationList(flags());
-        expect(ctx.resolverCalls[0]?.connType).toBe("local");
-        expect(ctx.cache.cached).toBe(false);
-        expect(ctx.out.stderrText).not.toContain("Warning:");
-      }).pipe(Effect.provide(Layer.mergeAll(ctx.layer, envLayer())));
-    });
-
-    it.effect("target = remote lists the linked project and names the source", () => {
-      const ctx = setup(tmp.current, { explicitWorkdir: true });
-      return Effect.gen(function* () {
-        yield* writeTarget("remote");
-        yield* migrationList(flags());
-        expect(ctx.resolverCalls[0]?.connType).toBe("linked");
-        expect(ctx.out.stderrText).toContain(
-          'Targeting the linked project (target = "remote" from supabase/config.toml)',
-        );
-        expect(ctx.out.stderrText).not.toContain("Warning:");
-      }).pipe(Effect.provide(Layer.mergeAll(ctx.layer, envLayer())));
-    });
-
-    it.effect("fails instead of dropping --password when target = local", () => {
-      const ctx = setup(tmp.current, { explicitWorkdir: true, isLocal: true });
-      return Effect.gen(function* () {
-        yield* writeTarget("local");
-        const error = yield* migrationList(flags({ password: Option.some("pw") })).pipe(
-          Effect.flip,
-        );
-        expect(error).toBeInstanceOf(MigrationPasswordFlagsError);
-        expect(error).toMatchObject({
-          message: expect.stringContaining(
-            "--password only applies when targeting the linked project",
-          ),
-        });
-        expect(ctx.resolverCalls).toEqual([]);
-      }).pipe(Effect.provide(Layer.mergeAll(ctx.layer, envLayer())));
-    });
-
-    it.effect("keeps --password with target = remote", () => {
-      const ctx = setup(tmp.current, { explicitWorkdir: true });
-      return Effect.gen(function* () {
-        yield* writeTarget("remote");
-        yield* migrationList(flags({ password: Option.some("pw") }));
-        expect(ctx.resolverCalls[0]).toMatchObject({
-          connType: "linked",
-          password: Option.some("pw"),
-        });
-      }).pipe(Effect.provide(Layer.mergeAll(ctx.layer, envLayer())));
-    });
-
-    it.effect("keeps --password and warns about the default flip when no target is set", () => {
-      const ctx = setup(tmp.current, { explicitWorkdir: true });
-      return Effect.gen(function* () {
-        yield* migrationList(flags({ password: Option.some("pw") }));
-        expect(ctx.resolverCalls[0]).toMatchObject({
-          connType: "linked",
-          password: Option.some("pw"),
-        });
-        expect(ctx.out.stderrText.match(/Warning:/g)).toHaveLength(1);
-      }).pipe(Effect.provide(Layer.mergeAll(ctx.layer, envLayer())));
-    });
-
-    it.effect("--project-ref resolves to the linked project when target = remote", () => {
-      const ctx = setup(tmp.current, { explicitWorkdir: true });
-      return Effect.gen(function* () {
-        yield* writeTarget("remote");
-        yield* migrationList(flags({ projectRef: Option.some(OTHER_REF) }));
-        expect(ctx.resolverCalls[0]).toMatchObject({
-          connType: "linked",
-          linkedProjectRef: Option.some(OTHER_REF),
-        });
-        expect(ctx.cache.cachedRef).toBe(OTHER_REF);
-      }).pipe(Effect.provide(Layer.mergeAll(ctx.layer, envLayer())));
-    });
-
-    it.effect("--project-ref without a target neither warns nor reads the config target", () => {
-      const ctx = setup(tmp.current, { explicitWorkdir: true });
-      return Effect.gen(function* () {
-        yield* migrationList(flags({ projectRef: Option.some(OTHER_REF) }));
-        expect(ctx.resolverCalls[0]?.connType).toBe("linked");
-        expect(ctx.out.stderrText).not.toContain("Warning:");
-        expect(ctx.out.stderrText).not.toContain("Targeting the linked project");
-      }).pipe(Effect.provide(Layer.mergeAll(ctx.layer, envLayer())));
-    });
-
-    it.effect("fails on a malformed project env file before any API call or connection", () => {
-      const ctx = setup(tmp.current, { explicitWorkdir: true, realLayers: true });
-      const requests: Array<StubbedRequest> = [];
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-        yield* fs.makeDirectory(`${tmp.current}/supabase`, { recursive: true });
-        yield* fs.writeFileString(
-          `${tmp.current}/supabase/.env`,
-          "SUPABASE_TARGET=local\nBAD LINE!\n",
-        );
-        const error = yield* migrationList(flags()).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(DbConfigLoadError);
-        expect(error.message).toBe("failed to parse environment file: .env");
-        expect(requests).toEqual([]);
-        expect(ctx.http.calls).toEqual([]);
-        expect(ctx.out.stderrText).not.toContain("Connecting to");
-        expect(ctx.telemetry.flushed).toBe(true);
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(ctx.layer),
-        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
-      );
-    });
-
-    it.effect("flushes telemetry when the workspace target is invalid", () => {
-      const ctx = setup(tmp.current, { explicitWorkdir: true });
-      return Effect.gen(function* () {
-        const error = yield* migrationList(flags()).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(WorkspaceTargetError);
-        expect(ctx.telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(Layer.mergeAll(ctx.layer, envLayer({ SUPABASE_TARGET: "prod" }))));
-    });
   });
 });

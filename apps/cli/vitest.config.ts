@@ -81,7 +81,7 @@ export default defineConfig({
         test: {
           name: "unit",
           include: ["**/*.unit.test.ts"],
-          env: { FORCE_COLOR: "1", SUPABASE_TARGET: "" },
+          env: { FORCE_COLOR: "1" },
         },
       },
       {
@@ -89,8 +89,6 @@ export default defineConfig({
           name: "integration",
           hookTimeout: 120_000,
           include: ["**/*.integration.test.ts"],
-          // An empty value reads as unset, so a host `SUPABASE_TARGET` cannot steer handler tests.
-          env: { SUPABASE_TARGET: "" },
           // Integration workers start real service processes and containers.
           maxWorkers: 4,
           sequence: { groupOrder: 1 },
