@@ -30,5 +30,14 @@ fail. Repository conventions live in `CLAUDE.md`, `AGENTS.md`, and `docs/adr/`. 
 5. Never edit `.git/`, delete files, or create scratch files. You cannot run commands; CI runs
    again on the pull request after you finish.
 
+## Answer-only round
+
+When the context directory also holds `earlier-replies.md`, an earlier round already pushed a fix
+and the AI review ran again on it. This round only answers findings: do not edit any file.
+`earlier-replies.md` lists findings from earlier reviews with the replies already posted. Decline a
+finding that repeats one of them with a reply pointing to that earlier answer, and decline findings
+the merge did not introduce as above. If a finding needs a fix, set `fixed` to true and describe
+the fix in its reply; a maintainer takes over.
+
 Return JSON matching the provided schema. `summary` and each `reply` are posted on the pull
 request: one or two plain sentences each.

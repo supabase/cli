@@ -57,7 +57,7 @@ export function requireEnv(name: string): string {
   return value;
 }
 
-/** GET without a body, POST with one. */
+/** GET without a body, POST with one. A 204 response resolves to `undefined`. */
 export async function githubRequest<T>(token: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
@@ -76,6 +76,9 @@ export async function githubRequest<T>(token: string, path: string, body?: unkno
   if (!response.ok) {
     throw new Error(`${path} failed: ${response.status} ${await response.text()}`);
   }
+  if (response.status === 204) {
+    return undefined as T;
+  }
   return (await response.json()) as T;
 }
 
@@ -87,6 +90,9 @@ export const SYNC_PAIRS = [
 
 /** Login of the release GitHub App, the only author of sync pull requests. */
 export const RELEASE_BOT_LOGIN = "supabase-cli-releaser[bot]";
+
+/** Starts each release-bot comment that publishes a Claude resolution of the `develop` → `next` sync. */
+export const RESOLVE_MARKER = "<!-- sync-agent resolve -->";
 
 export function isAllowedSyncPair(source: string, target: string): boolean {
   return SYNC_PAIRS.some((pair) => pair.source === source && pair.target === target);

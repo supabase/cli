@@ -5,6 +5,7 @@ import {
   type GitRunner,
   MAX_PUSH_ATTEMPTS,
   RELEASE_BOT_LOGIN,
+  RESOLVE_MARKER,
   SYNC_PAIRS,
   githubGraphql,
   githubRequest,
@@ -233,7 +234,10 @@ export interface FastForwardIo {
   listReviews(): Promise<PullRequestReview[]>;
   listCheckRuns(sha: string): Promise<CheckRun[]>;
   findOpenPullRequest(base: string, head: string): Promise<number | undefined>;
+  listComments(): Promise<{ user: { login: string } | null; body: string }[]>;
   comment(body: string): Promise<void>;
+  /** Dispatches `Sync branches` to let Claude resolve the `develop` → `next` merge again on this pull request. */
+  dispatchResync(): Promise<void>;
 }
 
 export interface FastForwardInput {
@@ -249,6 +253,7 @@ export type FastForwardOutcome =
   | { status: "fast-forwarded"; sha: string }
   | { status: "merged-after-resync"; sha: string }
   | { status: "resynced"; sha: string }
+  | { status: "resync-dispatched"; resolutions: number }
   | { status: "refused"; reason: string }
   | { status: "dry-run"; reason: string };
 
@@ -396,6 +401,9 @@ function pushSha(
   return result.status === 0 ? { ok: true } : { ok: false, stderr: result.stderr };
 }
 
+/** Claude's first resolution of a `develop` → `next` sync plus the resyncs it may run after `next` moves. */
+const MAX_RESOLUTIONS = 3;
+
 async function resyncSyncBranch(
   io: FastForwardIo,
   input: FastForwardInput,
@@ -421,6 +429,35 @@ async function resyncSyncBranch(
         .filter(Boolean)
         .map((file) => `- \`${file}\``)
         .join("\n");
+      if (promotion.source === "develop" && promotion.target === "next") {
+        // A sync pull request resolved by hand carries no marker but still used its first resolution.
+        const resolutions = Math.max(
+          1,
+          (await io.listComments()).filter(
+            (comment) =>
+              comment.user?.login === RELEASE_BOT_LOGIN && comment.body.startsWith(RESOLVE_MARKER),
+          ).length,
+        );
+        if (resolutions < MAX_RESOLUTIONS) {
+          if (input.dryRun) {
+            return { status: "dry-run", reason: `would dispatch a resync of ${syncBranch}` };
+          }
+          try {
+            await io.dispatchResync();
+          } catch (error) {
+            return refuse(
+              io,
+              input,
+              `Dispatching the resync of ${syncBranch} failed`,
+              `\`${target}\` moved since approval and merging it into \`${syncBranch}\` conflicts:\n\n${list}\n\nStarting Claude's resync failed (${error instanceof Error ? error.message : String(error)}); resolve on the branch and re-approve.`,
+            );
+          }
+          await io.comment(
+            `\`${target}\` moved since approval and merging it into \`${syncBranch}\` conflicts:\n\n${list}\n\nClaude is resolving the merge again on this pull request (resync ${resolutions} of ${MAX_RESOLUTIONS - 1}).`,
+          );
+          return { status: "resync-dispatched", resolutions };
+        }
+      }
       return refuse(
         io,
         input,
@@ -641,10 +678,37 @@ function makeIo(token: string, repository: string, prNumber: number): FastForwar
       );
       return pulls[0]?.number;
     },
+    async listComments() {
+      const comments: { user: { login: string } | null; body: string }[] = [];
+      for (let page = 1; ; page += 1) {
+        const batch = await githubRequest<typeof comments>(
+          token,
+          `/repos/${repository}/issues/${prNumber}/comments?per_page=100&page=${page}`,
+        );
+        comments.push(...batch);
+        if (batch.length < 100) {
+          return comments;
+        }
+      }
+    },
     async comment(body) {
       await githubRequest(token, `/repos/${repository}/issues/${prNumber}/comments`, {
         body,
       });
+    },
+    async dispatchResync() {
+      const { default_branch: ref } = await githubRequest<{ default_branch: string }>(
+        token,
+        `/repos/${repository}`,
+      );
+      await githubRequest(
+        token,
+        `/repos/${repository}/actions/workflows/sync-branches.yml/dispatches`,
+        {
+          ref,
+          inputs: { pair: "develop-into-next", resync_pr: String(prNumber) },
+        },
+      );
     },
   };
 }
