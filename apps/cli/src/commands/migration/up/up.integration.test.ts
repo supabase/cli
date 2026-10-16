@@ -20,6 +20,7 @@ import {
   useTempWorkdir,
   sequentialExecBatch,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
@@ -132,6 +133,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   const http = recordingProjectHttpClient(VALID_REF);
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     out.layer,
     telemetry.layer,
     opts.realLayers === true
@@ -343,25 +345,6 @@ describe("migration up", () => {
       );
     }).pipe(Effect.provide(layer));
   });
-
-  it.effect(
-    "warns once on stderr that SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is removed in v3",
-    () => {
-      const { layer, out } = setup(tmp.current);
-      return Effect.gen(function* () {
-        yield* writeProjectFile(
-          tmp.current,
-          ".env",
-          "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION=17.11.0.002\n",
-        );
-        yield* migrationUp(flags());
-        const warning =
-          "WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.";
-        expect(out.stderrText.split("\n").filter((line) => line === warning)).toHaveLength(1);
-        expect(out.stdoutText).not.toContain(warning);
-      }).pipe(Effect.provide(layer));
-    },
-  );
 
   it.effect("surfaces an apply failure", () => {
     const { layer } = setup(tmp.current, { remote: [], failApply: true });

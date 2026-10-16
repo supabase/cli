@@ -8,7 +8,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
-import { tempPaths } from "./temp-paths.ts";
+import { tempPaths } from "../shared/config/temp-paths.ts";
 
 /** A saved `.temp` pin is not a usable image tag. The file is left unchanged. */
 export class InvalidServiceVersionTagError extends Data.TaggedError(

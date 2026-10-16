@@ -175,10 +175,10 @@ export interface LoadCliProjectEnvironmentOptions {
 /** Not covered by semver — exported from `@supabase/config/internal` only. */
 export interface InternalResolveCliConfigOptions {
   /**
-   * Opt into viper-style case-agnostic `env()` matching (`^env\((.*)\)$`). Defaults to
+   * Opt into the CLI's case-agnostic `env()` matching (`^env\((.*)\)$`). Defaults to
    * `false`, which requires SCREAMING_SNAKE_CASE.
    */
-  readonly goViperCompat?: boolean;
+  readonly cliCompat?: boolean;
 }
 
 export const loadCliProjectEnvironment = Effect.fn("ProjectEnvironment.load")(function* (
@@ -221,7 +221,7 @@ export const loadCliProjectEnvironment = Effect.fn("ProjectEnvironment.load")(fu
 
 /**
  * Effect-typed counterpart of the plain sync `resolveCliConfigValue` in
- * `./lib/resolve.ts`, additionally accepting the internal-only `goViperCompat` option.
+ * `./lib/resolve.ts`, additionally accepting the internal-only `cliCompat` option.
  *
  * Accepts `Pick<CliProjectEnvironment, "values">` so a caller with only a project's env
  * values, not the full loaded object, can pass `{ values }` directly.
@@ -237,7 +237,7 @@ export function resolveCliConfigValue<T>(
       value,
       cliProjectEnv,
       toPathSegments(configPath),
-      options?.goViperCompat ?? false,
+      options?.cliCompat ?? false,
     ),
   );
 }
@@ -254,7 +254,7 @@ export function resolveCliConfigSubtree<T>(
       value,
       cliProjectEnv,
       toPathSegments(pathPrefix),
-      options?.goViperCompat ?? false,
+      options?.cliCompat ?? false,
     ),
   );
 }

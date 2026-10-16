@@ -16,7 +16,7 @@ import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-va
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveYes, OutputFlag } from "../../../command-internal/global-flags.ts";
-import { unsupportedOutputFlagMessage } from "../../../command-internal/go-output-flag.ts";
+import { unsupportedOutputFlagMessage } from "../../../command-internal/output-formats.ts";
 import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
@@ -211,7 +211,7 @@ export const runConfigPull = Effect.fn("config.pull.run")(function* (input: Conf
  * {@link runConfigPull}.
  */
 export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullFlags) {
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const yes = yield* resolveYes;
   const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
@@ -232,7 +232,7 @@ export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullF
   yield* Effect.gen(function* () {
     // Reject -o/--output outright, before anything else: this command only supports
     // --output-format.
-    if (Option.isSome(goOutputFlag)) {
+    if (Option.isSome(outputFlag)) {
       return yield* new ConfigPullOutputFlagUnsupportedError({
         message: unsupportedOutputFlagMessage("config pull"),
       });
