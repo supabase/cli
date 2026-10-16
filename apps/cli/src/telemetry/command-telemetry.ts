@@ -445,9 +445,9 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
         const failureMetadata =
           failureCause !== undefined
             ? failureTelemetryPropertiesForCause(failureCause)
-          : recordedExitCode === 1
-            ? toFailureTelemetryProperties(processControlledFailureActionability(command))
-            : {};
+            : recordedExitCode === 1
+              ? toFailureTelemetryProperties(processControlledFailureActionability(command))
+              : {};
 
         yield* analytics
           .capture(EventCommandExecuted, {
