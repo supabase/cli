@@ -80,7 +80,7 @@ describe("new stack error telemetry", () => {
     ).toMatchObject({ error_fingerprint: "tag:ExperimentalStackDestroyError:release_mismatch" });
   });
 
-  it("names an unclassified stack failure by its failed operation, or a newer kind as unclassified", () => {
+  it("names an unclassified stack failure by its failed operation, or as unclassified for an unknown operation", () => {
     const wrap = (operation: string) =>
       new StackCommandStartError({
         reason: "stack",
