@@ -14,6 +14,7 @@ import { GLOBAL_OUTPUT_FORMATS } from "../../../command-internal/global-flags.ts
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { configDiff } from "./diff.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   // Accepts either a project ref or a branch of the linked project; no separate `--target` flag.
@@ -82,4 +83,5 @@ export const configDiffCommand = Command.make("diff", config).pipe(
   Command.provide(managementApiRuntimeLayer(["config", "diff"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

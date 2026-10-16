@@ -7,6 +7,7 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { emitHostnameResult } from "../domains.emit.ts";
 import { mapDomainsHttpError } from "../domains.errors.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
 import type { DomainsActivateFlags } from "./activate.command.ts";
 
@@ -24,6 +25,11 @@ export const domainsActivate = Effect.fn("domains.activate")(function* (
   const ref = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
+    yield* requireHostedMutationConsent({
+      action: "Activate the custom hostname",
+      details: ["Third-party auth providers stop working on the Supabase-provisioned subdomain."],
+    });
+
     const activating =
       output.format === "text" ? yield* output.task("Activating custom hostname...") : undefined;
     const response = yield* api.v1.activateCustomHostname({ ref }).pipe(

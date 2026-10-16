@@ -5,8 +5,14 @@ import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { GLOBAL_FLAGS, OutputFormatFlag } from "../../command-internal/global-flags.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { emptyEnv, fakeConsole, mockOutput } from "../../../tests/helpers/mocks.ts";
+import { commandTargetLayer } from "../output/command-target.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { exitCodeForFailure, withoutParseErrorHelpDump } from "./run.ts";
+
+const textOutputLayer = () => {
+  const out = mockOutput({ format: "text" });
+  return Layer.mergeAll(out.layer, commandTargetLayer.pipe(Layer.provide(out.layer)));
+};
 
 const testBranchesCommand = branchesCommand.pipe(
   Command.withGlobalFlags([OutputFormatFlag, ...GLOBAL_FLAGS]),
@@ -23,7 +29,7 @@ describe("group command exit codes (CLI-1906)", () => {
     Layer.mergeAll(
       CliOutput.layer(textCliOutputFormatter()),
       Layer.succeed(CliArgs, { args }),
-      mockOutput({ format: "text" }).layer,
+      textOutputLayer(),
       emptyEnv(),
     );
 
@@ -82,7 +88,7 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
       CliOutput.layer(textCliOutputFormatter()),
       Layer.succeed(CliArgs, { args }),
       Layer.succeed(Console.Console, console),
-      mockOutput({ format: "text" }).layer,
+      textOutputLayer(),
       emptyEnv(),
     );
 
@@ -249,7 +255,7 @@ describe("nested command parsing", () => {
           Layer.mergeAll(
             CliOutput.layer(textCliOutputFormatter()),
             Layer.succeed(CliArgs, { args }),
-            mockOutput({ format: "text" }).layer,
+            textOutputLayer(),
             emptyEnv(),
           ),
         ),

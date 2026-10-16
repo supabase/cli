@@ -11,6 +11,7 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { rejectIncludeRawOutput } from "../domains.removed-flag.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { domainsActivate } from "./activate.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   projectRef: Flag.String("project-ref").pipe(
@@ -61,4 +62,5 @@ export const domainsActivateCommand = Command.make("activate", config).pipe(
           Effect.provide(managementApiLayer),
         ),
   ),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

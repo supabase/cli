@@ -37,16 +37,18 @@
 | `SUPABASE_PROJECT_ID`   | PARENT project ref fallback (1st candidate) when `--project-ref` is unset (CLI-2167 follow-up) — see `branches list/SIDE_EFFECTS.md` for the full resolution chain | no                                                      |
 | `SUPABASE_WORKDIR`      | base directory for the `.temp/project-ref` lookup                                                                                                                  | no                                                      |
 | `GITHUB_HEAD_REF`       | preferred over walking `.git/HEAD` when detecting the default branch name in CI                                                                                    | no                                                      |
+| `SUPABASE_YES`          | approves the hosted-mutation confirmation like `--yes` (shell environment only; `supabase/.env` is ignored)                                                        | no                                                      |
 
 ## Exit Codes
 
-| Code | Condition                                                                                |
-| ---- | ---------------------------------------------------------------------------------------- |
-| `0`  | success — branch created                                                                 |
-| `1`  | `BranchesCreateCancelledError` — user declined the git-branch confirmation prompt        |
-| `1`  | `BranchesCreateUnexpectedStatusError` — non-201 response from the create branch endpoint |
-| `1`  | `BranchesCreateNetworkError` — transport-level network failure                           |
-| `1`  | Auth / project-ref resolution errors (`AccessTokenRequiredError`, …)                     |
+| Code | Condition                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — branch created                                                                                               |
+| `1`  | `BranchesCreateUnexpectedStatusError` — non-201 response from the create branch endpoint                               |
+| `1`  | `BranchesCreateNetworkError` — transport-level network failure                                                         |
+| `1`  | Auth / project-ref resolution errors (`AccessTokenRequiredError`, …)                                                   |
+| `1`  | `HostedMutationConsentRequiredError` — no `--yes` / shell `SUPABASE_YES` and the run cannot prompt; nothing is changed |
+| `1`  | `HostedMutationDeclinedError` — the confirmation prompt was declined                                                   |
 
 ## Telemetry Events Fired
 
@@ -64,3 +66,8 @@ In **text mode** (default / `--output pretty`), the header `Created preview bran
 For `--output {json,yaml,toml,env}`, the same header writes to stdout followed by the encoded `V1CreateABranchOutput` payload.
 
 In `--output-format json` / `stream-json`, a `success` event carries the response payload.
+
+## Notes
+
+- Resolves the parent project and prints `Target: <project>` once on stderr in every output format, for example `Target: project <name> (<ref>) · production`. `--output-format json|stream-json` object results and error envelopes also carry a `target` object; `--output {json,yaml,toml,env}` payloads are unchanged.
+- **Consent.** Asks once, after the parent project is resolved and the name is known (taken from the current git branch when `[name]` is omitted) and before the POST, with default Yes: `Create preview branch <name>`. The question lists the region, size, persistence and `--with-data` values that were set, and says when the name came from the git branch. The separate git-branch confirmation prompt is gone. `--yes` or a shell `SUPABASE_YES` approves it (`supabase/.env` does not) and echoes `Confirmed by --yes: <action> on <target>` to stderr. Without it, only an interactive text-mode terminal is asked: JSON, `-o`, piped and agent runs exit 1 with `HostedMutationConsentRequiredError` and change nothing, and declining exits 1 with `HostedMutationDeclinedError`. Stdin is never read.

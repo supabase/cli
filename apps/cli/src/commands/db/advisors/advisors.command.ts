@@ -14,27 +14,11 @@ import { dbAdvisors } from "./advisors.handler.ts";
 import { dbAdvisorsRuntimeLayer } from "./advisors.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { targetFlags } from "../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription(
-      "Checks the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Checks the linked project for issues."),
-    Flag.withDefault(false),
-  ),
-  local: Flag.Boolean("local").pipe(
-    Flag.withDescription("Checks the local database for issues."),
-    Flag.withDefault(false),
-  ),
-  // Overrides the linked project ref; the same flag exists on `config push`.
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
   type: Flag.Literals("type", ["all", "security", "performance"] as const).pipe(
     Flag.withDescription("Type of advisors to check: all, security, performance."),
     Flag.optional,
@@ -111,4 +95,9 @@ export const dbAdvisorsCommand = Command.make("advisors", config).pipe(
   Command.provide(dbAdvisorsRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({
+    group: "selectable",
+    consent: "none",
+    consentExemptReason: "its transaction is always rolled back",
+  }),
 );

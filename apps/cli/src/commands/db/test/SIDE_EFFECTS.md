@@ -36,10 +36,10 @@ Identical to `test db`. See
 Identical to `test db`. See
 [`../../test/db/SIDE_EFFECTS.md`](../../test/db/SIDE_EFFECTS.md#docker).
 
-## API Routes (`--linked` only)
+## API Routes (linked target only)
 
 Identical to `test db`. See
-[`../../test/db/SIDE_EFFECTS.md`](../../test/db/SIDE_EFFECTS.md#api-routes---linked-only).
+[`../../test/db/SIDE_EFFECTS.md`](../../test/db/SIDE_EFFECTS.md#api-routes-linked-target-only).
 
 ## Environment Variables
 
@@ -74,9 +74,8 @@ Identical to `test db`. See
 
 - Hidden command —
   registered with `.pipe(Command.unlisted)` in `../db.command.ts`.
-- `--local` defaults to `true` on both `db test` and `test db` — bare
-  `supabase db test` always targets the local stack. The flag drives
-  `resolveDbTargetFlags`'s presence-based selection directly, the same
-  mechanism `test db` uses, so the true default is reflected exactly.
+- Target selection and the hosted-target confirmation are identical to `test db`: with no target
+  flag, bare `supabase db test` follows the workspace target (default `local`), and a linked or
+  remote `--db-url` run asks for confirmation (or needs `--yes`) before pgTAP is enabled.
 - Shares every behavior documented on `test db` (pg_prove image pin,
   `pg_extension`-based "already exists" detection, global `--network-id` handling, etc.).

@@ -98,3 +98,4 @@ One `result` event whose `data` is the full response object.
 - `.temp/linked-project.json` is written after ref resolution (once the `--experimental` gate is open), even when the API call fails, but only on a cache miss with a token when `GET /v1/projects/{ref}` succeeds and `.temp/project-ref` does not name another ref. A closed gate writes nothing.
 - `telemetry.json` is written on every invocation past the `--experimental` gate, including
   failures. A closed gate writes nothing.
+- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).

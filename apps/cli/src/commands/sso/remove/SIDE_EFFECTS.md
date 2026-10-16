@@ -29,20 +29,23 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | profile selector (built-in name or YAML file path)   | no (defaults to `supabase`)                             |
+| Variable                | Purpose                                                                                               | Required?                                               |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                  | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROFILE`      | profile selector (built-in name or YAML file path)                                                    | no (defaults to `supabase`)                             |
+| `SUPABASE_YES`          | confirms the hosted mutation without asking; only the shell environment counts, never `supabase/.env` | no (falls back to the interactive prompt)               |
 
 ## Exit Codes
 
-| Code | Condition                                                   |
-| ---- | ----------------------------------------------------------- |
-| `0`  | success                                                     |
-| `1`  | `SsoInvalidUuidError` — provider ID is not a canonical UUID |
-| `1`  | `SsoRemoveNotFoundError` — 404 from delete endpoint         |
-| `1`  | `SsoRemoveUnexpectedStatusError` — other non-2xx            |
-| `1`  | `SsoRemoveNetworkError` — transport-level failure           |
+| Code | Condition                                                                                                                  |
+| ---- | -------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                    |
+| `1`  | `SsoInvalidUuidError` — provider ID is not a canonical UUID                                                                |
+| `1`  | `SsoRemoveNotFoundError` — 404 from delete endpoint                                                                        |
+| `1`  | `SsoRemoveUnexpectedStatusError` — other non-2xx                                                                           |
+| `1`  | `SsoRemoveNetworkError` — transport-level failure                                                                          |
+| `1`  | declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed               |
+| `1`  | JSON, stream-json, `-o` or non-interactive run without `--yes` (`HostedMutationConsentRequiredError`) — nothing is changed |
 
 ## Telemetry Events Fired
 
@@ -73,3 +76,5 @@ Single `success` event with the removed provider's details as data.
 
 - Removing a provider will prevent existing SSO users from logging in.
 - The `<provider-id>` argument must be a valid UUID; UUIDs are accepted case-insensitively.
+- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
+- Asks `Remove SSO provider <id> on <target>?` (default No) before the first write. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.

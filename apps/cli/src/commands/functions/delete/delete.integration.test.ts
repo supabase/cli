@@ -2,6 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { BunCrypto } from "@effect/platform-bun";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema, Stdio } from "effect";
 
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { stripControlSequences } from "../../../shared/output/strip-control-sequences.ts";
 import {
@@ -14,6 +16,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockContextualAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
@@ -27,19 +30,27 @@ const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const tempRoot = useTempWorkdir("supabase-functions-delete-");
 
+const approvedHostedMutation = Layer.mergeAll(
+  Layer.succeed(YesFlag, true),
+  Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+);
+
 describe("functions delete", () => {
   it.effect("deletes a function natively through the Management API", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
     const linkedProjectCache = mockLinkedProjectCacheTracked();
     const telemetry = mockTelemetryStateTracked();
-    const layer = buildTestRuntime({
-      out,
-      api,
-      cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-      linkedProjectCache: linkedProjectCache.layer,
-      telemetry: telemetry.layer,
-    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        linkedProjectCache: linkedProjectCache.layer,
+        telemetry: telemetry.layer,
+      }),
+      approvedHostedMutation,
+    );
 
     return Effect.gen(function* () {
       yield* functionsDelete({
@@ -68,14 +79,17 @@ describe("functions delete", () => {
   it.effect("uses an explicit project ref", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
-    const layer = buildTestRuntime({
-      out,
-      api,
-      cliSettings: mockCommandSettings({
-        workdir: tempRoot.current,
-        projectId: Option.none(),
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({
+          workdir: tempRoot.current,
+          projectId: Option.none(),
+        }),
       }),
-    });
+      approvedHostedMutation,
+    );
 
     return Effect.gen(function* () {
       yield* functionsDelete({
@@ -109,13 +123,19 @@ describe("functions delete", () => {
       workdir: tempRoot.current,
       projectId: Option.none(),
     });
-    const layer = buildTestRuntime({
-      out,
-      api,
-      cliSettings,
-      tty: mockTty({ stdinIsTty: true, stdoutIsTty: true }),
-      linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
-    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true, stdoutIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      approvedHostedMutation,
+    );
 
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -146,12 +166,15 @@ describe("functions delete", () => {
     (functionName) => {
       const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
       const linkedProjectCache = mockLinkedProjectCacheTracked();
-      const layer = buildTestRuntime({
-        out: mockOutput({ format: "text" }),
-        api,
-        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-        linkedProjectCache: linkedProjectCache.layer,
-      });
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out: mockOutput({ format: "text" }),
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          linkedProjectCache: linkedProjectCache.layer,
+        }),
+        approvedHostedMutation,
+      );
 
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
@@ -179,6 +202,7 @@ describe("functions delete", () => {
         analytics,
       }),
       commandRuntimeLayer(["functions", "delete"]).pipe(Layer.provide(BunCrypto.layer)),
+      approvedHostedMutation,
       Stdio.layerTest({
         args: Effect.succeed([
           "functions",
@@ -200,4 +224,11 @@ describe("functions delete", () => {
       expect(event?.properties.flags).toEqual({ "project-ref": "abcdefghijklmnopqrst" });
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("functions delete", {
+  api: { response: { status: 200, body: null } },
+  invoke: () => ({
+    run: functionsDelete({ functionName: "hello-world", projectRef: Option.none() }),
+  }),
 });

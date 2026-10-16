@@ -53,21 +53,6 @@ describe("pullConfigStepResult", () => {
     });
   });
 
-  it("reports planned for a declined confirmation that has work, identically to a dry run", () => {
-    const outcome: PullConfigStepOutcome = {
-      dryRun: false,
-      hasWork: true,
-      confirmed: false,
-      configFilePath: "supabase/config.toml",
-    };
-    expect(pullConfigStepResult(outcome, payload)).toEqual({
-      step: "config",
-      status: "planned",
-      written: [],
-      detail: payload,
-    });
-  });
-
   it("reports changed and writes the config file path once actually applied", () => {
     const outcome: PullConfigStepOutcome = {
       dryRun: false,
@@ -107,17 +92,6 @@ describe("pullMigrationHistoryStepResult", () => {
       written: [],
       detail: { files: [] },
       reason: "not_needed",
-    });
-  });
-
-  it("reports skipped with reason declined", () => {
-    const outcome: PullMigrationHistoryStepOutcome = { kind: "skipped", reason: "declined" };
-    expect(pullMigrationHistoryStepResult(outcome)).toEqual({
-      step: "migration_history",
-      status: "skipped",
-      written: [],
-      detail: { files: [] },
-      reason: "declined",
     });
   });
 

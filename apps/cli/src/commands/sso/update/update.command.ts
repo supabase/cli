@@ -12,6 +12,7 @@ import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts"
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
 import { ssoUpdate } from "./update.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 // All three domain flags are CSV string-slice flags; malformed CSV reports
 // a diagnostic (see `stringSliceFlag`).
@@ -118,4 +119,5 @@ export const ssoUpdateCommand = Command.make("update", config).pipe(
     ),
   ),
   Command.provide(managementApiRuntimeLayer(["sso", "update"])),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

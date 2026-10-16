@@ -21,6 +21,7 @@ test("unsets a secret from the remote project", ({ cliEffect, project }) =>
           `${name}=live-value`,
           "--project-ref",
           project.ref,
+          "--yes",
         ]);
         yield* requireSuccess(created, "secrets set setup");
 

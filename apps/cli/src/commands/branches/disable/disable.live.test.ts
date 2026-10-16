@@ -39,7 +39,13 @@ test("disables preview branching", ({ cliEffect, project }) =>
         yield* awaitLiveBranchesRemovedEffect(cliEffect, project);
         branchRef = undefined;
 
-        const disabled = yield* cliEffect(["branches", "disable", "--project-ref", project.ref]);
+        const disabled = yield* cliEffect([
+          "branches",
+          "disable",
+          "--project-ref",
+          project.ref,
+          "--yes",
+        ]);
         expect(disabled.exitCode, disabled.stderr).toBe(0);
         expect(disabled.stdout).toContain(`Disabled preview branching for project: ${project.ref}`);
       });

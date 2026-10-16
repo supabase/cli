@@ -10,14 +10,22 @@ import {
   withStorageGatewayFetch,
 } from "../../command-internal/storage-credentials.ts";
 import { withStackStorageGuidance } from "../../command-internal/stack-storage.ts";
-import { makeStorageGateway, type StorageGateway } from "../../command-internal/storage-gateway.ts";
+import {
+  announceLocalStorageTarget,
+  makeStorageGateway,
+  type StorageGateway,
+} from "../../command-internal/storage-gateway.ts";
+import { resolveTarget } from "../../command-internal/target/resolve-target.ts";
 import {
   UrlParseError,
   StorageUrlPatternError,
   parseStorageUrl,
 } from "../../command-internal/storage-url.ts";
 import { StorageConfigError } from "../../command-internal/storage-credentials.errors.ts";
-import { missingProjectConfigMessageEffect } from "../../command-internal/workdir-project.ts";
+import {
+  describeConfigParseError,
+  missingProjectConfigMessageEffect,
+} from "../../command-internal/workdir-project.ts";
 import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
 import {
   StorageInvalidUrlError,
@@ -26,10 +34,22 @@ import {
   StorageWorkdirError,
 } from "./storage.errors.ts";
 
-/**
- * Shared plumbing for the four `storage` subcommands: resolving the project ref
- * (`--local`'s value decides local vs linked) and building the gateway client.
- */
+interface StorageTargetFlags {
+  readonly local: boolean;
+  readonly linked: boolean;
+  readonly projectRef: Option.Option<string>;
+}
+
+/** The resolved target and its project ref, empty for the local stack. */
+export const resolveStorageTarget = Effect.fnUntraced(function* (flags: StorageTargetFlags) {
+  const target = yield* resolveTarget({
+    local: flags.local,
+    linked: flags.linked,
+    dbUrl: Option.none(),
+    projectRef: flags.projectRef,
+  });
+  return { target, projectRef: target.kind === "linked" ? target.ref : "" };
+});
 
 interface LoadedStorageConfig {
   readonly config: CliConfig;
@@ -65,7 +85,7 @@ export const loadStorageConfig = Effect.fn("Storage.loadConfig")(function* (
       "CliConfigParseError",
       (cause) =>
         new StorageConfigError({
-          message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
+          message: describeConfigParseError(cliSettings.workdir, cause),
         }),
     ),
     Effect.mapError((cause) =>
@@ -102,6 +122,7 @@ export const connectStorageGateway = <E, R>(
 ) =>
   Effect.gen(function* () {
     const credentials = yield* resolveStorageCredentials({ projectRef: opts.projectRef });
+    if (opts.projectRef === "") yield* announceLocalStorageTarget(credentials.baseUrl);
     const gatewayOps = Effect.gen(function* () {
       const gateway = yield* makeStorageGateway({
         baseUrl: credentials.baseUrl,

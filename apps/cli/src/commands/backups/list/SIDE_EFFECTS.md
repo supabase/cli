@@ -94,3 +94,5 @@ One `result` NDJSON event on success containing the backup response object.
 - Requires `--project-ref`, `SUPABASE_PROJECT_ID`, a populated `<workdir>/supabase/.temp/project-ref` file, or a TTY for the interactive project picker.
 - The interactive picker calls `GET /v1/projects` and writes `"Selected project: <ref>"` to stderr in text mode. It does **not** persist the choice; only `supabase link` and `supabase bootstrap` write the temp file.
 - Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers.
+
+- Prints `Target: <project>` once on stderr in every output format, for example `Target: project <name> (<ref>) · production`. `--output-format json|stream-json` object results and error envelopes also carry a `target` object; `--output {json,yaml,toml,env}` payloads are unchanged. Reads never prompt.

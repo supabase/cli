@@ -1,17 +1,16 @@
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
-import { Layer } from "effect";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { upgradeSuggestion } from "../../../command-internal/upgrade-suggest.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesCreate } from "./create.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const BRANCH_REGIONS = [
   "ap-east-1",
@@ -114,6 +113,6 @@ export const branchesCreateCommand = Command.make("create", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  // `stdinLayer` lets the confirmation prompt read piped stdin via `promptYesNo` on a non-TTY.
-  Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["branches", "create"]), stdinLayer)),
+  Command.provide(managementApiRuntimeLayer(["branches", "create"])),
+  withTargetPolicy({ group: "hosted", consent: "yes" }),
 );

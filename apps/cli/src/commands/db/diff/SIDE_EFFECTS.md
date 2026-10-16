@@ -8,6 +8,12 @@ edge-runtime involved). `--use-pg-schema` is removed: the flag stays parsed
 (hidden) only so using it fails with an actionable removal error instead of an
 unknown-flag parse error — see "`--use-pg-schema` is removed" below.
 
+With no target flag the command diffs the workspace target (`SUPABASE_TARGET`, then `target` in
+`config.toml`, default `local`; see
+[ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md)).
+`--local` selects the local stack, `--linked` or `--project-ref` the linked project, and `--db-url`
+a custom database. It only reads, so it never asks for confirmation, on any target.
+
 When `[experimental].stack` is on, each shadow is a fresh database in an invocation-owned,
 unique temporary stack namespace. The command applies the catalog and project migrations as needed,
 then destroys its namespace when the Effect scope closes. If its container engine is unreachable
@@ -39,8 +45,8 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 | managed snapshot key `<key>`                                                                              | backend                                                                               | warm stack-shadow cache hit; managed retention may evict entries and snapshots survive stack destruction                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial`                               | tar                                                                                   | abandoned-partial sweep on every cache-eligible acquire (warm hit and cold export) — enumerated and `stat`ed, and removed when older than 5 minutes (a crashed/SIGKILLed earlier export's leftover)                                                                                                                                                                                                                                                                                                                                                                 |
 | `[db.migrations].schema_paths` globs / `<workdir>/supabase/database/**` / `<workdir>/supabase/schemas/**` | SQL                                                                                   | migra engine only, for the local-target declarative-schema fallback; pg-delta always compares the migrations baseline directly to the live target                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `~/.supabase/access-token`                                                                                | plain text                                                                            | `--linked` / `--db-url` with no `SUPABASE_ACCESS_TOKEN`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `<workdir>/supabase/.temp/project-ref`                                                                    | plain text                                                                            | `--linked` ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `~/.supabase/access-token`                                                                                | plain text                                                                            | a linked target with no `SUPABASE_ACCESS_TOKEN`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `<workdir>/supabase/.temp/project-ref`                                                                    | plain text                                                                            | a linked target, ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ## Files Written
 
@@ -52,7 +58,7 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar     | cache-enabled COLD shadow provision creates the current key's snapshot (native diff targets + the explicit `--from/--to migrations` shadow; never `--use-pgadmin`/`--use-pg-schema`); a warm hit `touch`es its mtime (LRU); every cache-eligible acquire may delete other keys under LRU keep-3 + 2-day mtime TTL — ~90MB (`SUPABASE_HOME` overrides the root) |
 | managed snapshot key `<key>`                                                | backend | stack-mode cache-enabled cold shadow provision saves the database baseline; the last completed save replaces the key                                                                                                                                                                                                                                           |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial` | tar     | during a cold export — the in-flight temp file, `rename`d into the tar above on success and removed on failure; only a crash/SIGKILL leaves it behind, and later cold exports / warm hits sweep leftovers older than 5 minutes                                                                                                                                 |
-| `~/.supabase/<workdir-hash>/linked-project.json`                            | JSON    | `--linked` (post-run cache)                                                                                                                                                                                                                                                                                                                                    |
+| `~/.supabase/<workdir-hash>/linked-project.json`                            | JSON    | a linked target (post-run cache)                                                                                                                                                                                                                                                                                                                               |
 | `~/.supabase/telemetry.json`                                                | JSON    | every invocation (post-run)                                                                                                                                                                                                                                                                                                                                    |
 
 ## Docker
@@ -98,14 +104,15 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 | DELETE | `/v1/projects/{ref}/network-bans`           | Bearer | Unban during pooler login retry     |
 | GET    | `/v1/projects/{ref}`                        | Bearer | Linked-project cache (post-run)     |
 
-`--use-pgadmin --linked` performs every one of these calls natively (CLI-1968), as part
+`--use-pgadmin` with a linked target performs every one of these calls natively (CLI-1968), as part
 of this command's own target resolve, ahead of the differ container.
 
 ## Environment Variables
 
 | Variable                                                                              | Purpose                                                                                                                                                                                                             | Required? |
 | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_ACCESS_TOKEN`                                                               | auth for `--linked`                                                                                                                                                                                                 | no        |
+| `SUPABASE_ACCESS_TOKEN`                                                               | auth for a linked target                                                                                                                                                                                            | no        |
+| `SUPABASE_TARGET`                                                                     | workspace target when no `--local`/`--linked`/`--db-url` is given                                                                                                                                                   | no        |
 | `SUPABASE_DB_PASSWORD`                                                                | remote DB password (linked); ignored for a target other than the linked project (see Notes)                                                                                                                         | no        |
 | `SUPABASE_DB_SHADOW_PORT`                                                             | shadow container's host port (`db.shadow_port`) — NOT `SUPABASE_DB_PORT`, which the shadow never reads                                                                                                              | no        |
 | `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                                                                                                                                    | no        |
@@ -137,18 +144,20 @@ migra/pg-delta-engine-specific).
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                                    |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success; empty diff ("No schema changes found")                                                                                                                                                                                              |
-| `1`  | `--from` without `--to`; engine-flag mutex; target mutex; unknown explicit target; connection/shadow/engine failure; file IO error; local db not running (`--use-pgadmin`); differ container non-zero exit; unparseable `--json-diff` output |
-| `1`  | `--project-ref` set with a resolved target other than linked; (in explicit mode) `--project-ref` with `--linked` unchanged and neither `--from` nor `--to` being `linked`                                                                    |
-| `1`  | `--use-pg-schema` passed at all (any value, including `=false`) — removed, see Notes                                                                                                                                                         |
+| Code | Condition                                                                                                                                                                                                                      |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | success; empty diff ("No schema changes found")                                                                                                                                                                                |
+| `1`  | `--from` without `--to`; engine-flag mutex; unknown explicit target; connection/shadow/engine failure; file IO error; local db not running (`--use-pgadmin`); differ container non-zero exit; unparseable `--json-diff` output |
+| `1`  | more than one of `--db-url`/`--linked`/`--local` (`TargetSelectorConflictError`); `--project-ref` with `--local` or `--db-url` (`TargetProjectRefConflictError`)                                                               |
+| `1`  | `--use-pg-schema` passed at all (any value, including `=false`) — removed, see Notes                                                                                                                                           |
 
 ## Output
 
 ### `--output-format text`
 
-Progress to stderr (`Creating shadow database...`, `Diffing schemas[: <list>]`,
+Progress to stderr (the `Target: …` line — linked project `Target: <name> (<ref>)`,
+`Target: local stack (<host>:<port>)` or `Target: custom Postgres (<host>:<port>)`, printed once per
+distinct target — then `Creating shadow database...`, `Diffing schemas[: <list>]`,
 `Finished supabase db diff on branch <branch>.`, drop-statement warning, and the
 `--file` write warning). A configured `[db.migrations].schema_paths` also warns
 that it no longer changes the migrations baseline. The SQL diff prints to stdout
@@ -211,7 +220,7 @@ transaction metadata.
 
 - **Config value precedence** (ADR 0032): explicit flag > shell env > project `.env*` > config
   (`config.json` over `config.toml`) > default. The whole config is decoded up front, so an
-  invalid value fails the command. A `--linked` target also applies a matching `[remotes.*]`
+  invalid value fails the command. A linked target also applies a matching `[remotes.*]`
   block. The linked-database password env is withheld when the target differs from
   `.temp/project-ref`, with a `Not sending SUPABASE_DB_PASSWORD to <target>: ...` warning and a
   temporary login role instead. `--password` is rejected with `--db-url` or `--local`.
@@ -220,28 +229,21 @@ transaction metadata.
   stack backend is active or `[experimental.pgdelta].enabled` resolves true. An explicit
   `--use-migra` or `--use-pgadmin` (a true value) always wins; `--use-migra=false` keeps pg-delta; the stack backend always uses pg-delta.
 - `--use-migra`, `--use-pgadmin`, `--use-pg-delta` are a mutually-exclusive engine group
-  (pg-delta is the default unless `[experimental.pgdelta] enabled = false`); `--db-url` /
-  `--linked` / `--local` are a mutually-exclusive target group (default
-  `--local`). `--use-pg-schema` is removed and rejects before this group is even checked (see
-  Notes below), so it is never a live member of the group.
-- **`--project-ref`** overrides ONLY the linked-ref resolution `ProjectRefResolver`
-  performs (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`) — unlike
-  `SUPABASE_PROJECT_ID`, it does not affect the shadow container's project
-  id/labels. It never implies `--linked`: passing it with a resolved
-  `--local`/`--db-url` target (native mode) is a hard error, as is a plain
-  `--project-ref` with no `--from`/`--to` (defaults to `--local`). Two
-  exceptions apply in explicit mode: `--from linked` / `--to linked` resolves a
-  linked ref without any target flag at all, so the guard does not fire there;
-  and a changed `--linked` (even `--linked=false`) genuinely consumes
-  `--project-ref` via the preflight, so the guard does not fire whenever
-  `--linked` was explicitly set either. It still fires for e.g. `--from local
---to migrations --project-ref X` (explicit mode, `--linked` unchanged, and
-  neither side `linked`), where the flag would otherwise go silently unused
-  (deliberately stricter than `SUPABASE_PROJECT_ID`, which is simply unused
-  on a non-linked target). `--use-pgadmin --linked`
-  honors the flag like every other native engine (CLI-1968 — same target
-  resolve); `--use-pg-schema` is removed and rejects before any target
-  resolution happens (see Notes below), so this guard never runs for it.
+  (pg-delta is the default unless `[experimental.pgdelta] enabled = false`). `--use-pg-schema`
+  is removed and rejects before this group is even checked (see Notes below), so it is never a
+  live member of the group.
+- **Target selection.** `--db-url`, `--linked` and `--local` are mutually exclusive and a `false`
+  switch counts as absent. `--project-ref` selects the linked project and supplies only the ref
+  (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`); unlike `SUPABASE_PROJECT_ID`, it does not
+  affect the shadow container's project id/labels, and combining it with `--local` or `--db-url`
+  is a hard error. In explicit `--from`/`--to` mode the endpoints come from the two refs: a
+  target flag (or `--project-ref` alone, which implies the linked project) only validates the
+  selection and merges the linked project's `[remotes.<ref>]` override, `--from linked` /
+  `--to linked` resolve the linked project without any target flag, and the workspace target is
+  not consulted. The linked project resolves once, so `--from linked --to linked` announces it
+  once. `--use-pgadmin` honors the same selection (CLI-1968 — same target resolve);
+  `--use-pg-schema` is removed and rejects before any target resolution happens (see Notes
+  below).
 - Explicit `--from`/`--to` mode always uses pg-delta and writes the flattened review
   representation to `--output` (or stdout). It ignores `--file`; normal mode retains
   per-unit migration files for the CLI apply paths.

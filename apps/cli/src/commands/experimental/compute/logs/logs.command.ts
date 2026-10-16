@@ -13,6 +13,7 @@ import {
 } from "../../../../shared/compute/compute-logs.sql.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computeLogs } from "./logs.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 /**
  * The endpoint's own ceiling is the SQL `LIMIT`, so this bound is the CLI's
@@ -121,4 +122,5 @@ export const computeLogsCommand = Command.make("logs", config).pipe(
     ),
   ),
   Command.provide(managementApiRuntimeLayer(["compute", "logs"])),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

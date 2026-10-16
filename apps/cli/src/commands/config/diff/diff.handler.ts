@@ -32,6 +32,7 @@ import {
 } from "../config.load.ts";
 import { configApiScope, configEnvOriginLookup, configScopeLine } from "../config.format.ts";
 import { configProjectConfigTry } from "../config.project-config.ts";
+import { withAnnouncedTarget } from "../../../shared/output/command-target.service.ts";
 import { configReadStatusMessage } from "../config.read-status.ts";
 import {
   configDiffComparisonLine,
@@ -202,7 +203,7 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
     if (output.format !== "text") {
       yield* output.success(
         configDiffSummaryMessage(changeSet, scope),
-        configDiffPayload(changeSet, scope, context, originFor),
+        yield* withAnnouncedTarget(configDiffPayload(changeSet, scope, context, originFor)),
       );
     } else {
       yield* output.raw(renderConfigDiffText(changeSet, scope, originFor));

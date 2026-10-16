@@ -66,15 +66,16 @@ Docker bundling may pull or run the configured edge-runtime image and uses the
 
 ## Exit Codes
 
-| Code | Condition                                                         |
-| ---- | ----------------------------------------------------------------- |
-| `0`  | success                                                           |
-| `1`  | authentication / project-ref resolution                           |
-| `1`  | API error or unexpected HTTP status                               |
-| `1`  | build / bundle failure                                            |
-| `1`  | invalid function slug or flag conflict                            |
-| `1`  | a function directory has `import_map.json` instead of `deno.json` |
-| `1`  | prune confirmation cancelled                                      |
+| Code | Condition                                                                                                                                         |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                           |
+| `1`  | authentication / project-ref resolution                                                                                                           |
+| `1`  | API error or unexpected HTTP status                                                                                                               |
+| `1`  | build / bundle failure                                                                                                                            |
+| `1`  | invalid function slug or flag conflict                                                                                                            |
+| `1`  | a function directory has `import_map.json` instead of `deno.json`                                                                                 |
+| `1`  | `HostedMutationDeclinedError` — the consent question was declined                                                                                 |
+| `1`  | `HostedMutationConsentRequiredError` — no `--yes`/shell `SUPABASE_YES` on a non-interactive or machine-output run; nothing is deployed or deleted |
 
 ## Output
 
@@ -84,7 +85,8 @@ Prints progress and success messages as Functions are deployed, bundled, uploade
 
 ### `--output-format json`
 
-Emits a structured success payload with the project ref, deployed function slugs, and dashboard URL.
+Emits one structured success payload with the project ref, deployed function slugs, and dashboard
+URL, after `--prune` has finished deleting. A failing prune emits only the error envelope.
 
 ### `--output-format stream-json`
 
@@ -113,8 +115,20 @@ The `--output`/`-o` flag does not change deploy output.
 - Bundles locally with Docker by default (`--use-docker` defaults to true and is hidden); `--use-api` selects server-side bundling, and a stopped Docker daemon falls back to it after a `WARNING: Docker is not running`.
 - Local Docker bundling mounts existing local values declared under an import map's `scopes` read-only, including targets outside the nearest Git root; each such out-of-root mount prints a `WARN` naming the host path. The mounted target itself is bound as declared; imports reached from inside an out-of-root target are not additionally bound. API source uploads retain their existing source-root restrictions.
 - `--use-api`, `--use-docker`, and `--legacy-bundle` are mutually exclusive deploy modes.
-- `--prune` deletes deployed Functions that are not present locally after a confirmation prompt;
-  global `--yes` skips the prompt.
+- Prints the `Target:` banner (project name, ref and, for a branch, the parent project) before
+  anything else.
+- **Consent:** one question, `Deploy N Function(s)` on the target, asked after planning and
+  before the first bundle, upload or delete. The default answer is No. `--prune` adds
+  `delete N Function(s) with --prune` to the same question, so a deploy with pruning never asks
+  twice. The question lists the Function slugs on stderr.
+- `--yes` or a `SUPABASE_YES` set in the shell skips the question and echoes
+  `Confirmed by --yes: <action> on <target>` to stderr. A `SUPABASE_YES` in a project `.env*`
+  file does not count. Piped stdin answers are never read, and `json`/`stream-json` runs need
+  `--yes`.
+- The question lists every enabled Function, including ones the upload later finds unchanged;
+  a deploy with nothing enabled and nothing to prune does not ask.
+- `--prune` deletes deployed Functions that are not present locally, and runs even when every
+  local Function is already up to date.
 - **Spec-strict import-map key matching:** the functions import scanner (`walkImportPaths`/`substituteImportMapValue`,
   shared with `functions serve` and `start`'s Edge Runtime bring-up) matches import-map keys
   per the import-maps spec Deno/edge-runtime implement — exact match, or prefix match only

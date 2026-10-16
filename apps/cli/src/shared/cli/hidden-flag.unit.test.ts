@@ -20,7 +20,7 @@ import { startCommand } from "../../commands/start/start.command.ts";
 import { stopCommand } from "../../commands/stop/stop.command.ts";
 import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { RemovedSurfaceError } from "../../command-internal/removed-command.ts";
-import { TestDbMutuallyExclusiveFlagsError } from "../../command-internal/test-db.errors.ts";
+import { TargetSelectorConflictError } from "../../command-internal/target/target.errors.ts";
 import {
   mockAnalytics,
   mockOutput,
@@ -30,6 +30,7 @@ import {
   mockTty,
   processEnvLayer,
 } from "../../../tests/helpers/mocks.ts";
+import { commandTargetLayer } from "../output/command-target.layer.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { CliArgs } from "./cli-args.service.ts";
 
@@ -41,11 +42,13 @@ const buildHelpDoc = <Name extends string, Input, ContextInput, E, R>(
   cmd: Command.Command<Name, Input, ContextInput, E, R>,
 ): HelpDoc.HelpDoc => (cmd as unknown as CommandImpl).buildHelpDoc([]);
 
-const testRootLayer = (formatter: CliOutput.Formatter, args: ReadonlyArray<string>) =>
-  Layer.mergeAll(
+const testRootLayer = (formatter: CliOutput.Formatter, args: ReadonlyArray<string>) => {
+  const out = mockOutput({ format: "text" });
+  return Layer.mergeAll(
     CliOutput.layer(formatter),
     Layer.succeed(CliArgs, { args }),
-    mockOutput({ format: "text" }).layer,
+    out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     BunServices.layer,
     mockRuntimeInfo(),
     mockAnalytics().layer,
@@ -53,6 +56,7 @@ const testRootLayer = (formatter: CliOutput.Formatter, args: ReadonlyArray<strin
     mockTty(),
     mockProcessControl().layer,
   );
+};
 
 const testRoot = Command.make("supabase").pipe(
   Command.withSubcommands([
@@ -316,8 +320,8 @@ describe("hidden subcommands", () => {
 
   it.effect("still executes the native `db test` hidden alias by exact name (CLI-1962)", () =>
     Effect.gen(function* () {
-      // `--local --linked` fail inside the native handler's mutual-exclusivity check before any
-      // DB/docker IO, so that typed failure (not success) is what proves dispatch reached it.
+      // `--local --linked` fail in the target selector before any DB/docker IO, so that typed
+      // failure (not success) is what proves dispatch reached the handler.
       const fs = yield* FileSystem.FileSystem;
       const home = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-hidden-flag-" });
       const run = (args: ReadonlyArray<string>) =>
@@ -331,7 +335,7 @@ describe("hidden subcommands", () => {
       );
       expect(Exit.isFailure(dbTestExit)).toBe(true);
       if (!Exit.isFailure(dbTestExit)) return;
-      expect(Cause.squash(dbTestExit.cause)).toBeInstanceOf(TestDbMutuallyExclusiveFlagsError);
+      expect(Cause.squash(dbTestExit.cause)).toBeInstanceOf(TargetSelectorConflictError);
 
       const unknownExit = yield* run(["db", "not-a-real-command"]);
       expect(yield* encodeJson(unknownExit)).toContain("UnknownSubcommand");

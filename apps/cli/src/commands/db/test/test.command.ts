@@ -12,6 +12,7 @@ import {
 import { testDbRuntimeLayer } from "../../../command-internal/test-db.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 /**
  * `db test` is a hidden alias for `test db`, registered hidden by the parent
@@ -31,4 +32,5 @@ export const dbTestCommand = Command.make("test", testDbConfig).pipe(
   Command.provide(testDbRuntimeLayer(["db", "test"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(testDbConfig),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

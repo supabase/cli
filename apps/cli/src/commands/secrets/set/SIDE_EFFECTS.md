@@ -36,26 +36,29 @@
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                                                                                                                                                     | no (falls back to keyring → `~/.supabase/access-token`)                             |
 | `SUPABASE_PROFILE`      | selects API base URL: `supabase` → `api.supabase.com`, `supabase-staging` → `api.supabase.green`, `supabase-local` → `http://localhost:8080`. May alternatively be a filesystem path to a YAML profile with at least `api_url:` and optional `name:` (used by the cli-e2e test harness). | no (defaults to `supabase`)                                                         |
 | `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset                                                                                                                                                                                                                                       | no (also reads `<workdir>/supabase/.temp/project-ref` then prompts on TTY)          |
+| `SUPABASE_YES`          | confirms the set without a prompt, same as `--yes`; read from the shell only (a project `.env` value does not count)                                                                                                                                                                     |
 | `SUPABASE_WORKDIR`      | base directory for the `.temp/project-ref` lookup                                                                                                                                                                                                                                        | no (walks up from CWD looking for `supabase/config.toml` or `supabase/config.json`) |
 | `env(VAR)` references   | values matching `env(NAME)` in `[edge_runtime.secrets]` are resolved against the loaded env. Missing variables preserve the literal verbatim.                                                                                                                                            | —                                                                                   |
 
 ## Exit Codes
 
-| Code | Condition                                                                               |
-| ---- | --------------------------------------------------------------------------------------- |
-| `0`  | success — secrets set on the linked project                                             |
-| `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                               |
-| `1`  | `InvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`           |
-| `1`  | `ProjectRefNotLinkedError` — `--project-ref` unset, env/file empty, and stdin not a TTY |
-| `1`  | `InvalidProjectRefError` — resolved ref violates `^[a-z]{20}$`                          |
-| `1`  | `SecretsNoArgumentsError` — no positional pairs and no entries from env-file or config  |
-| `1`  | `InvalidSecretPairError` — positional argument missing `=`                              |
-| `1`  | `SecretsEnvFileOpenError` — `--env-file` cannot be opened                               |
-| `1`  | `SecretsEnvFileParseError` — `--env-file` cannot be parsed                              |
-| `1`  | `SecretsSetUnexpectedStatusError` — non-2xx response from POST                          |
-| `1`  | `SecretsSetNetworkError` — transport-level network failure                              |
-| `1`  | `CliConfigRemovedKeyError` — config uses a removed key, named with its replacement      |
-| `1`  | `CliConfigRemovedEnvError` — non-empty `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` set     |
+| Code | Condition                                                                                                                          |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — secrets set on the linked project                                                                                        |
+| `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                                                                          |
+| `1`  | `InvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`                                                      |
+| `1`  | `ProjectRefNotLinkedError` — `--project-ref` unset, env/file empty, and stdin not a TTY                                            |
+| `1`  | `InvalidProjectRefError` — resolved ref violates `^[a-z]{20}$`                                                                     |
+| `1`  | `SecretsNoArgumentsError` — no positional pairs and no entries from env-file or config                                             |
+| `1`  | `InvalidSecretPairError` — positional argument missing `=`                                                                         |
+| `1`  | `SecretsEnvFileOpenError` — `--env-file` cannot be opened                                                                          |
+| `1`  | `SecretsEnvFileParseError` — `--env-file` cannot be parsed                                                                         |
+| `1`  | `HostedMutationDeclinedError` — the confirmation was declined; nothing is sent                                                     |
+| `1`  | `HostedMutationConsentRequiredError` — no `--yes`/shell `SUPABASE_YES` on a non-interactive or machine-output run; nothing is sent |
+| `1`  | `SecretsSetUnexpectedStatusError` — non-2xx response from POST                                                                     |
+| `1`  | `SecretsSetNetworkError` — transport-level network failure                                                                         |
+| `1`  | `CliConfigRemovedKeyError` — config uses a removed key, named with its replacement                                                 |
+| `1`  | `CliConfigRemovedEnvError` — non-empty `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` set                                                |
 
 ## Telemetry Events Fired
 
@@ -67,20 +70,22 @@
 
 ### `--output pretty` (default) / `--output-format text`
 
-Stdout: `Finished supabase secrets set.\n`. Stderr: one `Env name cannot start with SUPABASE_, skipping: <name>` line per filtered entry.
+Stdout: `Finished supabase secrets set.\n`. Stderr: the `Target:` banner, one `Env name cannot start with SUPABASE_, skipping: <name>` line per filtered entry, then either the confirmation (`Secrets to set:` with the bulleted names, then `Set N secret(s) on <target>?`, default No) on an interactive terminal or `Confirmed by --yes: Set N secret(s) on <target>` under `--yes`. Secret values are never printed.
 
 The `--output {json,yaml,toml,env}` flags all collapse to the same text-mode `Finished` message.
 
 ### `--output-format json`
 
-Single JSON object emitted via `Output.success` with `{project_ref, count}` as the `data` field.
+Single JSON object emitted via `Output.success` with `{project_ref, count}` as the `data` field, plus a [`target`](../../../../docs/command-target.md) object. Needs `--yes` or a shell `SUPABASE_YES`, because machine output never prompts.
 
 ### `--output-format stream-json`
 
-One `result` NDJSON event on success containing `{project_ref, count}`.
+One `result` NDJSON event on success containing `{project_ref, count}` and `target`. Needs `--yes` or a shell `SUPABASE_YES`.
 
 ## Notes
 
+- Asks one question before the first POST: `set N secret(s)` on the announced target, default No, listing the secret names (never values). It runs after the entries are merged, so a usage or parse error never prompts, and a decline sends nothing.
+- `--yes` or a `SUPABASE_YES` set in the shell skips the question. A `SUPABASE_YES` in a project `.env*` file does not count, and piped stdin answers are never read.
 - Source order for merging entries: `[edge_runtime.secrets]` from `config.toml` (only resolved entries — see below) → `--env-file` (overrides config) → CLI args (overrides env-file).
 - `SUPABASE_`-prefixed entries are skipped post-merge with a stderr warning.
 - Secrets are POSTed in batches of 100 (the API's per-request cap); every batch is validated before the first POST. When no secrets remain after filtering, the command fails with `SecretsNoArgumentsError` and makes no POST (the cache fill still runs).

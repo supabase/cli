@@ -16,6 +16,7 @@ import { removedFlag } from "../../../command-internal/removed-command.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { functionsDownload } from "./download.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   functionName: Argument.String("Function name").pipe(
@@ -105,4 +106,5 @@ export const functionsDownloadCommand = Command.make("download", config).pipe(
   ),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

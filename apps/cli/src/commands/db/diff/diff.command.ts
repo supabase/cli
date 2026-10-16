@@ -17,6 +17,8 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbDiff } from "./diff.handler.ts";
 import { dbDiffRuntimeLayer } from "./diff.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { targetFlags } from "../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   // The engine flags are a mutually-exclusive group, modelled as `Option` so the mutex check keys
@@ -61,28 +63,7 @@ const config = {
     ),
     Flag.optional,
   ),
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription(
-      "Diffs against the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  // The target flags form a mutually-exclusive group; modelled as `Option` so
-  // the mutex check tracks whether a flag was passed. `--local` defaults to true
-  // via the target resolver's fall-through.
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Diffs local migration files against the linked project."),
-    Flag.optional,
-  ),
-  local: Flag.Boolean("local").pipe(
-    Flag.withDescription("Diffs local migration files against the local database."),
-    Flag.optional,
-  ),
-  // Overrides the linked project ref; the same flag exists on `config push`.
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
   file: Flag.String("file").pipe(
     Flag.withAlias("f"),
     Flag.withDescription(
@@ -166,4 +147,9 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
   Command.provide(dbDiffRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({
+    group: "selectable",
+    consent: "none",
+    consentExemptReason: "reads the target and writes only local migration files",
+  }),
 );

@@ -4,6 +4,8 @@ import { Effect, Option } from "effect";
 import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { OutputFlag } from "./global-flags.ts";
+import { requireHostedMutationConsent } from "./hosted-consent/hosted-consent.ts";
+import type { HostedMutationConsent } from "./hosted-consent/hosted-consent.token.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { encodeEnv, encodeSortedJson } from "./output.encoders.ts";
 import {
@@ -58,6 +60,8 @@ export interface ProjectCreateInput {
    * `bootstrap` suppresses it since it emits its own top-level result instead.
    */
   readonly emitStructuredResult: boolean;
+  /** Proof that the caller already confirmed the create; without it the core asks before the POST. */
+  readonly consent?: HostedMutationConsent;
 }
 
 /** Formats `key: value`, padding `key:` to width 20. */
@@ -124,6 +128,12 @@ export const projectCreateCore = Effect.fn("ProjectCreate.run")(function* (
     ...(postgresEngine !== undefined ? { postgres_engine: postgresEngine } : {}),
     ...(input.templateUrl !== undefined ? { template_url: input.templateUrl } : {}),
   };
+
+  if (input.consent === undefined) {
+    yield* requireHostedMutationConsent({
+      action: `Create project "${name}" in organization ${orgId}`,
+    });
+  }
 
   const creating = output.format === "text" ? yield* output.task("Creating project...") : undefined;
 

@@ -10,6 +10,7 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { verifyCname } from "../domains.cname.ts";
 import { emitHostnameResult } from "../domains.emit.ts";
 import { mapDomainsHttpError } from "../domains.errors.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
 import type { DomainsCreateFlags } from "./create.command.ts";
 
@@ -35,6 +36,10 @@ export const domainsCreate = Effect.fn("domains.create")(function* (flags: Domai
       projectHost: cliSettings.projectHost,
       ref,
       customHostname: flags.customHostname,
+    });
+
+    yield* requireHostedMutationConsent({
+      action: `Create custom hostname ${flags.customHostname}`,
     });
 
     // 2. Initialize the custom hostname.

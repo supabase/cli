@@ -1,3 +1,4 @@
+import { Option } from "effect";
 import { Argument, Command, Flag, Param } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -5,6 +6,7 @@ import {
   compose,
   withCondition,
   withContext,
+  withDbTarget,
   type EntryCondition,
 } from "../../../command-internal/command-permissions/model.ts";
 import {
@@ -30,24 +32,16 @@ import {
 import { genTypesRuntimeLayer } from "./types.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import {
+  deprecatedProjectIdFlag,
+  targetFlags,
+} from "../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
 
 const config = {
-  local: Flag.Boolean("local").pipe(
-    Flag.withDescription("Generate types from the local dev database."),
-    Flag.withDefault(false),
-  ),
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Generate types from the linked project."),
-    Flag.withDefault(false),
-  ),
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription("Generate types from a database url."),
-    Flag.optional,
-  ),
-  projectId: Flag.String("project-id").pipe(
-    Flag.withDescription("Generate types from a project ID."),
-    Flag.optional,
-  ),
+  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
+  projectId: deprecatedProjectIdFlag,
   lang: Flag.Literals("lang", GEN_TYPES_LANGUAGES).pipe(
     Flag.withDescription("Output language of the generated types. (default typescript)"),
     Flag.withDefault("typescript"),
@@ -78,6 +72,7 @@ const GEN_TYPES_RESERVED_FLAG_NAMES: ReadonlyArray<string> = [
   "local",
   "linked",
   "db-url",
+  "project-ref",
   "project-id",
   "lang",
   "schema",
@@ -110,10 +105,9 @@ export type GenTypesFlags = CliCommand.Command.Config.Infer<typeof flagsConfig> 
 const NON_TYPESCRIPT = GEN_TYPES_LANGUAGES.filter((lang) => lang !== "typescript");
 const nonTypescript = { flag: "lang", oneOf: NON_TYPESCRIPT } as const;
 const notBranch = "the ref names a project, not a preview branch";
-// With any of these the run uses a local or `--db-url` database, or fails before calling the API.
+// Without a linked target the run uses a local or `--db-url` database, or fails before calling the API.
 const remoteTarget: ReadonlyArray<EntryCondition> = [
-  { flag: "local", is: false },
-  { flag: "db-url", present: false },
+  { dbTarget: ["linked"] },
   { flag: "postgrest-v9-compat", is: false },
 ];
 
@@ -130,8 +124,8 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
       description: "Generate Go types from the linked project",
     },
     {
-      command: "supabase gen types --project-id abc-def-123 --schema public --schema private",
-      description: "Generate types from a project ID with specific schemas",
+      command: "supabase gen types --project-ref abc-def-123 --schema public --schema private",
+      description: "Generate types from a project ref with specific schemas",
     },
     {
       command: "supabase gen types --db-url 'postgresql://...' --schema public --schema auth",
@@ -139,53 +133,66 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
     },
   ]),
   withPermissions(
-    remoteTarget.reduce(
-      (fragment, condition) => withCondition(fragment, condition),
-      compose(
-        {
-          operations: [
-            {
-              operationId: "v1-generate-typescript-types",
-              kind: "required",
-              when: [{ flag: "lang", oneOf: ["typescript"] }],
-            },
-            { operationId: "v1-get-project", kind: "required", when: [nonTypescript] },
-            {
-              operationId: "v1-get-a-branch-config",
-              kind: "required",
-              when: [nonTypescript],
-              context: "the project lookup returns 404, so the ref names a preview branch",
-            },
-            {
-              operationId: "v1-get-pooler-config",
-              kind: "required",
-              when: [nonTypescript],
-              context: `${notBranch}, the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url (--project-id ignores the saved file)`,
-            },
-            {
-              operationId: "v1-get-pooler-config",
-              kind: "required",
-              when: [nonTypescript],
-              context:
-                "the ref names a preview branch and generating against its direct host fails with an IPv6 connectivity error",
-            },
-          ],
-          noApiEffectFlags: ["linked", "schema", "query-timeout", ...GEN_TYPES_LANGUAGE_FLAG_NAMES],
-        },
-        withCondition(withContext(dbConfigLinked, notBranch), nonTypescript),
-        withCondition(withContext(dbConfigPoolerFallbackLinked, notBranch), nonTypescript),
-        withCondition(projectRefPicker, { flag: "project-id", present: false }),
-        linkedProjectCache,
+    withDbTarget(
+      remoteTarget.reduce(
+        (fragment, condition) => withCondition(fragment, condition),
+        compose(
+          {
+            operations: [
+              {
+                operationId: "v1-generate-typescript-types",
+                kind: "required",
+                when: [{ flag: "lang", oneOf: ["typescript"] }],
+              },
+              { operationId: "v1-get-project", kind: "required", when: [nonTypescript] },
+              {
+                operationId: "v1-get-a-branch-config",
+                kind: "required",
+                when: [nonTypescript],
+                context: "the project lookup returns 404, so the ref names a preview branch",
+              },
+              {
+                operationId: "v1-get-pooler-config",
+                kind: "required",
+                when: [nonTypescript],
+                context: `${notBranch}, the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url (--project-ref and --project-id ignore the saved file)`,
+              },
+              {
+                operationId: "v1-get-pooler-config",
+                kind: "required",
+                when: [nonTypescript],
+                context:
+                  "the ref names a preview branch and generating against its direct host fails with an IPv6 connectivity error",
+              },
+            ],
+            noApiEffectFlags: ["schema", "query-timeout", ...GEN_TYPES_LANGUAGE_FLAG_NAMES],
+          },
+          withCondition(withContext(dbConfigLinked, notBranch), nonTypescript),
+          withCondition(withContext(dbConfigPoolerFallbackLinked, notBranch), nonTypescript),
+          withCondition(projectRefPicker, { flag: "project-id", present: false }),
+          linkedProjectCache,
+        ),
       ),
+      { default: "local" },
     ),
   ),
   Command.withHandler((flags) =>
     genTypes(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: ["project-id"], config: flagsConfig }),
+      withCommandTelemetry({
+        flags,
+        safeFlags: [
+          "project-id",
+          ...(Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
+            ? ["project-ref"]
+            : []),
+        ],
+        config: flagsConfig,
+      }),
       withJsonErrorHandling,
     ),
   ),
   Command.provide(genTypesRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(commandConfig),
+  withTargetPolicy({ group: "selectable", consent: "none", consentExemptReason: "read-only" }),
 );

@@ -15,6 +15,8 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { migrationDbRuntimeLayer } from "../migration.layers.ts";
 import { migrationRepair } from "./repair.handler.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { targetFlags } from "../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   versions: Argument.String("version").pipe(
@@ -24,25 +26,7 @@ const config = {
   status: Flag.Literals("status", ["applied", "reverted"] as const).pipe(
     Flag.withDescription("Version status to update."),
   ),
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription(
-      "Repairs migrations of the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Repairs the migration history of the linked project."),
-    Flag.withDefault(true),
-  ),
-  local: Flag.Boolean("local").pipe(
-    Flag.withDescription("Repairs the migration history of the local database."),
-    Flag.withDefault(false),
-  ),
-  // TS-only override of the linked project ref — see push.command.ts (db push).
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
@@ -61,7 +45,7 @@ export const migrationRepairCommand = Command.make("repair", config).pipe(
         dbConfig,
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
       ),
-      { default: "linked" },
+      { default: "local" },
     ),
   ),
   Command.withHandler((flags) =>
@@ -95,4 +79,5 @@ export const migrationRepairCommand = Command.make("repair", config).pipe(
   Command.provide(migrationDbRuntimeLayer(["migration", "repair"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

@@ -95,6 +95,7 @@ describe("functions", () => {
         "--use-api",
         "--project-ref",
         PROJECT_REF,
+        "--yes",
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
@@ -114,6 +115,7 @@ describe("functions", () => {
         "--use-api",
         "--project-ref",
         PROJECT_REF,
+        "--yes",
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Forbidden");
@@ -136,6 +138,7 @@ describe("functions", () => {
         "--use-api",
         "--project-ref",
         PROJECT_REF,
+        "--yes",
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Too Many Requests");
@@ -155,6 +158,7 @@ describe("functions", () => {
         "--use-api",
         "--project-ref",
         PROJECT_REF,
+        "--yes",
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
@@ -171,6 +175,7 @@ describe("functions", () => {
           FUNCTION_NAME,
           "--project-ref",
           projectRef,
+          "--yes",
         ]);
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("Deleted Function");
@@ -189,6 +194,7 @@ describe("functions", () => {
         FUNCTION_NAME,
         "--project-ref",
         PROJECT_REF,
+        "--yes",
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("does not exist");
@@ -206,6 +212,7 @@ describe("functions", () => {
         FUNCTION_NAME,
         "--project-ref",
         PROJECT_REF,
+        "--yes",
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
@@ -223,6 +230,7 @@ describe("functions", () => {
         FUNCTION_NAME,
         "--project-ref",
         PROJECT_REF,
+        "--yes",
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Forbidden");
@@ -240,6 +248,7 @@ describe("functions", () => {
         FUNCTION_NAME,
         "--project-ref",
         PROJECT_REF,
+        "--yes",
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Too Many Requests");
@@ -257,6 +266,7 @@ describe("functions", () => {
         FUNCTION_NAME,
         "--project-ref",
         PROJECT_REF,
+        "--yes",
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");

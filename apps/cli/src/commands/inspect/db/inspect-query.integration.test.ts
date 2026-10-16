@@ -1,6 +1,16 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+} from "effect";
 import { vi } from "vitest";
 
 vi.mock("node:net", (importOriginal) =>
@@ -15,9 +25,14 @@ import { commandTreeFor } from "../../../../tests/helpers/command-flags.ts";
 import {
   VALID_REF,
   VALID_TOKEN,
+  buildTestRuntime,
+  mockCommandPlatformApi,
+  mockCommandSettings,
   mockTelemetryStateTracked,
+  unverifiedTargetBanner,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
@@ -27,23 +42,28 @@ import {
   stubManagementApi,
   type StubbedRequest,
 } from "../../../../tests/helpers/permission-real-layers.ts";
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
+import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
-import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import type {
+  DbConnectionInput,
+  ResolvedDbConnection,
+} from "../../../command-internal/db-config.types.ts";
 import { DbConnectError, DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import {
+  TargetEmptyValueError,
+  TargetProjectRefConflictError,
+  TargetSelectorConflictError,
+} from "../../../command-internal/target/target.errors.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { inspectDbDbStats } from "./db-stats/db-stats.handler.ts";
 import { dbStatsSpec } from "./db-stats/db-stats.query.ts";
 import { inspectDbLocks } from "./locks/locks.handler.ts";
 import { inspectDbRoleStats } from "./role-stats/role-stats.handler.ts";
 import { roleStatsSpec } from "./role-stats/role-stats.query.ts";
-import {
-  InspectMutuallyExclusiveFlagsError,
-  type InspectConnectionFlags,
-} from "./inspect-query.ts";
+import type { InspectConnectionFlags } from "./inspect-query.ts";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -81,24 +101,25 @@ const LOCKS_ROW = {
 };
 
 function mockResolver(opts: { conn?: PgConnInput; isLocal?: boolean; fails?: boolean }) {
-  let resolveInput: DbConfigFlags | undefined;
+  let connectionInput: DbConnectionInput | undefined;
   const layer = Layer.succeed(DbConfigResolver, {
-    resolve: (flags: DbConfigFlags) => {
-      resolveInput = flags;
+    resolveConnection: (input: DbConnectionInput) => {
+      connectionInput = input;
       if (opts.fails === true) {
         return Effect.fail(new DbConfigLoadError({ message: "cannot load config" }));
       }
       return Effect.succeed({
         conn: opts.conn ?? LOCAL_CONN,
         isLocal: opts.isLocal ?? true,
-      } satisfies ResolvedDbConfig);
+        target: input.target,
+      } satisfies ResolvedDbConnection);
     },
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
   return {
     layer,
-    get resolveInput() {
-      return resolveInput;
+    get connectionInput() {
+      return connectionInput;
     },
   };
 }
@@ -163,10 +184,14 @@ interface SetupOpts {
   connectFails?: boolean;
   queryFails?: boolean;
   dnsResolver?: "native" | "https";
+  yes?: boolean;
+  /** The ref `SUPABASE_PROJECT_ID` supplies to the real project-ref resolver. */
+  projectId?: string;
   /** Raw CLI args slice; drives explicitly-passed flag detection. */
   cliArgs?: ReadonlyArray<string>;
   /** Runs the real `DbConfigResolver` against the temp `workdir`. */
   realLayers?: { readonly workdir: string };
+  workdir?: string;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -182,8 +207,19 @@ function setup(opts: SetupOpts = {}) {
     queryFails: opts.queryFails,
   });
   const telemetry = mockTelemetryStateTracked();
+  const workdir = opts.realLayers?.workdir ?? opts.workdir ?? "/tmp/inspect-db-test";
+  const runtime = buildTestRuntime({
+    out,
+    api: mockCommandPlatformApi(),
+    cliSettings: mockCommandSettings({
+      workdir,
+      projectId: opts.projectId === undefined ? Option.none() : Option.some(opts.projectId),
+    }),
+    telemetry: telemetry.layer,
+    cliArgs: opts.cliArgs,
+  });
   const layer = Layer.mergeAll(
-    out.layer,
+    runtime,
     opts.realLayers === undefined
       ? resolver.layer
       : realDbConfigResolver({
@@ -192,9 +228,16 @@ function setup(opts: SetupOpts = {}) {
           env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
         }),
     connection.layer,
-    telemetry.layer,
     Layer.succeed(DnsResolverFlag, opts.dnsResolver ?? "native"),
-    Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
+    Layer.succeed(YesFlag, opts.yes ?? false),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
+    ConfigProvider.layer(
+      ConfigProvider.fromEnvRecord(
+        opts.realLayers === undefined ? {} : { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+        { preserveEmptyStrings: true },
+      ),
+    ),
+    configValuesLayer(),
   );
   return { layer, out, resolver, connection, telemetry };
 }
@@ -207,6 +250,8 @@ const flags = (over: Partial<InspectConnectionFlags> = {}): InspectConnectionFla
 });
 
 describe("inspect db query runner", () => {
+  const workdir = useTempWorkdir("supabase-inspect-db-runner-");
+
   it.effect("renders a glamour table in text mode (db-stats)", () => {
     const { layer, out, connection } = setup({ rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {
@@ -277,114 +322,115 @@ describe("inspect db query runner", () => {
   });
 
   it.effect("inspects an explicit database url", () => {
-    const { layer, resolver, connection } = setup({
+    const { layer, resolver, connection, out } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
       rows: [DB_STATS_ROW],
-      cliArgs: ["--db-url=postgres://x"],
     });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags({ dbUrl: Option.some("postgres://x") }));
-      expect(resolver.resolveInput?.dbUrl).toEqual(Option.some("postgres://x"));
-      expect(resolver.resolveInput?.connType).toBe("db-url");
+      const target = resolver.connectionInput?.target;
+      expect(target?.kind).toBe("db-url");
+      expect(target?.kind === "db-url" ? Redacted.value(target.url) : undefined).toBe(
+        "postgres://x",
+      );
       expect(connection.connectCalls[0]?.isLocal).toBe(false);
+      expect(out.stderrText).not.toContain("Connecting to");
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("inspects the local database", () => {
-    const { layer, resolver, out } = setup({ rows: [DB_STATS_ROW], cliArgs: ["--local"] });
+  it.effect("inspects the local database with --local", () => {
+    const { layer, resolver, out } = setup({ rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags({ local: true }));
-      expect(resolver.resolveInput?.connType).toBe("local");
-      expect(out.stderrText).toContain("Connecting to local database...");
+      expect(resolver.connectionInput?.target).toEqual({ kind: "local" });
+      expect(out.stderrText).not.toContain("Connecting to");
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("inspects the linked project by default (no connection flag)", () => {
-    const { layer, resolver } = setup({ rows: [DB_STATS_ROW] });
+  it.effect("inspects the local database when no selector is given", () => {
+    const { layer, resolver, out } = setup({ rows: [DB_STATS_ROW], projectId: VALID_REF });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags());
-      expect(resolver.resolveInput?.connType).toBe("linked");
-      expect(resolver.resolveInput?.dbUrl).toEqual(Option.none());
+      expect(resolver.connectionInput?.target).toEqual({ kind: "local" });
+      expect(out.stderrText).not.toContain("Target:");
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("labels the diagnostic 'remote' for a non-local connection", () => {
-    const { layer, out } = setup({
-      conn: REMOTE_CONN,
-      isLocal: false,
+  it.effect("follows a workspace target of remote to the linked project", () => {
+    const { layer, resolver, out } = setup({
       rows: [DB_STATS_ROW],
-      cliArgs: ["--db-url=postgres://x"],
+      workdir: workdir.current,
+      projectId: VALID_REF,
     });
     return Effect.gen(function* () {
-      yield* inspectDbDbStats(flags({ dbUrl: Option.some("postgres://x") }));
-      expect(out.stderrText).toContain("Connecting to remote database...");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("rejects conflicting connection flags", () => {
-    const { layer } = setup({ cliArgs: ["--linked", "--local"] });
-    return Effect.gen(function* () {
-      const error = yield* inspectDbDbStats(flags({ linked: true, local: true })).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(InspectMutuallyExclusiveFlagsError);
-      expect(error.message).toBe(
-        "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(workdir.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workdir.current, "supabase", "config.toml"),
+        'target = "remote"\n',
       );
+      yield* inspectDbDbStats(flags());
+      expect(resolver.connectionInput?.target).toMatchObject({ kind: "linked", ref: VALID_REF });
+      expect(out.stderrText).toContain(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("--local=false is Changed and routes to local (not linked)", () => {
-    const { layer, resolver } = setup({ rows: [DB_STATS_ROW], cliArgs: ["--local=false"] });
-    return Effect.gen(function* () {
-      yield* inspectDbDbStats(flags({ local: false }));
-      expect(resolver.resolveInput?.connType).toBe("local");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--linked --local=false raises the mutual-exclusion error", () => {
-    const { layer } = setup({ cliArgs: ["--linked", "--local=false"] });
-    return Effect.gen(function* () {
-      const error = yield* inspectDbDbStats(flags({ linked: true, local: false })).pipe(
-        Effect.flip,
-      );
-      expect(error).toBeInstanceOf(InspectMutuallyExclusiveFlagsError);
-      expect(error.message).toBe(
-        "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
-      );
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--linked routes to linked", () => {
-    const { layer, resolver } = setup({ rows: [DB_STATS_ROW], cliArgs: ["--linked"] });
+  it.effect("--linked routes to the linked project and announces it", () => {
+    const { layer, resolver, out } = setup({ rows: [DB_STATS_ROW], projectId: VALID_REF });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags({ linked: true }));
-      expect(resolver.resolveInput?.connType).toBe("linked");
+      expect(resolver.connectionInput?.target).toMatchObject({ kind: "linked", ref: VALID_REF });
+      expect(out.stderrText).toContain(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("inspects the project given via --project-ref on the default linked path", () => {
+  it.effect("--project-ref implies the linked project", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    const { layer, resolver } = setup({ rows: [DB_STATS_ROW] });
+    const { layer, resolver, out } = setup({ rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {
       yield* inspectDbDbStats(flags({ projectRef: Option.some(FLAG_REF) }));
-      expect(resolver.resolveInput?.connType).toBe("linked");
-      expect(resolver.resolveInput?.linkedProjectRef).toEqual(Option.some(FLAG_REF));
+      expect(resolver.connectionInput?.target).toMatchObject({
+        kind: "linked",
+        ref: FLAG_REF,
+        source: "flag",
+      });
+      expect(out.stderrText).toContain(unverifiedTargetBanner(FLAG_REF));
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --project-ref combined with an explicit --local target", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, resolver } = setup({ rows: [DB_STATS_ROW], cliArgs: ["--local"] });
+  it.effect("rejects conflicting target flags", () => {
+    const { layer, resolver } = setup();
+    return Effect.gen(function* () {
+      const error = yield* inspectDbDbStats(flags({ linked: true, local: true })).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(TargetSelectorConflictError);
+      expect(resolver.connectionInput).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects --project-ref combined with --local", () => {
+    const { layer, resolver } = setup();
     return Effect.gen(function* () {
       const error = yield* inspectDbDbStats(
-        flags({ local: true, projectRef: Option.some(FLAG_REF) }),
+        flags({ local: true, projectRef: Option.some("flagflagflagflagflag") }),
       ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(InspectMutuallyExclusiveFlagsError);
-      expect(error.message).toBe(
-        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      );
-      expect(resolver.resolveInput).toBeUndefined();
+      expect(error).toBeInstanceOf(TargetProjectRefConflictError);
+      expect(resolver.connectionInput).toBeUndefined();
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("passes network-ban removal only under --yes", () => {
+    const withoutYes = setup({ rows: [DB_STATS_ROW] });
+    const withYes = setup({ rows: [DB_STATS_ROW], yes: true });
+    const banRemoval = (input: DbConnectionInput | undefined) =>
+      input === undefined ? undefined : Option.isSome(input.networkBanRemoval);
+    return Effect.gen(function* () {
+      yield* inspectDbDbStats(flags({ local: true })).pipe(Effect.provide(withoutYes.layer));
+      yield* inspectDbDbStats(flags({ local: true })).pipe(Effect.provide(withYes.layer));
+      expect(banRemoval(withoutYes.resolver.connectionInput)).toBe(false);
+      expect(banRemoval(withYes.resolver.connectionInput)).toBe(true);
+    });
   });
 
   it.effect("surfaces a query failure", () => {
@@ -558,35 +604,26 @@ describe("inspect db through the real database-config resolver", () => {
     );
   });
 
-  it.effect(
-    "an empty --project-ref falls back to the saved ref and still fetches the pooler",
-    () => {
-      const { layer } = setup({
-        rows: [DB_STATS_ROW],
-        cliArgs: ["inspect", "db", "db-stats", "--project-ref", ""],
-        realLayers: { workdir: tempRoot.current },
-      });
-      const requests: Array<StubbedRequest> = [];
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        yield* fs.makeDirectory(`${tempRoot.current}/supabase/.temp`, { recursive: true });
-        yield* fs.writeFileString(`${tempRoot.current}/supabase/.temp/project-ref`, VALID_REF);
-        yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-        yield* inspectDbDbStats(flags({ projectRef: Option.some("") }));
-        expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
-        assertPermissionDrift({
-          command: "inspect db db-stats",
-          activeFlags: { "project-ref": "" },
-          requests: asRecordedRequests(requests),
-          exact: true,
-        });
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
-        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+  it.effect("rejects an empty --project-ref before any Management API request", () => {
+    const { layer } = setup({
+      rows: [DB_STATS_ROW],
+      cliArgs: ["inspect", "db", "db-stats", "--project-ref", ""],
+      realLayers: { workdir: tempRoot.current },
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      const error = yield* inspectDbDbStats(flags({ projectRef: Option.some("") })).pipe(
+        Effect.flip,
       );
-    },
-  );
+      expect(error).toBeInstanceOf(TargetEmptyValueError);
+      expect(requests).toEqual([]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
 
   it.effect("makes no Management API request for --local", () => {
     const { layer, connection } = setup({

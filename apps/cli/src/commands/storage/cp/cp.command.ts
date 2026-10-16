@@ -4,7 +4,6 @@ import type * as CliCommand from "effect/cli/Command";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -13,14 +12,9 @@ import { requireExperimental } from "../../../command-internal/experimental-gate
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import { storageInvalidJobsMessage } from "../storage.errors.ts";
 import { parseUintBase0 } from "../../../shared/config/parse-uint.ts";
-import {
-  STORAGE_PERMISSIONS,
-  StorageLinkedFlagDef,
-  StorageLocalFlagDef,
-  StorageProjectRefFlagDef,
-  assertStorageTargetsExclusive,
-} from "../storage.flags.ts";
+import { STORAGE_PERMISSIONS, storageTargetFlags } from "../storage.flags.ts";
 import { storageCp } from "./cp.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 // Effect CLI renders no flag defaults, so the established `(default …)` tokens are written into
 // the descriptions below (`--content-type`'s actual runtime default is `""` for auto-detect).
@@ -64,9 +58,7 @@ const config = {
     ),
     Flag.optional,
   ),
-  linked: StorageLinkedFlagDef,
-  local: StorageLocalFlagDef,
-  projectRef: StorageProjectRefFlagDef,
+  ...storageTargetFlags,
   src: Argument.String("src").pipe(Argument.withDescription("Source path to copy from.")),
   dst: Argument.String("dst").pipe(Argument.withDescription("Destination path to copy to.")),
 } as const;
@@ -98,11 +90,8 @@ export const storageCpCommand = Command.make("cp", config).pipe(
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      // Gate before the mutex check below; see requireExperimental's doc comment for why. A
-      // non-uint `--jobs` never reaches here — `Flag.mapTryCatch` rejects it at parse time.
+      // A non-uint `--jobs` never reaches here: `Flag.mapTryCatch` rejects it at parse time.
       yield* requireExperimental;
-      const cliArgs = yield* CliArgs;
-      yield* assertStorageTargetsExclusive(cliArgs.args);
       const telemetryFlags = {
         recursive: flags.recursive,
         cacheControl: flags.cacheControl,
@@ -121,4 +110,5 @@ export const storageCpCommand = Command.make("cp", config).pipe(
   Command.provide(storageGatewayRuntimeLayer(["storage", "cp"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

@@ -89,3 +89,5 @@ One `result` event with the full response object.
   flag, and telemetry still fires and the cache fill still runs on this failure. An explicit
   empty value (`--desired-subdomain ""`) passes the check and reaches the API — only presence is
   required, not a non-empty value.
+
+- Prints `Target: <project>` once on stderr in every output format, for example `Target: project <name> (<ref>) · production`. `--output-format json|stream-json` object results and error envelopes also carry a `target` object; `--output {json,yaml,toml,env}` payloads are unchanged. Reads never prompt.

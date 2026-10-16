@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
+import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
 
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -11,13 +11,17 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { domainsDelete } from "./delete.handler.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
@@ -30,6 +34,14 @@ interface SetupOpts {
 
 const tempRoot = useTempWorkdir("supabase-domains-delete-int-");
 
+const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
+  Layer.mergeAll(
+    buildTestRuntime(opts),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
+
+const confirmed = `Confirmed by --yes: Delete the custom hostname config on project ${VALID_REF}\n`;
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function setup(opts: SetupOpts = {}) {
@@ -41,7 +53,7 @@ function setup(opts: SetupOpts = {}) {
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const telemetry = mockTelemetryStateTracked();
   const linkedProjectCache = mockLinkedProjectCacheTracked();
-  const layer = buildTestRuntime({
+  const layer = buildRuntime({
     out,
     api,
     cliSettings,
@@ -59,7 +71,9 @@ describe("domains delete integration", () => {
     const { layer, out, api, telemetry, linkedProjectCache } = setup();
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
-      expect(out.stderrText).toBe("Deleted custom hostname config successfully.\n");
+      expect(out.stderrText).toBe(
+        unverifiedTargetBanner() + confirmed + "Deleted custom hostname config successfully.\n",
+      );
       expect(out.stdoutText).toBe("");
       expect(api.requests[0]?.method).toBe("DELETE");
       expect(telemetry.flushed).toBe(true);
@@ -90,7 +104,9 @@ describe("domains delete integration", () => {
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
       expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe("Deleted custom hostname config successfully.\n");
+      expect(out.stderrText).toBe(
+        unverifiedTargetBanner() + confirmed + "Deleted custom hostname config successfully.\n",
+      );
     }).pipe(Effect.provide(layer));
   });
 
@@ -152,7 +168,7 @@ describe("domains delete integration", () => {
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildTestRuntime({
+      const layer = buildRuntime({
         out,
         api,
         cliSettings,
@@ -167,7 +183,11 @@ describe("domains delete integration", () => {
         const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
         expect(yield* fs.exists(cachePath)).toBe(false);
         yield* domainsDelete(baseFlags);
-        expect(out.stderrText).toBe("Deleted custom hostname config successfully.\n");
+        expect(out.stderrText).toBe(
+          `Target: project alpha (${VALID_REF})\n` +
+            `Confirmed by --yes: Delete the custom hostname config on project alpha (${VALID_REF})\n` +
+            "Deleted custom hostname config successfully.\n",
+        );
         expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
           "GET https://api.supabase.com/v1/projects",
           `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/custom-hostname`,
@@ -180,4 +200,9 @@ describe("domains delete integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describeHostedConsent("domains delete", {
+  api: { response: { status: 200, body: {} } },
+  invoke: () => ({ run: domainsDelete(baseFlags) }),
 });

@@ -10,6 +10,8 @@
 interface State {
   /** Returns the next state, or `null` to emit a token (statement boundary). */
   next(char: string, data: string): State | null;
+  /** `true` while inside a block comment, quoted string, quoted identifier or dollar quote. */
+  readonly open?: boolean;
 }
 
 const BEGIN_ATOMIC = "ATOMIC";
@@ -50,32 +52,54 @@ function isBeginAtomic(data: string): boolean {
   return endsWithKeyword(data.slice(0, end), "BEGIN");
 }
 
-function isCommentsAndWhitespace(text: string): boolean {
+// A character that ends a delimiter can't start the next one: `/*/` opens a comment without
+// closing it, and `*/*` closes one before a lone `*`.
+const blockDelimiterDelta = (window: string): -1 | 0 | 1 =>
+  window === "/*" ? 1 : window === "*/" ? -1 : 0;
+
+// Index of the first character past leading blanks and comments, or `text.length` when only
+// trivia (or an unterminated comment) remains.
+function skipLeadingTrivia(text: string, isBlank: (char: string) => boolean): number {
   let i = 0;
   while (i < text.length) {
-    if (isSqlWhitespace(text[i]!)) {
+    if (isBlank(text[i]!)) {
       i += 1;
     } else if (text.startsWith("--", i)) {
       const newline = text.slice(i + 2).search(/[\n\r]/u);
-      if (newline === -1) return true;
+      if (newline === -1) return text.length;
       i += newline + 3;
     } else if (text.startsWith("/*", i)) {
-      // Match `BlockState`'s sliding-window scan so both agree on overlapping delimiters.
       let depth = 1;
+      let afterDelimiter = true;
       i += 2;
       while (i < text.length && depth > 0) {
-        const window = text.slice(i - 1, i + 1);
-        if (window === "/*") depth += 1;
-        else if (window === "*/") depth -= 1;
+        const delta: number = afterDelimiter ? 0 : blockDelimiterDelta(text.slice(i - 1, i + 1));
+        afterDelimiter = delta !== 0;
+        depth += delta;
         i += 1;
       }
-      if (depth > 0) return true;
+      if (depth > 0) return text.length;
     } else {
-      return false;
+      return i;
     }
   }
-  return true;
+  return text.length;
 }
+
+const isCommentsAndWhitespace = (text: string): boolean =>
+  skipLeadingTrivia(text, isSqlWhitespace) === text.length;
+
+const BYTE_ORDER_MARK = "\uFEFF";
+
+/**
+ * Strips leading whitespace, byte order marks and line/block comments (block comments nest, as
+ * PostgreSQL scans them) so a keyword check sees the statement's first token. Empty when only
+ * trivia or an unterminated comment remains.
+ */
+export const trimLeadingSqlComments = (sql: string): string =>
+  sql
+    .slice(skipLeadingTrivia(sql, (char) => isSqlWhitespace(char) || char === BYTE_ORDER_MARK))
+    .trim();
 
 class ReadyState implements State {
   next(char: string, data: string): State | null {
@@ -129,18 +153,16 @@ class LineCommentState implements State {
 
 class BlockState implements State {
   private depth = 0;
+  private afterDelimiter = false;
+  get open(): boolean {
+    return this.depth > 0;
+  }
   next(char: string, data: string): State | null {
-    const window = data.slice(-2);
-    if (window === "/*") {
-      this.depth += 1;
-      return this;
-    }
-    if (this.depth === 0) return new ReadyState().next(char, data);
-    if (window === "*/") {
-      this.depth -= 1;
-      if (this.depth === 0) return new ReadyState();
-    }
-    return this;
+    const delta = this.afterDelimiter ? 0 : blockDelimiterDelta(data.slice(-2));
+    this.afterDelimiter = delta !== 0;
+    if (this.depth === 0 && delta === 0) return new ReadyState().next(char, data);
+    this.depth += delta;
+    return this.depth === 0 ? new ReadyState() : this;
   }
 }
 
@@ -151,6 +173,9 @@ class QuoteState implements State {
     private readonly delimiter: string,
     private readonly backslashEscapes: boolean,
   ) {}
+  get open(): boolean {
+    return !this.escape;
+  }
   next(char: string, data: string): State | null {
     if (this.escape) {
       // Preserve a doubled quote ('' or "").
@@ -204,6 +229,7 @@ class QuoteContinueState implements State {
 }
 
 class DollarState implements State {
+  readonly open = true;
   constructor(private readonly delimiter: string) {}
   next(_char: string, data: string): State | null {
     if (data.slice(-this.delimiter.length) === this.delimiter) return new ReadyState();
@@ -228,6 +254,9 @@ class EscapeState implements State {
 
 class ParenState implements State {
   constructor(private prev: State) {}
+  get open(): boolean {
+    return this.prev.open === true;
+  }
   next(char: string, data: string): State | null {
     const curr = this.prev.next(char, data);
     if (curr === null) {
@@ -249,6 +278,9 @@ class AtomicState implements State {
     start: number,
   ) {
     this.statementStart = start;
+  }
+  get open(): boolean {
+    return this.prev.open === true;
   }
   next(char: string, data: string): State | null {
     const pendingEnd = this.pendingEnd;
@@ -289,8 +321,14 @@ interface RawToken {
   readonly terminated: boolean;
 }
 
+interface RawSplit {
+  readonly tokens: RawToken[];
+  /** The input ends inside a block comment, quoted string, quoted identifier or dollar quote. */
+  readonly unterminated: boolean;
+}
+
 /** The FSM traversal shared by every `splitSql*` entry point below. */
-function splitRaw(sql: string): RawToken[] {
+function splitRaw(sql: string): RawSplit {
   let state: State = new ReadyState();
   const tokens: RawToken[] = [];
   // Slice each token from `sql` instead of growing it with `+=`: states read the token's tail every
@@ -312,7 +350,7 @@ function splitRaw(sql: string): RawToken[] {
   }
   // Trailing non-terminated statement at EOF.
   if (end > start) tokens.push({ text: sql.slice(start), terminated: false });
-  return tokens;
+  return { tokens, unterminated: state.open === true };
 }
 
 /**
@@ -324,7 +362,7 @@ export function splitSql(
   ...transform: ReadonlyArray<(s: string) => string>
 ): string[] {
   const statements: string[] = [];
-  for (const { text: raw } of splitRaw(sql)) {
+  for (const { text: raw } of splitRaw(sql).tokens) {
     let token = raw;
     for (const apply of transform) token = apply(token);
     if (token.length > 0) statements.push(token);
@@ -338,6 +376,16 @@ const trimStatement = (token: string): string => token.replace(/;+$/u, "").trim(
 /** Trims trailing `;` then surrounding whitespace from each statement. */
 export function splitAndTrim(sql: string): string[] {
   return splitSql(sql, trimStatement);
+}
+
+/** `splitAndTrim`, plus whether `sql` ends inside a block comment, quote or dollar quote. */
+export function splitAndTrimChecked(sql: string): {
+  readonly statements: string[];
+  readonly unterminated: boolean;
+} {
+  const { tokens, unterminated } = splitRaw(sql);
+  const statements = tokens.map(({ text }) => trimStatement(text)).filter((s) => s.length > 0);
+  return { statements, unterminated };
 }
 
 /** One statement, paired with both its raw and trimmed forms. */
@@ -364,7 +412,7 @@ export interface SplitSqlToken {
  * empty, so callers counting only non-empty trimmed statements still see every raw token.
  */
 export function splitSqlTokens(sql: string): ReadonlyArray<SplitSqlToken> {
-  return splitRaw(sql).map(({ text: raw, terminated }) => ({
+  return splitRaw(sql).tokens.map(({ text: raw, terminated }) => ({
     raw,
     trimmed: trimStatement(raw),
     terminated,

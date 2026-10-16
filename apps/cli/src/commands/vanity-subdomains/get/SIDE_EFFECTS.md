@@ -81,3 +81,5 @@ One `result` event with the full response object.
   open), even when the API call fails, but only on a cache miss with a token when
   `GET /v1/projects/{ref}` succeeds and `.temp/project-ref` does not name another ref. A closed
   gate writes nothing.
+
+- Prints `Target: <project>` once on stderr in every output format, for example `Target: project <name> (<ref>) · production`. `--output-format json|stream-json` object results and error envelopes also carry a `target` object; `--output {json,yaml,toml,env}` payloads are unchanged. Reads never prompt.

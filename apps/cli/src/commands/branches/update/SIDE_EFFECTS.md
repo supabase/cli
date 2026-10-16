@@ -28,14 +28,18 @@ Same auth fallback chain as every Management-API command. Project-ref discovery 
 
 `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROFILE`, `SUPABASE_PROJECT_ID`, `SUPABASE_WORKDIR` — same semantics as `branches list` (including the CLI-2167 PARENT-scoped resolution chain).
 
+`SUPABASE_YES` — approves the hosted-mutation confirmation like `--yes`; read from the shell environment only, never `supabase/.env`.
+
 ## Exit Codes
 
-| Code | Condition                                                                         |
-| ---- | --------------------------------------------------------------------------------- |
-| `0`  | success — branch updated                                                          |
-| `1`  | `BranchesUpdateUnexpectedStatusError` — non-200 response from the update endpoint |
-| `1`  | `BranchesUpdateNetworkError` — transport-level network failure                    |
-| `1`  | Branch-id resolution errors (find / config endpoints failed)                      |
+| Code | Condition                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — branch updated                                                                                               |
+| `1`  | `BranchesUpdateUnexpectedStatusError` — non-200 response from the update endpoint                                      |
+| `1`  | `BranchesUpdateNetworkError` — transport-level network failure                                                         |
+| `1`  | Branch-id resolution errors (find / config endpoints failed)                                                           |
+| `1`  | `HostedMutationConsentRequiredError` — no `--yes` / shell `SUPABASE_YES` and the run cannot prompt; nothing is changed |
+| `1`  | `HostedMutationDeclinedError` — the confirmation prompt was declined                                                   |
 
 ## Telemetry Events Fired
 
@@ -54,4 +58,6 @@ For `--output {json,yaml,toml,env}`, the header goes to stderr followed by the e
 
 ## Notes
 
-The upgrade-suggest call uses the branch's own resolved project ref (`resolveBranchProjectRef`) — not the parent `--project-ref` value — so the entitlements check is scoped to the branch's org.
+- The upgrade-suggest call uses the branch's own resolved project ref (`resolveBranchProjectRef`) — not the parent `--project-ref` value — so the entitlements check is scoped to the branch's org.
+- Resolves the parent project and prints `Target: <project>` once on stderr in every output format, for example `Target: project <name> (<ref>) · production`. `--output-format json|stream-json` object results and error envelopes also carry a `target` object; `--output {json,yaml,toml,env}` payloads are unchanged.
+- **Consent.** Asks once, after the branch name or ID is resolved to its ref and before the PATCH, with default No: `Update preview branch <name-or-id>`. The question also shows the branch project ref and each change that was requested (`--name`, `--git-branch`, `--persistent`, `--status`, `--notify-url`). `--yes` or a shell `SUPABASE_YES` approves it (`supabase/.env` does not) and echoes `Confirmed by --yes: <action> on <target>` to stderr. Without it, only an interactive text-mode terminal is asked: JSON, `-o`, piped and agent runs exit 1 with `HostedMutationConsentRequiredError` and change nothing, and declining exits 1 with `HostedMutationDeclinedError`. Stdin is never read.

@@ -18,6 +18,7 @@ import {
 import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { storageCommand } from "../storage.command.ts";
+import { commandTargetLayer } from "../../../shared/output/command-target.layer.ts";
 
 // Proves `--jobs`'s negative-value rejection is wired into the real command tree, ahead of the
 // `--experimental` gate and the `--linked`/`--local` mutex check in the handler — not just
@@ -34,6 +35,7 @@ function setup(args: ReadonlyArray<string>) {
     BunServices.layer,
     CliOutput.layer(textCliOutputFormatter()),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     Layer.succeed(CliArgs, { args }),
     // The jobs check never reaches `storageGatewayRuntimeLayer`'s lazy cliSettings/credentials
     // factory, but isolate ambient env defensively anyway.
@@ -84,7 +86,7 @@ describe("storage cp --jobs negative rejection (command-tree wiring)", () => {
           expect(Option.isSome(failure)).toBe(true);
           const causeText = Cause.pretty(exit.cause);
           expect(causeText).not.toContain("must set the --experimental flag to run this command");
-          expect(causeText).not.toContain("StorageMutuallyExclusiveFlags");
+          expect(causeText).not.toContain("TargetSelectorConflictError");
           // `normalizeCause` is the same rendering path `runCli` uses for parse failures.
           expect(normalizeCause(exit.cause).message).toBe(
             'invalid argument "-1" for "-j, --jobs" flag: expected an unsigned integer',

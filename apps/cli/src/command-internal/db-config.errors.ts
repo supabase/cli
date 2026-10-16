@@ -16,15 +16,6 @@ export class DbConfigParseUrlError extends Data.TaggedError("DbConfigParseUrlErr
   }
 }
 
-/** `--password` combined with `--db-url` or `--local`, where it can never apply. */
-export class DbPasswordFlagsError extends Data.TaggedError("DbPasswordFlagsError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
 /**
  * `supabase/config.toml` exists but could not be read or parsed: the read/decode
  * error aborts the load, rather than silently running against the default local database.
@@ -150,6 +141,20 @@ export class DbConfigConnectTempRoleError extends Data.TaggedError("DbConfigConn
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbConnection;
+  }
+}
+
+/** The temporary login role could not connect while network bans were listed and removing them was not approved with `--yes`. */
+export class LinkedDbNetworkBannedError extends Data.TaggedError("LinkedDbNetworkBannedError")<{
+  readonly message: string;
+  readonly suggestion?: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return {
+      ...actionability.dbConnection,
+      suggestion_type: CliSuggestionType.RunCommand,
+      suggested_command: "supabase network-bans remove",
+    };
   }
 }
 

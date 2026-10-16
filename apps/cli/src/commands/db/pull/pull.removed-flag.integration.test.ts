@@ -17,6 +17,7 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import { isolatedHomeLayer } from "../../../../tests/helpers/command-mocks.ts";
 import { dbCommand } from "../db.command.ts";
+import { commandTargetLayer } from "../../../shared/output/command-target.layer.ts";
 
 const testRoot = Command.make("supabase").pipe(
   Command.withSubcommands([dbCommand]),
@@ -53,6 +54,7 @@ const runDbPull = (
       Layer.succeed(CliArgs, { args: argv }),
       Stdio.layerTest({ args: Effect.succeed(argv) }),
       out.layer,
+      commandTargetLayer.pipe(Layer.provide(out.layer)),
       analytics.layer,
       mockTelemetryRuntime({ configDir: path.join(workdir, ".supabase") }),
       mockTty(),

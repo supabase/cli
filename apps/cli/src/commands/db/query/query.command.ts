@@ -7,7 +7,6 @@ import {
   withCondition,
   withDbTarget,
 } from "../../../command-internal/command-permissions/model.ts";
-import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -16,6 +15,8 @@ import { dbQuery } from "./query.handler.ts";
 import { dbQueryRuntimeLayer } from "./query.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { targetFlags } from "../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 /**
  * `db query` needs its own `--output`/`-o` (`json|table|csv`), but Effect CLI keeps one global
@@ -28,31 +29,17 @@ const config = {
     Argument.withDescription("SQL query to execute."),
     Argument.optional,
   ),
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription(
-      "Queries the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  // Selects the linked path by presence, not value, so `--linked=false` still selects it.
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Queries the linked project's database via Management API."),
-    Flag.optional,
-  ),
-  // In the same mutually-exclusive target group as `--db-url`/`--linked`, keyed off explicit
-  // presence, so `--local=false` still counts as an explicit target in the conflict check.
-  local: Flag.Boolean("local").pipe(
-    Flag.withDescription("Queries the local database."),
-    Flag.optional,
-  ),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
   file: Flag.String("file").pipe(
     Flag.withAlias("f"),
     Flag.withDescription("Path to a SQL file to execute."),
     Flag.optional,
+  ),
+  readOnly: Flag.Boolean("read-only").pipe(
+    Flag.withDescription(
+      "Runs the statement in a read-only transaction; a hosted target needs no confirmation.",
+    ),
+    Flag.withDefault(false),
   ),
 } as const;
 
@@ -68,10 +55,9 @@ export const dbQueryCommand = Command.make("query", config).pipe(
           operations: [
             { operationId: "v1-run-a-query", kind: "required", when: [{ dbTarget: ["linked"] }] },
           ],
-          noApiEffectFlags: ["file"],
+          noApiEffectFlags: ["file", "project-ref", "read-only"],
         },
-        dbConfig,
-        withCondition(linkedProjectCache, { flag: "linked" }),
+        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
       ),
       { default: "local" },
     ),
@@ -85,6 +71,7 @@ export const dbQueryCommand = Command.make("query", config).pipe(
           local: flags.local,
           "project-ref": flags.projectRef,
           file: flags.file,
+          "read-only": flags.readOnly,
         },
         // --project-ref isn't in the telemetry safe-flags list, so it stays redacted.
         outputFormats: QUERY_OUTPUT_FORMATS,
@@ -97,4 +84,5 @@ export const dbQueryCommand = Command.make("query", config).pipe(
   Command.provide(dbQueryRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

@@ -49,6 +49,7 @@ import { IdentityStitch } from "../../../command-internal/identity-stitch.ts";
 
 import { dbAdvisorsRuntimeLayer } from "../advisors/advisors.layers.ts";
 import { dbLintRuntimeLayer } from "./lint.layers.ts";
+import { commandTargetLayer } from "../../../shared/output/command-target.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-lint-layers-");
 
@@ -79,15 +80,15 @@ function ambientStubs() {
       connect: () => Effect.die("db-connection not needed for layer-exposure test"),
     }),
     Layer.succeed(DbConfigResolver, {
-      resolve: () => Effect.die("db-config-resolver not needed for layer-exposure test"),
+      resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
       resolvePoolerFallback: () =>
         Effect.die("db-config-resolver not needed for layer-exposure test"),
     }),
     Layer.succeed(ProjectRefResolver, {
       resolve: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveForLink: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
+      resolveRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveOptional: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
-      loadProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       promptProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
     }),
     Layer.succeed(CommandPlatformApiFactory, {
@@ -105,6 +106,7 @@ function ambientStubs() {
     analytics.layer,
     mockTelemetryRuntime(),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     flagLayers,
     mockCommandSettings({ workdir: "/tmp/lint-layers-test" }),
     mockCommandCredentialsLayer,

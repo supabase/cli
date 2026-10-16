@@ -66,6 +66,7 @@ import {
   DnsResolverFlag,
   ExperimentalFlag,
   NetworkIdFlag,
+  YesFlag,
 } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
@@ -75,6 +76,15 @@ import {
 } from "../../../config/project-ref.service.ts";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import type {
+  DbConnectionInput,
+  ResolvedDbConnection,
+} from "../../../command-internal/db-config.types.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import {
+  TargetProjectRefConflictError,
+  TargetSelectorConflictError,
+} from "../../../command-internal/target/target.errors.ts";
 import {
   DbConnection,
   type DbSession,
@@ -135,7 +145,7 @@ interface SetupOpts {
   // `CommandSettings.projectId`; defaults to `Option.some("test")`. Pass
   // `Option.none()` to exercise the config.toml/workdir-basename fallback.
   readonly projectId?: Option.Option<string>;
-  // Simulates an unlinked workdir: `loadProjectRef` fails with
+  // Simulates an unlinked workdir: the project-ref resolver fails with
   // `ProjectRefNotLinkedError` absent an explicit `--project-ref` flag.
   readonly linkedFails?: boolean;
   // Per-differ-run `--json-diff` stdout, indexed by run order; falls back to `""`
@@ -397,15 +407,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     },
   });
 
-  const resolverCalls: unknown[] = [];
+  const resolverCalls: DbConnectionInput[] = [];
   const resolver = Layer.succeed(DbConfigResolver, {
-    resolve: (resolveFlags) => {
-      resolverCalls.push(resolveFlags);
-      // A threaded `--project-ref` flag wins over the fixed `opts.linkedRef` fixture,
-      // matching real resolver precedence.
-      const flagRef = resolveFlags.linkedProjectRef ?? Option.none();
-      const ref =
-        Option.isSome(flagRef) && flagRef.value.length > 0 ? flagRef.value : opts.linkedRef;
+    resolveConnection: (input: DbConnectionInput) => {
+      resolverCalls.push(input);
       return Effect.succeed({
         conn: {
           host: "127.0.0.1",
@@ -414,26 +419,28 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           password: "postgres",
           database: "postgres",
         },
-        isLocal: opts.isLocal ?? true,
-        ref: ref !== undefined ? Option.some(ref) : Option.none(),
-      });
+        isLocal: opts.isLocal ?? input.target.kind === "local",
+        ref: input.target.kind === "linked" ? Option.some(input.target.ref) : Option.none(),
+        target: input.target,
+      } satisfies ResolvedDbConnection);
     },
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 
-  // Mirrors the same ref `resolver`'s own mock embeds above, and gives an explicit
-  // `--project-ref` flag top precedence over `opts.linkedRef` (mirrors
-  // `reset.integration.test.ts`'s identical mock).
   const projectRefResolver = Layer.succeed(ProjectRefResolver, {
-    resolve: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
+    resolve: () => Effect.die("resolve is not used by this test"),
     resolveForLink: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
-    resolveOptional: () => Effect.succeed(Option.some(opts.linkedRef ?? VALID_REF)),
-    loadProjectRef: (flagValue: Option.Option<string>) =>
+    resolveRef: (flagValue: Option.Option<string>) =>
       Option.isSome(flagValue) && flagValue.value.length > 0
-        ? Effect.succeed(flagValue.value)
+        ? Effect.succeed({ ref: flagValue.value, source: "flag", matchesLinkedRef: false })
         : opts.linkedFails === true
           ? Effect.fail(new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
-          : Effect.succeed(opts.linkedRef ?? VALID_REF),
+          : Effect.succeed({
+              ref: opts.linkedRef ?? VALID_REF,
+              source: "file",
+              matchesLinkedRef: true,
+            }),
+    resolveOptional: () => Effect.succeed(Option.some(opts.linkedRef ?? VALID_REF)),
     promptProjectRef: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
   });
 
@@ -505,6 +512,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(ExperimentalFlag, false),
     Layer.succeed(DebugFlag, false),
     Layer.succeed(CliArgs, { args: [] }),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
+    Layer.succeed(YesFlag, false),
     mockRuntimeInfo({ platform: opts.platform ?? "linux" }),
     workdirFiles,
     shadowCacheDisabledLayer,
@@ -553,8 +562,8 @@ const flags = (over: Partial<DbDiffFlags> = {}): DbDiffFlags => ({
   to: over.to ?? Option.none(),
   output: over.output ?? Option.none(),
   dbUrl: over.dbUrl ?? Option.none(),
-  linked: over.linked ?? Option.none(),
-  local: over.local ?? Option.none(),
+  linked: over.linked ?? false,
+  local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none(),
   file: over.file ?? Option.none(),
   schema: over.schema ?? [],
@@ -933,7 +942,7 @@ describe("db diff", () => {
       diffSql: "alter table x;\n",
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags({ linked: Option.some(true) }));
+      yield* dbDiff(flags({ linked: true }));
       expect(s.databaseDiffCalls).toHaveLength(1);
       expect(stderr(s.out)).not.toContain("are not read");
     }).pipe(Effect.provide(s.layer));
@@ -1148,7 +1157,7 @@ describe("db diff", () => {
       diffSql: "alter table x;\n",
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags({ linked: Option.some(true) }));
+      yield* dbDiff(flags({ linked: true }));
       expect(s.databaseDiffCalls[0]?.target.connectOptions.isLocal).toBe(false);
       expect(s.databaseDiffCalls[0]?.source.connectOptions.isLocal).toBe(true);
     }).pipe(Effect.provide(s.layer));
@@ -1179,7 +1188,7 @@ describe("db diff", () => {
         diffSql: "alter table x;\n",
       });
       return Effect.gen(function* () {
-        yield* dbDiff(flags({ linked: Option.some(true) }));
+        yield* dbDiff(flags({ linked: true }));
         const createArgs = s.shadowSpawned.find((c) => c.args[0] === "create")?.args ?? [];
         expect(createArgs).toContain("--tmpfs");
         expect(s.dockerCalls).toEqual([]);
@@ -1208,7 +1217,7 @@ describe("db diff", () => {
       diffSql: "",
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags({ linked: Option.some(true), file: Option.some("declared") }));
+      yield* dbDiff(flags({ linked: true, file: Option.some("declared") }));
       expect(stderr(s.out)).toContain(
         "Run supabase db schema declarative sync --experimental to generate",
       );
@@ -1245,7 +1254,7 @@ describe("db diff", () => {
       diffSql: "alter table x;\n",
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags({ linked: Option.some(true) }));
+      yield* dbDiff(flags({ linked: true }));
       expect(s.cache.cached).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
@@ -1259,7 +1268,7 @@ describe("db diff", () => {
       linkedFails: true,
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }));
+      yield* dbDiff(flags({ linked: true, projectRef: Option.some(FLAG_REF) }));
       expect(s.cache.cached).toBe(true);
       expect(s.cache.cachedRef).toBe(FLAG_REF);
     }).pipe(Effect.provide(s.layer));
@@ -1274,7 +1283,7 @@ describe("db diff", () => {
       diffSql: "alter table x;\n",
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }));
+      yield* dbDiff(flags({ linked: true, projectRef: Option.some(FLAG_REF) }));
       expect(s.cache.cached).toBe(true);
       expect(s.cache.cachedRef).toBe(FLAG_REF);
       expect(s.cache.cachedRef).not.toBe("abcdefghijklmnopqrst");
@@ -1286,14 +1295,11 @@ describe("db diff", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        dbDiff(flags({ local: Option.some(true), projectRef: Option.some(FLAG_REF) })),
+        dbDiff(flags({ local: true, projectRef: Option.some(FLAG_REF) })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain(
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        );
+        expect(Cause.squash(exit.cause)).toBeInstanceOf(TargetProjectRefConflictError);
       }
       expect(s.resolverCalls).toEqual([]);
       expect(s.cache.cached).toBe(false);
@@ -1341,10 +1347,10 @@ describe("db diff", () => {
   );
 
   it.effect(
-    "explicit --from local --to migrations --linked --project-ref proceeds and applies the flag ref's remote override",
+    "explicit --from local --to migrations --project-ref proceeds and applies the flag ref's remote override",
     () => {
-      // Same `[remotes.staging]` fixture as the `--from linked` case above, but here a
-      // changed `--linked` (not a literal "linked" ref) resolves the flag ref instead.
+      // Same `[remotes.staging]` fixture as the `--from linked` case above, but here
+      // `--project-ref` alone selects the linked target instead of a literal "linked" ref.
       const s = setup(tmp.current, {
         files: {
           "supabase/config.toml": [
@@ -1367,7 +1373,6 @@ describe("db diff", () => {
           flags({
             from: Option.some("local"),
             to: Option.some("migrations"),
-            linked: Option.some(true),
             projectRef: Option.some("flagflagflagflagflag"),
           }),
         );
@@ -1377,33 +1382,6 @@ describe("db diff", () => {
           projectRef: "flagflagflagflagflag",
         });
         expect(s.cache.cachedRef).toBe("flagflagflagflagflag");
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
-
-  it.effect(
-    "explicit --from local --to migrations --project-ref errors (neither side is linked)",
-    () => {
-      const FLAG_REF = "flagflagflagflagflag";
-      const s = setup(tmp.current);
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
-          dbDiff(
-            flags({
-              from: Option.some("local"),
-              to: Option.some("migrations"),
-              projectRef: Option.some(FLAG_REF),
-            }),
-          ),
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const causeText = Cause.pretty(exit.cause);
-          expect(causeText).toContain(
-            "--project-ref only applies when targeting the linked project; use it with --linked, or --from/--to linked, in explicit mode",
-          );
-        }
-        expect(s.resolverCalls).toEqual([]);
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -1422,7 +1400,7 @@ describe("db diff", () => {
         diffSql: "alter table x;\n",
       });
       return Effect.gen(function* () {
-        const exit = yield* dbDiff(flags({ linked: Option.some(true) })).pipe(Effect.exit);
+        const exit = yield* dbDiff(flags({ linked: true })).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         expect(s.cache.cached).toBe(true);
         expect(s.cache.cachedRef).toBe("abcdefghijklmnopqrst");
@@ -1517,7 +1495,7 @@ describe("db diff", () => {
       yield* dbDiff(
         flags({
           usePgAdmin: Option.some(true),
-          linked: Option.some(true),
+          linked: true,
           projectRef: Option.some(FLAG_REF),
         }),
       );
@@ -1551,7 +1529,7 @@ describe("db diff", () => {
         pgadminStdout: [JSON.stringify([pgadminEntry()])],
       });
       return Effect.gen(function* () {
-        yield* dbDiff(flags({ usePgAdmin: Option.some(true), linked: Option.some(true) }));
+        yield* dbDiff(flags({ usePgAdmin: Option.some(true), linked: true }));
         expect(stderr(s.out)).toContain("Loading config override: [remotes.staging]");
         expect(s.differCalls).toHaveLength(1);
       }).pipe(Effect.provide(s.layer));
@@ -1578,7 +1556,7 @@ describe("db diff", () => {
         pgadminStdout: [JSON.stringify([pgadminEntry()])],
       });
       return Effect.gen(function* () {
-        yield* dbDiff(flags({ usePgAdmin: Option.some(true), linked: Option.some(true) }));
+        yield* dbDiff(flags({ usePgAdmin: Option.some(true), linked: true }));
         // `mockShadowContainerCliSpawner` distinguishes this preflight probe from the
         // shadow's own health-check inspect by the `supabase_db_` container-name prefix.
         const inspectTargets = s.shadowSpawned
@@ -2081,7 +2059,7 @@ describe("db diff", () => {
         flags({
           from: Option.some("local"),
           to: Option.some("migrations"),
-          linked: Option.some(true),
+          linked: true,
         }),
       );
       expect(s.explicitDiffCalls[0]?.desired).toEqual({
@@ -2117,7 +2095,7 @@ describe("db diff", () => {
         flags({
           from: Option.some("local"),
           to: Option.some("migrations"),
-          linked: Option.some(true),
+          linked: true,
         }),
       ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -2145,9 +2123,7 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("explicit mode still runs the target-flag preflight on a changed --db-url", () => {
-    // A changed target flag is still validated even when the explicit refs drive the
-    // diff; the preflight resolves --db-url (connType db-url).
+  it.effect("explicit mode accepts --db-url without minting a connection", () => {
     const s = setup(tmp.current, { diffSql: "create table p ();\n" });
     return Effect.gen(function* () {
       yield* dbDiff(
@@ -2157,7 +2133,26 @@ describe("db diff", () => {
           dbUrl: Option.some("postgresql://x"),
         }),
       );
-      expect(s.resolverCalls).toContainEqual(expect.objectContaining({ connType: "db-url" }));
+      expect(s.resolverCalls).toEqual([]);
+      expect(stdout(s.out)).toBe("create table p ();\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("explicit mode rejects conflicting target selectors", () => {
+    const s = setup(tmp.current);
+    return Effect.gen(function* () {
+      const exit = yield* dbDiff(
+        flags({
+          from: Option.some("local"),
+          to: Option.some("local"),
+          local: true,
+          dbUrl: Option.some("postgresql://x"),
+        }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toBeInstanceOf(TargetSelectorConflictError);
+      }
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -2210,10 +2205,11 @@ describe("db diff", () => {
   it.effect("fails on target mutex (--linked with --local)", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {
-      const exit = yield* dbDiff(
-        flags({ linked: Option.some(true), local: Option.some(true) }),
-      ).pipe(Effect.exit);
+      const exit = yield* dbDiff(flags({ linked: true, local: true })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toBeInstanceOf(TargetSelectorConflictError);
+      }
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -2829,8 +2825,8 @@ describe("db diff", () => {
           const exit = yield* dbDiff(
             flags({
               usePgAdmin: Option.some(true),
-              linked: Option.some(true),
-              local: Option.some(true),
+              linked: true,
+              local: true,
             }),
           ).pipe(Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
@@ -2959,7 +2955,7 @@ describe("db diff permissions through the real resolver and cache", () => {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-      yield* dbDiff(flags({ linked: Option.some(true), projectRef: Option.some(VALID_REF) })).pipe(
+      yield* dbDiff(flags({ linked: true, projectRef: Option.some(VALID_REF) })).pipe(
         Effect.provide(s.layer),
       );
       expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
@@ -3093,7 +3089,7 @@ describe("db diff permissions through the real resolver and cache", () => {
         flags({
           from: Option.some("linked"),
           to: Option.some("linked"),
-          linked: Option.some(true),
+          linked: true,
           projectRef: Option.some(VALID_REF),
         }),
       ).pipe(Effect.provide(s.layer));

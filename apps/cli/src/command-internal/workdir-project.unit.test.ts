@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { missingProjectConfigMessage } from "./workdir-project.ts";
+import { describeConfigParseError, missingProjectConfigMessage } from "./workdir-project.ts";
 
 describe("missingProjectConfigMessage", () => {
   it("points at `supabase init` for a defaulted workdir", () => {
@@ -27,5 +27,22 @@ describe("missingProjectConfigMessage", () => {
       explicitWorkdir: true,
     });
     expect(message).not.toContain("");
+  });
+});
+
+describe("describeConfigParseError", () => {
+  it("names the failed file relative to the workdir", () => {
+    expect(
+      describeConfigParseError("/repo", {
+        path: "/repo/supabase/config.toml",
+        cause: new Error("unexpected end of input"),
+      }),
+    ).toBe("failed to parse supabase/config.toml: Error: unexpected end of input");
+  });
+
+  it("keeps a path outside the workdir as given", () => {
+    expect(
+      describeConfigParseError("/repo", { path: "/elsewhere/config.json", cause: "bad json" }),
+    ).toBe("failed to parse /elsewhere/config.json: bad json");
   });
 });

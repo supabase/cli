@@ -16,6 +16,7 @@ import { COMPUTE_EXPOSURES } from "../../../../shared/compute/compute-runtimes.t
 import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computePush } from "./push.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
   names: Argument.String("name").pipe(
@@ -114,4 +115,5 @@ export const computePushCommand = Command.make("push", config).pipe(
   Command.provide(managementApiRuntimeLayer(["compute", "push"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

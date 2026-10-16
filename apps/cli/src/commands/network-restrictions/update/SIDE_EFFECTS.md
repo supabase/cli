@@ -31,12 +31,13 @@ when no `--db-allow-cidr` was supplied).
 
 ## Environment Variables
 
-| Variable                | Purpose                                                  | Required?                                                                                     |
-| ----------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)     | no (falls back to keyring → `~/.supabase/access-token`)                                       |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                  | no (falls back to `~/.supabase/profile` -> `supabase`)                                        |
-| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset       | no (falls back to `supabase/.temp/project-ref`, then the interactive project picker on a TTY) |
-| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag | no (pass `--experimental` instead; one of the two is required)                                |
+| Variable                | Purpose                                                                                               | Required?                                                                                     |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                  | no (falls back to keyring → `~/.supabase/access-token`)                                       |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                               | no (falls back to `~/.supabase/profile` -> `supabase`)                                        |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset                                                    | no (falls back to `supabase/.temp/project-ref`, then the interactive project picker on a TTY) |
+| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag                                              | no (pass `--experimental` instead; one of the two is required)                                |
+| `SUPABASE_YES`          | confirms the hosted mutation without asking; only the shell environment counts, never `supabase/.env` | no (falls back to the interactive prompt)                                                     |
 
 ## Exit Codes
 
@@ -50,6 +51,8 @@ when no `--db-allow-cidr` was supplied).
 | `1`  | project ref unresolved (`ProjectRefNotLinkedError` / `InvalidProjectRefError`)                                                                                                                                                                                                                                                                                                                                                                                        |
 | `1`  | API non-201 (POST) / non-200 (PATCH) — `NetworkRestrictionsUpdateUnexpectedStatusError`                                                                                                                                                                                                                                                                                                                                                                               |
 | `1`  | transport failure — `NetworkRestrictionsUpdateNetworkError`                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `1`  | declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed                                                                                                                                                                                                                                                                                                                                                          |
+| `1`  | JSON, stream-json, `-o` or non-interactive run without `--yes` (`HostedMutationConsentRequiredError`) — nothing is changed                                                                                                                                                                                                                                                                                                                                            |
 
 ## Telemetry Events Fired
 
@@ -121,3 +124,5 @@ One `result` event whose `data` is the full response object.
   writes nothing. A malformed `--db-allow-cidr` CSV value (e.g. an unterminated quote) also
   writes nothing and fires no telemetry, even with `--experimental` set — it fails during
   flag parsing, before the gate and the handler.
+- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
+- Asks `Replace the network restrictions on <target>?` (`Append to the network restrictions on <target>?` with `--append`; default No) before the first write, after printing the IPv4 and IPv6 CIDRs. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.

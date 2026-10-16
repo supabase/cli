@@ -50,6 +50,7 @@ import {
   ComputeSourceMissingError,
   MissingComputeExposureError,
 } from "../../../../shared/compute/compute.errors.ts";
+import { requireHostedMutationConsent } from "../../../../command-internal/hosted-consent/hosted-consent.ts";
 import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
@@ -592,6 +593,10 @@ export const computePush = Effect.fn("compute.push")(function* (
     // carries a `compute` array, so `-o env` can never encode it, and finding
     // that out at the end means failing with the remote project already changed.
     yield* rejectComputeEnvOutput();
+
+    yield* requireHostedMutationConsent({
+      action: `Deploy compute ${names.join(", ")}`,
+    });
 
     const machineOutput = yield* computeMachineOutputRequested();
     const deployed: Array<Record<string, unknown>> = [];

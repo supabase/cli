@@ -20,6 +20,7 @@ import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { pull } from "./pull.handler.ts";
 import { pullRuntimeLayer } from "./pull.layers.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 const config = {
   // Accepts either a project ref or a branch name of the linked project — no separate `--target`.
@@ -81,7 +82,7 @@ export const pullHandler = (flags: PullFlags) =>
 
 export const pullCommand = Command.make("pull", config).pipe(
   Command.withDescription(
-    "Refreshes local project state from a linked Supabase project or branch in one step: pulls config into supabase/config.toml, optionally fetches the remote migration history table, pulls the database schema into supabase/migrations (also updating that database's migration history), and downloads every Edge Function's source. Prompts for confirmation before writing on an interactive TTY, unless --yes is set; --output-format json|stream-json skips the prompt entirely and takes its default answer, while a non-interactive text run still prints the prompt to stderr and reads one line from piped stdin (y/yes/n/no honored, empty takes the default, anything else declines) — use --dry-run to preview first.",
+    "Refreshes local project state from a linked Supabase project or branch in one step: pulls config into supabase/config.toml, optionally fetches the remote migration history table, pulls the database schema into supabase/migrations (also updating that database's migration history), and downloads every Edge Function's source. Asks for confirmation (default No) before writing, because the database step records the migration in the remote migration history table: an interactive terminal is prompted, and --output-format json|stream-json or a non-interactive run needs --yes (or SUPABASE_YES in the shell environment) — use --dry-run to preview first.",
   ),
   Command.withShortDescription("Pull remote project state into the local checkout"),
   Command.withExamples([
@@ -124,4 +125,5 @@ export const pullCommand = Command.make("pull", config).pipe(
   Command.provide(pullRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

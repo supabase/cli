@@ -2,14 +2,11 @@ import { Config, Effect, FileSystem, Option, Path, Predicate, Ref } from "effect
 import type { Stack } from "@supabase/stack/effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import {
-  rejectPasswordWithDirectTarget,
-  type DbConnType,
-} from "../../../command-internal/db-target-flags.ts";
+import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
 import { loadProjectEnvValues, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
@@ -53,7 +50,7 @@ import {
 } from "../../../command-internal/stack-local-database.ts";
 import { resolveBundledPostgresRuntime } from "../../../command-internal/bundled-postgres-client.ts";
 import { supabaseEnvStringWithProjectFallback } from "../../../command-internal/supabase-env.ts";
-import { runWithPoolerFallback } from "../shared/pooler-fallback.ts";
+import { orNoPoolerFallback, runWithPoolerFallback } from "../shared/pooler-fallback.ts";
 import {
   dumpDataScript,
   dumpRoleScript,
@@ -67,7 +64,6 @@ import {
  * flags is alphabetised separately by `mutuallyExclusiveFlagsMessage`.
  */
 const DUMP_EXCLUSIVE_GROUPS = [
-  ["db-url", "linked", "local"],
   ["keep-comments", "data-only"],
   ["role-only", "data-only"],
   ["schema", "role-only"],
@@ -118,12 +114,6 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     //    string-slice when non-empty.
     const isSet = (name: (typeof DUMP_EXCLUSIVE_GROUPS)[number][number]): boolean => {
       switch (name) {
-        case "db-url":
-          return Option.isSome(flags.dbUrl);
-        case "linked":
-          return Option.isSome(flags.linked);
-        case "local":
-          return Option.isSome(flags.local);
         case "data-only":
           return Option.isSome(flags.dataOnly);
         case "role-only":
@@ -143,42 +133,26 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       }
     }
 
-    // 3. Resolve the connection: db-url > local > linked, defaulting to linked when
-    //    neither is set (unlike other db subcommands, which default to local).
-    const useLocal = Option.isNone(flags.dbUrl) && Option.isSome(flags.local);
-    const connType: DbConnType = Option.isSome(flags.dbUrl)
-      ? "db-url"
-      : useLocal
-        ? "local"
-        : "linked";
-    yield* rejectPasswordWithDirectTarget(connType, flags.password);
-    // `--project-ref` never implies `--linked`; see push.handler.ts's identical guard.
-    if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* new DbDumpMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      });
-    }
-    // The project ref is resolved before the connection is built, and the
-    // linked-project cache is refreshed unconditionally afterward, even on a
-    // connection-resolution failure. `loadProjectRef` validates the ref up front so an
-    // unvalidated raw `--project-ref` is never stored for the cache finalizer.
-    if (connType === "linked") {
-      const refResolver = yield* ProjectRefResolver;
-      const ref = yield* refResolver.loadProjectRef(flags.projectRef);
-      yield* Ref.set(linkedRefForCache, ref);
-    }
-    const {
-      conn,
-      isLocal,
-      ref: resolvedRef,
-    } = yield* resolver.resolve({
+    // 3. Resolve the target (a selector flag, else the workspace target) and connect to it.
+    const target = yield* resolveTarget({
+      local: flags.local,
+      linked: flags.linked,
       dbUrl: flags.dbUrl,
-      connType,
+      projectRef: flags.projectRef,
+    });
+    // The linked-project cache is refreshed unconditionally afterward, even on a
+    // connection-resolution failure.
+    if (target.kind === "linked") {
+      yield* Ref.set(linkedRefForCache, target.ref);
+    }
+    const connectionInput = {
+      target,
       dnsResolver,
       password: flags.password,
-      linkedProjectRef: flags.projectRef,
-    });
+      hasPasswordFlag: true,
+      networkBanRemoval: yield* hostedMutationPreapproval,
+    };
+    const { conn, isLocal, ref: resolvedRef } = yield* resolver.resolveConnection(connectionInput);
     const db = isLocal ? "local" : "remote";
     // On the linked path, re-read config with the resolved ref so a matching
     // `[remotes.<ref>]` block overrides `db.major_version` for the pg_dump image.
@@ -194,7 +168,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
 
     const backend = yield* currentStackBackend;
     const managedProject =
-      backend.kind === "stack" && connType === "local"
+      backend.kind === "stack" && target.kind === "local"
         ? yield* stackOpenReadyProject.pipe(
             Effect.mapError((cause) => new DbDumpRunError({ message: cause.message, cause })),
             Effect.map(Option.getOrUndefined),
@@ -202,7 +176,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         : undefined;
     const managedStack: Stack | undefined = managedProject?.stack;
     const stackRuntime =
-      backend.kind === "stack" && connType === "local"
+      backend.kind === "stack" && target.kind === "local"
         ? yield* stackRequireProjectRuntime
         : undefined;
     const bundledRuntime =
@@ -231,7 +205,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     const rewriteLoopbackTarget =
       backend.kind === "stack" ? managedStack === undefined : !dumpUsesHostNetwork;
     const dumpConn = useNativeClient
-      ? connType === "local"
+      ? target.kind === "local"
         ? dumpConnForHostClient(conn)
         : conn
       : rewriteLoopbackTarget
@@ -244,7 +218,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
           }
         : conn;
     const catalogVersion =
-      backend.kind === "stack" && connType === "local"
+      backend.kind === "stack" && target.kind === "local"
         ? ((yield* stackProjectDatabaseVersion) ?? String(tomlValues.majorVersion))
         : String(tomlValues.majorVersion);
     const dumpMajor = tomlValues.majorVersion;
@@ -423,20 +397,11 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       Effect.flatMap((dumped) =>
         runWithPoolerFallback({
           result: dumped,
-          connType,
+          connType: target.kind,
           host: conn.host,
           isLocal,
           projectHost: cliSettings.projectHost,
-          resolvePooler: () =>
-            resolver
-              .resolvePoolerFallback({
-                dbUrl: flags.dbUrl,
-                connType: "linked",
-                dnsResolver,
-                password: flags.password,
-                linkedProjectRef: flags.projectRef,
-              })
-              .pipe(Effect.orElseSucceed(() => Option.none())),
+          resolvePooler: () => orNoPoolerFallback(resolver.resolvePoolerFallback(connectionInput)),
           runWithConn: (c) => runContainer(mode.buildEnv(c, opt)),
           reprintOnRetry: output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr"),
         }),

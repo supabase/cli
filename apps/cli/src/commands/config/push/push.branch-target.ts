@@ -13,25 +13,21 @@ import { readProjectRefFile, tempPaths } from "../../../shared/config/temp-paths
 import { Output } from "../../../shared/output/output.service.ts";
 
 /**
- * What `ref` actually is, resolved for `config push`'s target-echo and branch confirmation gate:
+ * What `ref` actually is, resolved for `config push`'s payload:
  *
- * - `"project"` — `ref` is the linked project itself; `name` is present when the live probe
- *   found it.
+ * - `"project"` — `ref` is the linked project itself.
  * - `"branch"` — `ref` is confirmed to be a preview branch (an explicit `--project-ref
- *   <name-or-uuid>`, or a live 404); `parentRef`/`parentName`/`branch` are each present only
- *   when they could be determined.
+ *   <name-or-uuid>`, or a live 404); `parentRef`/`branch` are each present only when they could
+ *   be determined.
  * - `"unknown"` — the live probe couldn't tell (a timeout, a transport failure, or an
- *   unexpected status). Never asserted as a branch, since an uncertain outcome must not gate an
- *   unattended push behind a confirmation that then auto-declines it; never asserted as a
- *   project either — the target-echo line says plainly that it doesn't know.
+ *   unexpected status). Asserted as neither a branch nor a project.
  */
 export type ConfigPushTarget =
-  | { readonly kind: "project"; readonly ref: string; readonly name?: string }
+  | { readonly kind: "project"; readonly ref: string }
   | {
       readonly kind: "branch";
       readonly ref: string;
       readonly parentRef?: string;
-      readonly parentName?: string;
       readonly branch?: string;
     }
   | { readonly kind: "unknown"; readonly ref: string };
@@ -68,16 +64,16 @@ function isNotFound(cause: unknown): boolean {
 }
 
 type ProbeOutcome = Data.TaggedEnum<{
-  Project: { readonly name: string | undefined };
+  Project: {};
   Branch: {};
   Unknown: {};
 }>;
 const ProbeOutcome = Data.taggedEnum<ProbeOutcome>();
 
 /**
- * Resolves what `ref` actually is, so `config push` can tell the user whether they're pushing to
- * the linked project or a branch, and gate a branch push behind confirmation. Never fails: this
- * probe is diagnostic-only and must never abort a push that would otherwise succeed.
+ * Resolves what `ref` actually is, so `config push` can tell a branch from the linked project.
+ * Never fails: this probe is diagnostic-only and must never abort a push that would otherwise
+ * succeed.
  *
  * A known branch name/UUID skips the live probe. Otherwise `GET /v1/projects/{ref}` (bounded at
  * {@link BRANCH_LOOKUP_TIMEOUT}) returns a project on 200, `"unknown"` on any other failure
@@ -103,20 +99,9 @@ export function resolveConfigPushTarget(
       Effect.orElseSucceed(() => Option.none<CachedLinkedProject>()),
     );
 
-    // A name target: both fields already known, so just enrich the parent's name from cache
-    // when it happens to match.
     if (opts.knownBranch?.kind === "name") {
       const { branchName, parentRef } = opts.knownBranch;
-      const cached = yield* readCachedParent;
-      const parentName =
-        Option.isSome(cached) && cached.value.ref === parentRef ? cached.value.name : undefined;
-      return {
-        kind: "branch",
-        ref,
-        parentRef,
-        ...(parentName === undefined ? {} : { parentName }),
-        branch: branchName,
-      };
+      return { kind: "branch", ref, parentRef, branch: branchName };
     }
 
     // A uuid known-branch means ref is certainly a branch, so skip the live probe. Otherwise
@@ -130,7 +115,7 @@ export function resolveConfigPushTarget(
 
       const probe: ProbeOutcome = yield* Effect.timeoutOrElse(
         api.v1.getProject({ ref }).pipe(
-          Effect.map((project) => ProbeOutcome.Project({ name: normalizeApiName(project.name) })),
+          Effect.map(() => ProbeOutcome.Project()),
           Effect.catch((cause) =>
             Effect.succeed(isNotFound(cause) ? ProbeOutcome.Branch() : ProbeOutcome.Unknown()),
           ),
@@ -145,11 +130,7 @@ export function resolveConfigPushTarget(
       yield* (ProbeOutcome.$is("Unknown")(probe) ? probing?.fail() : probing?.clear) ?? Effect.void;
 
       const probed = ProbeOutcome.$match(probe, {
-        Project: ({ name }): ConfigPushTarget => ({
-          kind: "project",
-          ref,
-          ...(name === undefined ? {} : { name }),
-        }),
+        Project: (): ConfigPushTarget => ({ kind: "project", ref }),
         Unknown: (): ConfigPushTarget => ({ kind: "unknown", ref }),
         // A Branch probe (404) falls into the shared recovery below, same as an
         // incomplete uuid knownBranch.
@@ -187,15 +168,10 @@ export function resolveConfigPushTarget(
       return { kind: "branch", ref };
     }
 
-    const parentName =
-      Option.isSome(cached) && cached.value.ref === candidateParentRef
-        ? cached.value.name
-        : undefined;
     return {
       kind: "branch",
       ref,
       parentRef: candidateParentRef,
-      ...(parentName === undefined ? {} : { parentName }),
       ...(branchName === undefined ? {} : { branch: branchName }),
     };
   });

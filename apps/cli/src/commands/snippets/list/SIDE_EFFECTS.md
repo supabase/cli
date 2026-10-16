@@ -98,3 +98,4 @@ NDJSON `success` event with the full response as `data`.
 - When both `--output` and `--output-format` are set, `--output` wins (matches the precedence used elsewhere in ports).
 - `--output env` is rejected **after** project-ref resolution but **before** the API call.
 - The linked-project cache fires after project-ref resolves; the telemetry state always flushes. Both run on success and on every error path via the two `Effect.ensuring` blocks in the handler.
+- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).

@@ -9,6 +9,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { snippetsDownload } from "./download.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   snippetId: Argument.String("snippet-id").pipe(
@@ -46,4 +47,5 @@ export const snippetsDownloadCommand = Command.make("download", config).pipe(
     ),
   ),
   Command.provide(managementApiRuntimeLayer(["snippets", "download"])),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

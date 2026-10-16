@@ -10,8 +10,11 @@ import { CommandPlatformApiFactory } from "../../src/auth/command-platform-api-f
 import { CommandPlatformApi } from "../../src/auth/command-platform-api.service.ts";
 import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts";
 import { projectRefLayer } from "../../src/config/project-ref.layer.ts";
+import { commandTargetLayer } from "../../src/shared/output/command-target.layer.ts";
 import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
-import { OutputFlag } from "../../src/command-internal/global-flags.ts";
+import { OutputFlag, YesFlag } from "../../src/command-internal/global-flags.ts";
+import { TargetPolicy } from "../../src/command-internal/target/target-policy.ts";
+import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import {
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
@@ -234,7 +237,7 @@ export function notebooksProject(dir: string) {
 function testProjectRefLayer(linked: boolean) {
   const optional = (flag: Option.Option<string>) =>
     Option.orElse(flag, () => (linked ? Option.some(NOTEBOOKS_PROJECT_REF) : Option.none()));
-  const resolve = (flag: Option.Option<string>) =>
+  const resolve = (flag: Option.Option<string>): Effect.Effect<string, ProjectRefNotLinkedError> =>
     Option.match(optional(flag), {
       onSome: Effect.succeed,
       onNone: () =>
@@ -246,9 +249,12 @@ function testProjectRefLayer(linked: boolean) {
     });
   return Layer.succeed(ProjectRefResolver, {
     resolve,
+    resolveRef: (flag) =>
+      resolve(flag).pipe(
+        Effect.map((ref) => ({ ref, source: "file" as const, matchesLinkedRef: true })),
+      ),
     resolveForLink: resolve,
     resolveOptional: (flag) => Effect.succeed(optional(flag)),
-    loadProjectRef: resolve,
     promptProjectRef: () => resolve(Option.none()),
   });
 }
@@ -261,11 +267,15 @@ export interface NotebooksSetupOptions {
   readonly linked?: boolean;
   /** Answers the reconciliation prompt: `"keep"`, `"copy"` or `"delete"`. */
   readonly promptSelectResponses?: ReadonlyArray<string>;
+  /** Answers the hosted-mutation confirmation. */
+  readonly promptConfirmResponses?: ReadonlyArray<boolean>;
   readonly routes?: NotebooksHttpRoutes;
   /** The `-o`/`--output` flag, which every command family here honours. */
   readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
   readonly command?: "pull" | "push";
   readonly args?: ReadonlyArray<string>;
+  /** The global `--yes` flag; on by default so push tests are not blocked by the hosted-mutation consent. */
+  readonly yes?: boolean;
   /**
    * Runs the real `projectRefLayer` (an unlinked workdir reaches its picker) and the real
    * linked-project cache, so their `GET /v1/projects` and `GET /v1/projects/{ref}` calls go
@@ -275,12 +285,16 @@ export interface NotebooksSetupOptions {
 }
 
 export function setupNotebooks(options: NotebooksSetupOptions) {
+  const interactive = options.interactive ?? (options.format ?? "text") === "text";
   const out = mockOutput({
     format: options.format ?? "text",
-    interactive: options.interactive ?? (options.format ?? "text") === "text",
+    interactive,
     ...(options.promptSelectResponses === undefined
       ? {}
       : { promptSelectResponses: options.promptSelectResponses }),
+    ...(options.promptConfirmResponses === undefined
+      ? {}
+      : { promptConfirmResponses: options.promptConfirmResponses }),
   });
   const http = mockNotebooksHttp(options.routes ?? {});
 
@@ -300,6 +314,7 @@ export function setupNotebooks(options: NotebooksSetupOptions) {
           ),
           Layer.provide(cliSettings),
           Layer.provide(mockTty({ stdinIsTty: true })),
+          Layer.provide(commandTargetLayer.pipe(Layer.provide(out.layer))),
           Layer.provide(out.layer),
           Layer.provide(BunServices.layer),
         )
@@ -334,6 +349,10 @@ export function setupNotebooks(options: NotebooksSetupOptions) {
       ),
       BunServices.layer,
       Stdio.layerTest({ args: Effect.succeed(options.args ?? ["notebooks", command]) }),
+      Layer.succeed(YesFlag, options.yes ?? true),
+      Layer.succeed(CliArgs, { args: [] }),
+      mockTty({ stdinIsTty: interactive, stdoutIsTty: interactive }),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: command === "push" ? "no" : "none" }),
     ),
   };
 }

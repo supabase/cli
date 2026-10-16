@@ -29,6 +29,7 @@ import {
   type ConfigPullOutcome,
   type ConfigPullSource,
 } from "../../../command-internal/config-pull-run.ts";
+import { withAnnouncedTarget } from "../../../shared/output/command-target.service.ts";
 import { configPullCreatedBlockLabel, configPullSummaryMessage } from "./pull.format.ts";
 import type { ConfigPullPlan } from "./pull.plan.ts";
 import {
@@ -111,9 +112,15 @@ export const runConfigPull = Effect.fn("config.pull.run")(function* (input: Conf
   // keeps them.
   const emitOutcome = (planForOutput: ConfigPullPlan, outcome: ConfigPullOutcome) =>
     output.format !== "text"
-      ? output.success(
-          configPullSummaryMessage(changeSet, scope, planForOutput, outcome),
+      ? withAnnouncedTarget(
           configPullPayload(changeSet, scope, planForOutput, context, outcome),
+        ).pipe(
+          Effect.flatMap((payload) =>
+            output.success(
+              configPullSummaryMessage(changeSet, scope, planForOutput, outcome),
+              payload,
+            ),
+          ),
         )
       : output.raw(
           `${configPullSummaryMessage(changeSet, scope, planForOutput, outcome, { withCaveats: false })}\n`,

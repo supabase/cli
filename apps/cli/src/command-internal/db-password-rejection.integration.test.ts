@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Path } from "effect";
 import { CliOutput, Command } from "effect/cli";
 
 import { rootCommandForFeatures } from "../cli/root.ts";
@@ -54,10 +54,22 @@ const selectorArgs = (selector: "db-url" | "local" | "none") =>
       ? ["--local"]
       : [];
 
-const runCommand = (entry: WalkedCommand, selector: "db-url" | "local" | "none") =>
+const runCommand = (
+  entry: WalkedCommand,
+  selector: "db-url" | "local" | "none",
+  options: { readonly linked?: boolean } = {},
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-password-rejection-" });
+    if (options.linked === true) {
+      yield* fs.makeDirectory(path.join(home, "supabase", ".temp"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(home, "supabase", ".temp", "project-ref"),
+        "abcdefghijklmnopqrst",
+      );
+    }
     const args = [
       ...entry.path,
       ...requiredFlagArgs(entry),
@@ -103,18 +115,18 @@ describe("--password with a direct database target", () => {
           const failure = yield* runCommand(entry, selector);
 
           expect(failure).toMatchObject({
-            _tag: "DbPasswordFlagsError",
+            _tag: "TargetPasswordConflictError",
             message:
               selector === "db-url"
                 ? "--password can't be used with --db-url. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres"
-                : "--password can't be used with --local. The local database uses [db].password from supabase/config.toml.",
+                : "--password only applies to a linked project. The local database uses [db].password from supabase/config.toml.",
           });
         }),
       );
     }
   }
 
-  it.effect("explains that migration squash defaults to local when --password has no target", () =>
+  it.effect("rejects migration squash --password when the workspace target is local", () =>
     Effect.gen(function* () {
       const entry = passwordCommands.find(
         (candidate) => candidate.path.join(" ") === "migration squash",
@@ -123,9 +135,25 @@ describe("--password with a direct database target", () => {
       const failure = yield* runCommand(entry!, "none");
 
       expect(failure).toMatchObject({
-        _tag: "DbPasswordFlagsError",
+        _tag: "TargetPasswordConflictError",
         message:
-          "migration squash targets the local database unless you pass --linked, and --password only applies to a linked project. Pass --linked, or drop --password.",
+          "--password only applies to a linked project. The local database uses [db].password from supabase/config.toml.",
+      });
+    }),
+  );
+
+  it.effect("points a local --password rejection at --linked when the checkout is linked", () =>
+    Effect.gen(function* () {
+      const entry = passwordCommands.find(
+        (candidate) => candidate.path.join(" ") === "migration list",
+      );
+      expect(entry).toBeDefined();
+      const failure = yield* runCommand(entry!, "local", { linked: true });
+
+      expect(failure).toMatchObject({
+        _tag: "TargetPasswordConflictError",
+        message:
+          "--password only applies to a linked project. The local database uses [db].password from supabase/config.toml. To use the linked project instead, pass --linked.",
       });
     }),
   );

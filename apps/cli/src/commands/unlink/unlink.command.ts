@@ -10,6 +10,7 @@ import { withPermissions } from "../../command-internal/command-permissions/comm
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { unlink } from "./unlink.handler.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 // `unlink` makes no Management API calls, so it avoids `managementApiRuntimeLayer`,
 // which eagerly resolves an access token and would fail for a token-less `unlink`.
@@ -34,4 +35,5 @@ export const unlinkCommand = Command.make("unlink").pipe(
   withPermissions({ operations: [] }),
   Command.withHandler(() => unlink().pipe(withCommandTelemetry(), withJsonErrorHandling)),
   Command.provide(unlinkRuntimeLayer),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

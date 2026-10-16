@@ -5,6 +5,7 @@ import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { loginRuntimeLayer } from "./login.layers.ts";
 import { login } from "./login.handler.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../command-internal/command-permissions/model.ts";
 import { loginProfile } from "../../command-internal/login-api.layer.ts";
@@ -36,4 +37,9 @@ export const loginCommand = Command.make("login", config).pipe(
     login(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(loginRuntimeLayer),
+  withTargetPolicy({
+    group: "account",
+    consent: "none",
+    consentExemptReason: "mints the caller's own access token",
+  }),
 );

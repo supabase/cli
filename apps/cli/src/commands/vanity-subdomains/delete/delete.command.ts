@@ -15,6 +15,7 @@ import {
   withCommandTelemetry,
 } from "../../../telemetry/command-telemetry.ts";
 import { vanitySubdomainsDelete } from "./delete.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   projectRef: Flag.String("project-ref").pipe(
@@ -55,4 +56,5 @@ export const vanitySubdomainsDeleteCommand = Command.make("delete", config).pipe
       );
     }).pipe(withJsonErrorHandling),
   ),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

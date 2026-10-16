@@ -9,11 +9,9 @@ import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags.ts";
-import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { withAnnouncedTarget } from "../../../shared/output/command-target.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { Stdin } from "../../../shared/runtime/stdin.service.ts";
-import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { assertDecryptableSecrets } from "../../../command-internal/db-config.toml-read.ts";
 import { resolveLinkedParentRef } from "../../../command-internal/parent-project-ref.ts";
 import { BRANCH_UUID_PATTERN } from "../../../command-internal/ref-patterns.ts";
@@ -33,7 +31,6 @@ import {
   requireExplicitWorkdirProject,
 } from "../../../command-internal/workdir-project.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
-import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { mapConfigLoadError } from "../config.load.ts";
 import {
   configApiScope,
@@ -65,7 +62,6 @@ import {
   ConfigPushBranchNotReadyError,
   ConfigPushBranchResolveNetworkError,
   ConfigPushBranchResolveStatusError,
-  ConfigPushCancelledError,
   ConfigPushConfigEmptyError,
   ConfigPushConfigReadNetworkError,
   ConfigPushConfigReadStatusError,
@@ -84,9 +80,10 @@ import {
   ConfigPushWorkdirError,
 } from "./push.errors.ts";
 import {
-  configPushBranchPromptLabel,
   configPushPayloadFields,
-  configPushTargetLines,
+  configPushTargetFields,
+  pushConsentAction,
+  pushCostLine,
   pushEnvSourcedLine,
   pushNotes,
   pushNotPushableLine,
@@ -102,11 +99,10 @@ import { comparePaths, isRecord } from "./push.paths.ts";
 import {
   PUSH_ADDON_GATES,
   PUSH_RESOURCES,
-  applyMfaAddonDecline,
   changesCommunicated,
   planConfigPush,
-  pushAddonPromptNeeded,
-  pushPromptKey,
+  pushEnablesAddon,
+  pushCostKey,
   pushResourceEnabled,
   pushResourceForPath,
   pushResponseBlock,
@@ -117,7 +113,7 @@ import type { ConfigPushFlags } from "./push.command.ts";
 import type { ConfigPushServiceResult } from "./push.types.ts";
 
 /** The `services[].changes` union: encoded paths ∪ content extras ∪ secret paths the write
- *  actually sent, path-sorted. `sentSecretPaths` is `[]` for a declined/skipped write. */
+ *  actually sent, path-sorted. `sentSecretPaths` is `[]` for a skipped write. */
 function pushServiceChanges(
   encoded: PushEncoded<unknown>,
   sentSecretPaths: ReadonlyArray<ReadonlyArray<string>>,
@@ -155,6 +151,24 @@ function toSecretReport(decision: PushSecretDecision) {
   return report;
 }
 
+interface ResourcePlan<E> {
+  readonly changes: ReadonlyArray<ConfigChange>;
+  readonly encoded: PushEncoded<unknown>;
+  readonly secrets: ReadonlyArray<PushSecretDecision>;
+  /** Absent when the encoder produced no body, so there is nothing to send. */
+  readonly write: (() => Effect.Effect<unknown, E>) | undefined;
+}
+
+function planResource<Body, E>(
+  changes: ReadonlyArray<ConfigChange>,
+  encoded: PushEncoded<Body>,
+  secrets: ReadonlyArray<PushSecretDecision>,
+  write: (body: Body) => Effect.Effect<unknown, E>,
+): ResourcePlan<E> {
+  const { body } = encoded;
+  return { changes, encoded, secrets, write: body === undefined ? undefined : () => write(body) };
+}
+
 /** Loads the resolved config once per push. */
 const loadPushConfig = Effect.fn("config.push.loadConfig")(function* (
   cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
@@ -175,15 +189,11 @@ const loadPushConfig = Effect.fn("config.push.loadConfig")(function* (
   }
   const loaded = resolvedConfig.loaded;
   yield* Effect.annotateCurrentSpan("config.remote_applied", loaded.appliedRemote !== undefined);
-  const projectYes = resolvedConfig.projectEnvValues["SUPABASE_YES"];
-  const projectEnv: Record<string, string> =
-    projectYes === undefined ? {} : { SUPABASE_YES: projectYes };
   const referenced = yield* resolvedConfig.envValues(envReferenceNames(loaded.document));
   return {
     loaded,
     lookup: (name: string) => referenced[name],
     dotenvPrivateKeys: resolvedConfig.dotenvPrivateKeys,
-    projectEnv,
     originFor: configEnvOriginLookup(resolvedConfig.origins, (file) =>
       relativeConfigPath(cliSettings.workdir, file),
     ),
@@ -261,12 +271,10 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     //
     // Needs the fully decoded document and value origins, which the tolerant
     // `db-config.toml-read.ts` subtree reader does not produce.
-    const { loaded, lookup, dotenvPrivateKeys, projectEnv, originFor } = yield* loadPushConfig(
+    const { loaded, lookup, dotenvPrivateKeys, originFor } = yield* loadPushConfig(
       cliSettings,
       ref,
     );
-    // `SUPABASE_YES` set only in `supabase/.env` auto-confirms, not just the flag and shell env.
-    const yes = yield* resolveYesWithProjectEnv(projectEnv);
     // Printed from inside config load, before any command output.
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(
@@ -291,14 +299,10 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // silently push empty content over a real hosted customization.
     const authEmailContent = yield* loadAuthEmailContent(cliSettings.workdir, config.auth.email);
 
-    // 5. Determine the push target and, for a confirmed branch, gate the push behind an explicit
-    // confirmation before any further network call. A target resolved from an explicit
-    // `--project-ref <name-or-uuid>` this invocation skips the prompt, since the user already
-    // expressed same-invocation intent.
-    //
-    // `resolveConfigTarget` returns only the raw branch name, not its resolved parent, so a name
-    // target's parent is re-derived here via a second local-only read (env/cache/file, no
-    // network) of the same chain that just resolved.
+    // 5. Determine the push target for the echo and the payload. `resolveConfigTarget` returns
+    // only the raw branch name, not its resolved parent, so a name target's parent is re-derived
+    // here via a second local-only read (env/cache/file, no network) of the same chain that just
+    // resolved.
     let knownBranch: ConfigPushKnownBranch | undefined;
     if (branch !== undefined) {
       if (BRANCH_UUID_PATTERN.test(branch)) {
@@ -311,52 +315,13 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
             : { kind: "uuid" };
       }
     }
-    const tty = yield* Tty;
-    const confirm = (label: string, defaultValue: boolean) =>
-      !yes && tty.stdinIsTty && !output.interactive
-        ? Effect.succeed(defaultValue)
-        : promptYesNo(output, yes, label, defaultValue, true, { readMachineStdin: true });
     const target = yield* resolveConfigPushTarget(ref, { knownBranch }).pipe(
       Effect.withSpan("config.push.probeTarget"),
     );
     yield* Effect.annotateCurrentSpan("config.target_kind", target.kind);
-    yield* output.raw(configPushTargetLines(target), "stderr");
-    if (target.kind === "branch" && knownBranch === undefined) {
-      // Defaults `false`: an unattended run without affirmative consent
-      // must decline a branch mutation rather than silently proceed.
-      const proceed = yield* confirm(configPushBranchPromptLabel(target), false);
-      if (!proceed) {
-        return yield* new ConfigPushCancelledError({
-          message: CONTEXT_CANCELED_MESSAGE,
-          suggestion: "Pass --yes (or set SUPABASE_YES) to push to a branch without confirmation.",
-        });
-      }
-    }
 
-    // 6. Cost matrix (drives cost-aware prompts).
+    // 6. Cost matrix (prices the paid add-ons a push would enable).
     const cost = yield* getCostMatrix(ref);
-
-    // `promptYesNo` scans piped stdin on a non-TTY before falling back to the default.
-    const defaultProceed =
-      yes || (tty.stdinIsTty && output.interactive && output.format === "text");
-    const keep = (name: string) =>
-      Effect.gen(function* () {
-        const item = cost.get(name);
-        const title =
-          item === undefined
-            ? `Do you want to push ${name} config to remote?`
-            : `Enabling ${item.name} will cost you ${item.price}. Keep it enabled?`;
-        const confirmed = yield* confirm(title, defaultProceed);
-        if (!confirmed && output.format === "text" && (!tty.stdinIsTty || !output.interactive)) {
-          yield* output.raw(
-            tty.stdinIsTty
-              ? `Skipped ${name}: confirmation unavailable with redirected output. Pass --yes (or set SUPABASE_YES) to approve.\n`
-              : `Skipped ${name}: no affirmative confirmation received. Pass --yes (or set SUPABASE_YES) to approve.\n`,
-            "stderr",
-          );
-        }
-        return confirmed;
-      });
 
     // 7. Read the project's effective configuration in one call. No spinner, matching the rest
     // of this command's stderr progress lines.
@@ -451,128 +416,11 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       storage: pushResourceEnabled("storage", config, local),
     };
 
-    // Announced before any prompt so a `--yes` run still shows what the environment supplied;
-    // only paths an encoder will actually send are counted, so an up-to-date resource adds none.
-    const plannedEncodings: ReadonlyArray<PushEncoded<unknown>> = PUSH_RESOURCES.filter(
-      (resource) =>
-        resourceEnabled[resource] && !scope.missing.includes(pushResponseBlock(resource)),
-    ).map((resource) => {
+    const planFor = (resource: PushResource) => {
       const changes = plan.changesByResource[resource];
       switch (resource) {
         case "api":
-          return encodeApiBody({ changes, local, remote });
-        case "db.settings":
-          return encodeDbSettingsBody({ changes, local, remote });
-        case "db.network_restrictions":
-          return encodeNetworkRestrictionsBody({ changes, local, remote });
-        case "db.ssl_enforcement":
-          return encodeSslEnforcementBody({ changes, local, remote });
-        case "auth":
-          return encodeAuthBody({
-            changes,
-            local,
-            remote,
-            secrets,
-            emailContent: authEmailContent,
-            remoteAuthAttributes,
-            now,
-          });
-        case "storage":
-          return encodeStorageBody({ changes, local, remote, config });
-      }
-    });
-    const envSourced = envSourcedPaths(
-      plannedEncodings
-        .filter((encoded) => encoded.body !== undefined)
-        .flatMap((encoded) => pushServiceChanges(encoded, pushSentSecretPaths(encoded))),
-      originFor,
-    );
-    if (envSourced.length > 0) {
-      yield* output.raw(pushEnvSourcedLine(envSourced), "stderr");
-    }
-
-    const services: Array<ConfigPushServiceResult> = [];
-    const unsupported: Array<ReadonlyArray<string>> = [...plan.unsupported];
-    const unencodable: Array<PushUnencodable> = [];
-    const forced: Array<PushForced> = [];
-    const declinedAddons: Array<string> = [];
-    let authWriteRan = false;
-    let secretsSent: ReadonlyArray<ReadonlyArray<string>> = [];
-
-    // 10. Prints the resource's `Updating ...`/up-to-date/not-pushable line, prompts, writes, and
-    // returns the result. `secretsForResource` is the resource's full secret-decision list; only
-    // `auth` needs to pass anything besides `[]`.
-    function applyResource<Body, E, R>(
-      resource: PushResource,
-      changes: ReadonlyArray<ConfigChange>,
-      encoded: PushEncoded<Body>,
-      secretsForResource: ReadonlyArray<PushSecretDecision>,
-      write: (body: Body) => Effect.Effect<unknown, E, R>,
-    ): Effect.Effect<ConfigPushServiceResult, E, R | Tty | Stdin> {
-      return Effect.gen(function* () {
-        if (encoded.body === undefined) {
-          if (encoded.unencodable.length > 0) {
-            yield* output.raw(pushNotPushableLine(resource, encoded.unencodable.length), "stderr");
-            return { service: resource, status: "not_pushable", changes: [] };
-          }
-          yield* output.raw(pushUpToDateLine(resource), "stderr");
-          return { service: resource, status: "up_to_date", changes: [] };
-        }
-        const body = encoded.body;
-        const communicated = changesCommunicated(changes, encoded.encoded);
-        yield* output.raw(
-          pushUpdatingLine({
-            resource,
-            changes: communicated,
-            secrets: secretsForResource.map(toSecretReport),
-            secretsEncoded: encoded.secretsEncoded ?? [],
-            extras: encoded.extras,
-            forced: encoded.forced,
-            originFor,
-          }),
-          "stderr",
-        );
-        if (yield* keep(pushPromptKey(resource))) {
-          yield* write(body).pipe(
-            Effect.withSpan("config.push.updateResource", {
-              attributes: { "config.resource": resource },
-            }),
-          );
-          const sentSecretPaths = pushSentSecretPaths(encoded);
-          return {
-            service: resource,
-            status: "updated",
-            changes: pushServiceChanges(encoded, sentSecretPaths),
-          };
-        }
-        return {
-          service: resource,
-          status: "skipped",
-          changes: pushServiceChanges(encoded, []),
-        };
-      });
-    }
-
-    // 11. Six resources, in the established push order. A missing response block makes a
-    // resource `unavailable` (nothing compared or written); a gated-off local `enabled` flag
-    // makes it `disabled` — this can only happen for `db.network_restrictions` and
-    // `db.ssl_enforcement`, since `auth`/`storage`'s local `enabled` toggle only controls a
-    // Docker service the Management API has no concept of.
-    for (const resource of PUSH_RESOURCES) {
-      if (scope.missing.includes(pushResponseBlock(resource))) {
-        services.push({ service: resource, status: "unavailable", changes: [] });
-        continue;
-      }
-      if (!resourceEnabled[resource]) {
-        services.push({ service: resource, status: "disabled", changes: [] });
-        continue;
-      }
-
-      switch (resource) {
-        case "api": {
-          const changes = plan.changesByResource.api;
-          const encoded = encodeApiBody({ changes, local, remote });
-          const result = yield* applyResource("api", changes, encoded, [], (body) =>
+          return planResource(changes, encodeApiBody({ changes, local, remote }), [], (body) =>
             api.v1.updatePostgrestServiceConfig({ ref, ...body }).pipe(
               Effect.catch(
                 mapHttpError({
@@ -584,38 +432,27 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
               ),
             ),
           );
-          services.push(result);
-          unencodable.push(...encoded.unencodable);
-          if (result.status === "updated") forced.push(...encoded.forced);
-          break;
-        }
-        case "db.settings": {
-          const changes = plan.changesByResource["db.settings"];
-          const encoded = encodeDbSettingsBody({ changes, local, remote });
-          const result = yield* applyResource("db.settings", changes, encoded, [], (body) =>
-            api.v1.updatePostgresConfig({ ref, ...body }).pipe(
-              Effect.catch(
-                mapHttpError({
-                  networkError: ConfigPushDbUpdateNetworkError,
-                  statusError: ConfigPushDbUpdateStatusError,
-                  networkMessage: (cause) => `failed to update DB config: ${cause}`,
-                  statusMessage: unexpectedStatusMessage,
-                }),
-              ),
-            ),
-          );
-          services.push(result);
-          unencodable.push(...encoded.unencodable);
-          if (result.status === "updated") forced.push(...encoded.forced);
-          break;
-        }
-        case "db.network_restrictions": {
-          const changes = plan.changesByResource["db.network_restrictions"];
-          const encoded = encodeNetworkRestrictionsBody({ changes, local, remote });
-          const result = yield* applyResource(
-            "db.network_restrictions",
+        case "db.settings":
+          return planResource(
             changes,
-            encoded,
+            encodeDbSettingsBody({ changes, local, remote }),
+            [],
+            (body) =>
+              api.v1.updatePostgresConfig({ ref, ...body }).pipe(
+                Effect.catch(
+                  mapHttpError({
+                    networkError: ConfigPushDbUpdateNetworkError,
+                    statusError: ConfigPushDbUpdateStatusError,
+                    networkMessage: (cause) => `failed to update DB config: ${cause}`,
+                    statusMessage: unexpectedStatusMessage,
+                  }),
+                ),
+              ),
+          );
+        case "db.network_restrictions":
+          return planResource(
+            changes,
+            encodeNetworkRestrictionsBody({ changes, local, remote }),
             [],
             (body) =>
               api.v1.updateNetworkRestrictions({ ref, ...body }).pipe(
@@ -630,123 +467,219 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
                 ),
               ),
           );
-          services.push(result);
-          unencodable.push(...encoded.unencodable);
-          if (result.status === "updated") forced.push(...encoded.forced);
-          break;
-        }
-        case "db.ssl_enforcement": {
-          const changes = plan.changesByResource["db.ssl_enforcement"];
-          const encoded = encodeSslEnforcementBody({ changes, local, remote });
-          const result = yield* applyResource("db.ssl_enforcement", changes, encoded, [], (body) =>
-            api.v1.updateSslEnforcementConfig({ ref, ...body }).pipe(
-              Effect.catch(
-                mapHttpError({
-                  networkError: ConfigPushSslEnforcementUpdateNetworkError,
-                  statusError: ConfigPushSslEnforcementUpdateStatusError,
-                  networkMessage: (cause) => `failed to update SSL enforcement config: ${cause}`,
-                  statusMessage: unexpectedStatusMessage,
-                }),
-              ),
-            ),
-          );
-          services.push(result);
-          unencodable.push(...encoded.unencodable);
-          if (result.status === "updated") forced.push(...encoded.forced);
-          break;
-        }
-        case "auth": {
-          // MFA addon cost filter runs before anything about auth is printed: a declined paid
-          // addon carries an explicit disable when the remote currently has it on, or is dropped.
-          let changes = plan.changesByResource.auth;
-          for (const gate of PUSH_ADDON_GATES) {
-            if (pushAddonPromptNeeded(changes, gate, remote) && !(yield* keep(gate.costKey))) {
-              changes = applyMfaAddonDecline(changes, gate, remote);
-              declinedAddons.push(gate.costKey);
-            }
-          }
-
-          const encoded = encodeAuthBody({
+        case "db.ssl_enforcement":
+          return planResource(
             changes,
-            local,
-            remote,
-            secrets,
-            emailContent: authEmailContent,
-            remoteAuthAttributes,
-            now,
-          });
-          const result = yield* applyResource("auth", changes, encoded, secrets, (body) =>
-            api.v1.updateAuthServiceConfig({ ref, ...body }).pipe(
-              Effect.catch(
-                mapHttpError({
-                  networkError: ConfigPushAuthUpdateNetworkError,
-                  statusError: ConfigPushAuthUpdateStatusError,
-                  networkMessage: (cause) => `failed to update Auth config: ${cause}`,
-                  statusMessage: unexpectedStatusMessage,
-                }),
+            encodeSslEnforcementBody({ changes, local, remote }),
+            [],
+            (body) =>
+              api.v1.updateSslEnforcementConfig({ ref, ...body }).pipe(
+                Effect.catch(
+                  mapHttpError({
+                    networkError: ConfigPushSslEnforcementUpdateNetworkError,
+                    statusError: ConfigPushSslEnforcementUpdateStatusError,
+                    networkMessage: (cause) => `failed to update SSL enforcement config: ${cause}`,
+                    statusMessage: unexpectedStatusMessage,
+                  }),
+                ),
               ),
-            ),
           );
-          services.push(result);
-          unencodable.push(...encoded.unencodable);
-          authWriteRan = result.status === "updated";
-          secretsSent = pushSentSecretPaths(encoded);
-          if (result.status === "updated") forced.push(...encoded.forced);
-          break;
-        }
-        case "storage": {
-          const changes = plan.changesByResource.storage;
-          const encoded = encodeStorageBody({ changes, local, remote, config });
-          const result = yield* applyResource("storage", changes, encoded, [], (body) =>
-            api.v1.updateStorageConfig({ ref, ...body }).pipe(
-              Effect.catch(
-                mapHttpError({
-                  networkError: ConfigPushStorageUpdateNetworkError,
-                  statusError: ConfigPushStorageUpdateStatusError,
-                  networkMessage: (cause) => `failed to update Storage config: ${cause}`,
-                  statusMessage: unexpectedStatusMessage,
-                }),
-              ),
-            ),
-          );
-          services.push(result);
-          unencodable.push(...encoded.unencodable);
-          if (result.status === "updated") forced.push(...encoded.forced);
-          break;
-        }
-      }
-    }
-
-    // 11g. experimental.webhooks (no read/diff — a fixed enable-only POST).
-    if (config.experimental?.webhooks?.enabled !== true) {
-      services.push({ service: "experimental.webhooks", status: "disabled", changes: [] });
-    } else {
-      yield* output.raw(`Enabling webhooks for project: ${sanitizeInlineName(ref)}\n`, "stderr");
-      if (yield* keep("webhooks")) {
-        yield* api.v1.enableDatabaseWebhook({ ref }).pipe(
-          Effect.catch(
-            mapHttpError({
-              networkError: ConfigPushEnableWebhookNetworkError,
-              statusError: ConfigPushEnableWebhookStatusError,
-              networkMessage: (cause) => `failed to enable webhooks: ${cause}`,
-              statusMessage: (status, body) =>
-                `unexpected enable webhook status ${status}: ${body}`,
+        case "auth":
+          return planResource(
+            changes,
+            encodeAuthBody({
+              changes,
+              local,
+              remote,
+              secrets,
+              emailContent: authEmailContent,
+              remoteAuthAttributes,
+              now,
             }),
-          ),
+            secrets,
+            (body) =>
+              api.v1.updateAuthServiceConfig({ ref, ...body }).pipe(
+                Effect.catch(
+                  mapHttpError({
+                    networkError: ConfigPushAuthUpdateNetworkError,
+                    statusError: ConfigPushAuthUpdateStatusError,
+                    networkMessage: (cause) => `failed to update Auth config: ${cause}`,
+                    statusMessage: unexpectedStatusMessage,
+                  }),
+                ),
+              ),
+          );
+        case "storage":
+          return planResource(
+            changes,
+            encodeStorageBody({ changes, local, remote, config }),
+            [],
+            (body) =>
+              api.v1.updateStorageConfig({ ref, ...body }).pipe(
+                Effect.catch(
+                  mapHttpError({
+                    networkError: ConfigPushStorageUpdateNetworkError,
+                    statusError: ConfigPushStorageUpdateStatusError,
+                    networkMessage: (cause) => `failed to update Storage config: ${cause}`,
+                    statusMessage: unexpectedStatusMessage,
+                  }),
+                ),
+              ),
+          );
+      }
+    };
+
+    // 10. Encode every resource before anything is announced or written. A missing response
+    // block makes a resource `unavailable` (nothing compared or written); a gated-off local
+    // `enabled` flag makes it `disabled` — this can only happen for `db.network_restrictions` and
+    // `db.ssl_enforcement`, since `auth`/`storage`'s local `enabled` toggle only controls a
+    // Docker service the Management API has no concept of.
+    const resourcePlans = new Map(
+      PUSH_RESOURCES.filter(
+        (resource) =>
+          resourceEnabled[resource] && !scope.missing.includes(pushResponseBlock(resource)),
+      ).map((resource) => [resource, planFor(resource)] as const),
+    );
+    const webhooksEnabled = config.experimental?.webhooks?.enabled === true;
+
+    // Announced before the consent question so a `--yes` run still shows what the environment
+    // supplied; only paths an encoder will actually send are counted, so an up-to-date resource
+    // adds none.
+    const envSourced = envSourcedPaths(
+      [...resourcePlans.values()]
+        .filter(({ encoded }) => encoded.body !== undefined)
+        .flatMap(({ encoded }) => pushServiceChanges(encoded, pushSentSecretPaths(encoded))),
+      originFor,
+    );
+    if (envSourced.length > 0) {
+      yield* output.raw(pushEnvSourcedLine(envSourced), "stderr");
+    }
+
+    const services: Array<ConfigPushServiceResult> = [];
+    const unsupported: Array<ReadonlyArray<string>> = [...plan.unsupported];
+    const unencodable: Array<PushUnencodable> = [];
+    const forced: Array<PushForced> = [];
+    let authWriteRan = false;
+    let secretsSent: ReadonlyArray<ReadonlyArray<string>> = [];
+
+    for (const resource of PUSH_RESOURCES) {
+      const resourcePlan = resourcePlans.get(resource);
+      if (resourcePlan === undefined) continue;
+      const { changes, encoded, secrets: resourceSecrets } = resourcePlan;
+      unencodable.push(...encoded.unencodable);
+      if (encoded.body !== undefined) {
+        yield* output.raw(
+          pushUpdatingLine({
+            resource,
+            changes: changesCommunicated(changes, encoded.encoded),
+            secrets: resourceSecrets.map(toSecretReport),
+            secretsEncoded: encoded.secretsEncoded ?? [],
+            extras: encoded.extras,
+            forced: encoded.forced,
+            originFor,
+          }),
+          "stderr",
         );
-        services.push({
-          service: "experimental.webhooks",
-          status: "updated",
-          // No registry path backs this write, but the summary's property count (and a JSON
-          // consumer inspecting `changes`) must still see it.
-          changes: [["experimental", "webhooks", "enabled"]],
-        });
+      } else if (encoded.unencodable.length > 0) {
+        yield* output.raw(pushNotPushableLine(resource, encoded.unencodable.length), "stderr");
       } else {
-        services.push({ service: "experimental.webhooks", status: "skipped", changes: [] });
+        yield* output.raw(pushUpToDateLine(resource), "stderr");
+      }
+    }
+    if (webhooksEnabled) {
+      yield* output.raw(
+        `Would enable webhooks for project: ${sanitizeInlineName(ref)}\n`,
+        "stderr",
+      );
+    }
+
+    // 11. One consent covers every write; nothing is sent before it.
+    const pendingServices: ReadonlyArray<ConfigPushServiceResult["service"]> = [
+      ...PUSH_RESOURCES.filter((resource) => resourcePlans.get(resource)?.write !== undefined),
+      ...(webhooksEnabled ? (["experimental.webhooks"] as const) : []),
+    ];
+    if (pendingServices.length > 0) {
+      const authPlan = resourcePlans.get("auth");
+      const costKeys = new Set([
+        ...pendingServices.map((service) =>
+          service === "experimental.webhooks" ? "webhooks" : pushCostKey(service),
+        ),
+        ...(authPlan?.write === undefined
+          ? []
+          : PUSH_ADDON_GATES.filter((gate) => pushEnablesAddon(authPlan.changes, gate, remote)).map(
+              (gate) => gate.costKey,
+            )),
+      ]);
+      const costLines = [...costKeys].flatMap((key) => {
+        const item = cost.get(key);
+        return item === undefined ? [] : [pushCostLine(item)];
+      });
+      if (costLines.length > 0) {
+        yield* output.raw(costLines.join(""), "stderr");
+      }
+      yield* requireHostedMutationConsent({ action: pushConsentAction(pendingServices) });
+    }
+
+    // 12. Writes, in the established push order.
+    for (const resource of PUSH_RESOURCES) {
+      const resourcePlan = resourcePlans.get(resource);
+      if (resourcePlan === undefined) {
+        services.push({
+          service: resource,
+          status: scope.missing.includes(pushResponseBlock(resource)) ? "unavailable" : "disabled",
+          changes: [],
+        });
+        continue;
+      }
+      const { encoded, write } = resourcePlan;
+      if (write === undefined) {
+        services.push({
+          service: resource,
+          status: encoded.unencodable.length > 0 ? "not_pushable" : "up_to_date",
+          changes: [],
+        });
+        continue;
+      }
+      yield* Effect.gen(function* () {
+        yield* Effect.annotateCurrentSpan("config.resource", resource);
+        yield* write();
+      }).pipe(Effect.withSpan("config.push.updateResource"));
+      services.push({
+        service: resource,
+        status: "updated",
+        changes: pushServiceChanges(encoded, pushSentSecretPaths(encoded)),
+      });
+      forced.push(...encoded.forced);
+      if (resource === "auth") {
+        authWriteRan = true;
+        secretsSent = pushSentSecretPaths(encoded);
       }
     }
 
-    // 12. Notes (stderr, after the resource loop): unsupported, unencodable, and unmanaged
+    // 12g. experimental.webhooks (no read/diff — a fixed enable-only POST).
+    if (webhooksEnabled) {
+      yield* api.v1.enableDatabaseWebhook({ ref }).pipe(
+        Effect.catch(
+          mapHttpError({
+            networkError: ConfigPushEnableWebhookNetworkError,
+            statusError: ConfigPushEnableWebhookStatusError,
+            networkMessage: (cause) => `failed to enable webhooks: ${cause}`,
+            statusMessage: (status, body) => `unexpected enable webhook status ${status}: ${body}`,
+          }),
+        ),
+      );
+      services.push({
+        service: "experimental.webhooks",
+        status: "updated",
+        // No registry path backs this write, but the summary's property count (and a JSON
+        // consumer inspecting `changes`) must still see it.
+        changes: [["experimental", "webhooks", "enabled"]],
+      });
+    } else {
+      services.push({ service: "experimental.webhooks", status: "disabled", changes: [] });
+    }
+
+    // 13. Notes (stderr, after the writes): unsupported, unencodable, and unmanaged
     // (count only, excluding a gated-off resource's own entries) declared properties, forced
     // companion defaults, empty/unresolved credentials, and the hands-off remote-only count.
     const unmanagedCount = changeSet.unmanaged.filter((changePath) => {
@@ -775,7 +708,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       services.filter((service) => service.status === "updated").length,
     );
 
-    // 13. Machine-readable summary in `json` / `stream-json` mode.
+    // 14. Machine-readable summary in `json` / `stream-json` mode.
     if (output.format !== "text") {
       const payloadInput = {
         projectRef: ref,
@@ -788,7 +721,6 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
         secrets: secrets.map(toSecretReport),
         authWriteRan,
         secretsSent,
-        declinedAddons,
         remoteOnly: plan.remoteOnly,
         scope,
         envSourced: envSourcedPaths(
@@ -798,10 +730,14 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
           originFor,
         ),
       };
-      yield* output.success(pushSummaryMessage(payloadInput), {
-        ...pushPayload(payloadInput),
-        ...configPushPayloadFields(target),
-      });
+      yield* output.success(
+        pushSummaryMessage(payloadInput),
+        yield* withAnnouncedTarget({
+          ...pushPayload(payloadInput),
+          ...configPushPayloadFields(target),
+          target: configPushTargetFields(target),
+        }),
+      );
     }
   }).pipe(
     Effect.ensuring(

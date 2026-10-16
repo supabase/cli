@@ -92,7 +92,7 @@ line only appears on the `--use-api` path.
 
 ### `--output-format json`
 
-Prints a structured success result with the downloaded function slugs and project ref. On the
+Prints a structured success result with the downloaded function slugs and project ref, plus a `target` object (`kind: "linked"`, `project_ref`, and when known `project_name`, `environment`, `parent_project_ref`). On the
 Docker-unbundle path, the `unbundle` container's own stdout is routed to stderr instead of stdout
 so it can't corrupt the envelope.
 
@@ -107,6 +107,7 @@ Same envelope as `json` above (including on the Docker-unbundle path).
   invalid value, including an unparsable `SUPABASE_*` override, fails the command.
 - If no function name is provided, downloads all functions.
 - Requires a linked project (`--project-ref` or linked project config).
+- Prints the `Target:` banner (project name, ref and, for a branch, the parent project) to stderr before any download. It never asks for confirmation, so `--yes` and `SUPABASE_YES` have no effect.
 - The `--use-api` path rejects path traversal and symlink escapes before writing source files
   (`resolveDownloadDestination`/`ensureContainedPath`) — the Docker-unbundle path has no equivalent
   check of its own; it delegates the actual file writes to the `unbundle` subcommand running inside

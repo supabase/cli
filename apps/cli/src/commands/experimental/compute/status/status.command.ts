@@ -11,6 +11,7 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computeStatus } from "./status.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
   name: Argument.String("name").pipe(Argument.withDescription("Compute to inspect.")),
@@ -40,4 +41,5 @@ export const computeStatusCommand = Command.make("status", config).pipe(
   Command.provide(managementApiRuntimeLayer(["compute", "status"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

@@ -4,20 +4,14 @@ import type * as CliCommand from "effect/cli/Command";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
-import {
-  STORAGE_PERMISSIONS,
-  StorageLinkedFlagDef,
-  StorageLocalFlagDef,
-  StorageProjectRefFlagDef,
-  assertStorageTargetsExclusive,
-} from "../storage.flags.ts";
+import { STORAGE_PERMISSIONS, storageTargetFlags } from "../storage.flags.ts";
 import { storageLs } from "./ls.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   path: Argument.String("path").pipe(
@@ -29,9 +23,7 @@ const config = {
     Flag.withDescription("Recursively list a directory."),
     Flag.withDefault(false),
   ),
-  linked: StorageLinkedFlagDef,
-  local: StorageLocalFlagDef,
-  projectRef: StorageProjectRefFlagDef,
+  ...storageTargetFlags,
 } as const;
 
 export type StorageLsFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -48,10 +40,7 @@ export const storageLsCommand = Command.make("ls", config).pipe(
   withPermissions(STORAGE_PERMISSIONS),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      // Gate before the mutex check below; see requireExperimental's doc comment for why.
       yield* requireExperimental;
-      const cliArgs = yield* CliArgs;
-      yield* assertStorageTargetsExclusive(cliArgs.args);
       const telemetryFlags = {
         recursive: flags.recursive,
         linked: flags.linked,
@@ -67,4 +56,5 @@ export const storageLsCommand = Command.make("ls", config).pipe(
   Command.provide(storageGatewayRuntimeLayer(["storage", "ls"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "none", consentExemptReason: "read-only" }),
 );

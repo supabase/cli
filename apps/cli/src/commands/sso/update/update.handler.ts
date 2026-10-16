@@ -6,6 +6,7 @@ import { CommandPlatformApi } from "../../../auth/command-platform-api.service.t
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import {
   mutuallyExclusiveFlagsMessage,
   PERSISTENT_VALUE_FLAG_NAMES,
@@ -13,6 +14,7 @@ import {
   scanArgvFlags,
 } from "../../../shared/cli/flag-groups.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import type { OutputTask } from "../../../shared/output/output.service.ts";
 import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
   encodeStructToml,
@@ -334,8 +336,10 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
           : { baseUrl: apiUrl, accessToken: reconciledToken };
       const gate = { ref, apiUrl, tokenForAux: reconciledTokenForAux };
 
-      const fetching =
-        output.format === "text" ? yield* output.task("Updating SSO provider...") : undefined;
+      const startTask = Effect.suspend((): Effect.Effect<OutputTask | undefined> =>
+        output.format === "text" ? output.task("Updating SSO provider...") : Effect.undefined,
+      );
+      const fetching = yield* startTask;
 
       // Always GETs first, regardless of which flags are set.
       const existing = yield* api.v1
@@ -371,18 +375,31 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         body.attribute_mapping = mapping;
       }
 
-      if (domains.length > 0) {
-        body.domains = [...domains];
-      } else {
-        // `domains` is always recomputed and sent, even when no domain flag
-        // was passed; an empty merged set serializes as `"domains":[]`, never omitted.
-        body.domains = mergeDomains(existing.domains, addDomains, removeDomains);
-      }
+      // `domains` is always recomputed and sent, even when no domain flag
+      // was passed; an empty merged set serializes as `"domains":[]`, never omitted.
+      const finalDomains =
+        domains.length > 0
+          ? [...domains]
+          : mergeDomains(existing.domains, addDomains, removeDomains);
+      body.domains = [...finalDomains];
 
       if (Option.isSome(nameIdFormat)) {
         const format = toNameIdFormat(nameIdFormat.value);
         if (format !== undefined) body.name_id_format = format;
       }
+
+      yield* fetching?.clear ?? Effect.void;
+      yield* requireHostedMutationConsent({
+        action: `Update SSO provider ${providerId}`,
+        details: [
+          ...(Option.isSome(metadataFile) ? ["Metadata: from a file"] : []),
+          ...(Option.isSome(metadataUrl) ? ["Metadata: from a URL"] : []),
+          ...(Option.isSome(attributeMappingFile) ? ["Attribute mapping: replaced"] : []),
+          ...(Option.isSome(nameIdFormat) ? [`Name ID format: ${nameIdFormat.value}`] : []),
+          `Domains: ${finalDomains.join(", ") || "(none)"}`,
+        ],
+      });
+      const updating = yield* startTask;
 
       // `executeRaw` keeps the response body intact so structured output emits it as the API
       // returned it; the typed schema decodes a copy for the table view.
@@ -398,9 +415,9 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         return { rawBody, provider: yield* decodeProvider(rawBody) };
       }).pipe(
         Effect.catch((cause) => handlePutError(gate, cause)),
-        Effect.tapError(() => fetching?.fail() ?? Effect.void),
+        Effect.tapError(() => updating?.fail() ?? Effect.void),
       );
-      yield* fetching?.clear ?? Effect.void;
+      yield* updating?.clear ?? Effect.void;
 
       const outputFlagFormat = Option.getOrUndefined(outputFlag);
 

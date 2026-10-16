@@ -11,6 +11,7 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { rejectIncludeRawOutput } from "../domains.removed-flag.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { domainsReverify } from "./reverify.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   projectRef: Flag.String("project-ref").pipe(
@@ -59,4 +60,9 @@ export const domainsReverifyCommand = Command.make("reverify", config).pipe(
           Effect.provide(managementApiLayer),
         ),
   ),
+  withTargetPolicy({
+    group: "hosted",
+    consent: "none",
+    consentExemptReason: "re-runs verification and changes no configuration",
+  }),
 );

@@ -14,6 +14,7 @@ import {
   notebooksProjectRefSafeFlags,
 } from "../notebooks.shared.ts";
 import { notebooksPull } from "./pull.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   notebookId: Argument.String("Notebook id").pipe(
@@ -71,4 +72,9 @@ export const notebooksPullCommand = Command.make("pull", config).pipe(
   ),
   Command.withHandler(notebooksPullHandler),
   Command.provide(managementApiRuntimeLayer(["notebooks", "pull"])),
+  withTargetPolicy({
+    group: "hosted",
+    consent: "none",
+    consentExemptReason: "creates project notebooks only after an interactive reconcile choice",
+  }),
 );

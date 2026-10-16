@@ -107,7 +107,8 @@ exit `0`: neither is a failure.
 
 ## Output
 
-Diagnostics on **stderr**: `Pulling config from <target> → <destination>` (the destination echoed
+Diagnostics on **stderr**: the `Target:` banner (project name, ref and, for a branch, the parent
+project), then `Pulling config from <target> → <destination>` (the destination echoed
 BEFORE any network call — `config root` or `[remotes.<label>]`), then
 `Comparison scope: <blocks>` once the response arrives (same line `config diff` prints). The
 confirmation prompt and the change-set body are on **stdout**, followed by the payload.
@@ -147,7 +148,7 @@ apply.`, `[remotes.<label>] would be created (dry run); no config differences to
 
 `output.success(message, payload)`. `schema_version` is this command's OWN payload version
 (`CONFIG_PULL_PAYLOAD_VERSION`, currently `1`) — independent of `config diff`'s. The payload
-contains `config_schema`, `config_path`, `format`, `target` (`project_ref`, optional `branch`,
+contains `config_schema`, `config_path`, `format`, `target` (the [command target](../../../../docs/command-target.md) plus optional `branch` and
 `local_scope` — the block the LOCAL comparison operand came from, `"base"` when pulling into a
 brand-new `[remotes.*]` block since there is nothing to overlay yet), `destination` (`scope`,
 optional `label`, `created` — WHERE this run writes, independent of `target.local_scope`),
@@ -181,6 +182,7 @@ the -o/--output flag is not supported by config pull; use --output-format json|s
 
 ## Notes
 
+- **No hosted-mutation consent.** Pull changes only local files, so the one prompt is the local overwrite question above; `--yes` and `SUPABASE_YES` answer it, and nothing about the linked project is ever modified.
 - Run from the project root (or pass `--workdir`); `config.toml`/`config.json` is read and written
   relative to it.
 - **Scope resolution (ADR 0023) is pure and precedes any network call**: `--remote-label`, when

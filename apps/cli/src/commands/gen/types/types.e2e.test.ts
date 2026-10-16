@@ -390,7 +390,7 @@ describe("gen types e2e", () => {
               [
                 "gen",
                 "types",
-                "--project-id",
+                "--project-ref",
                 remoteProjectRef,
                 "--lang",
                 lang,
@@ -404,7 +404,7 @@ describe("gen types e2e", () => {
                 exitTimeoutMs: TYPEGEN_TIMEOUT_MS,
               },
             );
-            expectSucceeded(`supabase gen types --project-id <ref> --lang ${lang}`, result);
+            expectSucceeded(`supabase gen types --project-ref <ref> --lang ${lang}`, result);
             expectLanguageShape(lang, result.stdout);
           }
         }),

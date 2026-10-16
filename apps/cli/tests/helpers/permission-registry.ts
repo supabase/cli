@@ -28,7 +28,7 @@ export const DB_TARGET_FLAGS = [
   "linked",
 ] as const satisfies ReadonlyArray<DbTarget>;
 
-/** The target `activeFlags` selects (`db-url`, then `local`, then `linked`), else `fallback`. */
+/** The target `activeFlags` selects (`db-url`, `local`, `linked`, or `project-ref`, which implies linked), else `fallback`. */
 function dbTargetOf(
   activeFlags: ActiveFlags,
   fallback: DbTarget | undefined,
@@ -36,6 +36,7 @@ function dbTargetOf(
   for (const flag of DB_TARGET_FLAGS) {
     if (Object.hasOwn(activeFlags, flag)) return flag;
   }
+  if (Object.hasOwn(activeFlags, "project-ref")) return "linked";
   return fallback;
 }
 

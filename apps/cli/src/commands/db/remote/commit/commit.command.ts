@@ -7,6 +7,7 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { telemetryStateLayer } from "../../../../telemetry/telemetry-state.layer.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
   schema: Flag.String("schema").pipe(
@@ -47,4 +48,5 @@ export const dbRemoteCommitCommand = Command.make("commit", config).pipe(
   Command.provide(commandRuntimeLayer(["db", "remote", "commit"])),
   Command.provide(telemetryStateLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "removed", consent: "none" }),
 );

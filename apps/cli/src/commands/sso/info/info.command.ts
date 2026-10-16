@@ -9,6 +9,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { ssoInfo } from "./info.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   projectRef: Flag.String("project-ref").pipe(
@@ -37,4 +38,5 @@ export const ssoInfoCommand = Command.make("info", config).pipe(
     ),
   ),
   Command.provide(managementApiRuntimeLayer(["sso", "info"])),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

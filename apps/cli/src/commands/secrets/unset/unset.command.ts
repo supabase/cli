@@ -1,16 +1,15 @@
 import type * as CliCommand from "effect/cli/Command";
 import { Argument, Command, Flag } from "effect/cli";
 
-import { Layer } from "effect";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { secretsUnset } from "./unset.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   projectRef: Flag.String("project-ref").pipe(
@@ -79,6 +78,6 @@ export const secretsUnsetCommand = Command.make("unset", config).pipe(
   Command.withHandler((flags) =>
     secretsUnset(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
-  // `promptYesNo` requires `Stdin` even though the handler fails before its non-TTY branch.
-  Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["secrets", "unset"]), stdinLayer)),
+  Command.provide(managementApiRuntimeLayer(["secrets", "unset"])),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

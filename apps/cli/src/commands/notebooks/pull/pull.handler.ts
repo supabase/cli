@@ -5,11 +5,7 @@ import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import {
-  emitNotebooksMachineOutput,
-  notebooksMachineOutputRequested,
-  rejectNotebooksEnvOutput,
-} from "../notebooks.output.ts";
+import { emitNotebooksMachineOutput, rejectNotebooksEnvOutput } from "../notebooks.output.ts";
 import {
   isNotebookNameWritable,
   downloadNotebook,
@@ -59,7 +55,6 @@ export const notebooksPull = Effect.fn("notebooks.pull")(function* (flags: Noteb
     // Refused before the project is resolved: `-o env` cannot hold the payload,
     // and failing at emit time would mean failing after the files are written.
     yield* rejectNotebooksEnvOutput();
-    const machineOutput = yield* notebooksMachineOutputRequested();
 
     const ref = yield* resolver.resolve(flags.projectRef);
 
@@ -112,7 +107,6 @@ export const notebooksPull = Effect.fn("notebooks.pull")(function* (flags: Noteb
           names: localOnly,
           copyLabel: "Create them in the project",
           deleteLabel: `Delete them from ${dir}`,
-          machineOutput,
         });
 
         if (choice === "delete") {

@@ -133,29 +133,10 @@ export class SecretsUnsetInputError extends Data.TaggedError("SecretsUnsetInputE
   }
 }
 
-export class SecretsUnsetConfirmationRequiredError extends Data.TaggedError(
-  "SecretsUnsetConfirmationRequiredError",
-)<{
-  readonly message: string;
-  readonly suggestion: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
 export class SecretsEnvNotSupportedError extends Data.TaggedError("SecretsEnvNotSupportedError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidInput;
-  }
-}
-
-export class SecretsUnsetCancelledError extends Data.TaggedError("SecretsUnsetCancelledError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
   }
 }

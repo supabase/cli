@@ -15,31 +15,15 @@ import { migrationDbRuntimeLayer } from "../migration.layers.ts";
 import { migrationUp } from "./up.handler.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { targetFlags } from "../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   includeAll: Flag.Boolean("include-all").pipe(
     Flag.withDescription("Include all migrations not found on remote history table."),
     Flag.withDefault(false),
   ),
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription(
-      "Applies migrations to the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Applies pending migrations to the linked project."),
-    Flag.withDefault(false),
-  ),
-  local: Flag.Boolean("local").pipe(
-    Flag.withDescription("Applies pending migrations to the local database."),
-    Flag.withDefault(true),
-  ),
-  // TS-only override of the linked project ref — see push.command.ts (db push).
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
 } as const;
 
 export type MigrationUpFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -75,4 +59,5 @@ export const migrationUpCommand = Command.make("up", config).pipe(
   Command.provide(migrationDbRuntimeLayer(["migration", "up"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

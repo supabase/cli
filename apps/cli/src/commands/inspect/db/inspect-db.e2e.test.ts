@@ -26,7 +26,7 @@ describe("supabase inspect db", () => {
             { home: home.dir, env: { HOME: home.dir } },
           );
           expect(exitCode).toBe(1);
-          expect(stderr).toContain("Connecting to remote database...");
+          expect(stderr).toContain("Target: custom Postgres (127.0.0.1:1)");
           expect(stderr).toMatch(/failed to connect to postgres|connection refused|ECONNREFUSED/i);
         }),
       ),
@@ -45,9 +45,9 @@ describe("supabase inspect db", () => {
           expect(exitCode).toBe(1);
           expect(stderr).toContain('Command "cache-hit" is deprecated, use "db-stats" instead.');
           const deprecationIndex = stderr.indexOf('Command "cache-hit" is deprecated');
-          const connectingIndex = stderr.indexOf("Connecting to remote database...");
+          const bannerIndex = stderr.indexOf("Target: custom Postgres (127.0.0.1:1)");
           expect(deprecationIndex).toBeGreaterThanOrEqual(0);
-          expect(connectingIndex).toBeGreaterThan(deprecationIndex);
+          expect(bannerIndex).toBeGreaterThan(deprecationIndex);
         }),
       ),
     E2E_TIMEOUT_MS,

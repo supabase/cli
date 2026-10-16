@@ -497,8 +497,8 @@ describe("functions list integration", () => {
             }),
           ),
         resolveForLink: () => Effect.die("not used in functions list test"),
+        resolveRef: () => Effect.die("not used in functions list test"),
         resolveOptional: () => Effect.die("not used in functions list test"),
-        loadProjectRef: () => Effect.die("not used in functions list test"),
         promptProjectRef: () => Effect.die("not used in functions list test"),
       }),
     );

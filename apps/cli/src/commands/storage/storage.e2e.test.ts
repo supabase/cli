@@ -23,8 +23,8 @@ const withStorageProject = <A, E, R>(
   }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
 
 /**
- * Golden-path e2e for `storage`: the compiled binary and `--linked`/`--local` flag
- * parsing. Object list/copy/move/remove behavior is covered by the integration and
+ * Golden-path e2e for `storage`: the compiled binary and `--linked`/`--local` target
+ * selection. Object list/copy/move/remove behavior is covered by the integration and
  * unit suites, which don't need a live local stack.
  */
 describe("supabase storage", () => {
@@ -50,15 +50,15 @@ describe("supabase storage", () => {
     () =>
       withStorageProject("supabase-storage-e2e-mutex-", (projectDir) =>
         Effect.gen(function* () {
-          // The experimental gate runs before the mutex check, so --experimental must be
-          // set here to reach the mutex check at all.
+          // The experimental gate runs before the target check, so --experimental must be
+          // set here to reach the target check at all.
           const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
             ["storage", "ls", "--local", "--linked", "ss:///", "--experimental"],
             { cwd: projectDir },
           );
           expect(exitCode).toBe(1);
           expect(`${stdout}${stderr}`).toContain(
-            "if any flags in the group [linked local] are set none of the others can be",
+            "Only one of --local, --linked and --db-url can be set; got --local and --linked.",
           );
         }),
       ),

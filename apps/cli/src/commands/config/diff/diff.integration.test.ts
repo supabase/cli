@@ -1014,8 +1014,10 @@ describe("config diff integration", () => {
       expect(success).toBeDefined();
       expect(success?.message).toContain("1 config difference found.");
       const data = yield* decodeJsonRecord(success?.data);
-      expect(data["target"]).toMatchObject({
+      expect(data["target"]).toEqual({
+        kind: "linked",
         project_ref: VALID_REF,
+        environment: "unverified",
         local_scope: "base",
       });
       // schema_version is the payload contract's version; the user's $schema reference travels
@@ -1082,6 +1084,26 @@ describe("config diff integration", () => {
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("ConfigDiffReadNetworkError");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("json target for a branch name carries the branch, its parent and the identity", () => {
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n',
+      format: "json",
+    });
+    return Effect.gen(function* () {
+      yield* configDiff({ ...noFlags, projectRef: Option.some("staging") });
+      const success = out.messages.find((message) => message.type === "success");
+      const data = yield* decodeJsonRecord(success?.data);
+      expect(data["target"]).toEqual({
+        kind: "linked",
+        project_ref: BRANCH_REF,
+        environment: "branch",
+        parent_project_ref: VALID_REF,
+        branch: "staging",
+        local_scope: "base",
+      });
     }).pipe(Effect.provide(layer));
   });
 

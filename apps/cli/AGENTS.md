@@ -225,6 +225,31 @@ text layer. Therefore stdout is payload-only for either machine flag. Do not cha
 layer to move spinners; that would change text output globally. Handlers check `--output` first and
 use established encoders before the `output.format` branch.
 
+## Targets and hosted consent
+
+Every leaf declares its target group and consent default with `withTargetPolicy`; the
+classification test in `src/command-internal/target/target-policy.unit.test.ts` fails a leaf
+without one. Declare the target flags only through `targetFlags` in
+`src/command-internal/target/target-flags.ts`.
+
+- Database, storage, and seed commands call `resolveTarget`, then `resolveConnection`. Never pass a
+  default target: the policy owns the default, so a call site cannot fall back to local or linked.
+- A command that binds `--password` passes `hasPasswordFlag: true` to `resolveConnection`.
+- The linked `Target:` banner comes from `resolveTarget` and `resolveRef`; never build a linked
+  `ResolvedTarget` by hand.
+- Hosted writes call `requireHostedMutationConsent` (or `requireTargetMutationConsent` when the
+  target may be local) after the plan and before the first persistent effect, and pass the
+  returned `HostedMutationConsent` to anything that needs proof of it.
+- Never read stdin for consent. JSON, piped, and agent runs need `--yes` or a shell
+  `SUPABASE_YES`; `supabase/.env` and a cwd `.env*` file do not count. Write the action as an
+  imperative sentence-case phrase with no trailing period (`Delete project <ref>`).
+- A `sync` or `selectable` leaf with `consent: "none"` declares a `consentExemptReason`.
+- Every leaf with consent has a `describeHostedConsent("<command path>", …)` test from
+  `tests/helpers/hosted-consent.ts`.
+
+See [ADR 0033](../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md) for the
+target-default and consent rules.
+
 ## Tests
 
 Follow the root testing philosophy and use the package scripts in `package.json`. Cover meaningful

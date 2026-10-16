@@ -22,7 +22,8 @@ import {
   sequentialExecBatch,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
-import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
@@ -35,17 +36,24 @@ import {
   type StubbedRequest,
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { DnsResolverFlag, OutputFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import type {
+  DbConnectionInput,
+  ResolvedDbConnection,
+} from "../../../command-internal/db-config.types.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import { type DbSession, DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { MigrationDropError } from "../../../command-internal/drop-objects.ts";
 import { MigrationSeedError } from "../../../command-internal/seed.ts";
-import { MigrationTargetFlagsError, OperationCanceledError } from "../migration.errors.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import {
+  TargetProjectRefConflictError,
+  TargetSelectorConflictError,
+} from "../../../command-internal/target/target.errors.ts";
 import { MigrationLastTooLargeError, MigrationLastZeroError } from "./down.errors.ts";
 import { migrationDown } from "./down.handler.ts";
 import type { MigrationDownFlags } from "./down.command.ts";
@@ -56,10 +64,8 @@ interface SetupOpts {
   /** Runs the real `DbConfigResolver` and linked-project cache against `workdir`. */
   readonly realLayers?: boolean;
   readonly format?: OutputFormat;
-  readonly isTTY?: boolean;
-  readonly pipedInput?: string;
-  readonly args?: ReadonlyArray<string>;
   readonly yes?: boolean;
+  readonly interactive?: boolean;
   readonly confirm?: boolean;
   readonly remote?: ReadonlyArray<string>;
   readonly failResolve?: boolean;
@@ -70,35 +76,24 @@ interface SetupOpts {
 
 const SELECT_SEED = "SELECT path, hash FROM supabase_migrations.seed_files";
 
-function setup(workdir: string, opts: SetupOpts = {}) {
-  const out = mockOutput({
-    format: opts.format ?? "text",
-    promptConfirmResponses: opts.confirm === undefined ? undefined : [opts.confirm],
-  });
-  const telemetry = mockTelemetryStateTracked();
-  const cache = mockLinkedProjectCacheTracked();
+function fakeDatabase(opts: SetupOpts = {}) {
   const execs: Array<string> = [];
   const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
 
   const resolver = Layer.succeed(DbConfigResolver, {
-    resolve: (_flags: DbConfigFlags) =>
-      opts.failResolve === true
-        ? Effect.fail(
-            new ProjectRefNotLinkedError({
-              message: "Cannot find project ref. Have you run link?",
-            }),
-          )
-        : Effect.succeed({
-            conn: {
-              host: "127.0.0.1",
-              port: 54322,
-              user: "postgres",
-              password: "x",
-              database: "postgres",
-            },
-            isLocal: true,
-            ref: Option.none(),
-          } satisfies ResolvedDbConfig),
+    resolveConnection: (input: DbConnectionInput) =>
+      Effect.succeed({
+        conn: {
+          host: "127.0.0.1",
+          port: 54322,
+          user: "postgres",
+          password: "x",
+          database: "postgres",
+        },
+        isLocal: input.target.kind === "local",
+        ref: input.target.kind === "linked" ? Option.some(input.target.ref) : Option.none(),
+        target: input.target,
+      } satisfies ResolvedDbConnection),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 
@@ -134,22 +129,48 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     },
   });
 
+  return { resolver, connection, execs, queries };
+}
+
+const droppedSchemas = (execs: ReadonlyArray<string>) =>
+  execs.filter((sql) => sql.startsWith("do $$")).length;
+
+function setup(workdir: string, opts: SetupOpts = {}) {
+  const interactive = opts.interactive ?? false;
+  const out = mockOutput({
+    format: opts.format ?? "text",
+    interactive,
+    promptConfirmResponses: opts.confirm === undefined ? undefined : [opts.confirm],
+  });
+  const telemetry = mockTelemetryStateTracked();
+  const cache = mockLinkedProjectCacheTracked();
+  const { resolver, connection, execs, queries } = fakeDatabase(opts);
+
   // Gives an explicit --project-ref flag precedence over the VALID_REF fallback, so a
   // test can prove the flag drives the linked ref.
   const projectRef = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
+    resolveRef: (flagValue: Option.Option<string>) =>
+      opts.failResolve === true
+        ? Effect.fail(
+            new ProjectRefNotLinkedError({
+              message: "Cannot find project ref. Have you run link?",
+            }),
+          )
+        : Effect.succeed({
+            ref: Option.getOrElse(flagValue, () => VALID_REF),
+            source: Option.isSome(flagValue) ? ("flag" as const) : ("file" as const),
+            matchesLinkedRef: Option.isNone(flagValue),
+          }),
     resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
-    loadProjectRef: (flagValue: Option.Option<string>) =>
-      Effect.succeed(
-        Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : VALID_REF,
-      ),
     promptProjectRef: () => Effect.succeed(VALID_REF),
   });
 
   const http = recordingProjectHttpClient(VALID_REF);
   const layer = Layer.mergeAll(
     cliConfigValuesTestLayer,
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
     out.layer,
     telemetry.layer,
     opts.realLayers === true
@@ -170,13 +191,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockCommandSettings({ workdir }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(YesFlag, opts.yes ?? false),
-    Layer.succeed(CliArgs, { args: opts.args ?? [] }),
-    mockTty({ stdinIsTty: opts.isTTY ?? true }),
-    mockStdin(
-      opts.isTTY ?? true,
-      // Migration prompts read stdin directly, so the confirm answer is piped in.
-      opts.pipedInput ?? (opts.confirm === undefined ? undefined : opts.confirm ? "y\n" : "n\n"),
-    ),
+    Layer.succeed(OutputFlag, Option.none()),
+    Layer.succeed(CliArgs, { args: [] }),
+    mockTty({ stdinIsTty: interactive, stdoutIsTty: interactive }),
     BunServices.layer,
   );
   return { layer, http, out, telemetry, execs, queries, cache };
@@ -186,7 +203,7 @@ const flags = (over: Partial<MigrationDownFlags> = {}): MigrationDownFlags => ({
   last: over.last ?? 1,
   dbUrl: over.dbUrl ?? Option.none(),
   linked: over.linked ?? false,
-  local: over.local ?? true,
+  local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none(),
 });
 
@@ -196,10 +213,9 @@ const seed = Effect.fnUntraced(function* (
   body = "create table a;\n",
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const dir = path.join(workdir, "supabase", "migrations");
+  const dir = `${workdir}/supabase/migrations`;
   yield* fs.makeDirectory(dir, { recursive: true });
-  yield* fs.writeFileString(path.join(dir, name), body);
+  yield* fs.writeFileString(`${dir}/${name}`, body);
 });
 
 const writeProjectFile = Effect.fnUntraced(function* (workdir: string, name: string, body: string) {
@@ -224,7 +240,7 @@ describe("migration down", () => {
   it.effect("resolves the DB target before rejecting --last 0", () => {
     const { layer } = setup(tmp.current, { failResolve: true });
     return Effect.gen(function* () {
-      const error = yield* migrationDown(flags({ last: 0 })).pipe(Effect.flip);
+      const error = yield* migrationDown(flags({ last: 0, linked: true })).pipe(Effect.flip);
       expect(error).toBeInstanceOf(ProjectRefNotLinkedError);
     }).pipe(Effect.provide(layer));
   });
@@ -237,17 +253,16 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("reverts to the target version on confirm (drop + migrate&seed)", () => {
+  it.effect("reverts the local database to the target version without prompting", () => {
     const { layer, out, execs, queries } = setup(tmp.current, {
-      confirm: true,
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql");
       yield* migrationDown(flags({ last: 1 }));
-      expect(stripAnsi(out.stderrText)).toContain("Connecting to local database...");
       expect(stripAnsi(out.stderrText)).toContain("Resetting database to version: 20240101000000");
-      expect(execs.some((sql) => sql.startsWith("do $$"))).toBe(true);
+      expect(out.promptConfirmCalls).toEqual([]);
+      expect(droppedSchemas(execs)).toBe(1);
       expect(
         queries.some(
           (q) =>
@@ -257,102 +272,73 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "reverts on the project given via --project-ref --linked, overriding the linked ref",
-    () => {
-      // VALID_REF is the fake resolver's fallback, representing whatever the
-      // workdir would resolve to without the flag override.
-      const FLAG_REF = "flagflagflagflagflag";
-      const { layer, cache } = setup(tmp.current, {
-        args: ["--linked"],
-        confirm: true,
-        remote: ["20240101000000", "20240102000000"],
-      });
-      return Effect.gen(function* () {
-        yield* seed(tmp.current, "20240101000000_a.sql");
-        yield* migrationDown(
-          flags({ last: 1, linked: true, local: false, projectRef: Option.some(FLAG_REF) }),
-        );
-        expect(cache.cached).toBe(true);
-        expect(cache.cachedRef).toBe(FLAG_REF);
-        expect(cache.cachedRef).not.toBe(VALID_REF);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("reverts a linked project after the user accepts the listed migrations", () => {
+    const { layer, out, execs, cache } = setup(tmp.current, {
+      interactive: true,
+      remote: ["20240101000000", "20240102000000"],
+    });
+    return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
+      yield* migrationDown(flags({ last: 1, linked: true }));
+      const stderr = stripAnsi(out.stderrText);
+      expect(stderr).toContain("20240102000000");
+      expect(stderr).toContain("you will lose all data in this database");
+      expect(out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
+      expect(droppedSchemas(execs)).toBe(1);
+      expect(cache.cachedRef).toBe(VALID_REF);
+    }).pipe(Effect.provide(layer));
+  });
 
-  it.effect("rejects --project-ref on the default local target", () => {
+  it.effect("reverts on the project given via --project-ref, which implies --linked", () => {
+    // VALID_REF is the fake resolver's fallback, representing whatever the
+    // workdir would resolve to without the flag override.
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, cache } = setup(tmp.current, {
+      yes: true,
+      remote: ["20240101000000", "20240102000000"],
+    });
+    return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
+      yield* migrationDown(flags({ last: 1, projectRef: Option.some(FLAG_REF) }));
+      expect(cache.cached).toBe(true);
+      expect(cache.cachedRef).toBe(FLAG_REF);
+      expect(cache.cachedRef).not.toBe(VALID_REF);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects --project-ref combined with --local before touching the database", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, execs, queries, cache } = setup(tmp.current, {
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
       const error = yield* migrationDown(
-        flags({ last: 1, projectRef: Option.some(FLAG_REF) }),
+        flags({ last: 1, local: true, projectRef: Option.some(FLAG_REF) }),
       ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(MigrationTargetFlagsError);
-      expect(error.message).toBe(
-        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      );
+      expect(error).toBeInstanceOf(TargetProjectRefConflictError);
       expect(execs).toEqual([]);
       expect(queries).toEqual([]);
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("cancels on a declined prompt", () => {
-    const { layer, execs } = setup(tmp.current, {
-      confirm: false,
-      remote: ["20240101000000", "20240102000000"],
-    });
+  it.effect("rejects --db-url combined with --local", () => {
+    const { layer } = setup(tmp.current);
     return Effect.gen(function* () {
-      yield* seed(tmp.current, "20240101000000_a.sql");
-      const error = yield* migrationDown(flags({ last: 1 })).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(OperationCanceledError);
-      expect(execs.some((sql) => sql.startsWith("do $$"))).toBe(false);
+      const error = yield* migrationDown(
+        flags({ dbUrl: Option.some("postgresql://x"), local: true }),
+      ).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(TargetSelectorConflictError);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("falls back to NO (cancels) without a TTY and no piped answer", () => {
-    // isTTY only changes the read timeout; stdin is still read either way.
-    const { layer, out } = setup(tmp.current, {
-      isTTY: false,
-      remote: ["20240101000000", "20240102000000"],
-    });
-    return Effect.gen(function* () {
-      const error = yield* migrationDown(flags({ last: 1 })).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(OperationCanceledError);
-      expect(out.promptConfirmCalls.length).toBe(0);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("emits a structured result in json with --yes", () => {
-    const { layer, out } = setup(tmp.current, {
-      format: "json",
-      yes: true,
-      remote: ["20240101000000", "20240102000000"],
-    });
-    return Effect.gen(function* () {
-      yield* seed(tmp.current, "20240101000000_a.sql");
-      yield* migrationDown(flags({ last: 1 }));
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({
-          type: "success",
-          message: "Migrations reverted",
-          data: { version: "20240101000000", last: 1 },
-        }),
-      );
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("auto-confirms from SUPABASE_YES in the project .env", () => {
-    // SUPABASE_YES lives only in supabase/.env; the project env loads it before the prompt.
+  it.effect("emits a structured result in json on the local database", () => {
     const { layer, out } = setup(tmp.current, {
       format: "json",
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
       yield* seed(tmp.current, "20240101000000_a.sql");
-      yield* writeProjectFile(tmp.current, ".env", "SUPABASE_YES=true\n");
       yield* migrationDown(flags({ last: 1 }));
       expect(out.messages).toContainEqual(
         expect.objectContaining({
@@ -366,7 +352,6 @@ describe("migration down", () => {
 
   it.effect("reports a drop-schema failure", () => {
     const { layer } = setup(tmp.current, {
-      confirm: true,
       remote: ["20240101000000", "20240102000000"],
       failDrop: true,
     });
@@ -379,7 +364,6 @@ describe("migration down", () => {
 
   it.effect("seeds data from a new seed file and records its hash", () => {
     const { layer, out, queries } = setup(tmp.current, {
-      confirm: true,
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
@@ -395,7 +379,6 @@ describe("migration down", () => {
 
   it.effect("reports a seed-apply failure", () => {
     const { layer } = setup(tmp.current, {
-      confirm: true,
       remote: ["20240101000000", "20240102000000"],
       failSeed: true,
     });
@@ -411,7 +394,6 @@ describe("migration down", () => {
     const body = "insert into a values (1);\n";
     const hash = createHash("sha256").update(body).digest("hex");
     const { layer, out, queries } = setup(tmp.current, {
-      confirm: true,
       remote: ["20240101000000", "20240102000000"],
       seedTable: [{ path: "supabase/seed.sql", hash }],
     });
@@ -428,7 +410,6 @@ describe("migration down", () => {
 
   it.effect("updates the recorded hash (without re-running) for a changed seed file", () => {
     const { layer, out, execs, queries } = setup(tmp.current, {
-      confirm: true,
       remote: ["20240101000000", "20240102000000"],
       seedTable: [{ path: "supabase/seed.sql", hash: "stale-hash-does-not-match" }],
     });
@@ -446,7 +427,6 @@ describe("migration down", () => {
 
   it.effect("skips migration apply when db.migrations.enabled = false", () => {
     const { layer, queries } = setup(tmp.current, {
-      confirm: true,
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
@@ -459,8 +439,7 @@ describe("migration down", () => {
 
   it.effect("mints a login role and fills the cache through the real resolver and cache", () => {
     const ctx = setup(tmp.current, {
-      args: ["migration", "down", "--linked", "--project-ref", VALID_REF],
-      confirm: true,
+      yes: true,
       realLayers: true,
       remote: ["20240101000000", "20240102000000"],
     });
@@ -469,9 +448,7 @@ describe("migration down", () => {
       const fs = yield* FileSystem.FileSystem;
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
       yield* seed(tmp.current, "20240101000000_a.sql");
-      yield* migrationDown(
-        flags({ last: 1, linked: true, local: false, projectRef: Option.some(VALID_REF) }),
-      );
+      yield* migrationDown(flags({ last: 1, linked: true, projectRef: Option.some(VALID_REF) }));
       expect(ctx.out.stderrText).toContain("Resetting database to version: 20240101000000");
       expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
         `GET /v1/projects/${VALID_REF}/config/database/pooler`,
@@ -496,8 +473,6 @@ describe("migration down", () => {
 
   it.effect("defaults to the local target and makes no Management API request", () => {
     const ctx = setup(tmp.current, {
-      args: ["migration", "down"],
-      confirm: true,
       realLayers: true,
       remote: ["20240101000000", "20240102000000"],
     });
@@ -531,4 +506,25 @@ describe("migration down", () => {
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
+});
+
+describeHostedConsent("migration down", {
+  setup: (workdir) => seed(workdir, "20240101000000_a.sql"),
+  invoke: () => {
+    const db = fakeDatabase({ remote: ["20240101000000", "20240102000000"] });
+    return {
+      run: migrationDown(flags({ last: 1, linked: true })).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            db.resolver,
+            db.connection,
+            cliConfigValuesTestLayer,
+            mockTelemetryStateTracked().layer,
+            Layer.succeed(DnsResolverFlag, "native"),
+          ),
+        ),
+      ),
+      mutations: () => droppedSchemas(db.execs),
+    };
+  },
 });

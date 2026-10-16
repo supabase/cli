@@ -11,6 +11,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesDelete } from "./delete.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   name: Argument.String("name").pipe(
@@ -43,4 +44,5 @@ export const branchesDeleteCommand = Command.make("delete", config).pipe(
     ),
   ),
   Command.provide(managementApiRuntimeLayer(["branches", "delete"])),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

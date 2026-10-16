@@ -12,6 +12,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
@@ -132,7 +133,7 @@ describe("domains reverify integration", () => {
     return Effect.gen(function* () {
       yield* domainsReverify(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 

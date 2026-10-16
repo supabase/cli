@@ -12,7 +12,11 @@ import {
   Schema,
 } from "effect";
 
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import {
   mockOutput,
   mockRuntimeInfo,
@@ -80,12 +84,13 @@ interface SetupOpts {
   status?: number;
   network?: "fail";
   env?: Record<string, string | undefined>;
+  confirm?: boolean;
 }
 
 const tempRoot = useTempWorkdir("supabase-secrets-set-int-");
 
 function setup(opts: SetupOpts = {}) {
-  const out = mockOutput({ format: opts.format ?? "text" });
+  const out = mockOutput({ format: opts.format ?? "text", confirmLogout: opts.confirm });
   const api = mockCommandPlatformApi({
     // POST `/v1/projects/{ref}/secrets` returns 201 with no body on success.
     response: { status: opts.status ?? 201, body: null },
@@ -99,11 +104,14 @@ function setup(opts: SetupOpts = {}) {
       api,
       cliSettings,
       outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
+      tty: mockTty({ stdinIsTty: opts.confirm !== undefined, stdoutIsTty: false }),
     }),
     mockRuntimeInfo({ cwd: tempRoot.current }),
     processEnvLayer(opts.env ?? {}),
     cliConfigValuesTestLayer,
     debugLogger.layer,
+    Layer.succeed(YesFlag, opts.confirm === undefined),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
   );
   return { layer, out, api, debugLogger };
 }
@@ -136,6 +144,37 @@ const decodePostBody = Schema.decodeUnknownEffect(
 );
 
 describe("secrets set integration", () => {
+  describe("consent", () => {
+    it.effect("lists the secret names but never their values in the confirmation", () => {
+      const { layer, out, api } = setup({ confirm: true });
+      return Effect.gen(function* () {
+        yield* secretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: ["FOO=hunter2", "BAR=swordfish"],
+        });
+        expect(out.promptConfirmCalls[0]?.message).toBe(`Set 2 secrets on project ${VALID_REF}?`);
+        expect(out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
+        expect(out.stderrText).toContain("Secrets to set:\n • FOO\n • BAR\n");
+        expect(out.stderrText).not.toMatch(/hunter2|swordfish/u);
+        expect(api.requests).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("sends nothing when the user declines", () => {
+      const { layer, api } = setup({ confirm: false });
+      return Effect.gen(function* () {
+        const error = yield* secretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: ["FOO=bar"],
+        }).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(HostedMutationDeclinedError);
+        expect(api.requests).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
   it.effect("sets a single secret via CLI arg FOO=bar", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
@@ -237,6 +276,8 @@ describe("secrets set integration", () => {
       processEnvLayer({}),
       cliConfigValuesTestLayer,
       mockDebugLoggerTracked().layer,
+      Layer.succeed(YesFlag, true),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
     );
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1091,4 +1132,17 @@ FROM_CONFIG = "config-value"
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describeHostedConsent("secrets set", {
+  api: { response: { status: 201, body: null } },
+  invoke: () => ({
+    run: secretsSet({
+      projectRef: Option.none(),
+      envFile: Option.none(),
+      secrets: ["FOO=bar"],
+    }).pipe(
+      Effect.provide(Layer.mergeAll(cliConfigValuesTestLayer, mockDebugLoggerTracked().layer)),
+    ),
+  }),
 });

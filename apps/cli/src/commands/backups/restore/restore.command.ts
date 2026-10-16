@@ -9,6 +9,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { backupsRestore } from "./restore.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   projectRef: Flag.String("project-ref").pipe(
@@ -47,4 +48,5 @@ export const backupsRestoreCommand = Command.make("restore", config).pipe(
     backupsRestore(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["backups", "restore"])),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

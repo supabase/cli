@@ -3,9 +3,11 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 import { CliError, CliOutput, Command } from "effect/cli";
 
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput, mockTelemetryRuntime, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { ExperimentalRequiredError } from "../../../command-internal/experimental-gate.ts";
-import { GLOBAL_FLAGS, ExperimentalFlag } from "../../../command-internal/global-flags.ts";
+import { GLOBAL_FLAGS, ExperimentalFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import {
   type ApiResponse,
@@ -19,6 +21,7 @@ import {
   useTempWorkdir,
   withConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import {
   assertBlockDrift,
   assertPermissionDrift,
@@ -73,6 +76,8 @@ interface SetupOpts {
   readonly promptPasswordResponses?: ReadonlyArray<string>;
   readonly tracked?: boolean;
   readonly experimental?: boolean;
+  readonly yes?: boolean;
+  readonly promptConfirmResponses?: ReadonlyArray<boolean>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -81,6 +86,7 @@ function setup(opts: SetupOpts = {}) {
     promptTextResponses: opts.promptTextResponses,
     promptSelectResponses: opts.promptSelectResponses,
     promptPasswordResponses: opts.promptPasswordResponses,
+    promptConfirmResponses: opts.promptConfirmResponses,
   });
   const api = mockCommandPlatformApi({
     network: opts.network,
@@ -108,6 +114,8 @@ function setup(opts: SetupOpts = {}) {
   const layer = Layer.mergeAll(
     runtime,
     Layer.succeed(ExperimentalFlag, opts.experimental ?? false),
+    Layer.succeed(YesFlag, opts.yes ?? true),
+    Layer.succeed(TargetPolicy, { group: "account", consent: "yes" }),
   );
   return { layer, out, api, telemetry, cache };
 }
@@ -396,6 +404,22 @@ describe("projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("asks for consent after the prompts and creates nothing when declined", () => {
+    const { layer, api } = setup({
+      stdinIsTty: true,
+      yes: false,
+      promptTextResponses: ["my-proj"],
+      promptSelectResponses: ["org-abc", "us-west-2"],
+      promptPasswordResponses: [""],
+      promptConfirmResponses: [false],
+    });
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(projectsCreate({ ...BASE_FLAGS }));
+      expect(error).toBeInstanceOf(HostedMutationDeclinedError);
+      expect(api.requests.some((r) => r.method === "GET")).toBe(true);
+      expect(api.requests.some((r) => r.method === "POST")).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
   it.effect(
     "lists the organizations when --interactive is passed on a TTY without --org-id",
     () => {
@@ -655,6 +679,8 @@ describe("projects create integration", () => {
         }),
       }),
       Layer.succeed(ExperimentalFlag, false),
+      Layer.succeed(YesFlag, true),
+      Layer.succeed(TargetPolicy, { group: "account", consent: "yes" }),
     );
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -748,3 +774,16 @@ function rejectsInvalidSizeChoice(error: unknown): boolean {
     )
   );
 }
+
+describeHostedConsent("projects create", {
+  api: { byMethod: { POST: { status: 201, body: CREATED } } },
+  invoke: () => ({
+    run: projectsCreate({
+      ...BASE_FLAGS,
+      name: Option.some("alpha"),
+      orgId: Option.some("acme"),
+      dbPassword: Option.some("s3cret-pass"),
+      region: Option.some("us-east-1"),
+    }).pipe(Effect.provideService(ExperimentalFlag, false)),
+  }),
+});

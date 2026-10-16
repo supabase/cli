@@ -33,20 +33,23 @@ additionally reads the new key from stdin.
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                                                                     |
-| ----------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`)                                       |
-| `SUPABASE_PROJECT_ID`   | project ref (fallback when `--project-ref` unset)    | no (falls back to `supabase/.temp/project-ref`, then the interactive project picker on a TTY) |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)                                        |
+| Variable                | Purpose                                                                                               | Required?                                                                                     |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                  | no (falls back to keyring → `~/.supabase/access-token`)                                       |
+| `SUPABASE_PROJECT_ID`   | project ref (fallback when `--project-ref` unset)                                                     | no (falls back to `supabase/.temp/project-ref`, then the interactive project picker on a TTY) |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                               | no (falls back to `~/.supabase/profile` -> `supabase`)                                        |
+| `SUPABASE_YES`          | confirms the hosted mutation without asking; only the shell environment counts, never `supabase/.env` | no (falls back to the interactive prompt)                                                     |
 
 ## Exit Codes
 
-| Code | Condition                                 |
-| ---- | ----------------------------------------- |
-| `0`  | success                                   |
-| `1`  | project ref unresolved / malformed        |
-| `1`  | network / connection failure              |
-| `1`  | non-200 status from the pgsodium endpoint |
+| Code | Condition                                                                                                                                     |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                       |
+| `1`  | project ref unresolved / malformed                                                                                                            |
+| `1`  | network / connection failure                                                                                                                  |
+| `1`  | non-200 status from the pgsodium endpoint                                                                                                     |
+| `1`  | `update-root-key`: declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed               |
+| `1`  | `update-root-key`: JSON, stream-json, `-o` or non-interactive run without `--yes` (`HostedMutationConsentRequiredError`) — nothing is changed |
 
 ## Telemetry Events Fired
 
@@ -85,3 +88,6 @@ One `result` event carrying `{root_key}` (both subcommands).
 - The TTY prompt is a clack masked prompt labelled `Enter a new root key: `
   (clack adds its own framing). Piped (non-TTY) mode does not print the
   prompt at all — it reads stdin directly.
+- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../docs/command-target.md).
+- `update-root-key` asks `Replace the project's root encryption key on <target>?` (default No) before the first write. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.
+- The new key is read (masked TTY prompt or piped stdin) before the confirmation, which never reads stdin.

@@ -55,6 +55,12 @@ business.
 Notebook files are read only from inside the project: `supabase/notebooks/` and each
 entry are canonicalized and refused when they resolve outside the project root.
 
+## Confirmation
+
+- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
+- Asks `Push <n> notebook(s) on <target>?` (`Push <n> notebook(s) and delete <m> from the project on <target>?` for the delete answer; default No) before the first write, after printing one `Create`, `Update` or `Delete` line per notebook. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.
+- No confirmation is asked when nothing would be uploaded or deleted (an empty notebooks directory with the `keep` or write-locally answer). The reconciliation question above is separate: it chooses what to do with project-only notebooks, and the confirmation covers the resulting uploads and deletes together.
+
 ## API Routes
 
 | Method | Path                                | Auth   | Request body                           | Response (used fields)                                                                                                                                                                            |
@@ -76,27 +82,30 @@ never mentions `favorite` keeps whatever the dashboard set.
 
 ## Exit Codes
 
-| Code | Condition                                                                        |
-| ---- | -------------------------------------------------------------------------------- |
-| `0`  | success                                                                          |
-| `1`  | no project ref — not linked and no `--project-ref`                               |
-| `1`  | the named notebook is not in `supabase/notebooks/`                               |
-| `1`  | a file is unreadable, not JSON, or not a notebook — before anything is sent      |
-| `1`  | duplicate remote names (only the selected name for a named push)                 |
-| `1`  | the notebooks path exists but cannot be read as a directory                      |
-| `1`  | a project notebook name cannot be stored safely as a local file                  |
-| `1`  | a Management API call failed (transport, unexpected status, or undecodable body) |
-| `1`  | `-o env`, which cannot represent the payload                                     |
+| Code | Condition                                                                                                                  |
+| ---- | -------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                    |
+| `1`  | no project ref — not linked and no `--project-ref`                                                                         |
+| `1`  | the named notebook is not in `supabase/notebooks/`                                                                         |
+| `1`  | a file is unreadable, not JSON, or not a notebook — before anything is sent                                                |
+| `1`  | duplicate remote names (only the selected name for a named push)                                                           |
+| `1`  | the notebooks path exists but cannot be read as a directory                                                                |
+| `1`  | a project notebook name cannot be stored safely as a local file                                                            |
+| `1`  | a Management API call failed (transport, unexpected status, or undecodable body)                                           |
+| `1`  | `-o env`, which cannot represent the payload                                                                               |
+| `1`  | declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed               |
+| `1`  | JSON, stream-json, `-o` or non-interactive run without `--yes` (`HostedMutationConsentRequiredError`) — nothing is changed |
 
 ## Environment Variables
 
-| Variable                | Purpose                                   | Required?                                                                 |
-| ----------------------- | ----------------------------------------- | ------------------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | Management API bearer token               | no (falls back to the stored login)                                       |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path   | no (falls back to `~/.supabase/profile` -> `supabase`)                    |
-| `SUPABASE_PROJECT_ID`   | project ref when `--project-ref` is unset | no (falls back to `supabase/.temp/project-ref`, then the picker on a TTY) |
-| `SUPABASE_WORKDIR`      | project directory the command acts on     | no (falls back to `--workdir`, then the ancestor walk)                    |
-| `SUPABASE_HOME`         | directory holding `telemetry.json`        | no (falls back to `~/.supabase`)                                          |
+| Variable                | Purpose                                                                                               | Required?                                                                 |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | Management API bearer token                                                                           | no (falls back to the stored login)                                       |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                               | no (falls back to `~/.supabase/profile` -> `supabase`)                    |
+| `SUPABASE_PROJECT_ID`   | project ref when `--project-ref` is unset                                                             | no (falls back to `supabase/.temp/project-ref`, then the picker on a TTY) |
+| `SUPABASE_WORKDIR`      | project directory the command acts on                                                                 | no (falls back to `--workdir`, then the ancestor walk)                    |
+| `SUPABASE_HOME`         | directory holding `telemetry.json`                                                                    | no (falls back to `~/.supabase`)                                          |
+| `SUPABASE_YES`          | confirms the hosted mutation without asking; only the shell environment counts, never `supabase/.env` | no (falls back to the interactive prompt)                                 |
 
 ## Telemetry Events Fired
 

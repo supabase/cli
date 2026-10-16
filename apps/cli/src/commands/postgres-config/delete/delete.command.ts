@@ -17,6 +17,7 @@ import {
   withCommandTelemetry,
 } from "../../../telemetry/command-telemetry.ts";
 import { postgresConfigDelete } from "./delete.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 /**
  * CSV-splits each occurrence into config keys, failing at parse time with a diagnostic
@@ -68,4 +69,5 @@ export const postgresConfigDeleteCommand = Command.make("delete", config).pipe(
       );
     }).pipe(withJsonErrorHandling),
   ),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

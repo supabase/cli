@@ -25,11 +25,9 @@ import {
 } from "effect";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClientError from "effect/http/HttpClientError";
-import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
-import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
+import { requireHostedMutationConsent } from "../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../output/output.service.ts";
-import { bold } from "../../command-internal/colors.ts";
 import { supabaseEnvStringWithProjectFallback } from "../../command-internal/supabase-env.ts";
 import { findGitRootPath } from "../git/git-root.ts";
 import {
@@ -47,7 +45,6 @@ import {
 import { slimImagesEnabled } from "../services/slim-images.ts";
 import {
   ConflictingFunctionDeployFlagsError,
-  FunctionDeployCancelledError,
   FunctionDeployError,
   FunctionImportMapSyntaxError,
   FunctionImportNotDirectoryError,
@@ -108,7 +105,6 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
    * command tree directly — see {@link FunctionsLocalConfigLoader}.
    */
   readonly localConfigLoader: FunctionsLocalConfigLoader;
-  readonly yes?: boolean;
   readonly rawArgs: ReadonlyArray<string>;
   readonly edgeRuntimeVersion: string;
   readonly resolveProjectRef: (
@@ -2454,34 +2450,27 @@ const deployViaDocker = Effect.fn("functions.deploy.viaDocker")(function* (
   }
 });
 
-const pruneFunctions = Effect.fn("functions.deploy.prune")(function* (
+const findPruneCandidates = Effect.fn("functions.deploy.pruneCandidates")(function* (
   projectRef: string,
   configs: ReadonlyArray<ResolvedDeployFunctionConfig>,
   api: ApiClient,
-  yes: boolean,
 ) {
-  const output = yield* Output;
   const remoteFunctions = yield* listRemoteFunctions(api, projectRef);
   const localSlugs = new Set(configs.map((config) => config.slug));
-  const toDelete = remoteFunctions
+  return remoteFunctions
     .filter((remote) => remote.status !== "REMOVED" && !localSlugs.has(remote.slug))
     .map((remote) => remote.slug);
+});
 
+const pruneFunctions = Effect.fn("functions.deploy.prune")(function* (
+  projectRef: string,
+  toDelete: ReadonlyArray<string>,
+  api: ApiClient,
+) {
+  const output = yield* Output;
   if (toDelete.length === 0) {
     yield* output.raw("No Functions to prune.\n", "stderr");
     return;
-  }
-
-  // Header, one ` • <bold slug>` line per function, and a trailing blank line before the [y/N]
-  // choices. Routed through `promptYesNo` so `--yes`/`SUPABASE_YES` auto-confirms with the
-  // stderr echo, and a non-TTY stdin still honors a piped `y`/`n` answer.
-  const prompt = `${[
-    "Do you want to delete the following Functions from your project?",
-    ...toDelete.map((slug) => ` • ${bold(slug)}`),
-  ].join("\n")}\n\n`;
-  const confirmed = yield* promptYesNo(output, yes, prompt, false);
-  if (!confirmed) {
-    return yield* new FunctionDeployCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
   }
 
   for (const slug of toDelete) {
@@ -2489,6 +2478,28 @@ const pruneFunctions = Effect.fn("functions.deploy.prune")(function* (
     yield* deleteRemoteFunction(api, projectRef, slug);
   }
 });
+
+const functionCount = (count: number) => `${count} ${count === 1 ? "Function" : "Functions"}`;
+
+const requireDeployConsent = (toDeploy: ReadonlyArray<string>, toPrune: ReadonlyArray<string>) =>
+  requireHostedMutationConsent({
+    action: [
+      ...(toDeploy.length > 0 ? [`Deploy ${functionCount(toDeploy.length)}`] : []),
+      ...(toPrune.length > 0
+        ? [
+            `${toDeploy.length > 0 ? "delete" : "Delete"} ${functionCount(toPrune.length)} with --prune`,
+          ]
+        : []),
+    ].join(" and "),
+    details: [
+      ...(toDeploy.length > 0
+        ? ["Functions to deploy:", ...toDeploy.map((slug) => ` • ${slug}`)]
+        : []),
+      ...(toPrune.length > 0
+        ? ["Functions to delete (not found locally):", ...toPrune.map((slug) => ` • ${slug}`)]
+        : []),
+    ],
+  });
 
 export const deployFunctions = Effect.fn("functions.deploy")(function* <
   ResolveError,
@@ -2608,6 +2619,14 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   });
   const dashboardUrl = `${dependencies.dashboardUrl}/project/${projectRef}/functions`;
 
+  const toDeploy = configs.filter((config) => config.enabled).map((config) => config.slug);
+  const toPrune = flags.prune
+    ? yield* findPruneCandidates(projectRef, configs, dependencies.api)
+    : [];
+  if (toDeploy.length > 0 || toPrune.length > 0) {
+    yield* requireDeployConsent(toDeploy, toPrune);
+  }
+
   const deployWithApi = deployViaApi(
     projectRef,
     dependencies.projectRoot,
@@ -2615,23 +2634,18 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
     dependencies.api,
     jobs,
   ).pipe(
-    Effect.as(true),
+    Effect.as(Option.none<string>()),
     Effect.catchIf(
       (error): error is NoFunctionsToDeployError => error instanceof NoFunctionsToDeployError,
       (error) =>
-        (output.format === "text"
-          ? output.raw(`${error.message}\n`, "stderr")
-          : output.success(error.message, {
-              project_ref: projectRef,
-              functions: uniqueSlugs,
-              dashboard_url: dashboardUrl,
-            })
-        ).pipe(Effect.as(false)),
+        (output.format === "text" ? output.raw(`${error.message}\n`, "stderr") : Effect.void).pipe(
+          Effect.as(Option.some(error.message)),
+        ),
     ),
   );
 
   const styleWarning = dependencies.styleWarning ?? ((text: string) => text);
-  const deployed = useLocalBundler
+  const nothingToDeployMessage = useLocalBundler
     ? yield* Effect.gen(function* () {
         if (!(yield* isDockerRunning())) {
           yield* output.raw(`${styleWarning("WARNING:")} Docker is not running\n`, "stderr");
@@ -2660,30 +2674,31 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
           styleEmphasis,
           projectEnvValues: context.projectEnvValues,
         });
-        return true;
+        return Option.none<string>();
       })
     : yield* deployWithApi;
 
-  if (!deployed) {
-    return;
-  }
-
-  if (output.format === "text") {
+  if (output.format === "text" && Option.isNone(nothingToDeployMessage)) {
     // Joins the raw `slugs` list, not the deduped set, so `functions deploy foo foo` prints
     // "foo, foo".
     yield* output.raw(
       `Deployed Functions on project ${styleIdentifier(projectRef)}: ${slugs.join(", ")}\n`,
     );
     yield* output.raw(`You can inspect your deployment in the Dashboard: ${dashboardUrl}\n`);
-  } else {
-    yield* output.success("Deployed Functions.", {
-      project_ref: projectRef,
-      functions: uniqueSlugs,
-      dashboard_url: dashboardUrl,
-    });
   }
 
   if (flags.prune) {
-    yield* pruneFunctions(projectRef, configs, dependencies.api, dependencies.yes ?? false);
+    yield* pruneFunctions(projectRef, toPrune, dependencies.api);
+  }
+
+  if (output.format !== "text") {
+    yield* output.success(
+      Option.getOrElse(nothingToDeployMessage, () => "Deployed Functions."),
+      {
+        project_ref: projectRef,
+        functions: uniqueSlugs,
+        dashboard_url: dashboardUrl,
+      },
+    );
   }
 });

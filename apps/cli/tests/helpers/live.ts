@@ -219,6 +219,7 @@ export async function removeLiveMigration(
     "reverted",
     "--db-url",
     project.dbUrl,
+    "--yes",
   ]);
   requireCliSuccess(reverted, `migration repair cleanup for ${version}`);
 }

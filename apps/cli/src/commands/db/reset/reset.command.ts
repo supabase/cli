@@ -16,26 +16,11 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbReset } from "./reset.handler.ts";
 import { dbResetRuntimeLayer } from "./reset.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { targetFlags } from "../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription(
-      "Resets the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Resets the linked project with local migrations."),
-    Flag.withDefault(false),
-  ),
-  local: Flag.Boolean("local").pipe(
-    Flag.withDescription("Resets the local database with local migrations."),
-    Flag.withDefault(false),
-  ),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
   noSeed: CliConfigKeys.db.seed.enabled.flag({
     name: "no-seed",
     description: "Skip running the seed script after reset.",
@@ -94,4 +79,5 @@ export const dbResetCommand = Command.make("reset", config).pipe(
   Command.provide(dbResetRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

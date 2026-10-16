@@ -1,4 +1,4 @@
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer } from "effect";
 import { Command } from "effect/cli";
 import { backupsCommand } from "../commands/backups/backups.command.ts";
 import { bootstrapCommand } from "../commands/bootstrap/bootstrap.command.ts";
@@ -52,7 +52,10 @@ import { unlinkCommand } from "../commands/unlink/unlink.command.ts";
 import { vanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
 import { whoamiCommand } from "../commands/whoami/whoami.command.ts";
 import { CLI_VERSION, cliBuildChannel } from "../shared/cli/version.ts";
+import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
+import { machineErrorContextLayer } from "../shared/output/machine-error-context.layer.ts";
 import { outputLayerFor } from "../shared/output/output.layer.ts";
+import { isMachineResourceFormat } from "../shared/output/resource-format.ts";
 import { quietProgressTextOutputLayer } from "../output/quiet-progress-text-output.layer.ts";
 import { AiTool } from "../shared/telemetry/ai-tool.service.ts";
 import { aiToolLayer } from "../shared/telemetry/ai-tool.layer.ts";
@@ -218,20 +221,18 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
           // Machine formats keep the text layer's error rendering but suppress the progress
           // spinner, which would otherwise corrupt the stdout payload. `-o pretty`/`-o table`
           // (db query's human default) and no `-o` keep the normal text/json layers.
-          const resourceFormat = Option.getOrUndefined(resourceOutput);
-          const isMachineResourceFormat =
-            resourceFormat !== undefined &&
-            resourceFormat !== "pretty" &&
-            resourceFormat !== "table";
-          const outputLayer = isMachineResourceFormat
+          const outputLayer = isMachineResourceFormat(resourceOutput)
             ? quietProgressTextOutputLayer
             : outputLayerFor(outputFormat);
 
+          // A command that provides its own `machineErrorContextLayer` shadows the default cell.
           return Layer.mergeAll(
             options.stackBackend === undefined
               ? Layer.empty
               : stackBackendLayer(options.stackBackend),
-            outputLayer,
+            commandTargetLayer.pipe(Layer.provideMerge(outputLayer)),
+            machineErrorContextLayer,
+            Layer.succeed(AiTool, aiTool),
           );
         }),
       ),

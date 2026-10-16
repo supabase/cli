@@ -63,6 +63,16 @@ export const SUGGEST_ENV_VAR =
  */
 export const SUGGEST_LOCAL_STACK = "Make sure Docker is running, then run: supabase start";
 
+/** Appended to the local-stack hint when the checkout is linked to a hosted project. */
+export const SUGGEST_LINKED_PROJECT = "To use the linked project instead, pass --linked.";
+
+/** The local-stack hint, plus the `--linked` pointer when the checkout is linked. */
+export function localStackSuggestion(linkedCheckout: boolean | undefined): string {
+  return linkedCheckout === true
+    ? `${SUGGEST_LOCAL_STACK}\n${SUGGEST_LINKED_PROJECT}`
+    : SUGGEST_LOCAL_STACK;
+}
+
 /**
  * Remote-only "Network Restrictions" hint, shown for a connection refused or blocked by IP
  * allow-listing. Shared by both the always-remote `Address not in tenant allow_list` branch
@@ -78,6 +88,8 @@ export interface ConnectSuggestionContext {
   readonly dashboardUrl: string;
   /** Active profile name. */
   readonly profileName: string;
+  /** Whether the checkout is linked to a hosted project, so a local failure can point at `--linked`. */
+  readonly linkedCheckout?: boolean;
 }
 
 /**
@@ -350,7 +362,9 @@ export function connectSuggestion(
   }
   // Don't send the user to the dashboard's Network Restrictions page for a --local connection.
   if (text.includes("ECONNREFUSED") || text.includes("connection refused")) {
-    return ctx.isLocal ? SUGGEST_LOCAL_STACK : suggestNetworkRestrictions(ctx.dashboardUrl);
+    return ctx.isLocal
+      ? localStackSuggestion(ctx.linkedCheckout)
+      : suggestNetworkRestrictions(ctx.dashboardUrl);
   }
   if (
     text.includes("SCRAM exchange: Wrong password") ||

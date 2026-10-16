@@ -5,6 +5,7 @@ import {
   INSPECT_DB_FLAGS,
   INSPECT_DB_PERMISSIONS,
   inspectDbCommandHandler,
+  withInspectDbTargetPolicy,
 } from "../inspect-db-command.ts";
 import { inspectDbRuntimeLayer } from "../db.layers.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
@@ -20,4 +21,5 @@ export const inspectDbSeqScansCommand = Command.make("seq-scans", INSPECT_DB_FLA
   Command.provide(inspectDbRuntimeLayer("seq-scans")),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(INSPECT_DB_FLAGS),
+  withInspectDbTargetPolicy,
 );

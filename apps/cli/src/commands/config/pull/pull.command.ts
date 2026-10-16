@@ -16,6 +16,7 @@ import { GLOBAL_OUTPUT_FORMATS } from "../../../command-internal/global-flags.ts
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { configPull } from "./pull.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   // Accepts either a project ref or a branch name/UUID of the linked project; there's no
@@ -96,4 +97,5 @@ export const configPullCommand = Command.make("pull", config).pipe(
   Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["config", "pull"]), stdinLayer)),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

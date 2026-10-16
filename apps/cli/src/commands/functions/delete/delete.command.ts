@@ -9,6 +9,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { functionsDelete } from "./delete.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   functionName: Argument.String("Function name").pipe(
@@ -54,4 +55,5 @@ export const functionsDeleteCommand = Command.make("delete", config).pipe(
   ),
   Command.withHandler(functionsDeleteHandler),
   Command.provide(managementApiRuntimeLayer(["functions", "delete"])),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

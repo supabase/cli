@@ -14,6 +14,7 @@ import {
   notebooksProjectRefSafeFlags,
 } from "../notebooks.shared.ts";
 import { notebooksPush } from "./push.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   notebookName: Argument.String("Notebook name").pipe(
@@ -80,4 +81,5 @@ export const notebooksPushCommand = Command.make("push", config).pipe(
   ),
   Command.withHandler(notebooksPushHandler),
   Command.provide(managementApiRuntimeLayer(["notebooks", "push"])),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

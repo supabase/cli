@@ -125,3 +125,5 @@ response error. Partial inventories are never used to reconcile notebooks.
 Network operations show progress in text mode; machine output remains payload-only.
 `-o table` and `-o csv` are rejected by command instrumentation before the handler
 runs. `-o env` is rejected by the handler before resolving the project.
+
+After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).

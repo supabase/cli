@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 
 import { Output } from "../shared/output/output.service.ts";
+import { DbConfigPoolerLoginError, LinkedDbNetworkBannedError } from "./db-config.errors.ts";
 import type { PgConnInput } from "./db-connection.service.ts";
 import { runWithPoolerFallback } from "./pooler-fallback.ts";
 
@@ -173,6 +174,48 @@ describe("runWithPoolerFallback", () => {
 
       expect(result).toEqual({ exitCode: 0, stderr: "" });
       expect(out.stderrText).toContain("Retrying via the IPv4 connection pooler.");
+    }).pipe(Effect.provide(out.layer));
+  });
+
+  it.live(
+    "surfaces an unapproved network-ban removal instead of keeping the original result",
+    () => {
+      const out = captureOutput();
+      const banned = new LinkedDbNetworkBannedError({
+        message: "Network bans (203.0.113.7) may be blocking the connection.",
+        suggestion: "Re-run with --yes to remove them.",
+      });
+
+      return Effect.gen(function* () {
+        const exit = yield* runWithPoolerFallback({
+          run: Effect.succeed({ exitCode: 1, stderr: "network is unreachable" }),
+          retry: () => Effect.succeed({ exitCode: 0, stderr: "" }),
+          directHost: "db.abcdefghijklmnopqrst.supabase.co",
+          eligible: true,
+          resolveFallback: Effect.fail(banned),
+          classifyResult: (result: AttemptResult) => result.exitCode !== 0,
+        }).pipe(Effect.exit);
+
+        expect(exit).toEqual(Exit.fail(banned));
+        expect(out.stderrText).toBe("");
+      }).pipe(Effect.provide(out.layer));
+    },
+  );
+
+  it.live("keeps the original result when the pooler cannot be resolved for another reason", () => {
+    const out = captureOutput();
+
+    return Effect.gen(function* () {
+      const result = yield* runWithPoolerFallback({
+        run: Effect.succeed({ exitCode: 1, stderr: "network is unreachable" }),
+        retry: () => Effect.succeed({ exitCode: 0, stderr: "" }),
+        directHost: "db.abcdefghijklmnopqrst.supabase.co",
+        eligible: true,
+        resolveFallback: Effect.fail(new DbConfigPoolerLoginError({ message: "tenant mismatch" })),
+        classifyResult: (result: AttemptResult) => result.exitCode !== 0,
+      });
+
+      expect(result).toEqual({ exitCode: 1, stderr: "network is unreachable" });
     }).pipe(Effect.provide(out.layer));
   });
 });

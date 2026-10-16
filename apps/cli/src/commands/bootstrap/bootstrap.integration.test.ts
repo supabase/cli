@@ -42,13 +42,15 @@ import {
   YesFlag,
   OutputFlag,
 } from "../../command-internal/global-flags.ts";
-import { flagInput } from "../../../tests/helpers/config-values-layer.ts";
+import { configValuesLayer, flagInput } from "../../../tests/helpers/config-values-layer.ts";
+import { describeHostedConsent } from "../../../tests/helpers/hosted-consent.ts";
 import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { DbConnectError } from "../../command-internal/db-connection.errors.ts";
 import { DbConnection, type PgConnInput } from "../../command-internal/db-connection.service.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
+import { TargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { TemplateService, type StarterTemplate } from "./bootstrap.templates.ts";
 import { bootstrap } from "./bootstrap.handler.ts";
 import type { BootstrapFlags } from "./bootstrap.command.ts";
@@ -111,18 +113,7 @@ interface SetupOpts {
   readonly env?: Readonly<Record<string, string | undefined>>;
 }
 
-function setup(path: Path.Path, opts: SetupOpts = {}) {
-  const out = mockOutput({
-    format: opts.format ?? "text",
-    promptTextResponses: opts.promptTextResponses,
-    promptConfirmResponses: opts.promptConfirmResponses,
-    promptPasswordResponses: opts.promptPasswordResponses,
-  });
-  const telemetry = mockTelemetryStateTracked();
-  const linkedCache = mockLinkedProjectCacheTracked();
-  const analytics = mockAnalytics();
-  const credentials = mockCommandCredentialsTracked();
-
+function bootstrapApiHandler(opts: SetupOpts) {
   let apiKeysCalls = 0;
   const createBodies: Array<unknown> = [];
   const handler: ApiHandler = (request, recorded) => {
@@ -176,6 +167,49 @@ function setup(path: Path.Path, opts: SetupOpts = {}) {
     // storage/tenant version probes — best-effort, ignored.
     return Effect.succeed(jsonResponse(request, 404, {}));
   };
+  return { handler, createBodies, apiKeyCalls: () => apiKeysCalls };
+}
+
+function fakeDbConnection(opts: SetupOpts) {
+  // The scratch/downloaded-template fixtures never scaffold migrations/seed.sql/roles.sql, so
+  // `dbPushCore` always reaches the "up to date" short-circuit right after connecting — no query
+  // results or edge-runtime invocation are needed.
+  const pushConnectCalls: Array<PgConnInput> = [];
+  const dbConnectionLayer = Layer.succeed(DbConnection, {
+    connect: (conn: PgConnInput) =>
+      Effect.suspend(() => {
+        pushConnectCalls.push(conn);
+        // Fails the first N connect attempts (retry coverage for the push step's own retry
+        // wrap), succeeding after, mirroring `apiKeysFailTimes` above.
+        if (pushConnectCalls.length <= (opts.pushConnectFailTimes ?? 0)) {
+          return Effect.fail(new DbConnectError({ message: "connection refused" }));
+        }
+        return Effect.succeed({
+          extensionExists: () => Effect.succeed(false),
+          copyToCsv: () => Effect.succeed(new Uint8Array()),
+          queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+          exec: () => Effect.void,
+          execBatch: () => Effect.void,
+          query: () => Effect.succeed([]),
+        });
+      }),
+  });
+  return { dbConnectionLayer, pushConnectCalls };
+}
+
+function setup(path: Path.Path, opts: SetupOpts = {}) {
+  const out = mockOutput({
+    format: opts.format ?? "text",
+    promptTextResponses: opts.promptTextResponses,
+    promptConfirmResponses: opts.promptConfirmResponses,
+    promptPasswordResponses: opts.promptPasswordResponses,
+  });
+  const telemetry = mockTelemetryStateTracked();
+  const linkedCache = mockLinkedProjectCacheTracked();
+  const analytics = mockAnalytics();
+  const credentials = mockCommandCredentialsTracked();
+
+  const { handler, createBodies, apiKeyCalls } = bootstrapApiHandler(opts);
   const api = mockCommandPlatformApi({ handler });
 
   const cliSettings = mockCommandSettings({
@@ -214,29 +248,7 @@ function setup(path: Path.Path, opts: SetupOpts = {}) {
       }),
   });
 
-  // The scratch/downloaded-template fixtures never scaffold migrations/seed.sql/roles.sql, so
-  // `dbPushCore` always reaches the "up to date" short-circuit right after connecting — no query
-  // results or edge-runtime invocation are needed.
-  const pushConnectCalls: Array<PgConnInput> = [];
-  const dbConnectionLayer = Layer.succeed(DbConnection, {
-    connect: (conn: PgConnInput) =>
-      Effect.suspend(() => {
-        pushConnectCalls.push(conn);
-        // Fails the first N connect attempts (retry coverage for the push step's own retry
-        // wrap), succeeding after, mirroring `apiKeysFailTimes` above.
-        if (pushConnectCalls.length <= (opts.pushConnectFailTimes ?? 0)) {
-          return Effect.fail(new DbConnectError({ message: "connection refused" }));
-        }
-        return Effect.succeed({
-          extensionExists: () => Effect.succeed(false),
-          copyToCsv: () => Effect.succeed(new Uint8Array()),
-          queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-          exec: () => Effect.void,
-          execBatch: () => Effect.void,
-          query: () => Effect.succeed([]),
-        });
-      }),
-  });
+  const { dbConnectionLayer, pushConnectCalls } = fakeDbConnection(opts);
   const loginApi = mockLoginApi({ gotrueId: "gotrue-user" });
   const loginCrypto = mockLoginCrypto();
 
@@ -263,6 +275,7 @@ function setup(path: Path.Path, opts: SetupOpts = {}) {
     Layer.succeed(OutputFlag, Option.none()),
     Layer.succeed(WorkdirFlag, opts.workdir ?? Option.some(tempRoot.current)),
     Layer.succeed(YesFlag, opts.yes ?? false),
+    Layer.succeed(TargetPolicy, { group: "account", consent: "yes" }),
     Layer.succeed(DebugFlag, opts.debug ?? false),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(NetworkIdFlag, Option.none()),
@@ -286,7 +299,7 @@ function setup(path: Path.Path, opts: SetupOpts = {}) {
     pushConnectCalls,
     loginApi,
     get apiKeysCalls() {
-      return apiKeysCalls;
+      return apiKeyCalls();
     },
   };
 }
@@ -422,6 +435,18 @@ describe("bootstrap integration", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live("asks for hosted-mutation consent once for the whole bootstrap", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const s = setup(path, { promptConfirmResponses: [true] });
+      yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+        Effect.provide(s.layer),
+      );
+      expect(s.out.promptConfirmCalls).toHaveLength(1);
+      expect(s.createBodies).toHaveLength(1);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("prompts for a workdir when none is configured", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -457,7 +482,7 @@ describe("bootstrap integration", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const s = setup(path, { promptConfirmResponses: [false] });
+      const s = setup(path, { promptConfirmResponses: [true, false] });
       yield* fs.writeFileString(path.join(tempRoot.current, "existing.txt"), "keep me");
       const exit = yield* Effect.exit(
         bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
@@ -624,7 +649,6 @@ describe("bootstrap integration", () => {
         expect(s.pushConnectCalls).toHaveLength(1);
         expect(s.pushConnectCalls[0]?.host).toBe("aws-0-us-east-1.pooler.supabase.com");
         expect(s.pushConnectCalls[0]?.user).toBe(`postgres.${VALID_REF}`);
-        expect(s.out.stderrText).toContain("Connecting to remote database...");
         expect(s.out.stdoutText).toContain("Remote database is up to date.");
       }).pipe(Effect.provide(BunServices.layer)),
   );
@@ -720,7 +744,7 @@ describe("bootstrap integration", () => {
   it.live("emits a single structured result in json mode", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
-      const s = setup(path, { format: "json" });
+      const s = setup(path, { format: "json", yes: true });
       yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
         Effect.provide(s.layer),
       );
@@ -740,7 +764,7 @@ describe("bootstrap integration", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const s = setup(path, { format: "json" });
+      const s = setup(path, { format: "json", yes: true });
       yield* fs.makeDirectory(tempRoot.current, { recursive: true });
       yield* fs.writeFileString(path.join(tempRoot.current, ".env.example"), "!=");
       yield* bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
@@ -750,4 +774,35 @@ describe("bootstrap integration", () => {
       expect(success?.data).toMatchObject({ env_file: null });
     }).pipe(Effect.provide(BunServices.layer)),
   );
+});
+
+describeHostedConsent("bootstrap", {
+  api: { handler: bootstrapApiHandler({}).handler },
+  invoke: ({ workdir, out }) => {
+    const login = mockLoginApi({ gotrueId: "gotrue-user" });
+    const substrate = Layer.mergeAll(
+      Layer.succeed(TemplateService, {
+        listSamples: Effect.succeed([]),
+        download: () => Effect.void,
+      }),
+      fakeDbConnection({}).dbConnectionLayer,
+      login.layer,
+      mockLoginCrypto().layer,
+      mockBrowser(),
+      Layer.succeed(WorkdirFlag, Option.some(workdir)),
+      Layer.succeed(DnsResolverFlag, "native"),
+      Layer.succeed(NetworkIdFlag, Option.none()),
+      Layer.succeed(DebugFlag, false),
+      debugLoggerLayer.pipe(Layer.provide(Layer.succeed(DebugFlag, false))),
+      configValuesLayer({
+        output: out.layer,
+        flags: [flagInput("linkedDb.password", "password", "s3cret")],
+      }),
+    );
+    return {
+      run: bootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF).pipe(
+        Effect.provide(substrate),
+      ),
+    };
+  },
 });

@@ -41,8 +41,8 @@ const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
   Layer.provide(identityStitchLayer),
 );
 
-// Exposed so the handler can pre-validate `--project-ref` via `loadProjectRef`
-// before the linked-project-cache finalizer ever sees it.
+// Exposed so target resolution can validate `--project-ref` before the linked-project-cache
+// finalizer ever sees it.
 const projectRef = projectRefLayer.pipe(
   Layer.provide(platformApiFactory),
   Layer.provide(cliSettings),

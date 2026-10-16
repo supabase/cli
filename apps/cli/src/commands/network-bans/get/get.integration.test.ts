@@ -13,6 +13,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
@@ -77,7 +78,7 @@ describe("network-bans get integration", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
-      expect(out.stderrText).toBe("DB banned IPs:\n");
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + "DB banned IPs:\n");
       expect(out.stdoutText).toBe(
         `[
   "192.168.0.1",
@@ -92,7 +93,7 @@ describe("network-bans get integration", () => {
     const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
-      expect(out.stderrText).toBe("DB banned IPs:\n");
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + "DB banned IPs:\n");
       expect(out.stdoutText).toBe('banned_ips = ["192.168.0.1", "192.168.0.2"]\n');
     }).pipe(Effect.provide(layer));
   });
@@ -101,7 +102,7 @@ describe("network-bans get integration", () => {
     const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
-      expect(out.stderrText).toBe("DB banned IPs:\n");
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + "DB banned IPs:\n");
       expect(out.stdoutText).toContain("192.168.0.1");
       expect(out.stdoutText).toContain("192.168.0.2");
     }).pipe(Effect.provide(layer));
@@ -111,7 +112,7 @@ describe("network-bans get integration", () => {
     const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
-      expect(out.stderrText).toBe("DB banned IPs:\n");
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + "DB banned IPs:\n");
       expect(out.stdoutText).toBe(
         `[
   "192.168.0.1",
@@ -126,7 +127,7 @@ describe("network-bans get integration", () => {
     const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
-      expect(out.stderrText).toBe("DB banned IPs:\n");
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + "DB banned IPs:\n");
       expect(out.stdoutText).toBe(
         `[
   "192.168.0.1",
@@ -142,7 +143,7 @@ describe("network-bans get integration", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(networkBansGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(out.stderrText).toBe("DB banned IPs:\n");
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + "DB banned IPs:\n");
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
         expect(causeText).toContain("NetworkBansEnvNotSupportedError");
@@ -161,7 +162,7 @@ describe("network-bans get integration", () => {
         banned_ipv4_addresses: ["192.168.0.1", "192.168.0.2"],
       });
       // TS-native machine-readable modes skip the stderr heading.
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 
@@ -181,7 +182,7 @@ describe("network-bans get integration", () => {
     const { layer, out } = setup({ format: "json", outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* networkBansGet({ projectRef: Option.none() });
-      expect(out.stderrText).toBe("DB banned IPs:\n");
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + "DB banned IPs:\n");
       expect(out.stdoutText).toBe('banned_ips = ["192.168.0.1", "192.168.0.2"]\n');
     }).pipe(Effect.provide(layer));
   });

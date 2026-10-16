@@ -1,4 +1,4 @@
-import { Layer, Option } from "effect";
+import { Option } from "effect";
 import { Command, Flag } from "effect/cli";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
@@ -12,10 +12,10 @@ import { branchTarget } from "../../../command-internal/branch-target.ts";
 import { configTarget } from "../../../command-internal/project-target.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { configPush } from "./push.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   // Accepts either a project ref or a branch name/UUID of the linked project; there's no
@@ -48,7 +48,7 @@ export const configPushHandler = (flags: ConfigPushFlags) =>
 
 export const configPushCommand = Command.make("push", config).pipe(
   Command.withDescription(
-    "Pushes the properties your local config.toml declares to the linked project or one of its branches. Properties the file does not declare are left unchanged; run `supabase config diff` to preview. Prompts for confirmation before writing each changed resource, showing the exact diff. Non-interactive runs honor piped y/n answers and skip changes without an affirmative answer or --yes/SUPABASE_YES. Run `supabase config diff` first to review the changes.",
+    "Pushes the properties your local config.toml declares to the linked project or one of its branches. Properties the file does not declare are left unchanged; run `supabase config diff` to preview. Shows the exact diff for every changed resource, then asks once before anything is written (the default answer is no). Piped answers are not read: non-interactive and JSON runs need --yes or a SUPABASE_YES set in the shell. Run `supabase config diff` first to review the changes.",
   ),
   Command.withShortDescription("Push local config to linked project"),
   Command.withExamples([
@@ -124,7 +124,8 @@ export const configPushCommand = Command.make("push", config).pipe(
     ),
   ),
   Command.withHandler(configPushHandler),
-  Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["config", "push"]), stdinLayer)),
+  Command.provide(managementApiRuntimeLayer(["config", "push"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

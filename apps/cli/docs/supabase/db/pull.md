@@ -2,11 +2,11 @@
 
 Pulls schema changes from a remote database. A new migration file will be created under `supabase/migrations` directory.
 
-Requires your local project to be linked to a remote database by running `supabase link`. For self-hosted databases, you can pass in the connection parameters using `--db-url` flag.
+Pulls from the linked project by default, so your local project must be linked by running `supabase link`. Pass `--local` to pull from the local database, or `--db-url` to pull from another database such as a self-hosted one. The command prints a `Target:` line on stderr naming the database it resolved.
 
 > Note this command requires Docker Desktop (or a running Docker daemon), as it starts a local Postgres container to diff your remote schema.
 
-Optionally, a new row can be inserted into the migration history table to reflect the current state of the remote database.
+After the migration file is written, a new row is inserted into the migration history table to reflect the current state of the remote database. A hosted database asks for one confirmation first (default No), after the diff and before any file is written; declining stops the command without writing anything. Non-interactive, JSON and agent runs need `--yes` (or `SUPABASE_YES` in the shell environment, not in `supabase/.env`). A pull from the local database and `--declarative` ask nothing.
 
 If no entries exist in the migration history table, pg-delta (the default diff engine) produces the full migration from the shadow diff alone; with `--diff-engine migra`, the initial pull instead uses `pg_dump` to capture all contents of the remote schemas you have created. Otherwise, this command will only diff schema changes against the remote database, similar to running `db diff --linked`.
 

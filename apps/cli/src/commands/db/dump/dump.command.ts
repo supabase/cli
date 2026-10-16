@@ -21,6 +21,8 @@ import { DbDumpRunError } from "./dump.errors.ts";
 import { dbDump } from "./dump.handler.ts";
 import { dbDumpRuntimeLayer } from "./dump.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { targetFlags } from "../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 /**
  * `db dump` has no `--output-format` machine envelope; it streams pg_dump SQL to
@@ -42,9 +44,8 @@ const config = {
     Flag.withDescription("Prints the pg_dump script that would be executed."),
     Flag.withDefault(false),
   ),
-  // Mutually-exclusive-group flags (data-only/role-only/keep-comments, and the
-  // db-url/linked/local target group) are modelled as `Option` so presence, not
-  // value, drives validation — `--data-only=false` still counts as set.
+  // Mutually-exclusive-group flags (data-only/role-only/keep-comments) are modelled as
+  // `Option` so presence, not value, drives validation — `--data-only=false` still counts as set.
   dataOnly: Flag.Boolean("data-only").pipe(
     Flag.withDescription("Dumps only data records."),
     Flag.optional,
@@ -76,25 +77,7 @@ const config = {
     Flag.withDescription("File path to save the dumped contents."),
     Flag.optional,
   ),
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription(
-      "Dumps from the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Dumps from the linked project."),
-    Flag.optional,
-  ),
-  local: Flag.Boolean("local").pipe(
-    Flag.withDescription("Dumps from the local database."),
-    Flag.optional,
-  ),
-  // TS-only override of the linked project ref — see push.command.ts.
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
@@ -116,8 +99,8 @@ const config = {
 export type DbDumpFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const dbDumpCommand = Command.make("dump", config).pipe(
-  Command.withDescription("Dumps data or schemas from the remote database."),
-  Command.withShortDescription("Dumps data or schemas from the remote database"),
+  Command.withDescription("Dumps data or schemas from the target database."),
+  Command.withShortDescription("Dumps data or schemas from the target database"),
   withPermissions(
     withDbTarget(
       compose(
@@ -138,7 +121,7 @@ export const dbDumpCommand = Command.make("dump", config).pipe(
         dbConfigPoolerFallback,
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
       ),
-      { default: "linked" },
+      { default: "local" },
     ),
   ),
   Command.withHandler((flags) =>
@@ -170,4 +153,9 @@ export const dbDumpCommand = Command.make("dump", config).pipe(
   Command.provide(dbDumpRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({
+    group: "selectable",
+    consent: "none",
+    consentExemptReason: "reads the target and writes only a local dump",
+  }),
 );

@@ -129,6 +129,10 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 ### `--output-format text`
 
 - stderr: the warning `link ignores --password; remove it from your scripts.` when `--password` is passed (printed before the access token is resolved); `Selected project: <ref>` (prompt path); `WARNING: Project status is <status> instead of Active Healthy. Some operations might fail.`; the dashboard unpause suggestion on a paused project.
+- stderr: the target banner `Target: project <ref>` (`Target: project <name> (<ref>)` when the
+  picker named it), printed once the ref resolves and before the project is looked up; see
+  [Command target](../../../docs/command-target.md). `link` only records a link, so it asks for no
+  confirmation and the banner stays as is once the project verifies.
 - stderr: `Resolved branch "<name>" of project <parentRef> to project ref <branchRef>.` — via
   `output.raw(..., "stderr")` (NOT `output.info`, which clack renders on stdout with `│`/`◇`
   framing in text mode) — only when a non-ref-shaped `[ref-or-branch]`/`--project-ref` value

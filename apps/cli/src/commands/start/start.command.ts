@@ -22,6 +22,7 @@ import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import { start } from "./start.handler.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 /**
  * A string-slice flag: CSV-splits each occurrence (`--exclude gotrue,realtime` -> two
@@ -99,4 +100,5 @@ export const startCommand = Command.make("start", config).pipe(
   Command.provide(startRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

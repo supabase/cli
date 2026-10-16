@@ -6,6 +6,7 @@ import { CommandPlatformApi } from "../../../auth/command-platform-api.service.t
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import {
   mutuallyExclusiveFlagsMessage,
   PERSISTENT_VALUE_FLAG_NAMES,
@@ -287,6 +288,16 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
         const format = toNameIdFormat(nameIdFormat.value);
         if (format !== undefined) body.name_id_format = format;
       }
+
+      yield* requireHostedMutationConsent({
+        action: "Add an SSO provider",
+        details: [
+          `Type: ${flags.type}`,
+          ...(domains.length > 0 ? [`Domains: ${domains.join(", ")}`] : []),
+          ...(Option.isSome(metadataFile) ? ["Metadata: from a file"] : []),
+          ...(Option.isSome(metadataUrl) ? ["Metadata: from a URL"] : []),
+        ],
+      });
 
       const reconciledToken =
         reconciledTokenCached === undefined

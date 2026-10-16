@@ -9,6 +9,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesList } from "./list.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   projectRef: Flag.String("project-ref").pipe(
@@ -36,4 +37,5 @@ export const branchesListCommand = Command.make("list", config).pipe(
     ),
   ),
   Command.provide(managementApiRuntimeLayer(["branches", "list"])),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

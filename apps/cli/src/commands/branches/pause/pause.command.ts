@@ -11,6 +11,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesPause } from "./pause.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   name: Argument.String("name").pipe(
@@ -44,4 +45,5 @@ export const branchesPauseCommand = Command.make("pause", config).pipe(
     ),
   ),
   Command.provide(managementApiRuntimeLayer(["branches", "pause"])),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

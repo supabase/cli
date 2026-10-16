@@ -1,52 +1,7 @@
 import type { Option } from "effect";
 import type { PgConnInput } from "./db-connection.service.ts";
-import type { DbConnType } from "./db-target-flags.ts";
-
-/**
- * The connection-resolution flags shared by `db lint`, `db advisors`, and `test db`.
- *
- * `connType` records which selector flag the user explicitly set, derived from raw argv via
- * `resolveDbTargetFlags`:
- * - "db-url" → `--db-url` was set (read `dbUrl.value`)
- * - "linked" → `--linked` was set (Management API path)
- * - "local" → `--local` was set (explicit local path)
- * - undefined → no selector was set; resolver defaults to local
- *
- * `--db-url` / `--linked` / `--local` are mutually exclusive. `dnsResolver` carries the global
- * `--dns-resolver` value, used when the resolver opens its own remote connection (the linked
- * pooler temp-role probe); the handler passes the same value to its primary `connect`.
- */
-export interface DbConfigFlags {
-  readonly dbUrl: Option.Option<string>;
-  readonly connType: DbConnType | undefined;
-  readonly dnsResolver: "native" | "https";
-  /**
-   * Whether config resolution should decrypt and materialize `[db.vault]` values.
-   * Defaults to true; `db push --skip-vault` is the only caller that disables it.
-   */
-  readonly resolveVaultSecrets?: boolean;
-  /**
-   * The `--password`/`-p` flag value, passed so the resolver can reject it with `--db-url` or
-   * `--local`. The linked path reads the password itself through `CliConfigValues`, where the
-   * flag beats `SUPABASE_DB_PASSWORD`.
-   */
-  readonly password?: Option.Option<string>;
-  /**
-   * Optional explicit linked project ref override, letting e.g. `gen types --project-id <ref>`
-   * reuse the linked resolver's temp-role and pooler fallback without the workdir being linked.
-   * Shares only `SUPABASE_PROJECT_ID`'s ref-resolution precedence (flag > env >
-   * `.temp/project-ref`) — it never drives the local container id or pg-delta project id the way
-   * that env var does. `None` preserves the normal `--linked` fallback.
-   */
-  readonly linkedProjectRef?: Option.Option<string>;
-  /**
-   * Marks `linkedProjectRef` as an ad-hoc remote target (e.g. `gen types --project-id <ref>`)
-   * rather than the current linked workdir, so the resolver must not reuse the saved
-   * `.temp/pooler-url`, fetching pooler config from the Management API instead. Absent for the
-   * normal `--linked` path, which may reuse it.
-   */
-  readonly adHocProjectRef?: boolean;
-}
+import type { HostedMutationConsent } from "./hosted-consent/hosted-consent.token.ts";
+import type { ResolvedTarget } from "./target/resolve-target.ts";
 
 /**
  * A resolved Postgres connection plus whether it points at the local stack. `isLocal` decides
@@ -61,4 +16,21 @@ export interface ResolvedDbConfig {
    * override fields like `db.major_version` for the container image.
    */
   readonly ref?: Option.Option<string>;
+}
+
+/** What {@link DbConfigResolver.resolveConnection} needs: the resolved target plus how to authenticate. */
+export interface DbConnectionInput {
+  readonly target: ResolvedTarget;
+  readonly dnsResolver: "native" | "https";
+  /** Rejected unless the target is the linked project. */
+  readonly password: Option.Option<string>;
+  readonly resolveVaultSecrets?: boolean;
+  /** Set when the command binds `--password`, so the withheld-password notice can name it. */
+  readonly hasPasswordFlag?: boolean;
+  /** A `--yes`-sourced `Some` lets the temp-role retry clear network bans; otherwise a ban surfaces as `LinkedDbNetworkBannedError`. */
+  readonly networkBanRemoval: Option.Option<HostedMutationConsent>;
+}
+
+export interface ResolvedDbConnection extends ResolvedDbConfig {
+  readonly target: ResolvedTarget;
 }

@@ -12,27 +12,11 @@ import { inspectReport } from "./report.handler.ts";
 import { inspectBaseLayer } from "../inspect.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { targetFlags } from "../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription(
-      "Inspect the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Inspect the linked project."),
-    Flag.withDefault(false),
-  ),
-  local: Flag.Boolean("local").pipe(
-    Flag.withDescription("Inspect the local database."),
-    Flag.withDefault(false),
-  ),
-  // TS-only override of the linked project ref — see push.command.ts (db push).
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
   outputDir: Flag.String("output-dir").pipe(
     Flag.withDescription("Path to save CSV files in."),
     Flag.withDefault("."),
@@ -42,11 +26,13 @@ const config = {
 export type InspectReportFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const inspectReportCommand = Command.make("report", config).pipe(
-  Command.withDescription("Generate a CSV output for all inspect commands."),
+  Command.withDescription(
+    "Generate a CSV output for all inspect commands. It reports on the local database by default; pass --linked for the linked project or --db-url for another database.",
+  ),
   Command.withShortDescription("Generate a CSV output for all inspect commands"),
   withPermissions(
     withDbTarget(compose({ operations: [], noApiEffectFlags: ["output-dir"] }, dbConfig), {
-      default: "linked",
+      default: "local",
     }),
   ),
   Command.withHandler((flags) =>
@@ -67,4 +53,9 @@ export const inspectReportCommand = Command.make("report", config).pipe(
   Command.provide(Layer.merge(inspectBaseLayer, commandRuntimeLayer(["inspect", "report"]))),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({
+    group: "selectable",
+    consent: "none",
+    consentExemptReason: "reads the target and writes only local report files",
+  }),
 );

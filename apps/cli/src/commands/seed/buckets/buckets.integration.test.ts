@@ -31,7 +31,10 @@ import {
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
+import { OutputFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { commandTargetLayer } from "../../../shared/output/command-target.layer.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
@@ -47,9 +50,12 @@ import {
   StackStorageCapabilityError,
   StackStorageUnavailableError,
 } from "../../../command-internal/stack-storage.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import {
   buildStorageStackApi,
   STORAGE_TEST_JWT_SECRET,
+  storageConsentApi,
+  storageConsentServices,
   type SetupStorageStackApiOptions,
 } from "../../../../tests/helpers/storage.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
@@ -93,7 +99,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     readonly pipedAnswers?: ReadonlyArray<string>;
     readonly args?: ReadonlyArray<string>;
     readonly yes?: boolean;
-    /** Project ref returned by loadProjectRef for --linked tests. */
+    /** Project ref returned by the project-ref resolver for --linked tests. */
     readonly projectRef?: string;
     /** API keys response for Management API mock. */
     readonly apiKeys?: ReadonlyArray<{
@@ -102,7 +108,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
       type?: string | null;
       secret_jwt_template?: Record<string, unknown> | null;
     }>;
-    /** When true, loadProjectRef fails with ProjectRefNotLinkedError. */
+    /** When true, the project-ref resolver fails with ProjectRefNotLinkedError. */
     readonly linkedFails?: boolean;
     /** When set, the Management API `getProjectApiKeys` call fails with this error. */
     readonly apiKeysFail?: HttpClientError.HttpClientError;
@@ -194,20 +200,20 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
             }),
           )
         : Effect.succeed(projectRefRef),
-    resolveOptional: () => Effect.succeed(Option.some(projectRefRef)),
-    // An explicit `--project-ref` flag takes precedence and short-circuits
-    // before `linkedFails`, so a test can prove the flag resolves a ref even
-    // for an "unlinked" workdir.
-    loadProjectRef: (flagValue: Option.Option<string>) =>
+    resolveRef: (flagValue: Option.Option<string>) =>
       Option.isSome(flagValue) && flagValue.value.length > 0
-        ? Effect.succeed(flagValue.value)
+        ? Effect.succeed({ ref: flagValue.value, source: "flag" as const, matchesLinkedRef: false })
         : opts.linkedFails === true
           ? Effect.fail(
               new ProjectRefNotLinkedError({
                 message: "Cannot find project ref. Have you run supabase link?",
               }),
             )
-          : Effect.succeed(projectRefRef),
+          : Effect.succeed({ ref: projectRefRef, source: "file" as const, matchesLinkedRef: true }),
+    resolveOptional: () => Effect.succeed(Option.some(projectRefRef)),
+    // An explicit `--project-ref` flag takes precedence and short-circuits
+    // before `linkedFails`, so a test can prove the flag resolves a ref even
+    // for an "unlinked" workdir.
     promptProjectRef: () => Effect.succeed(projectRefRef),
   });
 
@@ -247,6 +253,9 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
 
   const layer = Layer.mergeAll(
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
+    Layer.succeed(OutputFlag, opts.format === "json" ? Option.some("json") : Option.none()),
     httpLayer,
     telemetry.layer,
     ConfigProvider.layer(ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true })),
@@ -2277,47 +2286,11 @@ describe("seed buckets", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain(
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+          "--project-ref selects a linked project and cannot be combined with --local.",
         );
       }
       expect(requests).toEqual([]);
       expect(linkedCache.cached).toBe(false);
-    }).pipe(seedScenario),
-  );
-
-  it.effect("--linked=false still takes the linked path (flag presence, not value)", () =>
-    Effect.gen(function* () {
-      const { layer, requests, managementRequests } = yield* setupSeedBuckets(tmp.current, {
-        toml: "[storage.buckets.test]\npublic = true\n",
-        projectRef: VALID_REF,
-        recordManagementApi: true,
-        args: ["seed", "buckets", "--linked=false"],
-        routes: [
-          { method: "GET", match: "/storage/v1/bucket", body: [] },
-          { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
-        ],
-      });
-      const exit = yield* seedBuckets({
-        linked: false,
-        local: true,
-        projectRef: Option.none(),
-      }).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(requests.every((r) => r.url.startsWith(`https://${VALID_REF}.supabase.co`))).toBe(
-        true,
-      );
-      expect(
-        managementRequests.map(({ method, urlWithParams }) => `${method} ${urlWithParams}`),
-      ).toEqual([
-        `GET https://api.supabase.com/v1/projects/${VALID_REF}/api-keys?reveal=true`,
-        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
-      ]);
-      assertPermissionDrift({
-        command: "seed buckets",
-        activeFlags: { linked: false },
-        requests: managementRequests,
-        exact: true,
-      });
     }).pipe(seedScenario),
   );
 
@@ -2529,7 +2502,7 @@ describe("seed buckets", () => {
     }).pipe(seedScenario),
   );
 
-  it.effect("prunes a stale analytics bucket when the prompt is accepted", () =>
+  it.effect("prunes a stale analytics bucket after the single hosted confirmation", () =>
     Effect.gen(function* () {
       const flags: BucketsFlags = { linked: true, local: false, projectRef: Option.none() };
       const { layer, out, requests } = yield* setupSeedBuckets(tmp.current, {
@@ -2560,11 +2533,80 @@ describe("seed buckets", () => {
       const exit = yield* seedBuckets(flags).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stderrText).toContain("Pruning analytics bucket: stale-analytics");
+      expect(out.stderrText).toContain(
+        "Delete analytics buckets not declared in supabase/config.toml: stale-analytics",
+      );
+      expect(out.promptConfirmCalls.map((call) => call.message)).toEqual(["Seed storage buckets?"]);
       expect(
         requests.some(
           (r) => r.method === "DELETE" && r.url.includes("/iceberg/bucket/stale-analytics"),
         ),
       ).toBe(true);
+    }).pipe(seedScenario),
+  );
+
+  it.effect(
+    "overwrites an existing hosted bucket under one confirmation, with no per-bucket prompt",
+    () =>
+      Effect.gen(function* () {
+        const { layer, out, requests } = yield* setupSeedBuckets(tmp.current, {
+          toml: "[storage.buckets.test]\npublic = true\n",
+          projectRef: VALID_REF,
+          args: ["seed", "buckets", "--linked"],
+          routes: [
+            { method: "GET", match: "/storage/v1/bucket", body: [{ name: "test", id: "test" }] },
+            { method: "PUT", match: "/storage/v1/bucket/test", body: {} },
+          ],
+        });
+        const exit = yield* seedBuckets({
+          linked: true,
+          local: false,
+          projectRef: Option.none(),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stderrText).toContain("Overwrite the properties of buckets: test");
+        expect(out.promptConfirmCalls.map((call) => call.message)).toEqual([
+          "Seed storage buckets?",
+        ]);
+        expect(requests.some((r) => r.method === "PUT")).toBe(true);
+        expect(
+          requests.filter((r) => r.method === "GET" && r.url.endsWith("/storage/v1/bucket")),
+        ).toHaveLength(1);
+      }).pipe(seedScenario),
+  );
+
+  it.effect("writes nothing to the hosted project when the confirmation is declined", () =>
+    Effect.gen(function* () {
+      const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
+        toml: "[storage.buckets.test]\npublic = true\n",
+        projectRef: VALID_REF,
+        args: ["seed", "buckets", "--linked"],
+        confirm: [false],
+        routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
+      });
+      const exit = yield* seedBuckets({
+        linked: true,
+        local: false,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(failureErrors(exit).some((e) => e instanceof HostedMutationDeclinedError)).toBe(true);
+      expect(requests.every((r) => r.method === "GET")).toBe(true);
+    }).pipe(seedScenario),
+  );
+
+  it.effect("announces the local stack target and asks for no consent", () =>
+    Effect.gen(function* () {
+      const { layer, out } = yield* setupSeedBuckets(tmp.current, {
+        toml: "[storage.buckets.test]\npublic = true\n",
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+        ],
+      });
+      const exit = yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("Target: local stack (");
+      expect(out.promptConfirmCalls).toEqual([]);
     }).pipe(seedScenario),
   );
 
@@ -3127,4 +3169,31 @@ describe("stack backend", () => {
         expect(requests).toHaveLength(0);
       }).pipe(Effect.provide(BunServices.layer)),
   );
+});
+
+describeHostedConsent("seed buckets", {
+  api: storageConsentApi,
+  setup: (workdir) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(`${workdir}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${workdir}/supabase/config.toml`,
+        "[storage.buckets.test]\npublic = true\n",
+      );
+    }),
+  invoke: ({ workdir }) => {
+    const storage = storageConsentServices(workdir, [
+      { method: "GET", match: "/storage/v1/bucket", body: [], persist: true },
+      { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+    ]);
+    return {
+      run: seedBuckets({
+        linked: false,
+        local: false,
+        projectRef: Option.some(VALID_REF),
+      }).pipe(Effect.provide(storage.layer)),
+      mutations: storage.writes,
+    };
+  },
 });

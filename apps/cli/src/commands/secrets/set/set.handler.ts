@@ -17,7 +17,8 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
-import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { mapHttpError, sanitizeInlineName } from "../../../command-internal/http-errors.ts";
 import {
   InvalidSecretPairError,
   SecretsEnvFileOpenError,
@@ -299,6 +300,11 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
         (cause) => new SecretsSetInputError({ message: `failed to set secrets: ${String(cause)}` }),
       ),
     );
+
+    yield* requireHostedMutationConsent({
+      action: `Set ${body.length} ${body.length === 1 ? "secret" : "secrets"}`,
+      details: ["Secrets to set:", ...body.map(({ name }) => ` • ${sanitizeInlineName(name)}`)],
+    });
 
     const setting = output.format === "text" ? yield* output.task("Setting secrets...") : undefined;
     yield* Effect.forEach(batches, (batch) => api.v1.bulkCreateSecrets({ ref, body: batch }), {

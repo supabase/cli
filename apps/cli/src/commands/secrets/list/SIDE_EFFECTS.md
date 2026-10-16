@@ -78,14 +78,16 @@ Fails immediately with `SecretsEnvNotSupportedError("--output env flag is not su
 
 ### `--output-format json`
 
-Single JSON object emitted via `Output.success` with `{secrets: [...]}` as the `data` field.
+Single JSON object emitted via `Output.success` with `{secrets: [...]}` as the `data` field, plus a [`target`](../../../../docs/command-target.md) object.
 
 ### `--output-format stream-json`
 
-One `result` NDJSON event on success containing `{secrets: [...]}`.
+One `result` NDJSON event on success containing `{secrets: [...]}` and `target`.
 
 ## Notes
 
+- Prints the `Target:` banner (project name, ref and, for a branch, the parent project) to stderr before the request. It never asks for confirmation, so `--yes` and `SUPABASE_YES` have no effect.
+- The `--output {json,yaml,toml}` renderings emit the secret array as-is, without `target`.
 - The `value` field returned by the API is a digest/hash of the secret, not the plaintext value.
 - Results are sorted alphabetically by `name` before any encoding.
 - Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers.

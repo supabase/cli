@@ -31,16 +31,28 @@ linked-project cache is never written.
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                                                       | Required?                                               |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                          | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | selects API base URL (`supabase`, `supabase-staging`, `supabase-local`), or a filesystem path to a YAML profile (used by the cli-e2e harness) | no (defaults to `supabase`)                             |
+| Variable                | Purpose                                                                                                                                       | Required?                                                     |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                          | no (falls back to keyring → `~/.supabase/access-token`)       |
+| `SUPABASE_YES`          | answers the creation confirmation, as `--yes` does                                                                                            | no (defaults to prompting; a project `.env` value is ignored) |
+| `SUPABASE_PROFILE`      | selects API base URL (`supabase`, `supabase-staging`, `supabase-local`), or a filesystem path to a YAML profile (used by the cli-e2e harness) | no (defaults to `supabase`)                                   |
+
+## Confirmation
+
+Before the `POST /v1/organizations`, the command asks `create organization "<name>"?`
+(default **Yes**). `--yes` or a shell `SUPABASE_YES` answers it and prints
+`Confirmed by --yes: …` on stderr; a `SUPABASE_YES` in a project `.env` does not count.
+A run that can't prompt (piped stdin, `--output-format json`/`stream-json`, or
+`-o json`/`yaml`/`toml`/`env`) without `--yes` fails with the consent-required error and
+makes no API write. Stdin is never read for the answer.
 
 ## Exit Codes
 
 | Code | Condition                                                                 |
 | ---- | ------------------------------------------------------------------------- |
 | `0`  | success — organization created                                            |
+| `1`  | confirmation declined                                                     |
+| `1`  | confirmation needed but this run can't prompt, and no `--yes`             |
 | `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                 |
 | `1`  | `OrgsCreateUnexpectedStatusError` — non-201 response from create endpoint |
 | `1`  | `OrgsCreateNetworkError` — transport-level network failure                |

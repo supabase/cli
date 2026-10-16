@@ -7,7 +7,13 @@ import { StackStorageCapabilityError } from "../../../command-internal/stack-sto
 import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import { StorageRmConfirmationRequiredError } from "../storage.errors.ts";
-import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import {
+  setupStorage,
+  STORAGE_TEST_JWT_SECRET,
+  storageConsentApi,
+  storageConsentServices,
+} from "../../../../tests/helpers/storage.ts";
 import {
   VALID_REF,
   useTempWorkdir,
@@ -69,7 +75,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/abstract.pdf", "ss:///private/docs/readme.md"],
         recursive: false,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -92,7 +98,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -116,7 +122,7 @@ describe("storage rm", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
-          linked: true,
+          linked: false,
           local: true,
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
@@ -139,7 +145,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -189,7 +195,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -210,7 +216,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -232,7 +238,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -261,7 +267,7 @@ describe("storage rm", () => {
             const exit = yield* storageRm({
               files: ["ss:///private/a.pdf"],
               recursive: false,
-              linked: true,
+              linked: false,
               local: true,
               projectRef: Option.none(),
             }).pipe(Effect.provide(layer), Effect.exit);
@@ -295,7 +301,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: [],
         recursive: true,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -324,7 +330,7 @@ describe("storage rm", () => {
         const exit = yield* storageRm({
           files: [],
           recursive: false,
-          linked: true,
+          linked: false,
           local: true,
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
@@ -364,7 +370,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files,
         recursive: false,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -387,7 +393,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///"],
         recursive: false,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -408,7 +414,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/"],
         recursive: false,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -431,7 +437,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: [],
         recursive: false,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -460,7 +466,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: [],
         recursive: true,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -495,7 +501,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///test"],
         recursive: true,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -553,7 +559,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/dir"],
         recursive: true,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -585,7 +591,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///test"],
         recursive: true,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -609,7 +615,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/dir"],
         recursive: true,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -632,7 +638,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -663,7 +669,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -685,7 +691,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: [],
         recursive: true,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -760,7 +766,7 @@ describe("storage rm", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain(
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+          "--project-ref selects a linked project and cannot be combined with --local.",
         );
       }
       expect(requests).toHaveLength(0);
@@ -790,7 +796,7 @@ describe("storage rm", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
-          linked: true,
+          linked: false,
           local: true,
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
@@ -815,7 +821,7 @@ describe("storage rm", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
-          linked: true,
+          linked: false,
           local: true,
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
@@ -839,7 +845,7 @@ describe("storage rm", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
-          linked: true,
+          linked: false,
           local: true,
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
@@ -865,7 +871,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -906,7 +912,7 @@ describe("storage rm", () => {
           expect(yield* fs.exists(`${tmp.current}/${CACHE_FILE}`)).toBe(true);
           assertPermissionDrift({
             command: "storage rm",
-            activeFlags: { local: false },
+            activeFlags: { linked: true },
             requests: managementRequests,
           });
         }).pipe(Effect.provide(layer));
@@ -930,7 +936,7 @@ describe("stack backend", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        linked: true,
+        linked: false,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -959,7 +965,7 @@ describe("stack backend", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
-          linked: true,
+          linked: false,
           local: true,
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
@@ -982,7 +988,7 @@ describe("stack backend", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
-          linked: true,
+          linked: false,
           local: true,
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
@@ -1003,4 +1009,23 @@ describe("stack backend", () => {
       });
     },
   );
+});
+
+describeHostedConsent("storage rm", {
+  api: storageConsentApi,
+  invoke: ({ workdir }) => {
+    const storage = storageConsentServices(workdir, [
+      { method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] },
+    ]);
+    return {
+      run: storageRm({
+        files: ["ss:///private/a.pdf"],
+        recursive: false,
+        linked: false,
+        local: false,
+        projectRef: Option.some(VALID_REF),
+      }).pipe(Effect.provide(storage.layer)),
+      mutations: storage.writes,
+    };
+  },
 });

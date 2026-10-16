@@ -79,3 +79,4 @@ Single `success` event with the response as data.
 - The `<provider-id>` argument must be a valid UUID; invalid input produces `identity provider ID "<input>" is not a UUID`. UUIDs are accepted case-insensitively.
 - `--metadata` short-circuits any `--output` selection.
 - The `## SAML 2.0 Metadata XML` fenced block is pretty-printed via `formatSsoMetadataXml` (`sso.format.ts`), matching a 2-space-indented XML pretty-printer's output byte-for-byte.
+- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).

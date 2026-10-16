@@ -12,6 +12,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesUpdate } from "./update.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const BRANCH_STATUSES = [
   "RUNNING_MIGRATIONS",
@@ -76,4 +77,5 @@ export const branchesUpdateCommand = Command.make("update", config).pipe(
     ),
   ),
   Command.provide(managementApiRuntimeLayer(["branches", "update"])),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

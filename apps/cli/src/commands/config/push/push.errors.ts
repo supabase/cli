@@ -120,23 +120,6 @@ export class ConfigPushBranchResolveStatusError extends Data.TaggedError(
 // transport failure, or an unexpected status) degrades to an uncertain target rather than
 // aborting the push. There is no error class for this probe — it never fails the command.
 
-/**
- * The user declined the branch confirmation gate. Mirrors `projects delete`/`db reset`'s
- * identical top-level "are you sure" cancellation shape: declining fails (exit 1), matching
- * every other top-level confirmation gate in this codebase; the per-service `keep()` prompts
- * below are unrelated and still exit 0 on decline. `suggestion` always names the
- * `--yes`/`SUPABASE_YES` escape hatch, since a machine-mode or non-TTY decline never renders the
- * interactive prompt's own inline hint.
- */
-export class ConfigPushCancelledError extends Data.TaggedError("ConfigPushCancelledError")<{
-  readonly message: string;
-  readonly suggestion?: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
-  }
-}
-
 export class ConfigPushListAddonsNetworkError extends Data.TaggedError(
   "ConfigPushListAddonsNetworkError",
 )<DecodableNetworkErrorArgs> {

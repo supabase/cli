@@ -17,6 +17,7 @@ import {
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import {
   mockAnalytics,
   mockOutput,
@@ -38,7 +39,8 @@ import {
   projectResponse,
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
-import { ProfileFlag } from "../../../command-internal/global-flags.ts";
+import { ProfileFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import type { SsoUpdateFlags } from "./update.command.ts";
@@ -182,6 +184,8 @@ function setup(opts: SetupOpts = {}) {
     Stdio.layerTest({
       args: Effect.succeed(opts.cliArgs ?? ["sso", "update", VALID_PROVIDER_ID]),
     }),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
     opts.profileFlag === undefined ? Layer.empty : Layer.succeed(ProfileFlag, opts.profileFlag),
     ConfigProvider.layer(
       ConfigProvider.fromEnvRecord({ SUPABASE_NO_KEYRING: "1" }, { preserveEmptyStrings: true }),
@@ -306,6 +310,8 @@ describe("sso update integration", () => {
           cliSettings,
         }),
       }),
+      Layer.succeed(YesFlag, true),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
       Stdio.layerTest({ args: Effect.succeed(["sso", "update", VALID_PROVIDER_ID]) }),
     );
     return Effect.gen(function* () {
@@ -1672,4 +1678,20 @@ describe("sso update integration", () => {
       expect(api.requests.length).toBe(0);
     }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
   });
+});
+
+describeHostedConsent("sso update", {
+  api: {
+    byMethod: {
+      GET: { status: 200, body: EXISTING_PROVIDER },
+      PUT: { status: 200, body: RESPONSE_PROVIDER },
+    },
+  },
+  invoke: () => ({
+    run: ssoUpdate({ ...defaultFlags, projectRef: Option.some(VALID_REF) }).pipe(
+      Effect.provide(
+        Stdio.layerTest({ args: Effect.succeed(["sso", "update", VALID_PROVIDER_ID]) }),
+      ),
+    ),
+  }),
 });
