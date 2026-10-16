@@ -71,16 +71,16 @@ export async function partitionUnmirroredImages(
  */
 export function inspectResultIsMirrored(
   target: string,
-  status: number | null,
+  exit: number | NodeJS.Signals | null,
   stderr: string,
 ): boolean {
-  if (status === 0) {
+  if (exit === 0) {
     return true;
   }
   if (stderr.trimEnd().endsWith(": not found")) {
     return false;
   }
-  throw new Error(`could not inspect ${target} (exit ${status}): ${stderr.trim()}`);
+  throw new Error(`could not inspect ${target} (exit ${exit}): ${stderr.trim()}`);
 }
 
 function imageExistsOnMirror(target: string): Promise<boolean> {
@@ -88,7 +88,12 @@ function imageExistsOnMirror(target: string): Promise<boolean> {
     encoding: "utf8",
     stdio: ["ignore", "ignore", "pipe"],
   });
-  return Promise.resolve(inspectResultIsMirrored(target, result.status, result.stderr));
+  if (result.error) {
+    throw result.error;
+  }
+  return Promise.resolve(
+    inspectResultIsMirrored(target, result.status ?? result.signal, result.stderr),
+  );
 }
 
 if (import.meta.main) {
