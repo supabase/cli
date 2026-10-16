@@ -91,9 +91,6 @@ export const SYNC_PAIRS = [
 /** Login of the release GitHub App, the only author of sync pull requests. */
 export const RELEASE_BOT_LOGIN = "supabase-cli-releaser[bot]";
 
-/** Starts each release-bot comment that publishes a Claude resolution of the `develop` → `next` sync. */
-export const RESOLVE_MARKER = "<!-- sync-agent resolve -->";
-
 export function isAllowedSyncPair(source: string, target: string): boolean {
   return SYNC_PAIRS.some((pair) => pair.source === source && pair.target === target);
 }

@@ -157,7 +157,8 @@ jobs:
   rereview:
     name: Re-run the AI review on the repair
     needs: repair
-    if: needs.repair.outputs.rereview == 'true'
+    # Runs after a later Publish failure too, since the posted re-review marker already rules out another dispatch.
+    if: ${{ !cancelled() && needs.repair.outputs.rereview == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

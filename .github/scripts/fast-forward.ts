@@ -5,7 +5,6 @@ import {
   type GitRunner,
   MAX_PUSH_ATTEMPTS,
   RELEASE_BOT_LOGIN,
-  RESOLVE_MARKER,
   SYNC_PAIRS,
   githubGraphql,
   githubRequest,
@@ -253,7 +252,7 @@ export type FastForwardOutcome =
   | { status: "fast-forwarded"; sha: string }
   | { status: "merged-after-resync"; sha: string }
   | { status: "resynced"; sha: string }
-  | { status: "resync-dispatched"; resolutions: number }
+  | { status: "resync-dispatched"; resyncs: number }
   | { status: "refused"; reason: string }
   | { status: "dry-run"; reason: string };
 
@@ -401,8 +400,10 @@ function pushSha(
   return result.status === 0 ? { ok: true } : { ok: false, stderr: result.stderr };
 }
 
-/** Claude's first resolution of a `develop` → `next` sync plus the resyncs it may run after `next` moves. */
-const MAX_RESOLUTIONS = 3;
+/** Resyncs Claude may run on one `develop` → `next` sync pull request after `next` moves. */
+const MAX_RESYNCS = 2;
+const RESYNC_MARKER = "<!-- fast-forward resync -->";
+const WORKFLOW_BOT_LOGIN = "github-actions[bot]";
 
 async function resyncSyncBranch(
   io: FastForwardIo,
@@ -430,32 +431,31 @@ async function resyncSyncBranch(
         .map((file) => `- \`${file}\``)
         .join("\n");
       if (promotion.source === "develop" && promotion.target === "next") {
-        // A sync pull request resolved by hand carries no marker but still used its first resolution.
-        const resolutions = Math.max(
-          1,
-          (await io.listComments()).filter(
+        const conflict = `\`${target}\` moved since approval and merging it into \`${syncBranch}\` conflicts:\n\n${list}`;
+        try {
+          // Counts this workflow's own resync comments, so a sync resolved by hand gets the same two resyncs.
+          const resyncs = (await io.listComments()).filter(
             (comment) =>
-              comment.user?.login === RELEASE_BOT_LOGIN && comment.body.startsWith(RESOLVE_MARKER),
-          ).length,
-        );
-        if (resolutions < MAX_RESOLUTIONS) {
-          if (input.dryRun) {
-            return { status: "dry-run", reason: `would dispatch a resync of ${syncBranch}` };
-          }
-          try {
-            await io.dispatchResync();
-          } catch (error) {
-            return refuse(
-              io,
-              input,
-              `Dispatching the resync of ${syncBranch} failed`,
-              `\`${target}\` moved since approval and merging it into \`${syncBranch}\` conflicts:\n\n${list}\n\nStarting Claude's resync failed (${error instanceof Error ? error.message : String(error)}); resolve on the branch and re-approve.`,
+              comment.user?.login === WORKFLOW_BOT_LOGIN && comment.body.startsWith(RESYNC_MARKER),
+          ).length;
+          if (resyncs < MAX_RESYNCS) {
+            if (input.dryRun) {
+              return { status: "dry-run", reason: `would dispatch a resync of ${syncBranch}` };
+            }
+            // Posted before the dispatch, so a dispatch that fails still counts toward the limit.
+            await io.comment(
+              `${RESYNC_MARKER}\n${conflict}\n\nClaude is resolving the merge again on this pull request (resync ${resyncs + 1} of ${MAX_RESYNCS}).`,
             );
+            await io.dispatchResync();
+            return { status: "resync-dispatched", resyncs: resyncs + 1 };
           }
-          await io.comment(
-            `\`${target}\` moved since approval and merging it into \`${syncBranch}\` conflicts:\n\n${list}\n\nClaude is resolving the merge again on this pull request (resync ${resolutions} of ${MAX_RESOLUTIONS - 1}).`,
+        } catch (error) {
+          return refuse(
+            io,
+            input,
+            `Starting the resync of ${syncBranch} failed`,
+            `${conflict}\n\nStarting Claude's resync failed (${error instanceof Error ? error.message : String(error)}); resolve on the branch and re-approve.`,
           );
-          return { status: "resync-dispatched", resolutions };
         }
       }
       return refuse(

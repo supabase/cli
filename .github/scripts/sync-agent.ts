@@ -26,12 +26,12 @@ import {
   type GitRunner,
   makeGit,
   RELEASE_BOT_LOGIN,
-  RESOLVE_MARKER,
   requireEnv,
 } from "./promotion-shared.ts";
 
 const SYNC_BRANCH = "sync/develop-into-next";
 const PROMPTS_DIR = join(import.meta.dir, "../sync-branches");
+const RESOLVE_MARKER = "<!-- sync-agent resolve -->";
 const REPAIR_MARKER = "<!-- sync-agent repair";
 const REREVIEW_MARKER = "<!-- sync-agent re-review";
 const EXHAUSTED_MARKER = "<!-- sync-agent exhausted -->";

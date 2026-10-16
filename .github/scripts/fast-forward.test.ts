@@ -890,16 +890,22 @@ describe("runFastForward sync", () => {
     expect(dispatches).toEqual([]);
   });
 
-  test("hands a conflicting move of next back to Claude until the resolution limit, or a maintainer when dispatch fails", async () => {
-    const attempt = async (resolutions: number, dispatchFails = false) => {
+  test("hands a conflicting move of next back to Claude for two resyncs, or a maintainer when dispatch fails", async () => {
+    const attempt = async (resyncs: number, dispatchFails = false) => {
       const { repo, head, io, comments, dispatches } = resolvedSyncScenario("develop", "next");
       git(repo.seed, "switch", "next");
       repo.commit(repo.seed, "shared.txt", "conflicting\n", "feat(cli)!: conflicting");
       git(repo.seed, "push", "origin", "next");
-      const botComments = Array.from({ length: resolutions }, () => ({
-        user: { login: releaseBot.login },
-        body: "<!-- sync-agent resolve -->\n### Claude resolved the merge of `next`",
-      }));
+      const botComments = [
+        {
+          user: { login: releaseBot.login },
+          body: "<!-- sync-agent resolve -->\n### Claude resolved the merge of `next`",
+        },
+        ...Array.from({ length: resyncs }, () => ({
+          user: { login: "github-actions[bot]" },
+          body: "<!-- fast-forward resync -->\n`next` moved since approval",
+        })),
+      ];
 
       const outcome = await runFastForward(
         {
@@ -915,18 +921,18 @@ describe("runFastForward sync", () => {
       );
 
       expect(repo.remoteTip("sync/develop-into-next")).toBe(head);
-      return { status: outcome.status, dispatches, comment: comments[0] };
+      return { status: outcome.status, dispatches, comment: comments.at(-1) };
     };
 
-    const resync = await attempt(2);
+    const resync = await attempt(1);
     expect(resync).toMatchObject({
       status: "resync-dispatched",
       dispatches: ["sync/develop-into-next"],
     });
     expect(resync.comment).toContain("- `shared.txt`");
-    expect(await attempt(3)).toMatchObject({ status: "refused", dispatches: [] });
-    expect((await attempt(0)).status).toBe("resync-dispatched");
-    const failed = await attempt(1, true);
+    expect(resync.comment).toContain("resync 2 of 2");
+    expect(await attempt(2)).toMatchObject({ status: "refused", dispatches: [] });
+    const failed = await attempt(0, true);
     expect(failed.status).toBe("refused");
     expect(failed.comment).toContain("Starting Claude's resync failed (HTTP 403)");
   });
