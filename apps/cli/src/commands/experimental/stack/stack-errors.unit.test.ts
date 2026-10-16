@@ -100,10 +100,10 @@ describe("new stack error telemetry", () => {
     });
   });
 
-  it("fingerprints a start configuration check by name, and a directory failure by permission or I/O", () => {
+  it("fingerprints a start configuration check by name, and a directory failure by its user-actionable cause or as I/O", () => {
     const configError = (configIssue: "saved-stack-changes" | "missing-credentials") =>
       classify(new StackCommandStartError({ reason: "invalid-config", configIssue, message: "x" }));
-    const directoryError = (_tag: "PermissionDenied" | "Busy") =>
+    const directoryError = (_tag: "PermissionDenied" | "NotFound" | "Busy") =>
       classify(
         new StackCommandStartError({
           reason: "filesystem",
@@ -124,6 +124,10 @@ describe("new stack error telemetry", () => {
       error_fingerprint: "tag:ExperimentalStackStartError:filesystem",
       error_kind: "user_actionable",
       error_category: "permission",
+    });
+    expect(directoryError("NotFound")).toMatchObject({
+      error_fingerprint: "tag:ExperimentalStackStartError:not_found",
+      error_kind: "user_actionable",
     });
     expect(directoryError("Busy")).toEqual({
       error_fingerprint: "tag:ExperimentalStackStartError:filesystem_io",

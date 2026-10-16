@@ -52,7 +52,7 @@ export class StackCommandStartError extends Data.TaggedError("ExperimentalStackS
         };
       case "filesystem": {
         const declared = causeDeclaration(this.cause);
-        return declared?.error_category === "permission"
+        return declared?.error_kind === "user_actionable"
           ? declared
           : { ...actionability.runtimeCrash, fingerprint_suffix: "filesystem_io" };
       }
