@@ -3,6 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vitest";
 import {
+  ConfigProvider,
   Deferred,
   Effect,
   Fiber,
@@ -23,6 +24,8 @@ import {
 import { orioledbVersions, type ArtifactPin } from "@supabase/stack/internal/artifacts";
 import {
   apiRoute,
+  lockSelection,
+  readLock,
   StackError,
   type EndpointPortChange,
   type PlanOptions,
@@ -32,15 +35,28 @@ import {
   type ServiceInstances,
   type StackCredentials,
   type Stack,
+  writeLock,
 } from "@supabase/stack/effect";
 import { planSupabaseComposition } from "@supabase/stack/internal/composition";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
+  withConfigEnv,
   withEnvVar,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { containerEngineSpawner } from "../../../../../tests/helpers/child-process-spawner.ts";
-import { database15, selection } from "../../../../../tests/helpers/pins.ts";
+import {
+  database15,
+  orioledb as orioledbPin,
+  orioledbConfigVersion,
+  selection,
+} from "../../../../../tests/helpers/pins.ts";
+import {
+  publishRelease,
+  releaseHostEnv,
+  startReleaseFixture,
+  type ReleaseFixture,
+} from "../../../../../tests/helpers/release-fixture.ts";
 import {
   mockOutput,
   mockProcessControl,
@@ -55,6 +71,7 @@ import {
 import { StackCatalogSetup } from "../../../../command-internal/stack-catalog-setup.ts";
 import { ExperimentalFlag, YesFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
+import { causeDeclaration } from "../../../../shared/telemetry/error-actionability.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import * as HttpClient from "effect/http/HttpClient";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
@@ -71,6 +88,7 @@ const flags = (exclude: ReadonlyArray<string> = []) => ({
   stackId: Option.none<string>(),
   runtime: "native" as const,
   preparation: "background" as const,
+  frozen: false,
   eager: false,
 });
 
@@ -541,6 +559,12 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   };
 };
 
+/** A CI runner sets `CI`, which would freeze the lock between the starts of one test. */
+const ciUnsetLayer = ConfigProvider.layerAdd(
+  ConfigProvider.fromEnvRecord({ CI: "" }, { preserveEmptyStrings: true }),
+  { asPrimary: true },
+);
+
 const layers = (
   root: string,
   fixture: ReturnType<typeof fakeStack>,
@@ -580,6 +604,7 @@ const layers = (
     target,
     api,
     Layer.succeed(ExperimentalFlag, false),
+    ciUnsetLayer,
     Layer.succeed(CliArgs, { args: ["stack", "start"] }),
     Layer.succeed(StackCatalogSetup, {
       apply: () => Effect.sync(() => fixture.applyCatalog()),
@@ -2103,6 +2128,20 @@ describe("experimental stack start", () => {
   });
 
   const [orioledb = ""] = orioledbVersions();
+
+  /** `supabase start` of `root` with the release host reachable, so an OrioleDB specifier resolves. */
+  const startOnHost = (root: string, fixture: ReturnType<typeof fakeStack>, host: ReleaseFixture) =>
+    withConfigEnv(releaseHostEnv(host), stackStart(flags())).pipe(
+      Effect.provide(layers(root, fixture)),
+    );
+  const publishOrioledb = (host: ReleaseFixture) => {
+    for (let revision = 0; revision <= orioledbPin.revision; revision++)
+      publishRelease(host, {
+        producer: "postgres",
+        upstream: orioledbPin.upstreamVersion,
+        revision,
+      });
+  };
   for (const target of [
     {
       name: "both [db] major_version and [db] orioledb_version when stock 15 becomes OrioleDB 17",
@@ -2132,9 +2171,11 @@ describe("experimental stack start", () => {
       revert: "Revert SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION to its saved value",
     },
   ])
-    it.effect(`names ${target.name}`, () =>
+    it.live(`names ${target.name}`, () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const host = yield* startReleaseFixture;
+        publishOrioledb(host);
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-orioledb-" });
         yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
         const configPath = `${root}/supabase/config.toml`;
@@ -2144,10 +2185,7 @@ describe("experimental stack start", () => {
 
         yield* fs.writeFileString(configPath, `project_id = "orioledb"\n${target.after}`);
         yield* fixture.stack.composition.stop;
-        const restart = stackStart(flags()).pipe(
-          Effect.provide(layers(root, fixture)),
-          Effect.flip,
-        );
+        const restart = startOnHost(root, fixture, host).pipe(Effect.flip);
         const error = yield* target.env === undefined
           ? restart
           : withEnvVar(target.envVar, target.env, restart);
@@ -2162,11 +2200,13 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-  it.effect(
+  it.live(
     "warns once about SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION on a first start that includes storage",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const host = yield* startReleaseFixture;
+        publishOrioledb(host);
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-orioledb-alias-" });
         yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
         yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "alias"\n');
@@ -2179,8 +2219,7 @@ describe("experimental stack start", () => {
         const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
           consoleErrors.push(args.map((a) => String(a)).join(" "));
         });
-        yield* stackStart(flags()).pipe(
-          Effect.provide(layers(root, fixture)),
+        yield* startOnHost(root, fixture, host).pipe(
           Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())),
         );
         const services = yield* fixture.stack.services.list;
@@ -2540,5 +2579,503 @@ describe("experimental stack start", () => {
           expect(fixture.hostDestroyed).toBe(0);
         }
       }).pipe(Effect.provide(BunServices.layer)),
+  );
+});
+
+const lockPath = (root: string) => `${root}/supabase/supabase.lock`;
+
+const REST_OVERRIDE = '[local.services.rest]\nversion = "v99.0.0"\n';
+
+const setConfig = (root: string, config: string) =>
+  Effect.flatMap(FileSystem.FileSystem, (fs) =>
+    fs.writeFileString(`${root}/supabase/config.toml`, `project_id = "start-lock"\n${config}`),
+  );
+
+const lockProject = (config = "") =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-lock-" });
+    yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+    yield* setConfig(root, config);
+    return root;
+  });
+
+const lockText = (root: string) =>
+  Effect.flatMap(FileSystem.FileSystem, (fs) => fs.readFileString(lockPath(root)));
+
+const readProjectLock = (root: string) => readLock(root).pipe(Effect.map(Option.getOrThrow));
+
+/** Publishes `postgrest` `v99.0.0` revisions 0 and 1, so the unpinned specifier resolves to 1. */
+const publishRest = (host: ReleaseFixture) => {
+  publishRelease(host, { producer: "postgrest", upstream: "v99.0.0", revision: 0 });
+  return publishRelease(host, { producer: "postgrest", upstream: "v99.0.0", revision: 1 });
+};
+
+/** The artifact pin the fake stack's member of `service` was created with. */
+const memberPin = (stack: ReturnType<typeof fakeStack>, service: ServiceCreation["service"]) =>
+  stack.members.flatMap((member) =>
+    member.service === service ? [Effect.runSync(member.status).config.pin] : [],
+  )[0];
+
+/** One `supabase start` of `root`, with `CI` pinned and the release host reachable only when given. */
+const lockedStart = (
+  root: string,
+  options: {
+    readonly stack?: ReturnType<typeof fakeStack>;
+    readonly host?: ReleaseFixture;
+    readonly ci?: boolean;
+    readonly frozen?: boolean;
+    readonly existing?: boolean;
+  } = {},
+) => {
+  const output = mockOutput();
+  const stack = options.stack ?? fakeStack();
+  const run = withConfigEnv(
+    {
+      CI: options.ci === true ? "true" : "",
+      ...(options.host === undefined ? {} : releaseHostEnv(options.host)),
+    },
+    stackStart({ ...flags(), frozen: options.frozen ?? false }),
+  ).pipe(Effect.provide(layers(root, stack, output, options.existing)));
+  return { output, stack, run };
+};
+
+const infoMessages = (output: ReturnType<typeof mockOutput>) =>
+  output.messages.flatMap((entry) => (entry.type === "info" ? [entry.message] : []));
+
+const resolvedReports = (output: ReturnType<typeof mockOutput>) =>
+  infoMessages(output).filter((message) => message.startsWith("Resolved service versions:"));
+
+const COMMIT_WARNING = "Commit supabase/supabase.lock so CI and your team run the same versions.";
+
+describe("experimental stack start service lock", () => {
+  it.effect("writes the default lock on the first start and keeps it on later starts", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* lockProject();
+      const first = lockedStart(root);
+      yield* first.run;
+
+      const lock = yield* readProjectLock(root);
+      expect(lockSelection(lock)).toEqual(selection);
+      expect(lock.services.database).toMatchObject({ majorVersion: 17, line: "stock" });
+      expect(Object.values(lock.services).map(({ resolution }) => resolution)).toEqual(
+        Array.from({ length: 12 }, () => "unlinked"),
+      );
+      expect(resolvedReports(first.output)).toHaveLength(1);
+      expect(resolvedReports(first.output)[0]).toContain("Created supabase/supabase.lock.");
+      const gitignore = yield* fs.readFileString(`${root}/supabase/.gitignore`);
+      expect(gitignore).toContain(".supabase.lock.lease");
+      expect(gitignore).toContain(".supabase.lock.*.tmp");
+
+      const written = yield* lockText(root);
+      yield* first.stack.stack.composition.stop;
+      const second = lockedStart(root, { stack: first.stack });
+      yield* second.run;
+      expect(yield* lockText(root)).toBe(written);
+      expect(resolvedReports(second.output)).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("resolves a version override through the release host and runs the stack on it", () =>
+    Effect.gen(function* () {
+      const host = yield* startReleaseFixture;
+      const latest = publishRest(host);
+      const root = yield* lockProject(REST_OVERRIDE);
+      const { output, stack, run } = lockedStart(root, { host });
+      yield* run;
+
+      const lock = yield* readProjectLock(root);
+      expect(lock.services.rest).toMatchObject({
+        specifier: "v99.0.0",
+        resolution: "resolved",
+        resolved: { upstreamVersion: "v99.0.0", revision: 1 },
+      });
+      expect(lock.services.rest.resolved.image).toContain(latest.digest);
+      expect(lock.services.auth.resolved).toEqual(selection.auth);
+      expect(memberPin(stack, "rest")).toEqual(lock.services.rest.resolved);
+      expect(resolvedReports(output)[0]).toContain("v99.0.0-r1");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("goes back to the bundled version when the override is removed", () =>
+    Effect.gen(function* () {
+      const host = yield* startReleaseFixture;
+      publishRest(host);
+      const root = yield* lockProject(REST_OVERRIDE);
+      yield* lockedStart(root, { host }).run;
+      const overridden = yield* readProjectLock(root);
+
+      yield* setConfig(root, "");
+      const { output, run } = lockedStart(root, { host, existing: false });
+      yield* run;
+
+      const lock = yield* readProjectLock(root);
+      expect(lock.services.rest).toMatchObject({ specifier: "linked", resolution: "unlinked" });
+      expect(lock.services.rest.resolved).toEqual(selection.rest);
+      expect({ ...lock.services, rest: undefined }).toEqual({
+        ...overridden.services,
+        rest: undefined,
+      });
+      expect(resolvedReports(output)[0]).toContain("specifier linked ≠ locked v99.0.0");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "names [local.services.database] version when a service version swaps the database build",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* startReleaseFixture;
+        const root = yield* lockProject();
+        const stack = fakeStack();
+        yield* lockedStart(root, { stack }).run;
+        for (let revision = 0; revision <= orioledbPin.revision; revision++)
+          publishRelease(host, {
+            producer: "postgres",
+            upstream: orioledbPin.upstreamVersion,
+            revision,
+          });
+
+        yield* setConfig(
+          root,
+          `[local.services.database]\nversion = "${orioledbPin.upstreamVersion}"\n`,
+        );
+        yield* stack.stack.composition.stop;
+        const error = yield* lockedStart(root, { stack, host }).run.pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          reason: "invalid-config",
+          message: expect.stringContaining(
+            `[local.services.database] version: saved ${selection.database.upstreamVersion}-r${selection.database.revision}, requested ${orioledbPin.upstreamVersion}-r${orioledbPin.revision}`,
+          ),
+        });
+        expect(error.message).not.toContain("[db]");
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "starts an OrioleDB build the CLI does not bundle once the release host publishes it",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* startReleaseFixture;
+        publishRelease(host, {
+          producer: "postgres",
+          upstream: "17.0.0.000-orioledb",
+          revision: 0,
+        });
+        const root = yield* lockProject('[db]\norioledb_version = "17.0.0.000"\n');
+        const { stack, run } = lockedStart(root, { host });
+        yield* run;
+
+        const lock = yield* readProjectLock(root);
+        expect(lock.services.database).toMatchObject({
+          line: "orioledb",
+          resolved: { upstreamVersion: "17.0.0.000-orioledb", revision: 0 },
+        });
+        expect(memberPin(stack, "database")).toEqual(lock.services.database.resolved);
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("re-resolves the database when db.major_version changes", () =>
+    Effect.gen(function* () {
+      const root = yield* lockProject();
+      yield* lockedStart(root).run;
+
+      yield* setConfig(root, "[db]\nmajor_version = 15\n");
+      const { output, run } = lockedStart(root, { existing: false });
+      yield* run;
+
+      const lock = yield* readProjectLock(root);
+      expect(lock.services.database).toMatchObject({
+        majorVersion: 15,
+        line: "stock",
+        resolved: database15,
+      });
+      expect(resolvedReports(output)[0]).toContain("db.major_version 15 ≠ locked 17");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("fails a frozen start on a missing or stale lock and leaves the project untouched", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const host = yield* startReleaseFixture;
+      publishRest(host);
+      const root = yield* lockProject();
+
+      const missing = lockedStart(root, { host, frozen: true });
+      const notFound = yield* missing.run.pipe(Effect.flip);
+      expect(notFound).toMatchObject({
+        reason: "lock",
+        cause: { _tag: "LockResolutionError", reason: "frozen-missing" },
+      });
+      expect(notFound.message).toContain(
+        "supabase/supabase.lock not found; run supabase start locally and commit it",
+      );
+      expect(yield* fs.exists(lockPath(root))).toBe(false);
+      expect(yield* fs.exists(`${root}/supabase/.gitignore`)).toBe(false);
+
+      const stack = fakeStack();
+      yield* lockedStart(root, { stack }).run;
+      const written = yield* lockText(root);
+      const ignored = yield* fs.readFileString(`${root}/supabase/.gitignore`);
+      yield* stack.stack.composition.stop;
+      yield* lockedStart(root, { stack, frozen: true }).run;
+      expect(yield* lockText(root)).toBe(written);
+
+      yield* setConfig(root, REST_OVERRIDE);
+      const composed = stack.composed;
+      yield* stack.stack.composition.stop;
+      const stale = yield* lockedStart(root, { stack, host, frozen: true }).run.pipe(Effect.flip);
+      expect(stale).toMatchObject({
+        reason: "lock",
+        cause: { _tag: "LockResolutionError", reason: "frozen-stale" },
+      });
+      expect(stale.message).toContain(
+        "supabase/supabase.lock is stale for: rest (specifier v99.0.0 ≠ locked linked); run supabase start locally and commit the updated lock",
+      );
+      expect(yield* lockText(root)).toBe(written);
+      expect(yield* fs.readFileString(`${root}/supabase/.gitignore`)).toBe(ignored);
+      expect(stack.composed).toBe(composed);
+      expect(host.requests).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("fails a frozen start on a stale lock while the stack is running", () =>
+    Effect.gen(function* () {
+      const host = yield* startReleaseFixture;
+      publishRest(host);
+      const root = yield* lockProject();
+      const stack = fakeStack();
+      yield* lockedStart(root, { stack }).run;
+      const written = yield* lockText(root);
+      const composed = stack.composed;
+
+      yield* setConfig(root, REST_OVERRIDE);
+      const stale = yield* lockedStart(root, { stack, host, frozen: true }).run.pipe(Effect.flip);
+
+      expect(stale).toMatchObject({
+        reason: "lock",
+        cause: { _tag: "LockResolutionError", reason: "frozen-stale" },
+      });
+      expect(yield* lockText(root)).toBe(written);
+      expect(stack.composed).toBe(composed);
+      expect(host.requests).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live.each([
+    {
+      name: "an unpublished release",
+      reason: "unpublished",
+      message: "no published slim-services release",
+      suffix: "invalid_config",
+      arrange: (_host: ReleaseFixture) => undefined,
+    },
+    {
+      name: "a release host that is unavailable",
+      reason: "transient",
+      message: "could not be reached; retry shortly",
+      suffix: "network",
+      arrange: (host: ReleaseFixture) => {
+        publishRest(host);
+        host.failing.set("/releases/postgrest-v99.0.0-r0/SHA256SUMS", 503);
+      },
+    },
+    {
+      name: "a release that fails verification",
+      reason: "integrity",
+      message: "the published release failed verification",
+      suffix: "asset_checksum",
+      arrange: (host: ReleaseFixture) => {
+        publishRelease(host, {
+          producer: "postgrest",
+          upstream: "v99.0.0",
+          revision: 0,
+          tamperedManifest: true,
+        });
+      },
+    },
+  ])("fails the start on $name and writes no lock", (row) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const host = yield* startReleaseFixture;
+      row.arrange(host);
+      const root = yield* lockProject(REST_OVERRIDE);
+      const { stack, run } = lockedStart(root, { host });
+      const error = yield* run.pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        reason: "lock",
+        cause: { _tag: "LockResolutionError", reason: row.reason },
+      });
+      expect(error.message).toContain('local.services.rest.version = "v99.0.0"');
+      expect(error.message).toContain(row.message);
+      expect(causeDeclaration(error)).toMatchObject({ fingerprint_suffix: row.suffix });
+      expect(yield* fs.exists(lockPath(root))).toBe(false);
+      expect(stack.composed).toBe(0);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("resolves and warns to commit when CI starts without a lock, then freezes it", () =>
+    Effect.gen(function* () {
+      const host = yield* startReleaseFixture;
+      publishRest(host);
+      const root = yield* lockProject();
+
+      const first = lockedStart(root, { ci: true });
+      yield* first.run;
+      expect(first.output.messages).toContainEqual({ type: "warn", message: COMMIT_WARNING });
+      const written = yield* lockText(root);
+
+      yield* first.stack.stack.composition.stop;
+      const second = lockedStart(root, { stack: first.stack, ci: true });
+      yield* second.run;
+      expect(second.output.messages.filter(({ type }) => type === "warn")).toEqual([]);
+      expect(resolvedReports(second.output)).toEqual([]);
+
+      yield* setConfig(root, REST_OVERRIDE);
+      yield* first.stack.stack.composition.stop;
+      const stale = yield* lockedStart(root, { stack: first.stack, host, ci: true }).run.pipe(
+        Effect.flip,
+      );
+      expect(stale.message).toContain("supabase/supabase.lock is stale for: rest");
+      expect(yield* lockText(root)).toBe(written);
+      expect(host.requests).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("uses a teammate's committed lock as-is, with no probe, link or login", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const host = yield* startReleaseFixture;
+      publishRest(host);
+      const author = yield* lockProject(REST_OVERRIDE);
+      yield* lockedStart(author, { host }).run;
+      const requests = host.requests.length;
+      expect(requests).toBeGreaterThan(0);
+
+      const teammate = yield* lockProject(REST_OVERRIDE);
+      yield* fs.copyFile(lockPath(author), lockPath(teammate));
+      const { output, stack, run } = lockedStart(teammate, { host });
+      yield* run;
+
+      expect(host.requests).toHaveLength(requests);
+      expect(resolvedReports(output)).toEqual([]);
+      expect(yield* lockText(teammate)).toBe(yield* lockText(author));
+      expect(memberPin(stack, "rest")).toMatchObject({ upstreamVersion: "v99.0.0", revision: 1 });
+      expect(yield* fs.exists(`${teammate}/supabase/.link.json`)).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("serializes concurrent starts on the project lease so the versions resolve once", () =>
+    Effect.gen(function* () {
+      const host = yield* startReleaseFixture;
+      publishRest(host);
+      const root = yield* lockProject(REST_OVERRIDE);
+      const first = lockedStart(root, { host });
+      const second = lockedStart(root, { host });
+      yield* Effect.all([first.run, second.run], { concurrency: 2 });
+
+      const sums = host.requests.filter((path) => path.endsWith("/SHA256SUMS"));
+      expect(sums.length).toBeGreaterThan(0);
+      expect(new Set(sums).size).toBe(sums.length);
+      expect(resolvedReports(first.output).length + resolvedReports(second.output).length).toBe(1);
+      expect(memberPin(first.stack, "rest")).toEqual(memberPin(second.stack, "rest"));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("applies default to every service and lets an entry override it", () =>
+    Effect.gen(function* () {
+      const host = yield* startReleaseFixture;
+      publishRest(host);
+      const root = yield* lockProject(
+        `[local.services.default]\nversion = "bundled"\n[local.services.rest]\nversion = "v99.0.0-r1"\n`,
+      );
+      yield* lockedStart(root, { host }).run;
+
+      const lock = yield* readProjectLock(root);
+      expect(lock.services.auth).toMatchObject({ specifier: "bundled", resolution: "resolved" });
+      expect(lock.services.rest).toMatchObject({
+        specifier: "v99.0.0-r1",
+        resolved: { upstreamVersion: "v99.0.0", revision: 1 },
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("rejects orioledb_version next to a different database version", () =>
+    Effect.gen(function* () {
+      const root = yield* lockProject(
+        `[db]\norioledb_version = "${orioledbConfigVersion}"\n[local.services.database]\nversion = "bundled"\n`,
+      );
+      const error = yield* lockedStart(root).run.pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        reason: "invalid-config",
+        message: expect.stringContaining("conflicts with local.services.database.version"),
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("rejects a database version of another Postgres major than db.major_version", () =>
+    Effect.gen(function* () {
+      const root = yield* lockProject(
+        `[db]\nmajor_version = 15\n[local.services.database]\nversion = "${selection.database.upstreamVersion}"\n`,
+      );
+      const error = yield* lockedStart(root).run.pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        reason: "invalid-config",
+        message: expect.stringContaining("requires db.major_version"),
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("re-resolves a lock whose database pin was edited to contradict its own entry", () =>
+    Effect.gen(function* () {
+      const root = yield* lockProject();
+      yield* lockedStart(root).run;
+      const lock = yield* readProjectLock(root);
+      const { database } = lock.services;
+      const edits = [
+        [{ ...database, majorVersion: 15 }, "db.major_version 17 ≠ locked 15"],
+        [{ ...database, line: "orioledb" }, "database line stock ≠ locked orioledb"],
+        [
+          { ...database, resolved: database15 },
+          `locked pin ${database15.upstreamVersion} is not Postgres 17`,
+        ],
+      ] as const;
+      for (const [edited, reason] of edits) {
+        yield* writeLock(root, { ...lock, services: { ...lock.services, database: edited } });
+        const { output, run } = lockedStart(root, { existing: false });
+        yield* run;
+
+        expect(resolvedReports(output)[0]).toContain(reason);
+        expect((yield* readProjectLock(root)).services.database.resolved).toEqual(
+          selection.database,
+        );
+      }
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("fails on a malformed or newer lock whether or not the start is frozen", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* lockProject();
+      for (const [contents, advice] of [
+        ["{ not json", "delete it and run supabase start to resolve the versions again"],
+        ['{"lockfileVersion":2}', "upgrade the CLI"],
+      ] as const) {
+        yield* fs.writeFileString(lockPath(root), contents);
+        for (const frozen of [false, true]) {
+          const error = yield* lockedStart(root, { frozen }).run.pipe(Effect.flip);
+          expect(error).toMatchObject({
+            reason: "lock",
+            cause: { _tag: "LockResolutionError", reason: "invalid-lock" },
+          });
+          expect(error.message).toContain(advice);
+          expect(yield* lockText(root)).toBe(contents);
+        }
+      }
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 });

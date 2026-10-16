@@ -36,6 +36,7 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { functionsServeStack } from "./serve.stack.handler.ts";
 import { database15, selection } from "../../../../tests/helpers/pins.ts";
+import { seedLock, unbundled } from "../../../../tests/helpers/stack-lock.ts";
 
 type DatabaseInstance = Extract<
   Effect.Success<ReturnType<Stack["services"]["get"]>>,
@@ -386,6 +387,41 @@ describe("experimental Stack Functions serve", () => {
         yield* Fiber.join(run);
         expect(state.destroyed).toBe(true);
       }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("runs standalone Functions on the pin the project lock selects", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-locked-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "functions-locked"\n\n[edge_runtime]\nenabled = true\n',
+      );
+      const lockedFunctions = unbundled(selection.functions);
+      yield* seedLock(root, (services) => ({
+        ...services,
+        functions: { ...services.functions, resolved: lockedFunctions },
+      })).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            mockCommandSettings({ workdir: root, supabaseHome: "/home" }),
+            mockRuntimeInfo({ cwd: root, homeDir: "/home" }),
+          ),
+        ),
+      );
+      const state = yield* fixture({ standaloneProjectRoot: root });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(state.started);
+
+      expect(state.createdFunctions?.pin).toEqual(lockedFunctions);
+
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live("refreshes remote JWKS before creating standalone Functions", () =>

@@ -22,6 +22,7 @@ import { resolveArtifact, type ArtifactPin } from "../Artifacts.ts";
 import {
   databaseIdentity,
   databaseIdentityMismatch,
+  databaseReadyMarkerFile,
   readDatabaseIdentity,
   recordDatabaseIdentity,
   removeDatabaseIdentity,
@@ -910,10 +911,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         if (cached !== undefined) return { marker: Option.some(cached), validated: true as const };
         return { marker: yield* getMarkerIfPresent, validated: false as const };
       });
-      const readyMarkerPath = options.path.join(
-        options.instanceRoot,
-        ".supabase-database-ready.json",
-      );
+      const readyMarkerPath = options.path.join(options.instanceRoot, databaseReadyMarkerFile);
       // The host owns this file; a helper's bind-mount view can still list it after the host
       // removes it, which makes the helper's unlink fail.
       const removeReadyMarker = options.fs

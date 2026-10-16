@@ -176,15 +176,16 @@ precedence over `experimental.stack`; an unset or empty value falls back to the 
 Other values are rejected. The override is applied before reading the project configuration.
 
 `supabase services` follows the same backend selection. In stack mode it lists image versions and
-canonical `ghcr.io/supabase/cli/...` names from the installed CLI's artifact catalog, including
-Mailpit. PostgreSQL uses the selected major version (15 or 17), or the catalog's OrioleDB build
-when `db.orioledb_version` is set; invalid configuration, an unsupported PostgreSQL major, or an
-OrioleDB version the catalog does not pin warns with the cause and uses catalog defaults. This inventory describes the
-CLI catalog, not running containers, downloaded images, or service health. The Docker and native
-stack runtimes use the same catalog versions, though a running stack launched by another CLI
-version or using mirrored images may differ. Legacy version pins and slim-image overrides do not
-apply in stack mode. Linked versions remain best-effort; catalog mismatches cannot be changed with
-`supabase link`.
+canonical `ghcr.io/supabase/cli/...` names, including Mailpit. The versions come from
+`supabase/supabase.lock` when the project has a fresh one, else from the installed CLI's artifact
+catalog. PostgreSQL uses the selected major version (15 or 17), or the catalog's OrioleDB build when
+`db.orioledb_version` is set; invalid configuration, an unsupported PostgreSQL major, an OrioleDB
+version the catalog does not pin, or a stale or unreadable lock warns with the cause and uses
+catalog defaults. This inventory describes the lock or catalog, not running containers, downloaded
+images, or service health. The Docker and native stack runtimes use the same versions, though a
+running stack launched by another CLI version or using mirrored images may differ. Legacy version
+pins and slim-image overrides do not apply in stack mode. Linked versions remain best-effort;
+catalog mismatches cannot be changed with `supabase link`.
 
 `SUPABASE_EXPERIMENTAL_STACK=1 supabase init` writes `[experimental] stack = true` into the new
 project config and omits the Docker-era default ports so the stack is not pinned to them.
@@ -286,6 +287,43 @@ and seed configuration are separate from importing legacy database data.
 The flag is local CLI configuration in `supabase/config.toml` or `supabase/config.json` and is
 excluded from hosted project configuration. Routing applies the CLI's working-directory rules,
 including `--workdir` and `SUPABASE_WORKDIR`, and prefers JSON when both files exist.
+
+## Service versions
+
+A stack runs the service versions pinned in `supabase/supabase.lock`, which `supabase start` writes
+and the project commits so a team and CI run the same builds. Request versions under
+`[local.services]`, per service or for all of them with `default`:
+
+```toml
+[local.services]
+default = { version = "bundled" } # `linked` (the default) or `bundled`
+
+[local.services.auth]
+version = "v2.197.0" # an upstream version: the highest published revision
+[local.services.realtime]
+version = "v1.30.2-r1" # exactly revision 1 of that upstream version
+```
+
+`linked` follows the linked hosted project, which stack mode does not observe yet, so it pins the
+version bundled with the CLI and records it as `unlinked`. `bundled` pins the bundled version
+explicitly. An upstream version, optionally with a `-r<N>` revision suffix, is resolved against the
+published slim-services releases and pinned by content. `[db] orioledb_version` is shorthand for
+the `database` specifier of that OrioleDB build, and a database version must match
+`db.major_version`.
+
+`supabase start` resolves only the services whose specifier changed, under a project lease that
+serializes concurrent starts (a start waits up to 60 seconds for the lease, then fails), and leaves
+the other pins where they are. Resolving a release specifier needs the network, so a first start
+with an explicit service version or `[db] orioledb_version` cannot run offline, even when the CLI
+bundles that version; a first start that keeps `linked` or `bundled` does not need it. `supabase
+start --frozen` fails instead of resolving when the lock is missing or stale; it is implied when
+`CI` is set and a lock exists. A lock that is malformed, does not match the format, or comes from a
+newer CLI always fails the start. The lock's JSON Schema is published at
+`https://supabase.com/docs/cli/supabase-lock/v1.schema.json`. A database with initialized data keeps
+its build: changing its major or release line asks to destroy the stack, while a database that never
+initialized adopts the change. See the [`start` side
+effects](../src/commands/experimental/stack/start/SIDE_EFFECTS.md#service-versions-and-the-lock) for
+details.
 
 ## Port intents
 

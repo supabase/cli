@@ -33,6 +33,12 @@ const config = {
     Flag.withDescription("Artifact preparation policy."),
     Flag.withDefault("background" as const),
   ),
+  frozen: Flag.Boolean("frozen").pipe(
+    Flag.withDescription(
+      "Fail instead of updating supabase/supabase.lock when it is missing or out of date with config.toml. Implied when CI is set and the lock exists.",
+    ),
+    Flag.withDefault(false),
+  ),
   eager: Flag.Boolean("eager").pipe(
     Flag.withDescription(
       "Activate all enabled capabilities before returning and disable automatic idle stops.",
@@ -63,7 +69,7 @@ export const stackStartCommand = Command.make("start", config).pipe(
   ]),
   withPermissions({
     operations: [],
-    noApiEffectFlags: ["exclude", "stack", "stack-id", "runtime", "preparation", "eager"],
+    noApiEffectFlags: ["exclude", "stack", "stack-id", "runtime", "preparation", "frozen", "eager"],
   }),
   Command.withHandler((flags) =>
     stackStart(flags).pipe(

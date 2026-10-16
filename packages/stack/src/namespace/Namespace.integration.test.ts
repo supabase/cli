@@ -502,6 +502,7 @@ describe("registry lock", () => {
         const result = yield* Fiber.join(waiter);
         expect(result.operation).toBe("lock");
         expect(result.message).toBe("Stack registry is locked by another operation; retry shortly");
+        expect(StackNamespace.isLockBusy(result)).toBe(true);
         expect(yield* second.read(initial.id)).toBeUndefined();
         yield* Fiber.interrupt(owner);
         yield* second.withLock(second.save(initial));

@@ -20,6 +20,11 @@ import { resolveAuthConfig } from "./stack-auth-config.ts";
 import { parseGoDuration } from "./go-duration.ts";
 import { parseFileSizeLimit } from "./storage-bucket-config.ts";
 import { stackArtifactSelection } from "./stack-artifact-selection.ts";
+import {
+  type LockRequest,
+  type LockResolutionError,
+  rejectFrozenWithoutConfig,
+} from "./stack-lock.ts";
 
 import {
   decryptAuthSecret,
@@ -108,9 +113,24 @@ interface StackStartConfig {
 
 type StackConfigEffect = Effect.Effect<
   StackStartConfig,
-  StackConfigError,
+  StackConfigError | LockResolutionError,
   FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto
 >;
+
+interface StackConfigOptions {
+  /** An already-loaded project context to reuse. */
+  readonly context?: LocalProjectContext;
+  /** Chooses the artifact pins instead of the bundled ones; without a `supabase/config.toml` the bundled pins apply, or a frozen run fails. */
+  readonly selection?: (
+    request: LockRequest,
+  ) => Effect.Effect<
+    ArtifactSelection,
+    StackConfigError | LockResolutionError,
+    FileSystem.FileSystem | Path.Path | Crypto.Crypto
+  >;
+  /** Fails with `frozen-missing` when there is no `supabase/config.toml` to lock. */
+  readonly frozen?: boolean;
+}
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -905,10 +925,9 @@ const endpoint = (port: number | undefined): { readonly port: number | "auto" } 
   port: port === undefined ? "auto" : port,
 });
 
-/** Loads and translates the effective project config for all stack commands.
- * Pass `opts.context` to reuse an already-loaded project context. */
+/** Loads and translates the effective project config for all stack commands. */
 export const loadStackConfig = Effect.fn("StackConfig.load")(
-  (projectRoot: string, opts?: { readonly context?: LocalProjectContext }): StackConfigEffect =>
+  (projectRoot: string, opts?: StackConfigOptions): StackConfigEffect =>
     Effect.gen(function* () {
       const context =
         opts?.context ??
@@ -949,9 +968,18 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       const validationError = configValidationError(validatedConfig);
       if (validationError !== undefined)
         return yield* new StackConfigError({ message: validationError });
-      const selection = yield* stackArtifactSelection(validatedConfig.db).pipe(
-        Effect.mapError((error) => new StackConfigError({ message: error.message })),
-      );
+      if (context.loaded === null)
+        yield* rejectFrozenWithoutConfig(projectRoot, opts?.frozen === true);
+      const selection = yield* context.loaded !== null && opts?.selection !== undefined
+        ? opts.selection({
+            projectRoot,
+            majorVersion: validatedConfig.db.major_version,
+            orioledbVersion: validatedConfig.db.orioledb_version,
+            services: validatedConfig.local?.services,
+          })
+        : stackArtifactSelection(validatedConfig.db).pipe(
+            Effect.mapError((error) => new StackConfigError({ message: error.message })),
+          );
 
       const externalProviders = yield* Effect.try({
         try: () =>

@@ -172,7 +172,8 @@ in `config.toml` with the variable unset), the link target is one gitignored doc
 - `pooler_url` uses the same normalization as `.temp/pooler-url`; it is omitted with
   `--skip-pooler` or when the project reports no primary pooler.
 - The document is written atomically after `supabase/.gitignore` gains `.link.json`,
-  `..link.json.*.tmp` (the staged write), and `.supabase.lock.lease`. Service versions, the Postgres version, and `linked-project.json` are not
+  `..link.json.*.tmp` (the staged write), `.supabase.lock.lease`, and `.supabase.lock.*.tmp` (the
+  staged lock write). Service versions, the Postgres version, and `linked-project.json` are not
   written, and the tenant service probes are skipped.
 - A document that does not decode fails reads with `ProjectLinkMalformedError`, which suggests
   running `supabase link` again; a read or write failure other than absence is

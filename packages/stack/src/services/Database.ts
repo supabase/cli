@@ -92,6 +92,7 @@ import {
 import {
   databaseIdentity,
   databaseIdentityMismatch,
+  databaseReadyMarkerFile,
   readDatabaseIdentity,
   recordDatabaseIdentity,
   recreateStackAdvice,
@@ -370,7 +371,7 @@ const health = Effect.fn("Database.health")(function* (
           if (context.markInitialized !== undefined) yield* context.markInitialized;
           yield* context.fs.rename(
             `${stage}/marker`,
-            `${context.instanceRoot}/.supabase-database-ready.json`,
+            `${context.instanceRoot}/${databaseReadyMarkerFile}`,
           );
         }),
       ),
@@ -754,7 +755,7 @@ export const makeDatabase = (
      * invisible to the host, so Docker data without a readiness marker is checked by its storage.
      */
     const checkReuse = Effect.fn("Database.checkReuse")(function* (requested: string) {
-      const markerPath = path.join(instanceRoot, ".supabase-database-ready.json");
+      const markerPath = path.join(instanceRoot, databaseReadyMarkerFile);
       const ready = yield* fs.exists(markerPath);
       if (ready) {
         const marker = yield* fs

@@ -54,6 +54,7 @@ import { engineUnreachable, makeHostGateway, resolveEngineTarget } from "./runti
 import * as StackNamespace from "./StackNamespace.ts";
 import { makeScopedPorts } from "./Ports.ts";
 import { applyEndpointReplan, reportedEndpointChanges } from "./composition/EndpointReplan.ts";
+import { initializedDatabaseIds } from "./internal/database-reuse.ts";
 import type { ServiceCreationInput } from "./services/Catalog.ts";
 import { sweepOrphans } from "./Sweep.ts";
 import { makeCommandAttachments } from "./host/CommandAttachments.ts";
@@ -500,6 +501,12 @@ export const runStackHost = Effect.fn("StackHost.run")(
                   replanRequest.ports,
                   registered,
                   replanRequest.requested,
+                  yield* initializedDatabaseIds(
+                    fs,
+                    path,
+                    path.join(options.stateRoot, registered.id, "data"),
+                    registered.instances,
+                  ),
                 ).pipe(Effect.mapError((cause) => hostError("startup", cause)));
           const saved = replan?.saved ?? registered;
           const control = yield* bindControl();

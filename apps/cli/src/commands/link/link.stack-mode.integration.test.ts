@@ -171,6 +171,7 @@ describe("link integration in stack mode", () => {
       expect(ignored).toContain(".link.json");
       expect(ignored).toContain("..link.json.*.tmp");
       expect(ignored).toContain(".supabase.lock.lease");
+      expect(ignored).toContain(".supabase.lock.*.tmp");
     }).pipe(Effect.provide(layer));
   });
 

@@ -13,6 +13,7 @@ import { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import { StackApi } from "./stack-api.ts";
 import { loadStackConfig } from "./stack-config.ts";
+import { lockedSelection } from "./stack-lock.ts";
 import { readDbToml } from "./db-config.toml-read.ts";
 import { catalogDatabaseServices } from "./stack-catalog-setup.ts";
 import { resolveExperimentalWithProjectEnv } from "./global-flags.ts";
@@ -226,7 +227,9 @@ export const stackEnsurePostgresOnlyStarted = Effect.fn(
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const output = yield* Output;
-  const config = yield* loadStackConfig(settings.workdir).pipe(Effect.mapError(startFailed));
+  const config = yield* loadStackConfig(settings.workdir, {
+    selection: lockedSelection({ frozen: false, output }),
+  }).pipe(Effect.mapError(startFailed));
   const toml = yield* readDbToml(fs, path, settings.workdir).pipe(Effect.mapError(startFailed));
   const experimental = yield* resolveExperimentalWithProjectEnv({ ...toml.projectEnv });
   const existing = yield* stackForProject(api, settings, path).pipe(Effect.mapError(startFailed));

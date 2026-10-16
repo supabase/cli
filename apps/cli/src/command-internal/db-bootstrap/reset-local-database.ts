@@ -47,6 +47,7 @@ import {
   stackStorageEndpointFor,
 } from "../stack-storage.ts";
 import { loadStackConfig } from "../stack-config.ts";
+import { readSelectionOrBundled } from "../stack-lock.ts";
 import { catalogDatabaseServices, StackCatalogSetup } from "../stack-catalog-setup.ts";
 import {
   initializeStackDatabase,
@@ -130,9 +131,10 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     const catalog = yield* Effect.serviceOption(StackCatalogSetup);
     if (Option.isNone(catalog)) return yield* resetFailed("stack catalog setup is unavailable");
     const context = yield* loadLocalProjectContext(workdir, (message) => resetFailed(message));
-    const config = yield* loadStackConfig(workdir, { context }).pipe(
-      Effect.mapError((cause) => resetFailed(cause.message)),
-    );
+    const config = yield* loadStackConfig(workdir, {
+      context,
+      selection: readSelectionOrBundled,
+    }).pipe(Effect.mapError((cause) => resetFailed(cause.message, cause)));
     const toml = yield* readDbToml(fs, path, workdir);
     const databaseStatus = yield* opened.value.database.status.pipe(
       Effect.mapError((cause) => resetFailed(`failed to inspect stack: ${cause.message}`)),

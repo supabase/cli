@@ -475,6 +475,27 @@ describe("services", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  it.effect("reports an invalid supabase.lock before falling back to the bundled versions", () =>
+    Effect.gen(function* () {
+      const workdir = yield* makeProjectWithDbMajorVersion(17);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(path.join(workdir, "supabase", "supabase.lock"), "{ not json");
+      const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+
+      yield* services({}).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+
+      expect(yield* decodeServiceRows(out.stdoutText)).toContainEqual(
+        expect.objectContaining({
+          name: "ghcr.io/supabase/cli/postgres",
+          local: catalogUpstreamVersion("postgres"),
+        }),
+      );
+      expect(out.stderrText).toContain("supabase/supabase.lock");
+      expect(out.stderrText).toContain("using default stack catalog versions");
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.effect("ignores config.json and reads legacy config.toml for local image selection", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithConfigFiles({

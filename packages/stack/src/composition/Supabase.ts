@@ -296,6 +296,7 @@ const compareCreation = (
   requested: ServiceCreationInput,
   sharedPort: number | undefined,
   memberKinds: ReadonlySet<ServiceCreation["service"]>,
+  initializedData: boolean,
 ): CreationChange => {
   const overridable = overridableInputs[requested.service] ?? [];
   // Without its supplying member, the composition keeps the project's own value of an input.
@@ -316,9 +317,10 @@ const compareCreation = (
     ),
   ];
   const isEndpointPath = (path: string) => path === "endpoints" || path.startsWith("endpoints.");
-  // The planner flags a line or major change; Database.prepare enforces the exact build on
-  // initialized data, so any other pin change is planned as a restart.
+  // The planner flags a line or major change on initialized data; Database.prepare enforces the
+  // exact build there, so any other pin change is planned as a restart.
   const databaseLineChanged =
+    initializedData &&
     saved.service === "database" &&
     postgresLine(saved.pin.upstreamVersion) !== postgresLine(requested.pin.upstreamVersion);
   const incompatible = paths.filter(
@@ -350,6 +352,16 @@ export interface PlanOptions {
   readonly requestKind?: "partial" | "complete";
 }
 
+/** Planning options plus what the caller read from the instances' data. */
+export interface PlanInputs extends PlanOptions {
+  /**
+   * The database instances whose data is initialized. A database line or major change is
+   * incompatible only for these, since uninitialized data adopts any build. Omitted, every
+   * database counts as initialized.
+   */
+  readonly initializedDatabases?: ReadonlySet<string>;
+}
+
 /**
  * The fixed shared API port the request agrees on. A `partial` request falls back to a saved
  * sibling's port for a member kind it leaves out; a `complete` request never does, so a request
@@ -378,7 +390,7 @@ const sharedApiPortFor = (
 export const planSupabaseComposition = (
   saved: Pick<SavedStack, "instances" | "composition">,
   requested: ReadonlyArray<ServiceCreationInput>,
-  options: PlanOptions = {},
+  options: PlanInputs = {},
 ): ReadonlyArray<PlannedInstance> => {
   const members = new Set(saved.composition.members.map(({ id }) => id));
   const memberKinds = new Set(
@@ -394,7 +406,13 @@ export const planSupabaseComposition = (
             id,
             service: creation.service,
             member: members.has(id),
-            ...compareCreation(creation, request, sharedPort, memberKinds),
+            ...compareCreation(
+              creation,
+              request,
+              sharedPort,
+              memberKinds,
+              options.initializedDatabases?.has(id) ?? true,
+            ),
           },
         ];
   });
@@ -465,8 +483,8 @@ const endpointRewrite = (
 /**
  * Plans the endpoint port changes a stopped stack's start can apply instead of failing.
  * Returns `undefined` when a member is incompatible for a reason besides a pure endpoint port
- * reassignment (a database line change, or an added or removed endpoint), so the
- * caller leaves that case to the existing incompatible-change rejection.
+ * reassignment (an added or removed endpoint), so the caller leaves that case to the existing
+ * incompatible-change rejection.
  *
  * A requested kind with no saved member and no compatible stopped instance also has its sole
  * endpoint-only incompatible instance rewritten, so the start reuses it instead of creating a
@@ -475,10 +493,11 @@ const endpointRewrite = (
 export const planEndpointReplan = (
   saved: Pick<SavedStack, "instances" | "composition">,
   requested: ReadonlyArray<ServiceCreationInput>,
+  initializedDatabases?: ReadonlySet<string>,
 ): EndpointReplan | undefined => {
   // The start re-plan always replaces the whole composition, so an excluded sibling's stale
   // saved port must not anchor the shared port this request would otherwise move to automatic.
-  const planOptions: PlanOptions = { requestKind: "complete" };
+  const planOptions: PlanInputs = { requestKind: "complete", initializedDatabases };
   const planned = planSupabaseComposition(saved, requested, planOptions);
   const sharedPort = sharedApiPortFor(saved, requested, planOptions);
   const savedMemberIds = new Set(saved.composition.members.map(({ id }) => id));

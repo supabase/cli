@@ -32,10 +32,11 @@ credentials when present. Starting with Studio creates `supabase/snippets/`, whe
 snippets.
 Email template `content_path` values and third-party identity providers remain unsupported: they
 require template serving and shared external JWKS verification respectively.
-`db.orioledb_version` (or `SUPABASE_DB_ORIOLEDB_VERSION`) runs the catalog's OrioleDB build of that
-version instead of the stock major. Loading fails unless the catalog pins that OrioleDB version and
-`db.major_version` matches its major; the error lists the pinned OrioleDB versions. The
-`experimental.s3_*` OrioleDB settings are not forwarded, so loading fails when they are set.
+`db.orioledb_version` (or `SUPABASE_DB_ORIOLEDB_VERSION`) is a `local.services.database.version`
+request for that OrioleDB build instead of the stock major, resolved like any other version (see
+"Service versions and the lock"); the two keys must agree when both are set, and `db.major_version`
+must match the build's major. The `experimental.s3_*` OrioleDB settings are not forwarded, so
+loading fails when they are set.
 
 Secrets needed by enabled services are passed to the runtime. State and service data live under
 `$SUPABASE_HOME/stacks/<stack-id>/` (`~/.supabase/stacks/<stack-id>/` by default); native artifacts
@@ -124,6 +125,65 @@ are relative to `supabase/` and must remain within the project; Docker mounts th
 The inspector port is retained as an endpoint intent and does not enable debugging by itself.
 Running start calls do not refresh Functions from changed project files; stop the stack and start
 it again to apply those changes.
+
+## Service versions and the lock
+
+When the project has a `supabase/config.toml`, the versions a new or stopped stack runs come from
+`supabase/supabase.lock`, a JSON file the CLI writes and the project commits. For each of the
+twelve services it records the specifier requested under `[local.services]` (`<service>.version`,
+else `default.version`, else `linked`), how it resolved, and the exact pin: the release revision,
+each target's archive and manifest digests, and the image digest. Its
+[JSON Schema](https://supabase.com/docs/cli/supabase-lock/v1.schema.json) is published with the
+docs. A project without `supabase/config.toml` runs the versions bundled with the CLI and has no
+lock, unless `--frozen` is set, which fails the start.
+
+A specifier is `linked`, `bundled`, `<upstream>` (the highest published revision) or
+`<upstream>-r<N>` (exactly that revision). `linked` and `bundled` pin the version bundled with the
+CLI; `linked` records `unlinked` because no hosted version is observed in stack mode yet. A release
+specifier probes the slim-services GitHub releases and the registry, verifies the published
+digests, and records them. `SUPABASE_INTERNAL_SLIM_RELEASES_URL` and
+`SUPABASE_INTERNAL_SLIM_REGISTRY_URL` redirect those hosts.
+
+A start reads the lock under the project lease `supabase/.supabase.lock.lease`, an exclusive lock
+held while the lock is read, resolved and written. A concurrent
+start waits up to 60 seconds for the lease and then fails with a `lock` error that names the lock
+file; the wait is recorded as `lock.lease_wait_ms` on the `StackLock.lease` span. A lock that
+answers the current request is used as-is, with no network or login. A service whose specifier
+changed since the lock was written is resolved again, and the lock is rewritten with a `Resolved
+service versions` report. A changed `db.major_version` re-resolves the database. Services that are
+unchanged keep their pins, so starting never moves a pinned version on its own. The CLI adds
+`.supabase.lock.lease` and the lock's staged writes (`.supabase.lock.*.tmp`) to
+`supabase/.gitignore` whenever it writes the lock.
+
+Resolving a release specifier needs the network: a first start with an explicit upstream version
+(`<upstream>` or `<upstream>-r<N>`, even one the CLI bundles) or with `[db] orioledb_version` (even
+a bundled build) fetches the release manifests and fails when the host is unreachable, because a
+bare upstream version never takes a shortcut through the bundled catalog. A first start whose
+specifiers are all `linked` or `bundled` (the default) needs no network. A failed resolution fails
+the start with reason `lock` and writes nothing; the cause is unpublished (`invalid_config`),
+transient (`network`) or an integrity mismatch (`asset_checksum`). A saved database whose pin comes
+from `[local.services]` reports its changes as `[local.services.database] version`.
+
+`supabase db reset`, the database shadow of `supabase db diff`, `supabase functions serve` and the
+local services listing read the same lock without the lease or any resolution, and fall back to the
+versions bundled with the CLI when the project has no lock; a stale lock fails all but the
+services listing, which then lists the bundled versions.
+
+`--frozen` makes the start fail instead of resolving: a missing lock (or a project with no
+`supabase/config.toml`) fails with `supabase/supabase.lock not found`, and a stale one with `is stale for: <service> (<reason>)`, both
+advising to run `supabase start` locally and commit the lock. When the `CI` environment variable is
+set (not empty, `false` or `0`) and a lock exists, the start is frozen without the flag; a CI start
+with a lock but no `supabase/config.toml` fails with `supabase/config.toml not found`, since the lock
+cannot be checked, instead of using the bundled versions. A CI start
+with no lock resolves and writes it, then warns to commit it. A lock that is not valid JSON, does
+not match the format or is of a newer format version always fails, frozen or not; the first of
+these advises deleting the file and starting again.
+
+Initialized database data stays bound to its build. A stopped stack whose database holds no
+initialized data (no readiness marker and no PostgreSQL data directory) adopts a changed
+PostgreSQL major or release line; one with initialized data fails with `supabase stack destroy`
+advice (see below). `supabase stack status` reads the lock without the lease or any resolution; a
+missing or stale lock makes its configuration drift check unavailable.
 
 ## Service selection
 

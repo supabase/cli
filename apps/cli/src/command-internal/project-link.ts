@@ -12,10 +12,11 @@ import {
 /** Document name under `<workdir>/supabase`, local to one checkout. */
 const PROJECT_LINK_FILENAME = ".link.json";
 
-/** Lines `supabase/.gitignore` needs so the link, its staged writes, and the stack lease stay out of version control. */
+/** Lines `supabase/.gitignore` needs so the link, the lock, their staged writes, and the stack lease stay out of version control. */
 const GITIGNORE_LINES = [
   PROJECT_LINK_FILENAME,
   `.${PROJECT_LINK_FILENAME}.*.tmp`,
+  ".supabase.lock.*.tmp",
   ".supabase.lock.lease",
 ] as const;
 
@@ -122,7 +123,7 @@ export const readProjectLink = Effect.fn("ProjectLink.read")(function* (workdir:
  * symlinked `.gitignore` is user-managed and stays untouched, so a checkout cannot aim the write
  * at a file outside the project.
  */
-const ensureGitignore = Effect.fn("ProjectLink.ensureGitignore")(function* (
+export const ensureGitignore = Effect.fn("ProjectLink.ensureGitignore")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,

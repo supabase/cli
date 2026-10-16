@@ -1,7 +1,14 @@
-import { Effect, Exit, Schedule, Scope } from "effect";
+import { Effect, Exit, Schedule, Schema, Scope } from "effect";
 import type { Duration } from "effect";
 import { namespaceError, type NamespaceError } from "./Capabilities.ts";
 import { acquireLock, isBusy, takeLock } from "./drivers/Sqlite.ts";
+
+class LockBusy extends Schema.TaggedError<LockBusy>()("Namespace.LockBusy", {
+  message: Schema.String,
+}) {}
+
+/** Whether `error` is a {@link holdLock} failure because another holder kept the lock for the whole budget. */
+export const isLockBusy = (error: NamespaceError): boolean => Schema.is(LockBusy)(error.cause);
 
 /**
  * Takes the exclusive lock at `file` for the enclosing scope, waiting up to `budget` for another
@@ -32,7 +39,10 @@ export const holdLock = (
       }),
       Effect.catchIf(isBusy, () =>
         Effect.fail(
-          namespaceError("lock", `${subject} is locked by another operation; retry shortly`),
+          namespaceError(
+            "lock",
+            new LockBusy({ message: `${subject} is locked by another operation; retry shortly` }),
+          ),
         ),
       ),
     );

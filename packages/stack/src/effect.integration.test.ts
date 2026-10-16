@@ -1302,6 +1302,24 @@ it.live("plans requested creations against the saved composition and honours eag
         expect(promisePlan).toEqual([
           { id: restId, service: "rest", member: true, change: "unchanged" },
         ]);
+        if (databaseId === undefined) return yield* Effect.die("Composition is missing a database");
+        expect(
+          yield* stack.composition.plan([
+            { ...database, pin: database15 },
+            { ...rest, endpoints: { http: { port: FIXED_API_PORT + 1 } } },
+          ]),
+        ).toEqual([
+          { id: databaseId, service: "database", member: true, change: "changed", paths: ["pin"] },
+          {
+            id: restId,
+            service: "rest",
+            member: true,
+            change: "incompatible",
+            paths: ["endpoints.http.port"],
+            endpointsOnly: true,
+          },
+        ]);
+        yield* markDatabaseInitialized(`${root}/state`, stack.id, databaseId);
         expect(
           yield* stack.composition.plan([
             { ...database, pin: database15 },
@@ -1471,6 +1489,18 @@ const replanDatabase = (tag: string) =>
     },
     endpoints: { sql: { port: "auto" } },
   }) as const;
+
+/** Writes the readiness marker a completed database bootstrap leaves, which marks its data initialized. */
+const markDatabaseInitialized = (stateRoot: string, stackId: string, databaseId: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const instanceRoot = `${stateRoot}/${stackId}/data/${databaseId}`;
+    yield* fs.makeDirectory(instanceRoot, { recursive: true });
+    yield* fs.writeFileString(
+      `${instanceRoot}/.supabase-database-ready.json`,
+      '{"runtime":"native","profile":"supabase"}',
+    );
+  });
 
 const restPort = (status: { readonly endpoints: ReadonlyArray<{ name: string; port: number }> }) =>
   status.endpoints.find(({ name }) => name === "http")?.port;
@@ -1770,7 +1800,7 @@ it.live(
 );
 
 it.live(
-  "leaves a changed Postgres major version incompatible without re-planning any endpoint",
+  "leaves a changed Postgres major version incompatible on initialized data without re-planning any endpoint",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1792,6 +1822,7 @@ it.live(
           const restId = members.find(({ service }) => service === "rest")?.id;
           if (databaseId === undefined || restId === undefined)
             return yield* Effect.die("Composition is missing a member");
+          yield* markDatabaseInitialized(stateRoot, stack.id, databaseId);
 
           const olderVersion = { ...database, pin: database15 };
           const requestedAuto = { ...rest, endpoints: { http: { port: "auto" } } } as const;
@@ -1817,6 +1848,56 @@ it.live(
               paths: ["endpoints.http.port"],
               endpointsOnly: true,
             },
+          ]);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "plans a changed Postgres major version as a restart while the database data is uninitialized",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-uninit-version-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-uninit-version");
+          const rest = {
+            service: "rest",
+            pin: selection.rest,
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, rest], { eager: true });
+          const databaseId = members.find(({ service }) => service === "database")?.id;
+          const restId = members.find(({ service }) => service === "rest")?.id;
+          if (databaseId === undefined || restId === undefined)
+            return yield* Effect.die("Composition is missing a member");
+
+          const olderVersion = { ...database, pin: database15 };
+          const requestedAuto = { ...rest, endpoints: { http: { port: "auto" } } } as const;
+          const reopened = yield* restartWithReplan(stack, stateRoot, cacheRoot, [
+            olderVersion,
+            requestedAuto,
+          ]);
+          const changes = yield* reopened.startupEndpointChanges;
+          expect(
+            changes.map(({ service, endpoint, from }) => ({ service, endpoint, from })),
+          ).toEqual([{ service: "rest", endpoint: "http", from: FIXED_API_PORT }]);
+          expect(yield* reopened.composition.plan([olderVersion, requestedAuto])).toEqual([
+            {
+              id: databaseId,
+              service: "database",
+              member: true,
+              change: "changed",
+              paths: ["pin"],
+            },
+            { id: restId, service: "rest", member: true, change: "unchanged" },
           ]);
         }),
         destroyTestStack(stack),

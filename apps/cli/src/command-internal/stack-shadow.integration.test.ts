@@ -13,6 +13,7 @@ import { mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
 import { DbConnection } from "./db-connection.service.ts";
 import { dbConnectionLayer } from "./db-connection.sql-pg.layer.ts";
+import { loadLocalProjectContext } from "./local-project-context.ts";
 import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { StackCatalogSetup, stackCatalogSetupLayer } from "./stack-catalog-setup.ts";
 import { parseConnectionString } from "./db-config.parse.ts";
@@ -23,7 +24,13 @@ import {
 } from "./stack-shadow.ts";
 import type { ShadowSetupInput } from "./db-bootstrap/shadow-database.ts";
 import type { ArtifactPin } from "@supabase/stack/internal/artifacts";
-import { database15, orioledb, orioledbConfigVersion } from "../../tests/helpers/pins.ts";
+import {
+  database15,
+  orioledb,
+  orioledbConfigVersion,
+  selection,
+} from "../../tests/helpers/pins.ts";
+import { seedLock, unbundled } from "../../tests/helpers/stack-lock.ts";
 
 const defaultConfig = Schema.decodeSync(CliConfigSchema)({});
 
@@ -530,6 +537,12 @@ describe("stack shadow databases", () => {
       pin: orioledb,
     },
     { name: "stock Postgres 15 build", db: { major_version: 15, settings: {} }, pin: database15 },
+    {
+      name: "database build the project lock pins",
+      db: { major_version: 17, settings: {} },
+      pin: unbundled(selection.database),
+      locked: true,
+    },
   ]) {
     it.live(`creates the shadow database on the selected ${target.name}`, () =>
       Effect.gen(function* () {
@@ -537,6 +550,24 @@ describe("stack shadow databases", () => {
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-orioledb-pinned-" });
         const pins: ArtifactPin[] = [];
+        if (target.locked === true) {
+          yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(root, "supabase", "config.toml"),
+            'project_id = "proj"\n',
+          );
+          yield* seedLock(root, (services) => ({
+            ...services,
+            database: { ...services.database, resolved: target.pin },
+          })).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                runtimeInfoLayer,
+                mockCommandSettings({ workdir: root, supabaseHome: root }),
+              ),
+            ),
+          );
+        }
         // Stops at the database creation, so the test asserts the wiring without running OrioleDB.
         const capturingApi = Layer.effect(
           StackApi,
@@ -584,6 +615,120 @@ describe("stack shadow databases", () => {
         );
 
         expect(pins).toEqual([target.pin]);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+  }
+
+  for (const remote of [
+    {
+      title: "a linked diff whose remote block sets major 15 runs the remote major's bundled pin",
+      major: 15,
+      remoteDb: "major_version = 15",
+      db: { major_version: 15, settings: {} },
+      pin: database15,
+    },
+    {
+      title: "a linked diff whose remote block sets major 17 keeps the lock's pin",
+      major: 17,
+      remoteDb: "major_version = 17",
+      db: { major_version: 17, settings: {} },
+      pin: unbundled(selection.database),
+    },
+    {
+      title:
+        "a linked diff whose remote block sets an OrioleDB version at the same major runs the bundled OrioleDB pin",
+      major: 17,
+      remoteDb: `orioledb_version = "${orioledbConfigVersion}"`,
+      db: { major_version: 17, orioledb_version: orioledbConfigVersion, settings: {} },
+      pin: orioledb,
+    },
+  ]) {
+    it.live(remote.title, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-remote-major-" });
+        const ref = "abcdefghijklmnopqrst";
+        yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, "supabase", "config.toml"),
+          [
+            `project_id = "${ref}"`,
+            "[db]",
+            "major_version = 17",
+            `[remotes.${ref.slice(0, 4)}]`,
+            `project_id = "${ref}"`,
+            `[remotes.${ref.slice(0, 4)}.db]`,
+            remote.remoteDb,
+            "",
+          ].join("\n"),
+        );
+        const settings = Layer.mergeAll(
+          runtimeInfoLayer,
+          mockCommandSettings({ workdir: root, supabaseHome: root }),
+        );
+        const locked = unbundled(selection.database);
+        yield* seedLock(root, (services) => ({
+          ...services,
+          database: { ...services.database, resolved: locked },
+        })).pipe(Effect.provide(settings));
+        const context = yield* loadLocalProjectContext(root, (message) => message, ref).pipe(
+          Effect.provide(settings),
+        );
+        expect(context.loaded?.appliedRemote).toBeDefined();
+        expect(context.config.db.major_version).toBe(remote.major);
+        expect(context.config.db.orioledb_version).toBe(remote.db.orioledb_version);
+
+        const pins: ArtifactPin[] = [];
+        const capturingApi = Layer.effect(
+          StackApi,
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            return StackApi.of({
+              ...api,
+              create: (options) =>
+                api.create(options).pipe(
+                  Effect.map((stack) => ({
+                    ...stack,
+                    services: {
+                      ...stack.services,
+                      create: (creation) => {
+                        if (creation.service === "database") pins.push(creation.pin);
+                        return Effect.fail(
+                          new StackError({ operation: "create", message: "captured" }),
+                        );
+                      },
+                    },
+                  })),
+                ),
+            });
+          }),
+        ).pipe(Layer.provide(stackApiLayer), Layer.provide(BunServices.layer));
+        const base = input(fs, path, root);
+
+        yield* stackWithShadowDatabase(
+          {
+            ...base,
+            db: remote.db,
+            context,
+            setup: { ...base.setup, majorVersion: remote.major },
+          },
+          () => Effect.void,
+          { runtime: "native" },
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              capturingApi,
+              stackCatalogSetupLayer,
+              dbConnectionLayer,
+              settings,
+              mockOutput().layer,
+            ),
+          ),
+          Effect.exit,
+        );
+
+        expect(pins).toEqual([remote.pin]);
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     );
   }

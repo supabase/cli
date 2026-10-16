@@ -7,6 +7,8 @@ import {
   envOverrideOrioleDBVersion,
 } from "../../command-internal/local-config-values.ts";
 import { stackArtifactSelection } from "../../command-internal/stack-artifact-selection.ts";
+import { StackConfigError } from "../../command-internal/stack-config.ts";
+import { readSelectionOrBundled } from "../../command-internal/stack-lock.ts";
 import type { ServiceVersionRow } from "../../shared/services/services.shared.ts";
 import type { RemoteServiceName } from "../../shared/services/services.shared.ts";
 
@@ -34,13 +36,29 @@ export const stackServiceVersions = Effect.fn("services.stackServiceVersions")(f
         );
         if (value !== 15 && value !== 17)
           throw new Error(`unsupported PostgreSQL major version: ${value}`);
-        return stackArtifactSelection({
+        const db = {
           major_version: value,
           orioledb_version: envOverrideOrioleDBVersion(
             context.success.config.db.orioledb_version,
             context.success.projectEnvValues,
           ),
-        });
+        };
+        // A listing never resolves: it shows the locked pins, else the bundled ones.
+        return readSelectionOrBundled({
+          projectRoot: workdir,
+          majorVersion: db.major_version,
+          orioledbVersion: db.orioledb_version,
+          services: context.success.config.local?.services,
+        }).pipe(
+          Effect.catchTag("LockResolutionError", (error) =>
+            Effect.sync(() => {
+              configError = error.message;
+            }).pipe(
+              Effect.andThen(stackArtifactSelection(db)),
+              Effect.mapError((cause) => new StackConfigError({ message: cause.message })),
+            ),
+          ),
+        );
       },
       catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
     }).pipe(

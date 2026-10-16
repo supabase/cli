@@ -201,6 +201,11 @@ data stay. Initialized data accepts only a revision of its own build, so another
 major fails with advice to run `supabase stack destroy`. Auth, Storage and Realtime must not be
 selected at an older upstream than one that already migrated the database (recorded in
 `schema-writers.json` in the instance data directory); such a start fails with the same advice.
+The database version comes from `supabase/supabase.lock`, resolved and written under the
+project lease exactly as `supabase start` does (see its `SIDE_EFFECTS.md`, "Service versions and
+the lock"), except that there is no `--frozen` flag: a missing or stale lock is resolved, unless
+`CI` is set and a lock exists, in which case a stale lock fails. The lock covers every service,
+not only the database.
 The resident owner process manages the database beyond the CLI invocation. Stack mode rejects
 `--from-backup` with exit code 1.
 

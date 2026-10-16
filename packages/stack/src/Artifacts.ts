@@ -41,7 +41,9 @@ export class ArtifactError extends Data.TaggedError("ArtifactError")<{
 const Sha256 = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
 
 /** Content digests of one native target's published archive and manifest. */
-export const NativePin = Schema.Struct({ archive: Sha256, manifest: Sha256 });
+export const NativePin = Schema.Struct({ archive: Sha256, manifest: Sha256 }).annotate({
+  identifier: "NativePin",
+});
 export interface NativePin extends Schema.Schema.Type<typeof NativePin> {}
 
 /**
@@ -67,7 +69,7 @@ export const ArtifactPin = Schema.Struct({
     "linux-amd64": NativePin,
     "linux-arm64": NativePin,
   }),
-});
+}).annotate({ identifier: "ArtifactPin" });
 export interface ArtifactPin extends Schema.Schema.Type<typeof ArtifactPin> {}
 
 /** The pin each stack service runs, chosen once per command and written into every creation. */

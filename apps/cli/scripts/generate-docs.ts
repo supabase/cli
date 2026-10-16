@@ -2,6 +2,8 @@ import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "@supabase/config";
+import { Lock, LOCK_SCHEMA_URL } from "@supabase/stack/effect";
+import { Schema } from "effect";
 import { rootCommand } from "../src/cli/root.ts";
 import { collectCommands, getHelpDoc } from "../src/shared/cli/command-docs.ts";
 import { formatHelpDocAsMarkdown } from "../src/shared/cli/markdown-formatter.ts";
@@ -90,6 +92,27 @@ function copyConfigSchemaAsset(schemaUrl: string, distFileName: string) {
   console.log(`Generated: ${path.relative(path.resolve(import.meta.dir, "../../.."), destPath)}`);
 }
 
+/** Writes the `supabase.lock` v1 JSON Schema, generated from the stack's lock schema, to its docs-site public path. */
+function writeLockSchemaAsset() {
+  const { schema, definitions } = Schema.toJsonSchemaDocument(Lock);
+  const document = {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    $id: LOCK_SCHEMA_URL,
+    title: "supabase.lock",
+    description: "The service versions that supabase start pins in supabase/supabase.lock.",
+    ...schema,
+    $defs: definitions,
+  };
+  const schemaPathname = new URL(LOCK_SCHEMA_URL).pathname.replace(/^\/docs/, "");
+  const destPath = path.join(defaultDocsPublicDir, schemaPathname);
+
+  mkdirSync(path.dirname(destPath), { recursive: true });
+  writeFileSync(destPath, `${JSON.stringify(document, null, 2)}\n`);
+
+  console.log(`Generated: ${path.relative(path.resolve(import.meta.dir, "../../.."), destPath)}`);
+}
+
 generateCommandDocs();
+writeLockSchemaAsset();
 copyConfigSchemaAsset(CLI_CONFIG_SCHEMA_URL, "schema.json");
 copyConfigSchemaAsset(PROJECT_CONFIG_SCHEMA_URL, "project-schema.json");

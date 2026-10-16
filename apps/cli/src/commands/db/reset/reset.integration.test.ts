@@ -105,6 +105,9 @@ import {
 import { dbReset } from "./reset.handler.ts";
 import type { DbResetFlags } from "./reset.command.ts";
 import { database15, selection } from "../../../../tests/helpers/pins.ts";
+import { seedLock, unbundled } from "../../../../tests/helpers/stack-lock.ts";
+import { classifyCliErrorActionability } from "../../../shared/telemetry/error-actionability.ts";
+import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
 import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 const LIST_MIGRATIONS =
@@ -1296,6 +1299,83 @@ describe("db reset", () => {
         expect(out.stderrText).not.toContain("skipped seeding storage buckets");
       });
     });
+
+    it.effect("runs the catalog one-shots of a postgres-only stack on the lock's pins", () => {
+      const toml = 'project_id = "test"\n';
+      const lockedAuth = unbundled(selection.auth);
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(tmp.current, "supabase", "config.toml"), toml);
+        yield* seedLock(tmp.current, (services) => ({
+          ...services,
+          auth: { ...services.auth, resolved: lockedAuth },
+        })).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              runtimeInfoLayer,
+              mockCommandSettings({ workdir: tmp.current, supabaseHome: tmp.current }),
+            ),
+          ),
+        );
+        const { layer, catalogApplied } = setup(tmp.current, {
+          toml,
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          stackBackend: true,
+          stackPostgresOnly: true,
+        });
+
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+
+        expect(catalogApplied[0]?.target.selection.auth).toEqual(lockedAuth);
+      }).pipe(Effect.provide(BunServices.layer));
+    });
+
+    it.effect(
+      "tells a stale lock to run supabase start and classifies it as user-actionable",
+      () => {
+        const toml = 'project_id = "test"\n';
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+          yield* fs.writeFileString(path.join(tmp.current, "supabase", "config.toml"), toml);
+          yield* seedLock(tmp.current, (services) => ({
+            ...services,
+            rest: { ...services.rest, specifier: "v99.0.0" },
+          })).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                runtimeInfoLayer,
+                mockCommandSettings({ workdir: tmp.current, supabaseHome: tmp.current }),
+              ),
+            ),
+          );
+          const { layer } = setup(tmp.current, {
+            toml,
+            args: ["db", "reset", "--local"],
+            isLocal: true,
+            stackBackend: true,
+          });
+
+          const error = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(error).toMatchObject({
+            message: expect.stringContaining(
+              "rest (specifier linked ≠ locked v99.0.0); run supabase start to refresh it",
+            ),
+          });
+          expect(error.message).not.toContain("commit");
+          expect(classifyCliErrorActionability(error)).toMatchObject({
+            error_kind: "user_actionable",
+            suggested_command: "supabase start",
+            error_fingerprint: "tag:ResetLocalDbFailedError:conflict",
+          });
+        }).pipe(Effect.provide(BunServices.layer));
+      },
+    );
 
     it.effect("preserves the existing stack composition while rebuilding the database", () => {
       const { layer, catalogApplied } = setup(tmp.current, {

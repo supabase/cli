@@ -63,6 +63,9 @@ export const databaseIdentityMismatch = (
   });
 };
 
+/** Written once a database's bootstrap completed; its presence marks initialized data. */
+export const databaseReadyMarkerFile = ".supabase-database-ready.json";
+
 const identityFile = ".supabase-database-identity.json";
 const IdentityJson = Schema.fromJsonString(DatabaseIdentity);
 
@@ -99,3 +102,37 @@ export const recordDatabaseIdentity = Effect.fn("Database.recordIdentity")(funct
   yield* fs.writeFileString(path.join(stage, "marker"), encoded, { mode: 0o600 });
   yield* fs.rename(path.join(stage, "marker"), path.join(instanceRoot, identityFile));
 }, Effect.scoped);
+
+/**
+ * Whether `instanceRoot` holds initialized database data: a readiness marker, or a PostgreSQL data
+ * directory an interrupted first start left behind. A Docker volume is invisible to the host, so
+ * only its marker counts here; the launch guard checks its storage.
+ */
+const databaseDataInitialized = Effect.fn("Database.dataInitialized")(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  instanceRoot: string,
+) {
+  const initialized =
+    (yield* fs.exists(path.join(instanceRoot, databaseReadyMarkerFile))) ||
+    (yield* fs.exists(path.join(instanceRoot, "data", "PG_VERSION")));
+  yield* Effect.annotateCurrentSpan({ "database.data.initialized": initialized });
+  return initialized;
+});
+
+/** The ids of the saved database instances under `dataRoot` whose data is initialized. */
+export const initializedDatabaseIds = Effect.fn("Database.initializedIds")(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  dataRoot: string,
+  instances: ReadonlyArray<{
+    readonly id: string;
+    readonly creation: { readonly service: string };
+  }>,
+) {
+  const databases = instances.filter(({ creation }) => creation.service === "database");
+  const initialized = yield* Effect.filter(databases, ({ id }) =>
+    databaseDataInitialized(fs, path, path.join(dataRoot, id)),
+  );
+  return new Set(initialized.map(({ id }) => id));
+});

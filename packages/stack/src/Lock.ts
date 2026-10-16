@@ -17,7 +17,9 @@ const lockPath = (path: Path.Path, projectRoot: string): string =>
   path.join(projectRoot, "supabase", "supabase.lock");
 
 /** What the hosted project reported for a service, kept even when a specifier overrides it. */
-const LinkedVersion = Schema.Struct({ raw: Schema.String, version: Schema.String });
+const LinkedVersion = Schema.Struct({ raw: Schema.String, version: Schema.String }).annotate({
+  identifier: "LinkedVersion",
+});
 
 /**
  * How the specifier became `resolved`: as requested, or as the bundled pin because a `linked`
@@ -53,13 +55,14 @@ const serviceFields = (kind: ServiceKind) => ({
   resolved: resolvedPin(kind),
 });
 
-const serviceLock = (kind: ServiceKind) => Schema.Struct(serviceFields(kind));
+const serviceLock = (kind: ServiceKind) =>
+  Schema.Struct(serviceFields(kind)).annotate({ identifier: "ServiceLock" });
 
 const DatabaseLock = Schema.Struct({
   ...serviceFields("database"),
   majorVersion: Schema.Int,
   line: Schema.Literals(["stock", "orioledb"]),
-});
+}).annotate({ identifier: "DatabaseLock" });
 
 /** The remote the `linked` observations belong to: a project plus one of its branches. */
 const LinkedRemote = Schema.Struct({

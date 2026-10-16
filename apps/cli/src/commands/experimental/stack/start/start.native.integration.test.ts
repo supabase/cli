@@ -41,6 +41,7 @@ const flags = (exclude: ReadonlyArray<string>) => ({
   stackId: Option.none<string>(),
   runtime: "native" as const,
   preparation: "on-demand" as const,
+  frozen: false,
   eager: false,
 });
 
