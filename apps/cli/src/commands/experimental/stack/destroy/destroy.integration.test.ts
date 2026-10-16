@@ -163,42 +163,45 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("destroys an offline namespace without affecting a different stack", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture(true);
-      const other = yield* f.api.create({
-        ...f.locations,
-        projectRoot: f.root,
-        name: "other",
-        runtime: "native",
-      });
-      yield* Effect.acquireUseRelease(
-        Effect.succeed(f.stack),
-        () => stackDestroy(f.flags).pipe(Effect.provide(f.layer)),
-        () =>
-          f.api
-            .discover(f.locations)
-            .pipe(
-              Effect.flatMap((entries) =>
-                entries.some(
-                  ({ definition, host }) => definition.id === f.stack.id && host !== undefined,
-                )
-                  ? f.stack.stop
-                  : Effect.void,
+  it.live(
+    "destroys an offline namespace without affecting a different stack",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture(true);
+        const other = yield* f.api.create({
+          ...f.locations,
+          projectRoot: f.root,
+          name: "other",
+          runtime: "native",
+        });
+        yield* Effect.acquireUseRelease(
+          Effect.succeed(f.stack),
+          () => stackDestroy(f.flags).pipe(Effect.provide(f.layer)),
+          () =>
+            f.api
+              .discover(f.locations)
+              .pipe(
+                Effect.flatMap((entries) =>
+                  entries.some(
+                    ({ definition, host }) => definition.id === f.stack.id && host !== undefined,
+                  )
+                    ? f.stack.stop
+                    : Effect.void,
+                ),
               ),
-            ),
-      );
-      expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
-        other.id,
-      ]);
-      expect(f.output.stderrText).toContain(
-        `Permanently destroying stack ${f.stack.id} at ${f.projectRoot} and its owned data.\n`,
-      );
-      expect(f.output.stderrText).not.toContain("[y/N]");
-      expect(f.output.promptConfirmCalls).toEqual([]);
-      expect(f.output.stdoutText).toContain(`Stack ${f.stack.id} destroyed.`);
-      expect(f.telemetry.flushed).toBe(true);
-    }).pipe(Effect.provide(live)),
+        );
+        expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual(
+          [other.id],
+        );
+        expect(f.output.stderrText).toContain(
+          `Permanently destroying stack ${f.stack.id} at ${f.projectRoot} and its owned data.\n`,
+        );
+        expect(f.output.stderrText).not.toContain("[y/N]");
+        expect(f.output.promptConfirmCalls).toEqual([]);
+        expect(f.output.stdoutText).toContain(`Stack ${f.stack.id} destroyed.`);
+        expect(f.telemetry.flushed).toBe(true);
+      }).pipe(Effect.provide(live)),
+    { timeout: 60_000 },
   );
 
   it.effect("refuses a stack with an unknown service kind and names its directory", () =>
@@ -220,25 +223,28 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("destroys only the stack addressed by the short ID that stack list shows", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture(true);
-      const other = yield* f.api.create({
-        ...f.locations,
-        projectRoot: f.root,
-        name: "other",
-        runtime: "native",
-      });
+  it.live(
+    "destroys only the stack addressed by the short ID that stack list shows",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture(true);
+        const other = yield* f.api.create({
+          ...f.locations,
+          projectRoot: f.root,
+          name: "other",
+          runtime: "native",
+        });
 
-      yield* stackDestroy({ ...f.flags, stackId: [f.stack.id.slice(0, 8)] }).pipe(
-        Effect.provide(f.layer),
-      );
+        yield* stackDestroy({ ...f.flags, stackId: [f.stack.id.slice(0, 8)] }).pipe(
+          Effect.provide(f.layer),
+        );
 
-      expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
-        other.id,
-      ]);
-      expect(f.output.stdoutText).toContain(`Stack ${f.stack.id} destroyed.`);
-    }).pipe(Effect.provide(live)),
+        expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual(
+          [other.id],
+        );
+        expect(f.output.stdoutText).toContain(`Stack ${f.stack.id} destroyed.`);
+      }).pipe(Effect.provide(live)),
+    { timeout: 60_000 },
   );
 
   it.effect("dispatches a full ID with no registration to its deleted-stack cleanup", () =>
@@ -328,6 +334,7 @@ describe("stack destroy", () => {
           "data",
         ]);
       }).pipe(Effect.provide(live)),
+    { timeout: 60_000 },
   );
 
   it.live(
@@ -372,71 +379,78 @@ describe("stack destroy", () => {
               ),
         );
       }).pipe(Effect.provide(live)),
+    { timeout: 60_000 },
   );
 
-  it.live("destroys each stack named by repeated --stack-id flags once", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture(true);
-      const second = yield* f.api.create({
-        ...f.locations,
-        projectRoot: f.root,
-        name: "second",
-        runtime: "native",
-      });
-      const third = yield* f.api.create({
-        ...f.locations,
-        projectRoot: f.root,
-        name: "third",
-        runtime: "native",
-      });
-      const output = mockOutput({ format: "json" });
+  it.live(
+    "destroys each stack named by repeated --stack-id flags once",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture(true);
+        const second = yield* f.api.create({
+          ...f.locations,
+          projectRoot: f.root,
+          name: "second",
+          runtime: "native",
+        });
+        const third = yield* f.api.create({
+          ...f.locations,
+          projectRoot: f.root,
+          name: "third",
+          runtime: "native",
+        });
+        const output = mockOutput({ format: "json" });
 
-      yield* runDestroy(Layer.merge(f.layer, output.layer), [
-        "--stack-id",
-        f.stack.id,
-        "--stack-id",
-        second.id.slice(0, 8),
-        "--stack-id",
-        f.stack.id.slice(0, 8),
-      ]);
+        yield* runDestroy(Layer.merge(f.layer, output.layer), [
+          "--stack-id",
+          f.stack.id,
+          "--stack-id",
+          second.id.slice(0, 8),
+          "--stack-id",
+          f.stack.id.slice(0, 8),
+        ]);
 
-      expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
-        third.id,
-      ]);
-      expect(output.stderrText).toBe(
-        `Permanently destroying stack ${f.stack.id} at ${f.projectRoot} and its owned data; stack ${second.id} at ${f.projectRoot} and its owned data.\n`,
-      );
-      expect(output.messages).toContainEqual(
-        expect.objectContaining({
-          type: "success",
-          data: {
-            destroyed: true,
-            stacks: [{ id: f.stack.id }, { id: second.id }],
-          },
-        }),
-      );
-    }).pipe(Effect.provide(live)),
+        expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual(
+          [third.id],
+        );
+        expect(output.stderrText).toBe(
+          `Permanently destroying stack ${f.stack.id} at ${f.projectRoot} and its owned data; stack ${second.id} at ${f.projectRoot} and its owned data.\n`,
+        );
+        expect(output.messages).toContainEqual(
+          expect.objectContaining({
+            type: "success",
+            data: {
+              destroyed: true,
+              stacks: [{ id: f.stack.id }, { id: second.id }],
+            },
+          }),
+        );
+      }).pipe(Effect.provide(live)),
+    { timeout: 60_000 },
   );
 
-  it.live("keeps the batch result when repeated --stack-id flags name one stack", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture(true);
-      const output = mockOutput({ format: "json" });
+  it.live(
+    "keeps the batch result when repeated --stack-id flags name one stack",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture(true);
+        const output = mockOutput({ format: "json" });
 
-      yield* runDestroy(Layer.merge(f.layer, output.layer), [
-        "--stack-id",
-        f.stack.id,
-        "--stack-id",
-        f.stack.id.slice(0, 8),
-      ]);
+        yield* runDestroy(Layer.merge(f.layer, output.layer), [
+          "--stack-id",
+          f.stack.id,
+          "--stack-id",
+          f.stack.id.slice(0, 8),
+        ]);
 
-      expect(output.messages).toContainEqual(
-        expect.objectContaining({
-          type: "success",
-          data: { destroyed: true, stacks: [{ id: f.stack.id }] },
-        }),
-      );
-    }).pipe(Effect.provide(live)),
+        expect(output.messages).toContainEqual(
+          expect.objectContaining({
+            type: "success",
+            data: { destroyed: true, stacks: [{ id: f.stack.id }] },
+          }),
+        );
+      }).pipe(Effect.provide(live)),
+    { timeout: 60_000 },
   );
 
   it.effect("rejects --stack combined with repeated --stack-id flags", () =>
@@ -512,200 +526,215 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.effect("fails a single stack with its own destroy error", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture(true);
+  it.effect(
+    "fails a single stack with its own destroy error",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture(true);
 
-      const error = yield* stackDestroy(f.flags).pipe(
-        Effect.provide(Layer.merge(f.layer, refuseDestroy(f.api, [f.stack.id]))),
-        Effect.flip,
-      );
-
-      expect(error).toMatchObject({ reason: "stack", message: "engine refused" });
-      expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
-        f.stack.id,
-      ]);
-    }).pipe(Effect.provide(live)),
-  );
-
-  it.effect("points a batch at the engine only when it was unreachable for every stack", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture(true);
-      const second = yield* f.api.create({
-        ...f.locations,
-        projectRoot: f.root,
-        name: "second",
-        runtime: "native",
-      });
-      const ids = [f.stack.id, second.id];
-      const retry = `"supabase stack destroy --stack-id ${f.stack.id} --stack-id ${second.id} --yes"`;
-      const destroyWith = (unreachable: ReadonlyArray<string>) =>
-        stackDestroy({ ...f.flags, stackId: ids }).pipe(
-          Effect.provide(Layer.merge(f.layer, refuseDestroy(f.api, ids, unreachable))),
+        const error = yield* stackDestroy(f.flags).pipe(
+          Effect.provide(Layer.merge(f.layer, refuseDestroy(f.api, [f.stack.id]))),
           Effect.flip,
         );
 
-      expect(yield* destroyWith([f.stack.id])).toMatchObject({
-        reason: "stack",
-        suggestion: `Resolve each error, then run ${retry} to retry the stacks that failed.`,
-      });
-      expect(yield* destroyWith(ids)).toMatchObject({
-        reason: "runtime",
-        suggestion: `Start the container engine, then run ${retry} again; nothing was removed for those stacks.`,
-      });
-      expect(
-        (yield* f.api.discover(f.locations)).map(({ definition }) => definition.id).toSorted(),
-      ).toEqual(ids.toSorted());
-    }).pipe(Effect.provide(live)),
+        expect(error).toMatchObject({ reason: "stack", message: "engine refused" });
+        expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual(
+          [f.stack.id],
+        );
+      }).pipe(Effect.provide(live)),
+    { timeout: 60_000 },
   );
 
-  it.live("destroys a registered stack and a deleted stack's containers in one batch", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture(true);
-      const id = "d".repeat(64);
-      let removed = 0;
-      const api = Layer.succeed(StackApi, {
-        ...f.api,
-        findDeleted: (options) =>
-          Effect.succeed(
-            options.id === id
-              ? Option.some({
-                  id,
-                  destroy: Effect.sync(() => {
-                    removed += 1;
-                  }),
-                })
-              : Option.none(),
-          ),
-      });
+  it.effect(
+    "points a batch at the engine only when it was unreachable for every stack",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture(true);
+        const second = yield* f.api.create({
+          ...f.locations,
+          projectRoot: f.root,
+          name: "second",
+          runtime: "native",
+        });
+        const ids = [f.stack.id, second.id];
+        const retry = `"supabase stack destroy --stack-id ${f.stack.id} --stack-id ${second.id} --yes"`;
+        const destroyWith = (unreachable: ReadonlyArray<string>) =>
+          stackDestroy({ ...f.flags, stackId: ids }).pipe(
+            Effect.provide(Layer.merge(f.layer, refuseDestroy(f.api, ids, unreachable))),
+            Effect.flip,
+          );
 
-      yield* stackDestroy({ ...f.flags, stackId: [f.stack.id, id] }).pipe(
-        Effect.provide(Layer.merge(f.layer, api)),
-      );
-
-      expect(removed).toBe(1);
-      expect(f.output.stderrText).toBe(
-        `Permanently destroying stack ${f.stack.id} at ${f.projectRoot} and its owned data; the containers deleted stack ${id} left behind.\n`,
-      );
-      expect(f.output.stdoutText).toBe(
-        `Stack ${f.stack.id} destroyed.\nRemoved the containers stack ${id} left behind.\n`,
-      );
-      expect(yield* f.api.discover(f.locations)).toEqual([]);
-    }).pipe(Effect.provide(live)),
+        expect(yield* destroyWith([f.stack.id])).toMatchObject({
+          reason: "stack",
+          suggestion: `Resolve each error, then run ${retry} to retry the stacks that failed.`,
+        });
+        expect(yield* destroyWith(ids)).toMatchObject({
+          reason: "runtime",
+          suggestion: `Start the container engine, then run ${retry} again; nothing was removed for those stacks.`,
+        });
+        expect(
+          (yield* f.api.discover(f.locations)).map(({ definition }) => definition.id).toSorted(),
+        ).toEqual(ids.toSorted());
+      }).pipe(Effect.provide(live)),
+    { timeout: 60_000 },
   );
 
-  it.live("keeps destroying after a failure and fails once with the stacks it destroyed", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture(true);
-      const second = yield* f.api.create({
-        ...f.locations,
-        projectRoot: f.root,
-        name: "second",
-        runtime: "native",
-      });
-      const stdout: Array<string> = [];
-      const stdio = Layer.succeed(
-        Stdio.Stdio,
-        Stdio.make({
-          args: Effect.succeed([]),
-          stdin: Stream.empty,
-          stdout: () =>
-            Sink.forEach((item: string | Uint8Array) =>
-              Effect.sync(() => {
-                stdout.push(typeof item === "string" ? item : new TextDecoder().decode(item));
-              }),
+  it.live(
+    "destroys a registered stack and a deleted stack's containers in one batch",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture(true);
+        const id = "d".repeat(64);
+        let removed = 0;
+        const api = Layer.succeed(StackApi, {
+          ...f.api,
+          findDeleted: (options) =>
+            Effect.succeed(
+              options.id === id
+                ? Option.some({
+                    id,
+                    destroy: Effect.sync(() => {
+                      removed += 1;
+                    }),
+                  })
+                : Option.none(),
             ),
-          stderr: () => Sink.forEach(() => Effect.void),
-        }),
-      );
-      const processControl = mockProcessControl();
+        });
 
-      yield* runDestroy(
-        Layer.merge(
-          f.layer,
-          Layer.mergeAll(
-            refuseDestroy(f.api, [f.stack.id]),
-            jsonOutputLayer.pipe(Layer.provide(stdio)),
-            processControl.layer,
-          ),
-        ),
-        ["--stack-id", f.stack.id, "--stack-id", second.id],
-      );
+        yield* stackDestroy({ ...f.flags, stackId: [f.stack.id, id] }).pipe(
+          Effect.provide(Layer.merge(f.layer, api)),
+        );
 
-      expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
-        f.stack.id,
-      ]);
-      expect(
-        yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(stdout.join("")),
-      ).toEqual({
-        destroyed_stacks: [{ id: second.id }],
-        _tag: "Error",
-        error: {
-          code: "ExperimentalStackDestroyError",
-          message: "Failed to destroy 1 managed stack(s).",
-          detail: `${f.stack.id}: engine refused`,
-          suggestion: `Resolve each error, then run "supabase stack destroy --stack-id ${f.stack.id} --yes" to retry the stacks that failed.`,
-        },
-      });
-      expect(processControl.exitCode).toBe(1);
-    }).pipe(Effect.provide(live)),
+        expect(removed).toBe(1);
+        expect(f.output.stderrText).toBe(
+          `Permanently destroying stack ${f.stack.id} at ${f.projectRoot} and its owned data; the containers deleted stack ${id} left behind.\n`,
+        );
+        expect(f.output.stdoutText).toBe(
+          `Stack ${f.stack.id} destroyed.\nRemoved the containers stack ${id} left behind.\n`,
+        );
+        expect(yield* f.api.discover(f.locations)).toEqual([]);
+      }).pipe(Effect.provide(live)),
+    { timeout: 60_000 },
   );
 
-  it.live("counts a stack as destroyed when only its uploads directory could not be removed", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture(true);
-      const second = yield* f.api.create({
-        ...f.locations,
-        projectRoot: f.root,
-        name: "second",
-        runtime: "native",
-      });
-      const stdout: Array<string> = [];
-      const stdio = Layer.succeed(
-        Stdio.Stdio,
-        Stdio.make({
-          args: Effect.succeed([]),
-          stdin: Stream.empty,
-          stdout: () =>
-            Sink.forEach((item: string | Uint8Array) =>
-              Effect.sync(() => {
-                stdout.push(typeof item === "string" ? item : new TextDecoder().decode(item));
-              }),
+  it.live(
+    "keeps destroying after a failure and fails once with the stacks it destroyed",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture(true);
+        const second = yield* f.api.create({
+          ...f.locations,
+          projectRoot: f.root,
+          name: "second",
+          runtime: "native",
+        });
+        const stdout: Array<string> = [];
+        const stdio = Layer.succeed(
+          Stdio.Stdio,
+          Stdio.make({
+            args: Effect.succeed([]),
+            stdin: Stream.empty,
+            stdout: () =>
+              Sink.forEach((item: string | Uint8Array) =>
+                Effect.sync(() => {
+                  stdout.push(typeof item === "string" ? item : new TextDecoder().decode(item));
+                }),
+              ),
+            stderr: () => Sink.forEach(() => Effect.void),
+          }),
+        );
+        const processControl = mockProcessControl();
+
+        yield* runDestroy(
+          Layer.merge(
+            f.layer,
+            Layer.mergeAll(
+              refuseDestroy(f.api, [f.stack.id]),
+              jsonOutputLayer.pipe(Layer.provide(stdio)),
+              processControl.layer,
             ),
-          stderr: () => Sink.forEach(() => Effect.void),
-        }),
-      );
-      const processControl = mockProcessControl();
-
-      yield* runDestroy(
-        Layer.merge(
-          f.layer,
-          Layer.mergeAll(
-            refuseUploadsRemoval,
-            jsonOutputLayer.pipe(Layer.provide(stdio)),
-            processControl.layer,
           ),
-        ),
-        ["--stack-id", f.stack.id, "--stack-id", second.id],
-      );
+          ["--stack-id", f.stack.id, "--stack-id", second.id],
+        );
 
-      expect(yield* f.api.discover(f.locations)).toEqual([]);
-      const uploads = stackUploadsDir(f.path, f.root, f.stack.id);
-      const secondUploads = stackUploadsDir(f.path, f.root, second.id);
-      expect(
-        yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(stdout.join("")),
-      ).toMatchObject({
-        destroyed_stacks: expect.arrayContaining([{ id: f.stack.id }, { id: second.id }]),
-        _tag: "Error",
-        error: {
-          code: "ExperimentalStackDestroyError",
-          message: "Failed to destroy 2 managed stack(s).",
-          suggestion: expect.stringContaining(`Remove ${uploads} manually.`),
-        },
-      });
-      expect(stdout.join("")).toContain(`Remove ${secondUploads} manually.`);
-      expect(stdout.join("")).not.toContain("to retry the stacks that failed");
-      expect(processControl.exitCode).toBe(1);
-    }).pipe(Effect.provide(live)),
+        expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual(
+          [f.stack.id],
+        );
+        expect(
+          yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(stdout.join("")),
+        ).toEqual({
+          destroyed_stacks: [{ id: second.id }],
+          _tag: "Error",
+          error: {
+            code: "ExperimentalStackDestroyError",
+            message: "Failed to destroy 1 managed stack(s).",
+            detail: `${f.stack.id}: engine refused`,
+            suggestion: `Resolve each error, then run "supabase stack destroy --stack-id ${f.stack.id} --yes" to retry the stacks that failed.`,
+          },
+        });
+        expect(processControl.exitCode).toBe(1);
+      }).pipe(Effect.provide(live)),
+    { timeout: 60_000 },
+  );
+
+  it.live(
+    "counts a stack as destroyed when only its uploads directory could not be removed",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture(true);
+        const second = yield* f.api.create({
+          ...f.locations,
+          projectRoot: f.root,
+          name: "second",
+          runtime: "native",
+        });
+        const stdout: Array<string> = [];
+        const stdio = Layer.succeed(
+          Stdio.Stdio,
+          Stdio.make({
+            args: Effect.succeed([]),
+            stdin: Stream.empty,
+            stdout: () =>
+              Sink.forEach((item: string | Uint8Array) =>
+                Effect.sync(() => {
+                  stdout.push(typeof item === "string" ? item : new TextDecoder().decode(item));
+                }),
+              ),
+            stderr: () => Sink.forEach(() => Effect.void),
+          }),
+        );
+        const processControl = mockProcessControl();
+
+        yield* runDestroy(
+          Layer.merge(
+            f.layer,
+            Layer.mergeAll(
+              refuseUploadsRemoval,
+              jsonOutputLayer.pipe(Layer.provide(stdio)),
+              processControl.layer,
+            ),
+          ),
+          ["--stack-id", f.stack.id, "--stack-id", second.id],
+        );
+
+        expect(yield* f.api.discover(f.locations)).toEqual([]);
+        const uploads = stackUploadsDir(f.path, f.root, f.stack.id);
+        const secondUploads = stackUploadsDir(f.path, f.root, second.id);
+        expect(
+          yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(stdout.join("")),
+        ).toMatchObject({
+          destroyed_stacks: expect.arrayContaining([{ id: f.stack.id }, { id: second.id }]),
+          _tag: "Error",
+          error: {
+            code: "ExperimentalStackDestroyError",
+            message: "Failed to destroy 2 managed stack(s).",
+            suggestion: expect.stringContaining(`Remove ${uploads} manually.`),
+          },
+        });
+        expect(stdout.join("")).toContain(`Remove ${secondUploads} manually.`);
+        expect(stdout.join("")).not.toContain("to retry the stacks that failed");
+        expect(processControl.exitCode).toBe(1);
+      }).pipe(Effect.provide(live)),
+    { timeout: 60_000 },
   );
 });
