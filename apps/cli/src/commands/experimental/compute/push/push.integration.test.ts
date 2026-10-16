@@ -2007,7 +2007,7 @@ describe("compute push", () => {
       const { layer, http } = setupCompute({
         workdir: repo.dir,
         routes: routes(),
-        goOutput: "env",
+        outputFlag: "env",
       });
 
       return yield* Effect.gen(function* () {
@@ -2071,7 +2071,7 @@ describe("compute push", () => {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "toml",
+        outputFlag: "toml",
         routes: routes({
           [`GET ${computeRoute("/api")}`]: {
             status: 200,

@@ -14,16 +14,10 @@ inputs:
       fails with a path validation error.
     required: false
     default: "true"
-  go-cache:
-    description: >-
-      Whether to restore the Go module and build caches. Disable this in jobs
-      that never run Go.
-    required: false
-    default: "true"
   tools:
     description: >-
       Space-separated mise tools to install instead of every tool in
-      mise.toml. Skipping the Go toolchain keeps the restored mise cache small.
+      mise.toml.
     required: false
     default: ""
   pnpm-store-cache:
@@ -188,41 +182,6 @@ runs:
       with:
         path: ${{ steps.pnpm-cache.outputs.path }}/lockfile-verified.jsonl
         key: pnpm-verify-${{ runner.os }}-${{ inputs.dependency-firewall-token != '' && 'firewall' || 'public' }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml') }}
-
-    - name: Resolve Go cache paths
-      if: inputs.dependency-cache == 'true' && inputs.go-cache == 'true'
-      id: go-cache
-      shell: bash
-      run: |
-        echo "mod=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
-        echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
-
-    - name: Mount Go module disk
-      if: inputs.dependency-cache == 'true' && inputs.go-cache == 'true' && steps.sticky.outputs.enabled == 'true'
-      uses: useblacksmith/stickydisk@b6cb58d1d31d6d32a25248fab12493d831f7bd48 # v1.7.2
-      with:
-        key: ${{ github.repository }}-go-mod-v3-${{ runner.arch }}
-        path: ${{ steps.go-cache.outputs.mod }}
-        commit: ${{ steps.sticky.outputs.commit }}
-
-    - name: Mount Go build disk
-      if: inputs.dependency-cache == 'true' && inputs.go-cache == 'true' && steps.sticky.outputs.enabled == 'true'
-      uses: useblacksmith/stickydisk@b6cb58d1d31d6d32a25248fab12493d831f7bd48 # v1.7.2
-      with:
-        key: ${{ github.repository }}-go-build-v3-${{ runner.arch }}
-        path: ${{ steps.go-cache.outputs.build }}
-        commit: ${{ steps.sticky.outputs.commit }}
-
-    - name: Configure Go dependency cache
-      if: inputs.dependency-cache == 'true' && inputs.go-cache == 'true' && steps.sticky.outputs.enabled != 'true'
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        path: |
-          ${{ steps.go-cache.outputs.mod }}
-          ${{ steps.go-cache.outputs.build }}
-        key: go-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/cli-go/go.mod', 'apps/cli-go/go.sum') }}
-        restore-keys: |
-          go-cache-${{ runner.os }}-${{ runner.arch }}-
 
     - name: Install dependencies
       shell: bash

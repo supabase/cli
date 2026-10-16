@@ -3,6 +3,8 @@ import { withPermissions } from "../../command-internal/command-permissions/comm
 import { compose, withContext } from "../../command-internal/command-permissions/model.ts";
 import { linkedServiceVersions } from "../../shared/services/services.shared.ts";
 import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
+import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import type * as CliCommand from "effect/cli/Command";
@@ -31,4 +33,6 @@ export const servicesCommand = Command.make("services", config).pipe(
     services(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(servicesRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );
