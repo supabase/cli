@@ -438,6 +438,41 @@ const holdLease = Effect.fn("StackLock.lease")(function* (projectRoot: string) {
   });
 });
 
+/** A service the lock gained or moved to another release. */
+interface LockChange {
+  readonly service: ServiceKind;
+  /** The release the lock held before; absent when the service had no entry yet. */
+  readonly from: string | undefined;
+  readonly to: string;
+}
+
+/** The pins a command runs and what it changed in the lock to get them. */
+export interface LockedResolution {
+  readonly selection: ArtifactSelection;
+  /** Whether `supabase/supabase.lock` was written. */
+  readonly written: boolean;
+  /** Services resolved afresh; empty when the lock was used as-is. */
+  readonly changes: ReadonlyArray<LockChange>;
+  /** Services whose locked entry was kept. */
+  readonly unchanged: ReadonlyArray<ServiceKind>;
+}
+
+const resolutionOf = (
+  lock: Lock,
+  previous: Lock | undefined,
+  stale: ReadonlyMap<ServiceKind, string>,
+  written: boolean,
+): LockedResolution => ({
+  selection: lockSelection(lock),
+  written,
+  changes: [...stale.keys()].map((service) => ({
+    service,
+    from: previous === undefined ? undefined : version(previous.services[service].resolved),
+    to: version(lock.services[service].resolved),
+  })),
+  unchanged: artifactServiceKinds().filter((kind) => !stale.has(kind)),
+});
+
 /**
  * Fails a project without `supabase/config.toml` that is frozen, explicitly or by `CI` with a
  * lock present: with no config the lock cannot be checked, so the bundled versions must not
@@ -465,14 +500,14 @@ export const rejectFrozenWithoutConfig = Effect.fn("StackLock.rejectFrozenWithou
  * a fresh lock is used as-is; a missing or stale one is resolved and rewritten, unless frozen.
  * Frozen is explicit, or implied when `CI` is set and a lock exists.
  */
-export const lockedSelection = (options: {
+export const lockedResolution = (options: {
   readonly frozen: boolean;
   readonly output: Output["Service"];
 }) =>
   Effect.fn("StackLock.select")(function* (
     request: LockRequest,
   ): Effect.fn.Return<
-    ArtifactSelection,
+    LockedResolution,
     StackConfigError | LockResolutionError,
     FileSystem.FileSystem | Path.Path | Crypto.Crypto
   > {
@@ -490,7 +525,8 @@ export const lockedSelection = (options: {
         "lock.frozen": frozen,
         "lock.stale_count": stale.size,
       });
-      if (previous !== undefined && stale.size === 0) return lockSelection(previous);
+      if (previous !== undefined && stale.size === 0)
+        return resolutionOf(previous, previous, stale, false);
       if (frozen) return yield* unusableLock(stale, previous, "frozen");
 
       const settle = <A, E, R>(
@@ -548,6 +584,13 @@ export const lockedSelection = (options: {
         yield* options.output.warn(
           `Commit ${LOCK_FILE} so CI and your team run the same versions.`,
         );
-      return lockSelection(lock);
+      return resolutionOf(lock, previous, stale, true);
     }).pipe(Effect.scoped);
   });
+
+/** The pins a stack command runs; see {@link lockedResolution}. */
+export const lockedSelection = (options: Parameters<typeof lockedResolution>[0]) => {
+  const resolve = lockedResolution(options);
+  return (request: LockRequest) =>
+    resolve(request).pipe(Effect.map((resolution) => resolution.selection));
+};

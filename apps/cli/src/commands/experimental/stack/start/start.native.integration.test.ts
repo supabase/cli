@@ -20,7 +20,6 @@ import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
 import { ExperimentalFlag, YesFlag } from "../../../../command-internal/global-flags.ts";
 import { stackStart } from "./start.handler.ts";
-import { stackPrepare } from "../prepare/prepare.handler.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
 import { destroyTestStacks } from "../../../../../tests/helpers/stack-cleanup.ts";
 
@@ -43,13 +42,6 @@ const flags = (exclude: ReadonlyArray<string>) => ({
   preparation: "on-demand" as const,
   frozen: false,
   eager: false,
-});
-
-const prepareFlags = () => ({
-  stack: Option.none<string>(),
-  stackId: Option.none<string>(),
-  runtime: "native" as const,
-  capability: [],
 });
 
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
@@ -232,8 +224,16 @@ describe("experimental stack start native lifecycle", () => {
         const fixture = makeLayers(root);
         yield* Effect.ensuring(
           Effect.gen(function* () {
-            yield* Effect.scoped(stackPrepare(prepareFlags()));
             const api = yield* StackApi;
+            yield* Effect.scoped(
+              api.create({
+                projectRoot: root,
+                stateRoot: path.join(root, "stacks"),
+                cacheRoot: path.join(root, "cache"),
+                runtime: "native",
+                startOwner: true,
+              }),
+            );
             const preparedDefinitions = yield* api.discover({
               stateRoot: path.join(root, "stacks"),
             });

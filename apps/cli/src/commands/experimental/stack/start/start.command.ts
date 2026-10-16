@@ -7,6 +7,7 @@ import { machineErrorContextLayer } from "../../../../shared/output/machine-erro
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stringSliceFlag } from "../../../../command-internal/string-slice-flag.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
+import { frozenFlag } from "../stack.flags.ts";
 import { stackStart } from "./start.handler.ts";
 import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";
 
@@ -33,12 +34,7 @@ const config = {
     Flag.withDescription("Artifact preparation policy."),
     Flag.withDefault("background" as const),
   ),
-  frozen: Flag.Boolean("frozen").pipe(
-    Flag.withDescription(
-      "Fail instead of updating supabase/supabase.lock when it is missing or out of date with config.toml. Implied when CI is set and the lock exists.",
-    ),
-    Flag.withDefault(false),
-  ),
+  frozen: frozenFlag,
   eager: Flag.Boolean("eager").pipe(
     Flag.withDescription(
       "Activate all enabled capabilities before returning and disable automatic idle stops.",

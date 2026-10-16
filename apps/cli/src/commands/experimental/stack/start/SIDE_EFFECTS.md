@@ -155,6 +155,9 @@ unchanged keep their pins, so starting never moves a pinned version on its own. 
 `.supabase.lock.lease` and the lock's staged writes (`.supabase.lock.*.tmp`) to
 `supabase/.gitignore` whenever it writes the lock.
 
+`supabase stack install` runs this same resolution under the same lease, then downloads what the lock
+pins without starting a stack; see [`../install/SIDE_EFFECTS.md`](../install/SIDE_EFFECTS.md).
+
 Resolving a release specifier needs the network: a first start with an explicit upstream version
 (`<upstream>` or `<upstream>-r<N>`, even one the CLI bundles) or with `[db] orioledb_version` (even
 a bundled build) fetches the release manifests and fails when the host is unreachable, because a

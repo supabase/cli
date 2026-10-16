@@ -17,7 +17,7 @@ import { stackDestroyCommand as stackDestroyCommandBase } from "./destroy/destro
 import { stackLogsCommand as stackLogsCommandBase } from "./logs/logs.command.ts";
 import { stackListCommand as stackListCommandBase } from "./list/list.command.ts";
 import { stackRestartCommand as stackRestartCommandBase } from "./restart/restart.command.ts";
-import { stackPrepareCommand as stackPrepareCommandBase } from "./prepare/prepare.command.ts";
+import { stackInstallCommand as stackInstallCommandBase } from "./install/install.command.ts";
 import { stackApiLayer, stackTargetResolverLayer } from "./stack.shared.ts";
 import { configureLoopbackProxyBypass } from "../../../command-internal/hostname.ts";
 
@@ -81,8 +81,8 @@ const stackListCommand = stackListCommandBase.pipe(
 const stackRestartCommand = stackRestartCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "restart"])),
 );
-const stackPrepareCommand = stackPrepareCommandBase.pipe(
-  Command.provide(commandRuntimeLayer(["stack", "prepare"])),
+const stackInstallCommand = stackInstallCommandBase.pipe(
+  Command.provide(commandRuntimeLayer(["stack", "install"])),
 );
 
 export const stackCommand = Command.make("stack").pipe(
@@ -92,9 +92,9 @@ export const stackCommand = Command.make("stack").pipe(
   Command.withShortDescription("Manage experimental local stacks"),
   Command.withSubcommands([
     stackDestroyCommand,
+    stackInstallCommand,
     stackListCommand,
     stackLogsCommand,
-    stackPrepareCommand,
     stackRestartCommand,
     stackStartCommand,
     stackStatusCommand,

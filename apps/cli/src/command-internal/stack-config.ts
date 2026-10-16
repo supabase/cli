@@ -111,13 +111,13 @@ interface StackStartConfig {
   >;
 }
 
-type StackConfigEffect = Effect.Effect<
+type StackConfigEffect<E, R> = Effect.Effect<
   StackStartConfig,
-  StackConfigError | LockResolutionError,
-  FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto
+  StackConfigError | LockResolutionError | E,
+  FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto | R
 >;
 
-interface StackConfigOptions {
+interface StackConfigOptions<E, R> {
   /** An already-loaded project context to reuse. */
   readonly context?: LocalProjectContext;
   /** Chooses the artifact pins instead of the bundled ones; without a `supabase/config.toml` the bundled pins apply, or a frozen run fails. */
@@ -125,8 +125,8 @@ interface StackConfigOptions {
     request: LockRequest,
   ) => Effect.Effect<
     ArtifactSelection,
-    StackConfigError | LockResolutionError,
-    FileSystem.FileSystem | Path.Path | Crypto.Crypto
+    StackConfigError | LockResolutionError | E,
+    FileSystem.FileSystem | Path.Path | Crypto.Crypto | R
   >;
   /** Fails with `frozen-missing` when there is no `supabase/config.toml` to lock. */
   readonly frozen?: boolean;
@@ -927,7 +927,10 @@ const endpoint = (port: number | undefined): { readonly port: number | "auto" } 
 
 /** Loads and translates the effective project config for all stack commands. */
 export const loadStackConfig = Effect.fn("StackConfig.load")(
-  (projectRoot: string, opts?: StackConfigOptions): StackConfigEffect =>
+  <E = never, R = never>(
+    projectRoot: string,
+    opts?: StackConfigOptions<E, R>,
+  ): StackConfigEffect<E, R> =>
     Effect.gen(function* () {
       const context =
         opts?.context ??

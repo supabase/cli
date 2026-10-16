@@ -6,7 +6,7 @@ import { Effect } from "effect";
 const TARGETS = ["darwin-arm64", "linux-amd64", "linux-arm64"] as const;
 
 interface Served {
-  readonly body: string;
+  readonly body: string | Uint8Array;
   readonly headers?: Record<string, string>;
 }
 
@@ -20,7 +20,7 @@ export interface ReleaseFixture {
   readonly requests: Array<string>;
 }
 
-const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+const sha256 = (text: string | Uint8Array) => createHash("sha256").update(text).digest("hex");
 
 /** Serves `/releases/…`, `/token` and `/v2/…` from OS-assigned loopback port until the scope closes. */
 export const startReleaseFixture = Effect.acquireRelease(
@@ -77,6 +77,10 @@ export const publishRelease = (
     revision: number;
     /** Serves manifests that no longer match their `SHA256SUMS` entries. */
     tamperedManifest?: boolean;
+    /** The `.tar.zst` served for every target; without it the sums cover placeholder text and no archive route exists. */
+    archive?: Uint8Array;
+    /** Publishes the `oci-provenance.json` that mirrored producers (vector, mailpit, imgproxy) resolve their upstream image from. */
+    provenanceSource?: string;
   },
 ) => {
   const version = `${release.upstream}-r${release.revision}`;
@@ -91,11 +95,19 @@ export const publishRelease = (
       target,
       ...(target === "darwin-arm64" ? { upstream_image: image } : { source_image: image }),
     });
-    sums.push(`${sha256(`archive ${stem}`)}  ${stem}.tar.zst`);
+    sums.push(`${sha256(release.archive ?? `archive ${stem}`)}  ${stem}.tar.zst`);
+    if (release.archive !== undefined)
+      fixture.routes.set(`/releases/${tag}/${stem}.tar.zst`, { body: release.archive });
     sums.push(`${sha256(manifest)}  ${stem}.manifest.json`);
     fixture.routes.set(`/releases/${tag}/${stem}.manifest.json`, {
       body: release.tamperedManifest === true ? `${manifest} ` : manifest,
     });
+  }
+  if (release.provenanceSource !== undefined) {
+    const name = `${release.producer}-${release.upstream}.oci-provenance.json`;
+    const provenance = JSON.stringify({ source: release.provenanceSource });
+    sums.push(`${sha256(provenance)}  ${name}`);
+    fixture.routes.set(`/releases/${tag}/${name}`, { body: provenance });
   }
   fixture.routes.set(`/releases/${tag}/SHA256SUMS`, { body: `${sums.join("\n")}\n` });
   const imageManifest = JSON.stringify({ schemaVersion: 2, tag });

@@ -27,3 +27,4 @@ export {
   type ReleaseError,
   type ResolvePinRequest,
 } from "../preparation/ReleaseResolver.ts";
+export { prepareArtifactSelection, type PreparedRelease } from "../preparation/PrepareSelection.ts";

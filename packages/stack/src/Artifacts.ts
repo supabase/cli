@@ -96,6 +96,8 @@ export interface PreparedNativeArtifact {
   readonly executable: string;
   /** The generation's digest lock file; a native workload spawned from `root` pins this too. */
   readonly lockPath: string;
+  /** Whether this call downloaded the generation or found it already installed. */
+  readonly outcome: "cached" | "downloaded";
 }
 
 interface ArtifactDefinition {
@@ -740,7 +742,11 @@ const nativeStoreRequest = Effect.fn("Artifacts.nativeStoreRequest")(function* (
 
 const toNativeArtifact = (
   resolved: ArtifactResolution,
-  prepared: { readonly path: string; readonly lockPath: string },
+  prepared: {
+    readonly path: string;
+    readonly lockPath: string;
+    readonly outcome: "cached" | "downloaded";
+  },
   path: Path.Path,
 ): PreparedNativeArtifact => ({
   service: resolved.service,
@@ -748,6 +754,7 @@ const toNativeArtifact = (
   root: prepared.path,
   executable: path.join(prepared.path, resolved.executablePath),
   lockPath: prepared.lockPath,
+  outcome: prepared.outcome,
 });
 
 /** Ahead-of-time: downloads and publishes the generation, but pins nothing. */

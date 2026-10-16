@@ -18,7 +18,7 @@ default `max_worker_processes` to 17 to leave room for those workers; `postgresq
 | ------------------------ | --------------------------------------------------------------------------------- |
 | `supabase stack destroy` | Permanently delete stacks and their data.                                         |
 | `supabase stack list`    | List persisted managed local stacks.                                              |
-| `supabase stack prepare` | Download artifacts without starting services.                                     |
+| `supabase stack install` | Resolve and lock service versions, then download artifacts without a stack.       |
 | `supabase stack start`   | Create or resume the project's stack.                                             |
 | `supabase stack status`  | Show identity, readiness, and drift, or export connection variables with `--env`. |
 | `supabase stack logs`    | Print retained stack logs; `-f` streams new lines.                                |
@@ -37,15 +37,16 @@ stack, cannot reach its engine, the failure asks you to install or start it, and
 on platforms that support native. Project stacks created by database commands, and shadow stacks
 created without a project stack, use the same selection.
 
-`supabase stack prepare` downloads or pulls artifacts for the selected stack without starting
-services. If the target does not exist, prepare creates and registers it; the stack then appears in
-`supabase stack list` and can be removed with `supabase stack destroy`. Omit `--capability` to
-prepare every enabled capability, or repeat `--capability` up to ten times to select specific
-capabilities. Each occurrence names one capability; use separate flags rather than CSV.
+`supabase stack install` resolves the project's service versions into `supabase/supabase.lock`, the
+same way `stack start` does, then downloads everything the lock pins for the chosen runtime without
+creating or starting a stack. `--runtime native` downloads archives into the artifact cache; `docker`
+and `podman` pull images; `auto` selects as `stack start` does. With `--frozen`, or with `CI` set
+and an existing lock, a missing or out-of-date lock fails instead of being written. Artifacts that
+are already present are skipped, so a second run reports everything as cached.
 
 ```sh
-supabase stack prepare
-supabase stack prepare --capability rest --capability auth --output-format json
+supabase stack install
+supabase stack install --frozen --runtime native --output-format json
 ```
 
 ## Connection details after start
@@ -102,7 +103,7 @@ fails the start with the usual port conflict; the new port stays saved and the p
 port is released, so starting again succeeds once the port is free. A PostgreSQL build, line or major that differs
 from the one that initialized the data still fails, suggesting `supabase stack destroy`; only a new
 revision of the same build reuses it. A changed port met by a stack whose owner is still
-running (for example after `stack prepare`) fails with advice to run `supabase stack stop`, then `supabase stack start`.
+running fails with advice to run `supabase stack stop`, then `supabase stack start`.
 
 ## Exporting environment variables
 
@@ -421,8 +422,7 @@ way. A manually stopped capability keeps wake-up disabled until the stack starts
 states are observed directly by Storage operations, including `stack start`.
 
 **`stack start` seeds on first configured start.** When a `stack start` (or the top-level `start`
-under the flag) invocation runs the stack's first configured start, including after `stack prepare`
-— never when it resumes an existing one — and
+under the flag) invocation runs the stack's first configured start (never when it resumes an existing one) and
 Storage is not `disabled`, it seeds `[storage.buckets]` against the stack before printing status,
 reusing the `seed buckets` core. A project with no `[storage.buckets]` or
 `[storage.vector.buckets]` configured resolves no credentials and prints nothing. Auto-confirm is

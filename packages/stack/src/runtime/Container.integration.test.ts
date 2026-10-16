@@ -81,13 +81,14 @@ describe("container process adapter", { timeout: 120_000 }, () => {
       const pinnedImage = `${image}@${digest}`;
       const pullAttempted = yield* Ref.make(false);
       const spawner = makePullFailureSpawner(delegate, pullAttempted);
-      yield* makeContainerRuntime({
+      const ensured = yield* makeContainerRuntime({
         target: containerTarget,
         root: ".",
       }).pipe(
-        Effect.flatMap((runtime) => runtime.prepare(pinnedImage)),
+        Effect.flatMap((runtime) => runtime.ensureImage(pinnedImage)),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
+      expect(ensured).toEqual({ image: pinnedImage, pulled: false });
       expect(yield* Ref.get(pullAttempted)).toBe(false);
     }).pipe(Effect.provide(NodeServices.layer)),
   );

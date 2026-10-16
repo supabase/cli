@@ -397,6 +397,7 @@ describe.runIf(testEngine === "docker")(
             container: {
               prepare: () => Effect.void,
               prepareImage: (image) => Effect.succeed(image),
+              ensureImage: (image) => Effect.succeed({ image, pulled: false }),
               launch: () => Effect.die("unused"),
               launchCommand: () => Effect.die("unused"),
             },
@@ -468,6 +469,7 @@ describe.runIf(testEngine === "docker")(
             container: {
               prepare: () => Effect.void,
               prepareImage: (image) => Effect.succeed(image),
+              ensureImage: (image) => Effect.succeed({ image, pulled: false }),
               launch: () => Effect.die("unused"),
               launchCommand: () => Effect.die("unused"),
             },
@@ -562,6 +564,7 @@ describe.runIf(testEngine === "docker")(
             container: {
               prepare: () => Effect.void,
               prepareImage: (image) => Effect.succeed(image),
+              ensureImage: (image) => Effect.succeed({ image, pulled: false }),
               launch: () => Effect.die("unused"),
               launchCommand: () => Effect.die("unused"),
             },

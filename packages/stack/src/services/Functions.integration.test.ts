@@ -605,6 +605,7 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
       const container: ContainerRuntime = {
         prepare: () => Effect.void,
         prepareImage: (image) => Effect.succeed(image),
+        ensureImage: (image) => Effect.succeed({ image, pulled: false }),
         launchCommand: () => Effect.die("Functions has no startup commands"),
         launch: (spec) =>
           Ref.set(launched, spec).pipe(
