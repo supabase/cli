@@ -28,6 +28,8 @@
     "!apps/cli/src/command-internal/branch-target.*",
     "!apps/cli/src/command-internal/bundled-postgres-client.*",
     "!apps/cli/src/command-internal/colors.*",
+    "!apps/cli/src/command-internal/config-pull-run.*",
+    "!apps/cli/src/command-internal/config-validate.*",
     "!apps/cli/src/command-internal/connect-errors.*",
     "!apps/cli/src/command-internal/container-cli.*",
     "!apps/cli/src/command-internal/db-*.ts",
@@ -52,6 +54,7 @@
     "!apps/cli/src/command-internal/go-duration.*",
     "!apps/cli/src/command-internal/go-float.*",
     "!apps/cli/src/command-internal/go-json.*",
+    "!apps/cli/src/command-internal/go-jwt.*",
     "!apps/cli/src/command-internal/go-output-flag.*",
     "!apps/cli/src/command-internal/go-output.encoders.*",
     "!apps/cli/src/command-internal/go-quote.ts",
@@ -120,6 +123,9 @@
     "!apps/cli/src/command-internal/workdir-project.*",
     "!apps/cli/src/command-internal/workdir-search.ts",
     "!apps/cli/src/command-internal/workdir-validation.ts",
+    "apps/cli/src/command-internal/config-validate.parity.unit.test.ts",
+    "apps/cli/src/command-internal/config-validate.ts",
+    "apps/cli/src/command-internal/config-validate.unit.test.ts",
     "apps/cli/src/command-internal/db-bootstrap/local-db-running.integration.test.ts",
     "apps/cli/src/command-internal/db-bootstrap/local-db-running.ts"
   ]

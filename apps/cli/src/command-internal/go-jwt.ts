@@ -1,4 +1,5 @@
 import { createHmac, createPrivateKey, createSign } from "node:crypto";
+import { DateTime } from "effect";
 import { encodeGoJsonCompact } from "./go-json.ts";
 
 export { DEFAULT_SIGNING_KEY } from "@supabase/stack/defaults";
@@ -251,6 +252,8 @@ export function signJwtWithJwk(jwk: Jwk, payloadJson: string): string {
  * shape as {@link generateGoJwt} (`iss`/`role`/`exp`), except the expiry is 10 years from now.
  */
 export function generateAsymmetricGoJwt(jwk: Jwk, role: "anon" | "service_role"): string {
-  const expiresAt = Math.floor(Date.now() / 1000) + GO_JWT_ASYMMETRIC_EXPIRY_SECONDS;
+  const expiresAt =
+    Math.floor(DateTime.toEpochMillis(DateTime.nowUnsafe()) / 1000) +
+    GO_JWT_ASYMMETRIC_EXPIRY_SECONDS;
   return signJwtWithJwk(jwk, JSON.stringify({ iss: GO_JWT_ISSUER, role, exp: expiresAt }));
 }
