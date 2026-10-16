@@ -15,8 +15,7 @@ type StartConfigIssue =
   | "saved-stack-changes"
   | "credentials-conflict"
   | "missing-database"
-  | "missing-credentials"
-  | "project-directory";
+  | "missing-credentials";
 
 const configIssueSuffix = {
   "project-config": "project_config",
@@ -29,7 +28,14 @@ const configIssueSuffix = {
 } as const;
 
 export class StackCommandStartError extends Data.TaggedError("ExperimentalStackStartError")<{
-  readonly reason: "invalid-config" | "flags" | "runtime" | "lifecycle" | "seed" | "stack";
+  readonly reason:
+    | "invalid-config"
+    | "filesystem"
+    | "flags"
+    | "runtime"
+    | "lifecycle"
+    | "seed"
+    | "stack";
   readonly configIssue?: StartConfigIssue;
   readonly message: string;
   readonly detail?: string;
@@ -39,18 +45,17 @@ export class StackCommandStartError extends Data.TaggedError("ExperimentalStackS
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     switch (this.reason) {
       case "invalid-config":
-        if (this.configIssue === "project-directory")
-          return (
-            causeDeclaration(this.cause) ?? {
-              ...actionability.runtimeCrash,
-              fingerprint_suffix: "filesystem_io",
-            }
-          );
         return {
           ...actionability.invalidConfig,
           fingerprint_suffix:
             this.configIssue === undefined ? "invalid_config" : configIssueSuffix[this.configIssue],
         };
+      case "filesystem": {
+        const declared = causeDeclaration(this.cause);
+        return declared?.error_category === "permission"
+          ? declared
+          : { ...actionability.runtimeCrash, fingerprint_suffix: "filesystem_io" };
+      }
       case "flags":
         return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
       case "runtime":

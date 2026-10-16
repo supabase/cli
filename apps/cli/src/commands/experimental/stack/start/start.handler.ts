@@ -838,8 +838,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           Effect.mapError(
             (cause) =>
               new StackCommandStartError({
-                reason: "invalid-config",
-                configIssue: "project-directory",
+                reason: "filesystem",
                 message: `Unable to create the Storage uploads directory: ${cause.message}`,
                 cause,
               }),
@@ -852,8 +851,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           Effect.mapError(
             (cause) =>
               new StackCommandStartError({
-                reason: "invalid-config",
-                configIssue: "project-directory",
+                reason: "filesystem",
                 message: `Unable to create the Functions directory: ${cause.message}`,
                 cause,
               }),
@@ -866,8 +864,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           Effect.mapError(
             (cause) =>
               new StackCommandStartError({
-                reason: "invalid-config",
-                configIssue: "project-directory",
+                reason: "filesystem",
                 message: `Unable to create the Studio snippets directory: ${cause.message}`,
                 cause,
               }),

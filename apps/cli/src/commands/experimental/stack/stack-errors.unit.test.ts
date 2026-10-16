@@ -100,19 +100,17 @@ describe("new stack error telemetry", () => {
     });
   });
 
-  it("fingerprints each start configuration check, and a directory failure by its cause", () => {
+  it("fingerprints a start configuration check by name, and a directory failure by permission or I/O", () => {
     const configError = (configIssue: "saved-stack-changes" | "missing-credentials") =>
       classify(new StackCommandStartError({ reason: "invalid-config", configIssue, message: "x" }));
-    const directoryError = new StackCommandStartError({
-      reason: "invalid-config",
-      configIssue: "project-directory",
-      message: "x",
-      cause: PlatformError.systemError({
-        _tag: "PermissionDenied",
-        module: "FileSystem",
-        method: "makeDirectory",
-      }),
-    });
+    const directoryError = (_tag: "PermissionDenied" | "Busy") =>
+      classify(
+        new StackCommandStartError({
+          reason: "filesystem",
+          message: "x",
+          cause: PlatformError.systemError({ _tag, module: "FileSystem", method: "makeDirectory" }),
+        }),
+      );
 
     expect(configError("saved-stack-changes")).toEqual({
       error_fingerprint: "tag:ExperimentalStackStartError:saved_stack_changes",
@@ -122,10 +120,15 @@ describe("new stack error telemetry", () => {
     expect(configError("missing-credentials")).toMatchObject({
       error_fingerprint: "tag:ExperimentalStackStartError:missing_credentials",
     });
-    expect(classify(directoryError)).toEqual({
+    expect(directoryError("PermissionDenied")).toEqual({
       error_fingerprint: "tag:ExperimentalStackStartError:filesystem",
       error_kind: "user_actionable",
       error_category: "permission",
+    });
+    expect(directoryError("Busy")).toEqual({
+      error_fingerprint: "tag:ExperimentalStackStartError:filesystem_io",
+      error_kind: "internal_bug",
+      error_category: "runtime_crash",
     });
   });
 
