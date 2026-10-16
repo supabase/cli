@@ -7,8 +7,36 @@ import {
   unclassifiedStackFailureActionability,
 } from "../../../../shared/telemetry/error-actionability.ts";
 
+/** The start check that rejected the project or saved stack configuration. */
+type StartConfigIssue =
+  | "project-config"
+  | "service-config"
+  | "functions-env"
+  | "saved-stack-changes"
+  | "credentials-conflict"
+  | "missing-database"
+  | "missing-credentials";
+
+const configIssueSuffix = {
+  "project-config": "project_config",
+  "service-config": "service_config",
+  "functions-env": "functions_env",
+  "saved-stack-changes": "saved_stack_changes",
+  "credentials-conflict": "credentials_conflict",
+  "missing-database": "missing_database",
+  "missing-credentials": "missing_credentials",
+} as const;
+
 export class StackCommandStartError extends Data.TaggedError("ExperimentalStackStartError")<{
-  readonly reason: "invalid-config" | "flags" | "runtime" | "lifecycle" | "seed" | "stack";
+  readonly reason:
+    | "invalid-config"
+    | "filesystem"
+    | "flags"
+    | "runtime"
+    | "lifecycle"
+    | "seed"
+    | "stack";
+  readonly configIssue?: StartConfigIssue;
   readonly message: string;
   readonly detail?: string;
   readonly suggestion?: string;
@@ -17,7 +45,17 @@ export class StackCommandStartError extends Data.TaggedError("ExperimentalStackS
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     switch (this.reason) {
       case "invalid-config":
-        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
+        return {
+          ...actionability.invalidConfig,
+          fingerprint_suffix:
+            this.configIssue === undefined ? "invalid_config" : configIssueSuffix[this.configIssue],
+        };
+      case "filesystem": {
+        const declared = causeDeclaration(this.cause);
+        return declared?.error_kind === "user_actionable"
+          ? declared
+          : { ...actionability.runtimeCrash, fingerprint_suffix: "filesystem_io" };
+      }
       case "flags":
         return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
       case "runtime":
@@ -27,7 +65,7 @@ export class StackCommandStartError extends Data.TaggedError("ExperimentalStackS
       case "seed":
         return { ...actionability.seedBuckets, fingerprint_suffix: "seed_buckets" };
       case "stack":
-        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability;
+        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability(this.cause);
     }
   }
 }

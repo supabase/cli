@@ -25,7 +25,7 @@ export class StackCommandPrepareError extends Data.TaggedError("ExperimentalStac
       case "lifecycle":
         return { ...actionability.invalidConfig, fingerprint_suffix: "lifecycle" };
       case "stack":
-        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability;
+        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability(this.cause);
     }
   }
 }
