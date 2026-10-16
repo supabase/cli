@@ -1,5 +1,4 @@
-import { basename, dirname } from "node:path";
-import { Effect, Option } from "effect";
+import { Effect, Option, Path } from "effect";
 import * as ChildProcess from "effect/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
@@ -17,11 +16,10 @@ import { collectText } from "./container-cli.ts";
  * Returns `Option.none()` whenever the answer can't be determined (not a git working tree, `git`
  * missing, a non-zero exit, or any other failure) rather than treating that as "clean".
  */
-export function pathHasUncommittedChanges(
-  path: string,
-): Effect.Effect<Option.Option<boolean>, never, ChildProcessSpawner> {
-  const args = ["status", "--porcelain", "--", basename(path)];
-  return withProcessSpan(
+export const pathHasUncommittedChanges = Effect.fnUntraced(function* (path: string) {
+  const pathService = yield* Path.Path;
+  const args = ["status", "--porcelain", "--", pathService.basename(path)];
+  return yield* withProcessSpan(
     "Git.status",
     { executable: "git", argCount: args.length },
     (traceEnv) =>
@@ -33,7 +31,12 @@ export function pathHasUncommittedChanges(
               "git",
               args,
               withChildTraceEnv(
-                { cwd: dirname(path), stdin: "ignore", stdout: "pipe", stderr: "ignore" },
+                {
+                  cwd: pathService.dirname(path),
+                  stdin: "ignore",
+                  stdout: "pipe",
+                  stderr: "ignore",
+                },
                 traceEnv,
               ),
             ),
@@ -52,4 +55,4 @@ export function pathHasUncommittedChanges(
     ),
     Effect.orElseSucceed(() => Option.none<boolean>()),
   );
-}
+});

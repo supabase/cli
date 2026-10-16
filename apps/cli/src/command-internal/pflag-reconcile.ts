@@ -3,13 +3,12 @@ import { Data, Effect, FileSystem, Option, Path, Result } from "effect";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { lastExplicitLongFlagValue, type PflagArgvScan } from "../shared/cli/cobra-flag-groups.ts";
 import { ProfileFlag, WorkdirFlag } from "./global-flags.ts";
-import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
-import { profileFilePath } from "../config/profile-file.ts";
+import { CommandSettings } from "../config/command-settings.service.ts";
 import { loadProfile, type LoadedProfile } from "./profile-load.ts";
 import { parseStringSliceFlag } from "./string-slice-flag.ts";
 import { validateWorkdirIsDirectory } from "./workdir-validation.ts";
@@ -136,7 +135,8 @@ export const validatePflagWorkdir = Effect.fnUntraced(function* (
   // `serviceOption`: absent outside the real CLI tree (handler-level tests
   // provide argv via `Stdio.layerTest`, not the global flag settings).
   const parsedWorkdir = Option.flatten(yield* Effect.serviceOption(WorkdirFlag));
-  const workdir = pflagWorkdirValue(scan, parsedWorkdir, process.env["SUPABASE_WORKDIR"]);
+  const envWorkdir = Option.getOrUndefined((yield* CommandSettings).workdirEnvValue);
+  const workdir = pflagWorkdirValue(scan, parsedWorkdir, envWorkdir);
   if (Option.isNone(workdir)) {
     return;
   }
@@ -205,16 +205,17 @@ export function pflagProfileValue(
  * persisted-file token) or when the resolved token is empty. On every normal invocation the
  * layer's resolution stands unchanged.
  *
- * `serviceOption` throughout: outside the real CLI tree (handler-level tests provide argv via
- * `Stdio.layerTest`) the flag settings and `RuntimeInfo` may be absent, and the reconcile then
- * only acts on what the scan itself shows.
+ * `serviceOption` for all but `CommandSettings`: outside the real CLI tree (handler-level
+ * tests provide argv via `Stdio.layerTest`) the flag settings may be absent, and the reconcile
+ * then only acts on what the scan itself shows.
  */
 export const resolvePflagProfile = Effect.fnUntraced(function* (
   scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
 ) {
   const parsedRaw = yield* Effect.serviceOption(ProfileFlag);
   const parsedProfile = Option.filter(parsedRaw, (value) => value !== "supabase");
-  const env = process.env["SUPABASE_PROFILE"];
+  const settings = yield* CommandSettings;
+  const env = Option.getOrUndefined(settings.profileEnvValue);
   const envProfile = env !== undefined && env.length > 0 ? env : undefined;
 
   // The explicit token pflag-equivalent semantics resolve, vs. the one the config layer's own
@@ -245,8 +246,7 @@ export const resolvePflagProfile = Effect.fnUntraced(function* (
 
   const fs = yield* Effect.serviceOption(FileSystem.FileSystem);
   const path = yield* Effect.serviceOption(Path.Path);
-  const runtimeInfo = yield* Effect.serviceOption(RuntimeInfo);
-  if (Option.isNone(fs) || Option.isNone(path) || Option.isNone(runtimeInfo)) {
+  if (Option.isNone(fs) || Option.isNone(path)) {
     return Option.none<LoadedProfile>();
   }
 
@@ -254,7 +254,7 @@ export const resolvePflagProfile = Effect.fnUntraced(function* (
   // while the config layer trims and maps empty to the default — a divergence the token
   // comparison below surfaces (e.g. a trailing newline fails to load as a profile).
   const fileRaw = yield* fs.value
-    .readFileString(profileFilePath(path.value, runtimeInfo.value.homeDir))
+    .readFileString(path.value.join(settings.supabaseHome, "profile"))
     .pipe(Effect.option);
 
   const goToken = Option.isSome(goExplicit)
