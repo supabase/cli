@@ -96,12 +96,10 @@ export function ensureImagesCached(
       // The install hint is appended once after every resolve finishes, rather than emitted
       // from inside the resolver, to avoid duplicate hints from concurrent failures.
       const hint = failures.some(isDockerDaemonUnreachable) ? `\n\n${SUGGEST_DOCKER_INSTALL}` : "";
-      return yield* Effect.fail(
-        new ImagePrepullError({
-          message: `${failures.join("\n")}${hint}`,
-          reason: failureReason,
-        }),
-      );
+      return yield* new ImagePrepullError({
+        message: `${failures.join("\n")}${hint}`,
+        reason: failureReason,
+      });
     }
 
     return resolved;

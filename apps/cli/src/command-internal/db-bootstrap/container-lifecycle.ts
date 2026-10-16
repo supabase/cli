@@ -245,15 +245,13 @@ export function ensureNetwork(
       );
       if (exitCode !== 0 && !isNetworkAlreadyExistsError(stderr)) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new NetworkCreateError({
-            message:
-              message.length > 0
-                ? `failed to create docker network: ${message}`
-                : "failed to create docker network",
-            reason: containerCliReason(message),
-          }),
-        );
+        return yield* new NetworkCreateError({
+          message:
+            message.length > 0
+              ? `failed to create docker network: ${message}`
+              : "failed to create docker network",
+          reason: containerCliReason(message),
+        });
       }
     }),
   );
@@ -316,15 +314,11 @@ export function ensureVolume(
       );
       if (exitCode !== 0 && !isVolumeAlreadyExistsError(stderr)) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new VolumeCreateError({
-            message:
-              message.length > 0
-                ? `failed to create volume: ${message}`
-                : "failed to create volume",
-            reason: containerCliReason(message),
-          }),
-        );
+        return yield* new VolumeCreateError({
+          message:
+            message.length > 0 ? `failed to create volume: ${message}` : "failed to create volume",
+          reason: containerCliReason(message),
+        });
       }
     }),
   );
@@ -483,15 +477,13 @@ function dockerCreateContainer(
       );
       if (exitCode !== 0) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new ContainerCreateError({
-            message:
-              message.length > 0
-                ? `failed to create docker container: ${message}`
-                : "failed to create docker container",
-            reason: containerCliReason(message),
-          }),
-        );
+        return yield* new ContainerCreateError({
+          message:
+            message.length > 0
+              ? `failed to create docker container: ${message}`
+              : "failed to create docker container",
+          reason: containerCliReason(message),
+        });
       }
       return stdout.trim();
     }),
@@ -537,20 +529,16 @@ function dockerStartContainer(
         }`;
         const hostPort = parsePortBindError(trimmed);
         if (hostPort === undefined) {
-          return yield* Effect.fail(
-            new ContainerStartError({
-              message: base,
-              reason: containerCliReason(trimmed),
-            }),
-          );
+          return yield* new ContainerStartError({
+            message: base,
+            reason: containerCliReason(trimmed),
+          });
         }
         const serviceLabel = spec.networkAliases?.[0] ?? spec.containerName;
-        return yield* Effect.fail(
-          new ContainerStartError({
-            message: `${base}${portConflictSuggestion(hostPort, serviceLabel)}`,
-            reason: "port_conflict",
-          }),
-        );
+        return yield* new ContainerStartError({
+          message: `${base}${portConflictSuggestion(hostPort, serviceLabel)}`,
+          reason: "port_conflict",
+        });
       }
     }),
   );

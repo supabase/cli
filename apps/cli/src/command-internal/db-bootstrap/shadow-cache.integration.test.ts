@@ -8,14 +8,21 @@
  * the contract (the export must stop the container before copying and start it again after).
  */
 
-import { accessSync, chmodSync, constants } from "node:fs";
-import { join } from "node:path";
-
 import type { CliConfig } from "@supabase/config";
 import { CliConfigSchema } from "@supabase/config";
-import { BunServices } from "@effect/platform-bun";
+import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
+import {
+  ConfigProvider,
+  DateTime,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Schema,
+} from "effect";
 
 import {
   FAKE_EMPTY_TAR,
@@ -48,6 +55,8 @@ import {
 import { removeShadowDatabase } from "./shadow-database.ts";
 import type { ShadowDbSetupInput, ShadowSetupInput } from "./shadow-database.ts";
 
+const nodePath = Effect.runSync(Effect.provide(Path.Path, BunPath.layer));
+
 const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
 const defaultConfig: CliConfig = decodeConfig({});
 
@@ -68,7 +77,7 @@ const withShadowCacheHome = <A, E, R>(
 ): Effect.Effect<A, E, R> =>
   withEnvVar(
     "SUPABASE_HOME",
-    join(tempRoot.current, "_supabase_home"),
+    nodePath.join(tempRoot.current, "_supabase_home"),
     withShadowCacheEnv(value, body),
   );
 
@@ -291,7 +300,9 @@ describe("acquireShadowDatabase", () => {
           "shadow-baseline-0011223344556677.tar.4242.partial",
         );
         yield* fs.writeFileString(abandoned, "stale");
-        const sixMinutesAgo = new Date(Date.now() - 6 * 60 * 1000);
+        const sixMinutesAgo = DateTime.toDateUtc(
+          DateTime.subtract(yield* DateTime.now, { minutes: 6 }),
+        );
         yield* fs.utimes(abandoned, sixMinutesAgo, sixMinutesAgo);
 
         const warm = yield* acquireShadowDatabase(docker.spawner, input);
@@ -396,18 +407,14 @@ describe("acquireShadowDatabase", () => {
         // read-only root selects the doomed cold cycle on every default-ON invocation.
         const cacheDir = shadowCacheDir(path);
         yield* fs.makeDirectory(cacheDir, { recursive: true });
-        chmodSync(cacheDir, 0o500);
+        yield* fs.chmod(cacheDir, 0o500);
         // chmod cannot revoke write access from a privileged user (root ignores permission
         // bits), so assert the degrade only when the denial is real for the current user;
         // otherwise the cached path proceeding is correct.
-        const writable = (() => {
-          try {
-            accessSync(cacheDir, constants.W_OK);
-            return true;
-          } catch {
-            return false;
-          }
-        })();
+        const writable = yield* fs.access(cacheDir, { writable: true }).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
 
         const handle = yield* acquireShadowDatabase(docker.spawner, shadowInput(fs, path));
         if (writable) {
@@ -418,7 +425,7 @@ describe("acquireShadowDatabase", () => {
           expect(docker.calls("create")[0] ?? []).toContain("--rm");
           expect(out.stderrText).toContain("shadow baseline cache unavailable");
         }
-        chmodSync(cacheDir, 0o700);
+        yield* fs.chmod(cacheDir, 0o700);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
@@ -601,7 +608,9 @@ describe("acquireShadowDatabase", () => {
         const live = path.join(tempDir, "shadow-baseline-fedcba9876543210.tar.88888.partial");
         yield* fs.writeFileString(abandoned, "stale");
         yield* fs.writeFileString(live, "in-flight");
-        const sixMinutesAgo = new Date(Date.now() - 6 * 60 * 1000);
+        const sixMinutesAgo = DateTime.toDateUtc(
+          DateTime.subtract(yield* DateTime.now, { minutes: 6 }),
+        );
         yield* fs.utimes(abandoned, sixMinutesAgo, sixMinutesAgo);
 
         yield* coldRun(docker, shadowInput(fs, path));
@@ -641,7 +650,7 @@ describe("acquireShadowDatabase", () => {
         // mtime is the LRU ordinal, and the rapid-fire publishes below can land within the
         // filesystem's timestamp granularity, making an mtime tie's "oldest" ambiguous. Age the
         // first tar explicitly since this test asserts keep-cap behavior, not tie-breaking.
-        const anHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+        const anHourAgo = DateTime.toDateUtc(DateTime.subtract(yield* DateTime.now, { hours: 1 }));
         yield* fs.utimes(path.join(shadowCacheDir(path), first[0] ?? ""), anHourAgo, anHourAgo);
 
         // Fill past keep-cap. The current key is retained, so siblings evict first.

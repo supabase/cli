@@ -523,9 +523,9 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     envOverridePort("SUPABASE_STUDIO_PORT", config.studio.port, "studio.port", projectEnvValues),
   );
   if (studioEnabledForValidation && studioPortForValidation === 0) {
-    yield* Effect.fail(
-      new DbConfigLoadError({ message: "Missing required field in config: studio.port" }),
-    );
+    return yield* new DbConfigLoadError({
+      message: "Missing required field in config: studio.port",
+    });
   }
   const studioApiUrlForValidation =
     envOverride("SUPABASE_STUDIO_API_URL", config.studio.api_url, projectEnvValues) ??
@@ -548,9 +548,9 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
     ),
   );
   if (localSmtpEnabledForValidation && localSmtpPortForValidation === 0) {
-    yield* Effect.fail(
-      new DbConfigLoadError({ message: "Missing required field in config: local_smtp.port" }),
-    );
+    return yield* new DbConfigLoadError({
+      message: "Missing required field in config: local_smtp.port",
+    });
   }
 
   // `resolveLocalConfigValues` is the same resolver `buildLocalDbContainerInputs` calls again

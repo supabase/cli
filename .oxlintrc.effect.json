@@ -33,6 +33,7 @@
     "!apps/cli/src/command-internal/connect-errors.*",
     "!apps/cli/src/command-internal/container-cli.*",
     "!apps/cli/src/command-internal/db-*.ts",
+    "!apps/cli/src/command-internal/db-bootstrap/**",
     "!apps/cli/src/command-internal/debug-logger.*",
     "!apps/cli/src/command-internal/detect-content-type.*",
     "!apps/cli/src/command-internal/diff-engine.*",
@@ -103,13 +104,8 @@
     "!apps/cli/src/command-internal/size-units.ts",
     "!apps/cli/src/command-internal/sql-files-glob.*",
     "!apps/cli/src/command-internal/sql-split.*",
-    "!apps/cli/src/command-internal/stack-api.ts",
-    "!apps/cli/src/command-internal/stack-backend.ts",
-    "!apps/cli/src/command-internal/stack-catalog-setup.ts",
-    "!apps/cli/src/command-internal/stack-config.ts",
-    "!apps/cli/src/command-internal/stack-local-database.ts",
-    "!apps/cli/src/command-internal/stack-shadow.ts",
-    "!apps/cli/src/command-internal/stack-storage.ts",
+    "!apps/cli/src/command-internal/stack-*",
+    "!apps/cli/src/command-internal/start-*",
     "!apps/cli/src/command-internal/status-errors.ts",
     "!apps/cli/src/command-internal/status-pretty.*",
     "!apps/cli/src/command-internal/status-values.*",
@@ -117,6 +113,7 @@
     "!apps/cli/src/command-internal/string-slice-flag.*",
     "!apps/cli/src/command-internal/temp-paths.*",
     "!apps/cli/src/command-internal/tenant-*",
+    "!apps/cli/src/command-internal/test-db.*",
     "!apps/cli/src/command-internal/timestamp.format.*",
     "!apps/cli/src/command-internal/upgrade-notice.*",
     "!apps/cli/src/command-internal/upgrade-suggest.*",
@@ -128,6 +125,8 @@
     "!apps/cli/src/command-internal/workdir-validation.ts",
     "apps/cli/src/command-internal/config-validate.parity.unit.test.ts",
     "apps/cli/src/command-internal/config-validate.ts",
-    "apps/cli/src/command-internal/config-validate.unit.test.ts"
+    "apps/cli/src/command-internal/config-validate.unit.test.ts",
+    "apps/cli/src/command-internal/db-bootstrap/local-db-running.integration.test.ts",
+    "apps/cli/src/command-internal/db-bootstrap/local-db-running.ts"
   ]
 }
