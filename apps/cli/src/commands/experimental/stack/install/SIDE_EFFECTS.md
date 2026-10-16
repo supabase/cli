@@ -23,6 +23,10 @@ project lease `supabase/.supabase.lock.lease`:
   fails with `supabase/config.toml not found` rather than using the bundled versions; without a lock
   `CI` changes nothing.
 
+To move a fresh entry to a newer release, use `supabase stack update`; `supabase stack outdated`
+reports which entries would move (see [`../update/SIDE_EFFECTS.md`](../update/SIDE_EFFECTS.md) and
+[`../outdated/SIDE_EFFECTS.md`](../outdated/SIDE_EFFECTS.md)).
+
 ## Download
 
 `--runtime` defaults to `auto`, which selects Docker, then Podman, then native, as `stack start`

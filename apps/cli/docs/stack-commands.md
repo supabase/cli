@@ -14,16 +14,18 @@ Native pg_cron runs jobs in background workers, so a job body cannot contain its
 default `max_worker_processes` to 17 to leave room for those workers; `postgresql.conf`,
 `ALTER SYSTEM`, and `[db.settings]` values take precedence.
 
-| Command                  | Purpose                                                                           |
-| ------------------------ | --------------------------------------------------------------------------------- |
-| `supabase stack destroy` | Permanently delete stacks and their data.                                         |
-| `supabase stack list`    | List persisted managed local stacks.                                              |
-| `supabase stack install` | Resolve and lock service versions, then download artifacts without a stack.       |
-| `supabase stack start`   | Create or resume the project's stack.                                             |
-| `supabase stack status`  | Show identity, readiness, and drift, or export connection variables with `--env`. |
-| `supabase stack logs`    | Print retained stack logs; `-f` streams new lines.                                |
-| `supabase stack restart` | Restart an existing stack using its saved effective configuration.                |
-| `supabase stack stop`    | Stop a stack while retaining its data.                                            |
+| Command                   | Purpose                                                                           |
+| ------------------------- | --------------------------------------------------------------------------------- |
+| `supabase stack destroy`  | Permanently delete stacks and their data.                                         |
+| `supabase stack list`     | List persisted managed local stacks.                                              |
+| `supabase stack install`  | Resolve and lock service versions, then download artifacts without a stack.       |
+| `supabase stack update`   | Re-resolve locked service versions and rewrite `supabase/supabase.lock`.          |
+| `supabase stack outdated` | Report which locked service versions `stack update` would change.                 |
+| `supabase stack start`    | Create or resume the project's stack.                                             |
+| `supabase stack status`   | Show identity, readiness, and drift, or export connection variables with `--env`. |
+| `supabase stack logs`     | Print retained stack logs; `-f` streams new lines.                                |
+| `supabase stack restart`  | Restart an existing stack using its saved effective configuration.                |
+| `supabase stack stop`     | Stop a stack while retaining its data.                                            |
 
 Use each command's `--help` for its available targeting and runtime options.
 
@@ -47,6 +49,18 @@ are already present are skipped, so a second run reports everything as cached.
 ```sh
 supabase stack install
 supabase stack install --frozen --runtime native --output-format json
+```
+
+`supabase stack update [service...]` re-resolves the named services, or all of them, even when the
+lock is fresh: an upstream version moves to its newest revision, `bundled` and `linked` move to the
+version this CLI bundles, and an exact `-r<N>` pin stays. It prints the diff and rewrites the lock
+without downloading anything; `CI` does not freeze it. `supabase stack outdated` is the read-only
+counterpart: it reports each service's locked and would-be version without a lease, a write, or a
+download, and reports a failed probe per row without failing.
+
+```sh
+supabase stack outdated
+supabase stack update auth realtime
 ```
 
 ## Connection details after start

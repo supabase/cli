@@ -157,6 +157,9 @@ unchanged keep their pins, so starting never moves a pinned version on its own. 
 
 `supabase stack install` runs this same resolution under the same lease, then downloads what the lock
 pins without starting a stack; see [`../install/SIDE_EFFECTS.md`](../install/SIDE_EFFECTS.md).
+`supabase stack update` re-resolves chosen services even when fresh, and `supabase stack outdated`
+reports what it would change; see [`../update/SIDE_EFFECTS.md`](../update/SIDE_EFFECTS.md) and
+[`../outdated/SIDE_EFFECTS.md`](../outdated/SIDE_EFFECTS.md).
 
 Resolving a release specifier needs the network: a first start with an explicit upstream version
 (`<upstream>` or `<upstream>-r<N>`, even one the CLI bundles) or with `[db] orioledb_version` (even

@@ -18,6 +18,8 @@ import { stackLogsCommand as stackLogsCommandBase } from "./logs/logs.command.ts
 import { stackListCommand as stackListCommandBase } from "./list/list.command.ts";
 import { stackRestartCommand as stackRestartCommandBase } from "./restart/restart.command.ts";
 import { stackInstallCommand as stackInstallCommandBase } from "./install/install.command.ts";
+import { stackOutdatedCommand as stackOutdatedCommandBase } from "./outdated/outdated.command.ts";
+import { stackUpdateCommand as stackUpdateCommandBase } from "./update/update.command.ts";
 import { stackApiLayer, stackTargetResolverLayer } from "./stack.shared.ts";
 import { configureLoopbackProxyBypass } from "../../../command-internal/hostname.ts";
 
@@ -84,6 +86,12 @@ const stackRestartCommand = stackRestartCommandBase.pipe(
 const stackInstallCommand = stackInstallCommandBase.pipe(
   Command.provide(commandRuntimeLayer(["stack", "install"])),
 );
+const stackOutdatedCommand = stackOutdatedCommandBase.pipe(
+  Command.provide(commandRuntimeLayer(["stack", "outdated"])),
+);
+const stackUpdateCommand = stackUpdateCommandBase.pipe(
+  Command.provide(commandRuntimeLayer(["stack", "update"])),
+);
 
 export const stackCommand = Command.make("stack").pipe(
   Command.withDescription(
@@ -95,10 +103,12 @@ export const stackCommand = Command.make("stack").pipe(
     stackInstallCommand,
     stackListCommand,
     stackLogsCommand,
+    stackOutdatedCommand,
     stackRestartCommand,
     stackStartCommand,
     stackStatusCommand,
     stackStopCommand,
+    stackUpdateCommand,
   ]),
   Command.provide(stackRuntimeLayer),
 );

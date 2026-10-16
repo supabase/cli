@@ -9,6 +9,7 @@ import {
   LockResolutionError,
   lockedResolution,
   type LockedResolution,
+  LOCK_FILE,
 } from "../../../../command-internal/stack-lock.ts";
 import {
   selectStackRuntime,
@@ -25,8 +26,6 @@ import {
   stackInstallError,
   stackInstallRuntimeError,
 } from "./install.errors.ts";
-
-const LOCK_FILE = "supabase/supabase.lock";
 
 const lockReport = (resolution: LockedResolution | undefined) =>
   resolution === undefined
