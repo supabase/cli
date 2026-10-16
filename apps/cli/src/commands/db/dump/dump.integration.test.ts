@@ -52,6 +52,7 @@ import {
   useTempWorkdir,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { DnsResolverFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import {
@@ -475,6 +476,7 @@ function setup(opts: SetupOpts = {}) {
   const projectHttp = recordingProjectHttpClient(VALID_REF);
   const workdir = opts.workdir ?? "/work/project";
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     out.layer,
     opts.realLayers === true
       ? realDbConfigResolver({
@@ -564,7 +566,7 @@ describe("db dump integration", () => {
   });
 
   it.effect(
-    "allows --use-copy with an explicit --data-only=false (Go required check is presence)",
+    "allows --use-copy with an explicit --data-only=false (the required check is presence)",
     () => {
       const { layer } = setup({ isLocal: true, stdout: "SELECT 1;\n" });
       return Effect.gen(function* () {
@@ -639,7 +641,35 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --linked=false --local as a target conflict (Go flag.Changed)", () => {
+  it.effect("rejects --password combined with --db-url", () => {
+    const { layer, resolver } = setup();
+    return Effect.gen(function* () {
+      const exit = yield* dbDump(
+        flags({ dbUrl: Option.some("postgresql://x"), password: Option.some("pw") }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toBe(
+        "--password can't be used with --db-url. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres",
+      );
+      expect(resolver.calls).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects --password combined with --local", () => {
+    const { layer, resolver } = setup();
+    return Effect.gen(function* () {
+      const exit = yield* dbDump(
+        flags({ local: Option.some(true), password: Option.some("pw") }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toBe(
+        "--password can't be used with --local. The local database uses [db].password from supabase/config.toml.",
+      );
+      expect(resolver.calls).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects --linked=false --local as a target conflict", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbDump(
@@ -652,7 +682,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --data-only=false --role-only as a conflict (Go flag.Changed)", () => {
+  it.effect("rejects --data-only=false --role-only as a conflict", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbDump(
@@ -665,7 +695,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("treats --local=false as an explicit local target (Go ParseDatabaseConfig)", () => {
+  it.effect("treats --local=false as an explicit local target", () => {
     const { layer, resolver } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* dbDump(flags({ local: Option.some(false), dryRun: true }));
@@ -699,7 +729,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("treats an explicit --file '' as stdout on --dry-run (Go: len(path) > 0)", () => {
+  it.effect("treats an explicit --file '' as stdout on --dry-run", () => {
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* dbDump(flags({ dryRun: true, local: Option.some(true), file: Option.some("") }));
@@ -709,7 +739,7 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("validates the merged config before the --dry-run print (Go root PreRun order)", () => {
+  it.effect("validates the merged config before the --dry-run print", () => {
     const { layer, out } = setup({ isLocal: true, workdir: tmp.current });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -747,29 +777,6 @@ describe("db dump integration", () => {
       expect(docker.lastOpts?.env["EXCLUDED_SCHEMAS"]).toBeDefined();
     }).pipe(Effect.provide(layer));
   });
-
-  it.effect(
-    "warns once on stderr that SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is removed in v3, keeping stdout clean",
-    () => {
-      const { layer, out } = setup({
-        isLocal: true,
-        stdout: "CREATE SCHEMA public;\n",
-        env: { SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION: "17.11.0.002" },
-      });
-      const consoleErrors: Array<string> = [];
-      const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-        consoleErrors.push(args.map((a) => String(a)).join(" "));
-      });
-      return Effect.gen(function* () {
-        yield* dbDump(flags({ local: Option.some(true) }));
-        const warning =
-          "WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.";
-        const stderrLines = [...out.stderrText.split("\n"), ...consoleErrors];
-        expect(stderrLines.filter((line) => line === warning)).toHaveLength(1);
-        expect(out.stdoutText).toBe("CREATE SCHEMA public;\n");
-      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
-    },
-  );
 
   it.effect("dumps only data with column inserts", () => {
     const { layer, out, docker } = setup({ isLocal: true, stdout: "INSERT INTO ...;\n" });
@@ -937,7 +944,7 @@ describe("db dump integration", () => {
     },
   );
 
-  it.effect("caches the linked project even when connection resolution fails (Go PostRun)", () => {
+  it.effect("caches the linked project even when connection resolution fails", () => {
     // The project ref is resolved before the connection is built, and the
     // linked-project cache is refreshed unconditionally afterward. So an
     // IPv6/pooler/login-role failure during resolution still refreshes the

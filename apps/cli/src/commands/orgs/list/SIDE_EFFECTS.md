@@ -50,12 +50,12 @@ linked-project cache (`~/.supabase/<workdir-hash>/linked-project.json`) is never
 
 The `--output {pretty,json,yaml,toml,env}` flag and the `--output-format {text,json,stream-json}`
 flag are both honored. `--output` wins when both are supplied. `pretty` and `text` map to the
-same Glamour render.
+same render.
 
 ### `--output pretty` (default) / `--output-format text`
 
-Prints a Glamour-styled markdown table with columns `ID`, `NAME`. The rendered table always
-ends with a trailing newline (Glamour appends one).
+Prints a styled markdown table with columns `ID`, `NAME`. The rendered table always
+ends with a trailing newline.
 
 ### `--output json`
 
@@ -89,7 +89,7 @@ One `result` NDJSON event with `{organizations: [...]}`.
 ## Security Notes
 
 - API-supplied `id` and `name` strings are rendered to stdout without ANSI / control-character
-  sanitization (inherited from the old Go CLI's rendering behavior). A malicious or
+  sanitization. A malicious or
   compromised Management API could in principle return org names containing terminal
   escape sequences. If sanitization is added later it should land at the renderer
   (`glamour-table.ts`) so every caller inherits the fix.

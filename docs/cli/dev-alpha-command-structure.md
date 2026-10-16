@@ -4,7 +4,7 @@
 
 This document defines the alpha command structure for the new Supabase CLI.
 
-For alpha, we will design the command surface from `supabase dev` outward. The goal is not to mirror the old CLI or the Management API. The goal is to give both humans and LLMs one command set that feels obvious, consistent, and reusable.
+For alpha, we will design the command surface from `supabase dev` outward. The goal is not to mirror the previous CLI surface or the Management API. The goal is to give both humans and LLMs one command set that feels obvious, consistent, and reusable.
 
 `supabase dev` is the primary human entry point. The subcommands underneath it are the reusable building blocks that `dev`, `push`, and `pull` orchestrate directly. In alpha, `push` and `pull` are platform sync workflows, while local database mutation uses `apply`.
 
@@ -264,7 +264,7 @@ The alpha should feel complete enough that `dev` can orchestrate a believable en
 ### Out of scope for this document
 
 - compatibility aliases
-- parity with the old CLI
+- matching the previous command surface
 - implementation details of watchers, transport, or API wiring
 - detailed handler boundaries or runtime architecture
 
