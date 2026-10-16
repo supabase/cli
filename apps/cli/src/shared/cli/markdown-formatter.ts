@@ -13,10 +13,10 @@ function formatTable(headers: string[], rows: string[][]): string {
   const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
   const pad = (s: string, w: number) => s + " ".repeat(w - s.length);
 
-  const headerLine = `| ${headers.map((h, i) => pad(h, widths[i]!)).join(" | ")} |`;
+  const headerLine = `| ${headers.map((h, i) => pad(h, widths[i] ?? h.length)).join(" | ")} |`;
   const separatorLine = `| ${widths.map((w) => "-".repeat(w)).join(" | ")} |`;
   const dataLines = rows.map(
-    (row) => `| ${row.map((cell, i) => pad(cell, widths[i]!)).join(" | ")} |`,
+    (row) => `| ${row.map((cell, i) => pad(cell, widths[i] ?? cell.length)).join(" | ")} |`,
   );
 
   return [headerLine, separatorLine, ...dataLines].join("\n");

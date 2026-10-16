@@ -21,6 +21,7 @@ on:
       - ".github/sync-branches/**"
       - "apps/cli/scripts/analyze-commits-title.js"
       - ".github/workflows/github-scripts-ci.yml"
+      - ".github/workflows/flaky-check.yml"
       - ".github/workflows/mirror-slim-image.yml"
 
 permissions: {}

@@ -3,7 +3,7 @@ import { Effect, Fiber } from "effect";
 import { CurrentAnalyticsContext, withAnalyticsContext } from "./analytics-context.ts";
 
 describe("withAnalyticsContext", () => {
-  it.live("merges context lexically and restores the previous value afterward", () =>
+  it.effect("merges context lexically and restores the previous value afterward", () =>
     Effect.gen(function* () {
       const before = yield* CurrentAnalyticsContext;
       expect(before).toEqual({});
@@ -40,7 +40,7 @@ describe("withAnalyticsContext", () => {
     }),
   );
 
-  it.live("is inherited by child fibers", () =>
+  it.effect("is inherited by child fibers", () =>
     Effect.gen(function* () {
       const child = yield* Effect.gen(function* () {
         const fiber = yield* Effect.forkChild(CurrentAnalyticsContext);

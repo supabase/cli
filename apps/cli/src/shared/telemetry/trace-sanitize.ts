@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import { Cause, Crypto, Effect, Exit } from "effect";
+import { absurd } from "effect/Function";
 import type { KeyValue, AnyValue } from "effect/observability/OtlpResource";
 import type { ScopeSpan, TraceData } from "effect/observability/OtlpTracer";
 
@@ -149,9 +150,9 @@ type AttributeDecision =
 function decide(key: string, numericOrBoolean: boolean): AttributeDecision {
   if (key === "db.query.text") return { _tag: "Query" };
   if (key === "url.query") return { _tag: "Drop" };
-  const header = HEADER_ATTRIBUTE.exec(key);
-  if (header !== null) {
-    return ALLOWED_HEADERS.has(header[1]!.toLowerCase()) ? { _tag: "Keep" } : { _tag: "Drop" };
+  const headerName = HEADER_ATTRIBUTE.exec(key)?.[1];
+  if (headerName !== undefined) {
+    return ALLOWED_HEADERS.has(headerName.toLowerCase()) ? { _tag: "Keep" } : { _tag: "Drop" };
   }
   if (!numericOrBoolean && DENIED_KEY.test(key)) return { _tag: "Drop" };
   return { _tag: "Keep" };
@@ -184,12 +185,15 @@ function sanitizeAttributeEntries(
       case "Query":
         if (typeof value === "string") result.push(...queryAttributes(value, hashQuery));
         break;
-      default:
+      case "Keep":
         result.push([
           key,
           (typeof value === "string" ? sanitizeUrlAttribute(key, value) : undefined) ??
             scrubUnknown(value),
         ]);
+        break;
+      default:
+        absurd(decision);
     }
   }
   return result;
@@ -237,7 +241,7 @@ function sanitizeKeyValues(
         }
         break;
       }
-      default: {
+      case "Keep": {
         const text = attribute.value.stringValue;
         const url =
           typeof text === "string" ? sanitizeUrlAttribute(attribute.key, text) : undefined;
@@ -246,7 +250,10 @@ function sanitizeKeyValues(
           value:
             url === undefined ? scrubAnyValue(attribute.value, hashQuery) : { stringValue: url },
         });
+        break;
       }
+      default:
+        absurd(decision);
     }
   }
   return result;

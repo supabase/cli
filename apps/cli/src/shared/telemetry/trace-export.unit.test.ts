@@ -1,5 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Layer, Option, Path, Redacted, Sink, Stdio } from "effect";
+import {
+  ConfigProvider,
+  Effect,
+  Layer,
+  Option,
+  Path,
+  Predicate,
+  Redacted,
+  Sink,
+  Stdio,
+} from "effect";
 import { BunServices } from "@effect/platform-bun";
 import { mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { CliSettings } from "../config/cli-settings.service.ts";
@@ -72,7 +82,7 @@ describe("resolveTraceSettings", () => {
         url: "http://localhost:4318/v1/traces",
       });
       const sink = Option.getOrThrow(settings.sink);
-      expect(sink._tag === "Otlp" && Redacted.value(sink.headers)).toEqual({
+      expect(Predicate.isTagged(sink, "Otlp") && Redacted.value(sink.headers)).toEqual({
         "x-api-key": "abc=",
         "x-tenant": "team",
       });

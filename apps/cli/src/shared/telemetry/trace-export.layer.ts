@@ -8,6 +8,7 @@ import {
   Fiber,
   FileSystem,
   Layer,
+  Match,
   Option,
   Path,
   Queue,
@@ -262,12 +263,14 @@ const sinkTracer = Effect.fnUntraced(function* (sink: TraceSink) {
   };
   const make = (url: string, headers: Redacted.Redacted<Readonly<Record<string, string>>>) =>
     sinkModule.makeOtlpTracer({ url, headers, resource });
-  const tracer =
-    sink._tag === "File"
-      ? make("file:///v1/traces", Redacted.make({})).pipe(
-          Effect.provide(sinkModule.fileTransportLayer(sink.path)),
-        )
-      : make(sink.url, sink.headers).pipe(Effect.provide(sinkModule.collectorTransportLayer));
+  const tracer = Match.valueTags(sink, {
+    File: (file) =>
+      make("file:///v1/traces", Redacted.make({})).pipe(
+        Effect.provide(sinkModule.fileTransportLayer(file.path)),
+      ),
+    Otlp: (otlp) =>
+      make(otlp.url, otlp.headers).pipe(Effect.provide(sinkModule.collectorTransportLayer)),
+  });
   return observedTracer(yield* tracer);
 });
 

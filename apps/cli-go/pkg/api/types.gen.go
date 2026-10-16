@@ -2803,312 +2803,312 @@ func (e ProjectUpgradeEligibilityResponseOutputWarnings3Type) Valid() bool {
 	}
 }
 
-// Defines values for RegionsInfoOutputAllSmartGroupCode.
+// Defines values for RegionsInfoV1OutputAllSmartGroupCode.
 const (
-	RegionsInfoOutputAllSmartGroupCodeAmericas RegionsInfoOutputAllSmartGroupCode = "americas"
-	RegionsInfoOutputAllSmartGroupCodeApac     RegionsInfoOutputAllSmartGroupCode = "apac"
-	RegionsInfoOutputAllSmartGroupCodeEmea     RegionsInfoOutputAllSmartGroupCode = "emea"
+	RegionsInfoV1OutputAllSmartGroupCodeAmericas RegionsInfoV1OutputAllSmartGroupCode = "americas"
+	RegionsInfoV1OutputAllSmartGroupCodeApac     RegionsInfoV1OutputAllSmartGroupCode = "apac"
+	RegionsInfoV1OutputAllSmartGroupCodeEmea     RegionsInfoV1OutputAllSmartGroupCode = "emea"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoOutputAllSmartGroupCode enum.
-func (e RegionsInfoOutputAllSmartGroupCode) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoV1OutputAllSmartGroupCode enum.
+func (e RegionsInfoV1OutputAllSmartGroupCode) Valid() bool {
 	switch e {
-	case RegionsInfoOutputAllSmartGroupCodeAmericas:
+	case RegionsInfoV1OutputAllSmartGroupCodeAmericas:
 		return true
-	case RegionsInfoOutputAllSmartGroupCodeApac:
+	case RegionsInfoV1OutputAllSmartGroupCodeApac:
 		return true
-	case RegionsInfoOutputAllSmartGroupCodeEmea:
+	case RegionsInfoV1OutputAllSmartGroupCodeEmea:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoOutputAllSmartGroupType.
+// Defines values for RegionsInfoV1OutputAllSmartGroupType.
 const (
-	RegionsInfoOutputAllSmartGroupTypeSmartGroup RegionsInfoOutputAllSmartGroupType = "smartGroup"
+	RegionsInfoV1OutputAllSmartGroupTypeSmartGroup RegionsInfoV1OutputAllSmartGroupType = "smartGroup"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoOutputAllSmartGroupType enum.
-func (e RegionsInfoOutputAllSmartGroupType) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoV1OutputAllSmartGroupType enum.
+func (e RegionsInfoV1OutputAllSmartGroupType) Valid() bool {
 	switch e {
-	case RegionsInfoOutputAllSmartGroupTypeSmartGroup:
+	case RegionsInfoV1OutputAllSmartGroupTypeSmartGroup:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoOutputAllSpecificCode.
+// Defines values for RegionsInfoV1OutputAllSpecificCode.
 const (
-	RegionsInfoOutputAllSpecificCodeApEast1      RegionsInfoOutputAllSpecificCode = "ap-east-1"
-	RegionsInfoOutputAllSpecificCodeApNortheast1 RegionsInfoOutputAllSpecificCode = "ap-northeast-1"
-	RegionsInfoOutputAllSpecificCodeApNortheast2 RegionsInfoOutputAllSpecificCode = "ap-northeast-2"
-	RegionsInfoOutputAllSpecificCodeApSouth1     RegionsInfoOutputAllSpecificCode = "ap-south-1"
-	RegionsInfoOutputAllSpecificCodeApSoutheast1 RegionsInfoOutputAllSpecificCode = "ap-southeast-1"
-	RegionsInfoOutputAllSpecificCodeApSoutheast2 RegionsInfoOutputAllSpecificCode = "ap-southeast-2"
-	RegionsInfoOutputAllSpecificCodeCaCentral1   RegionsInfoOutputAllSpecificCode = "ca-central-1"
-	RegionsInfoOutputAllSpecificCodeEuCentral1   RegionsInfoOutputAllSpecificCode = "eu-central-1"
-	RegionsInfoOutputAllSpecificCodeEuCentral2   RegionsInfoOutputAllSpecificCode = "eu-central-2"
-	RegionsInfoOutputAllSpecificCodeEuNorth1     RegionsInfoOutputAllSpecificCode = "eu-north-1"
-	RegionsInfoOutputAllSpecificCodeEuWest1      RegionsInfoOutputAllSpecificCode = "eu-west-1"
-	RegionsInfoOutputAllSpecificCodeEuWest2      RegionsInfoOutputAllSpecificCode = "eu-west-2"
-	RegionsInfoOutputAllSpecificCodeEuWest3      RegionsInfoOutputAllSpecificCode = "eu-west-3"
-	RegionsInfoOutputAllSpecificCodeSaEast1      RegionsInfoOutputAllSpecificCode = "sa-east-1"
-	RegionsInfoOutputAllSpecificCodeUsEast1      RegionsInfoOutputAllSpecificCode = "us-east-1"
-	RegionsInfoOutputAllSpecificCodeUsEast2      RegionsInfoOutputAllSpecificCode = "us-east-2"
-	RegionsInfoOutputAllSpecificCodeUsWest1      RegionsInfoOutputAllSpecificCode = "us-west-1"
-	RegionsInfoOutputAllSpecificCodeUsWest2      RegionsInfoOutputAllSpecificCode = "us-west-2"
+	RegionsInfoV1OutputAllSpecificCodeApEast1      RegionsInfoV1OutputAllSpecificCode = "ap-east-1"
+	RegionsInfoV1OutputAllSpecificCodeApNortheast1 RegionsInfoV1OutputAllSpecificCode = "ap-northeast-1"
+	RegionsInfoV1OutputAllSpecificCodeApNortheast2 RegionsInfoV1OutputAllSpecificCode = "ap-northeast-2"
+	RegionsInfoV1OutputAllSpecificCodeApSouth1     RegionsInfoV1OutputAllSpecificCode = "ap-south-1"
+	RegionsInfoV1OutputAllSpecificCodeApSoutheast1 RegionsInfoV1OutputAllSpecificCode = "ap-southeast-1"
+	RegionsInfoV1OutputAllSpecificCodeApSoutheast2 RegionsInfoV1OutputAllSpecificCode = "ap-southeast-2"
+	RegionsInfoV1OutputAllSpecificCodeCaCentral1   RegionsInfoV1OutputAllSpecificCode = "ca-central-1"
+	RegionsInfoV1OutputAllSpecificCodeEuCentral1   RegionsInfoV1OutputAllSpecificCode = "eu-central-1"
+	RegionsInfoV1OutputAllSpecificCodeEuCentral2   RegionsInfoV1OutputAllSpecificCode = "eu-central-2"
+	RegionsInfoV1OutputAllSpecificCodeEuNorth1     RegionsInfoV1OutputAllSpecificCode = "eu-north-1"
+	RegionsInfoV1OutputAllSpecificCodeEuWest1      RegionsInfoV1OutputAllSpecificCode = "eu-west-1"
+	RegionsInfoV1OutputAllSpecificCodeEuWest2      RegionsInfoV1OutputAllSpecificCode = "eu-west-2"
+	RegionsInfoV1OutputAllSpecificCodeEuWest3      RegionsInfoV1OutputAllSpecificCode = "eu-west-3"
+	RegionsInfoV1OutputAllSpecificCodeSaEast1      RegionsInfoV1OutputAllSpecificCode = "sa-east-1"
+	RegionsInfoV1OutputAllSpecificCodeUsEast1      RegionsInfoV1OutputAllSpecificCode = "us-east-1"
+	RegionsInfoV1OutputAllSpecificCodeUsEast2      RegionsInfoV1OutputAllSpecificCode = "us-east-2"
+	RegionsInfoV1OutputAllSpecificCodeUsWest1      RegionsInfoV1OutputAllSpecificCode = "us-west-1"
+	RegionsInfoV1OutputAllSpecificCodeUsWest2      RegionsInfoV1OutputAllSpecificCode = "us-west-2"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoOutputAllSpecificCode enum.
-func (e RegionsInfoOutputAllSpecificCode) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoV1OutputAllSpecificCode enum.
+func (e RegionsInfoV1OutputAllSpecificCode) Valid() bool {
 	switch e {
-	case RegionsInfoOutputAllSpecificCodeApEast1:
+	case RegionsInfoV1OutputAllSpecificCodeApEast1:
 		return true
-	case RegionsInfoOutputAllSpecificCodeApNortheast1:
+	case RegionsInfoV1OutputAllSpecificCodeApNortheast1:
 		return true
-	case RegionsInfoOutputAllSpecificCodeApNortheast2:
+	case RegionsInfoV1OutputAllSpecificCodeApNortheast2:
 		return true
-	case RegionsInfoOutputAllSpecificCodeApSouth1:
+	case RegionsInfoV1OutputAllSpecificCodeApSouth1:
 		return true
-	case RegionsInfoOutputAllSpecificCodeApSoutheast1:
+	case RegionsInfoV1OutputAllSpecificCodeApSoutheast1:
 		return true
-	case RegionsInfoOutputAllSpecificCodeApSoutheast2:
+	case RegionsInfoV1OutputAllSpecificCodeApSoutheast2:
 		return true
-	case RegionsInfoOutputAllSpecificCodeCaCentral1:
+	case RegionsInfoV1OutputAllSpecificCodeCaCentral1:
 		return true
-	case RegionsInfoOutputAllSpecificCodeEuCentral1:
+	case RegionsInfoV1OutputAllSpecificCodeEuCentral1:
 		return true
-	case RegionsInfoOutputAllSpecificCodeEuCentral2:
+	case RegionsInfoV1OutputAllSpecificCodeEuCentral2:
 		return true
-	case RegionsInfoOutputAllSpecificCodeEuNorth1:
+	case RegionsInfoV1OutputAllSpecificCodeEuNorth1:
 		return true
-	case RegionsInfoOutputAllSpecificCodeEuWest1:
+	case RegionsInfoV1OutputAllSpecificCodeEuWest1:
 		return true
-	case RegionsInfoOutputAllSpecificCodeEuWest2:
+	case RegionsInfoV1OutputAllSpecificCodeEuWest2:
 		return true
-	case RegionsInfoOutputAllSpecificCodeEuWest3:
+	case RegionsInfoV1OutputAllSpecificCodeEuWest3:
 		return true
-	case RegionsInfoOutputAllSpecificCodeSaEast1:
+	case RegionsInfoV1OutputAllSpecificCodeSaEast1:
 		return true
-	case RegionsInfoOutputAllSpecificCodeUsEast1:
+	case RegionsInfoV1OutputAllSpecificCodeUsEast1:
 		return true
-	case RegionsInfoOutputAllSpecificCodeUsEast2:
+	case RegionsInfoV1OutputAllSpecificCodeUsEast2:
 		return true
-	case RegionsInfoOutputAllSpecificCodeUsWest1:
+	case RegionsInfoV1OutputAllSpecificCodeUsWest1:
 		return true
-	case RegionsInfoOutputAllSpecificCodeUsWest2:
+	case RegionsInfoV1OutputAllSpecificCodeUsWest2:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoOutputAllSpecificProvider.
+// Defines values for RegionsInfoV1OutputAllSpecificProvider.
 const (
-	RegionsInfoOutputAllSpecificProviderAWS       RegionsInfoOutputAllSpecificProvider = "AWS"
-	RegionsInfoOutputAllSpecificProviderAWSK8S    RegionsInfoOutputAllSpecificProvider = "AWS_K8S"
-	RegionsInfoOutputAllSpecificProviderAWSNIMBUS RegionsInfoOutputAllSpecificProvider = "AWS_NIMBUS"
+	RegionsInfoV1OutputAllSpecificProviderAWS       RegionsInfoV1OutputAllSpecificProvider = "AWS"
+	RegionsInfoV1OutputAllSpecificProviderAWSK8S    RegionsInfoV1OutputAllSpecificProvider = "AWS_K8S"
+	RegionsInfoV1OutputAllSpecificProviderAWSNIMBUS RegionsInfoV1OutputAllSpecificProvider = "AWS_NIMBUS"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoOutputAllSpecificProvider enum.
-func (e RegionsInfoOutputAllSpecificProvider) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoV1OutputAllSpecificProvider enum.
+func (e RegionsInfoV1OutputAllSpecificProvider) Valid() bool {
 	switch e {
-	case RegionsInfoOutputAllSpecificProviderAWS:
+	case RegionsInfoV1OutputAllSpecificProviderAWS:
 		return true
-	case RegionsInfoOutputAllSpecificProviderAWSK8S:
+	case RegionsInfoV1OutputAllSpecificProviderAWSK8S:
 		return true
-	case RegionsInfoOutputAllSpecificProviderAWSNIMBUS:
+	case RegionsInfoV1OutputAllSpecificProviderAWSNIMBUS:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoOutputAllSpecificStatus.
+// Defines values for RegionsInfoV1OutputAllSpecificStatus.
 const (
-	RegionsInfoOutputAllSpecificStatusCapacity RegionsInfoOutputAllSpecificStatus = "capacity"
-	RegionsInfoOutputAllSpecificStatusOther    RegionsInfoOutputAllSpecificStatus = "other"
+	RegionsInfoV1OutputAllSpecificStatusCapacity RegionsInfoV1OutputAllSpecificStatus = "capacity"
+	RegionsInfoV1OutputAllSpecificStatusOther    RegionsInfoV1OutputAllSpecificStatus = "other"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoOutputAllSpecificStatus enum.
-func (e RegionsInfoOutputAllSpecificStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoV1OutputAllSpecificStatus enum.
+func (e RegionsInfoV1OutputAllSpecificStatus) Valid() bool {
 	switch e {
-	case RegionsInfoOutputAllSpecificStatusCapacity:
+	case RegionsInfoV1OutputAllSpecificStatusCapacity:
 		return true
-	case RegionsInfoOutputAllSpecificStatusOther:
+	case RegionsInfoV1OutputAllSpecificStatusOther:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoOutputAllSpecificType.
+// Defines values for RegionsInfoV1OutputAllSpecificType.
 const (
-	RegionsInfoOutputAllSpecificTypeSpecific RegionsInfoOutputAllSpecificType = "specific"
+	RegionsInfoV1OutputAllSpecificTypeSpecific RegionsInfoV1OutputAllSpecificType = "specific"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoOutputAllSpecificType enum.
-func (e RegionsInfoOutputAllSpecificType) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoV1OutputAllSpecificType enum.
+func (e RegionsInfoV1OutputAllSpecificType) Valid() bool {
 	switch e {
-	case RegionsInfoOutputAllSpecificTypeSpecific:
+	case RegionsInfoV1OutputAllSpecificTypeSpecific:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoOutputRecommendationsSmartGroupCode.
+// Defines values for RegionsInfoV1OutputRecommendationsSmartGroupCode.
 const (
-	RegionsInfoOutputRecommendationsSmartGroupCodeAmericas RegionsInfoOutputRecommendationsSmartGroupCode = "americas"
-	RegionsInfoOutputRecommendationsSmartGroupCodeApac     RegionsInfoOutputRecommendationsSmartGroupCode = "apac"
-	RegionsInfoOutputRecommendationsSmartGroupCodeEmea     RegionsInfoOutputRecommendationsSmartGroupCode = "emea"
+	RegionsInfoV1OutputRecommendationsSmartGroupCodeAmericas RegionsInfoV1OutputRecommendationsSmartGroupCode = "americas"
+	RegionsInfoV1OutputRecommendationsSmartGroupCodeApac     RegionsInfoV1OutputRecommendationsSmartGroupCode = "apac"
+	RegionsInfoV1OutputRecommendationsSmartGroupCodeEmea     RegionsInfoV1OutputRecommendationsSmartGroupCode = "emea"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoOutputRecommendationsSmartGroupCode enum.
-func (e RegionsInfoOutputRecommendationsSmartGroupCode) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoV1OutputRecommendationsSmartGroupCode enum.
+func (e RegionsInfoV1OutputRecommendationsSmartGroupCode) Valid() bool {
 	switch e {
-	case RegionsInfoOutputRecommendationsSmartGroupCodeAmericas:
+	case RegionsInfoV1OutputRecommendationsSmartGroupCodeAmericas:
 		return true
-	case RegionsInfoOutputRecommendationsSmartGroupCodeApac:
+	case RegionsInfoV1OutputRecommendationsSmartGroupCodeApac:
 		return true
-	case RegionsInfoOutputRecommendationsSmartGroupCodeEmea:
+	case RegionsInfoV1OutputRecommendationsSmartGroupCodeEmea:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoOutputRecommendationsSmartGroupType.
+// Defines values for RegionsInfoV1OutputRecommendationsSmartGroupType.
 const (
-	RegionsInfoOutputRecommendationsSmartGroupTypeSmartGroup RegionsInfoOutputRecommendationsSmartGroupType = "smartGroup"
+	RegionsInfoV1OutputRecommendationsSmartGroupTypeSmartGroup RegionsInfoV1OutputRecommendationsSmartGroupType = "smartGroup"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoOutputRecommendationsSmartGroupType enum.
-func (e RegionsInfoOutputRecommendationsSmartGroupType) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoV1OutputRecommendationsSmartGroupType enum.
+func (e RegionsInfoV1OutputRecommendationsSmartGroupType) Valid() bool {
 	switch e {
-	case RegionsInfoOutputRecommendationsSmartGroupTypeSmartGroup:
+	case RegionsInfoV1OutputRecommendationsSmartGroupTypeSmartGroup:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoOutputRecommendationsSpecificCode.
+// Defines values for RegionsInfoV1OutputRecommendationsSpecificCode.
 const (
-	RegionsInfoOutputRecommendationsSpecificCodeApEast1      RegionsInfoOutputRecommendationsSpecificCode = "ap-east-1"
-	RegionsInfoOutputRecommendationsSpecificCodeApNortheast1 RegionsInfoOutputRecommendationsSpecificCode = "ap-northeast-1"
-	RegionsInfoOutputRecommendationsSpecificCodeApNortheast2 RegionsInfoOutputRecommendationsSpecificCode = "ap-northeast-2"
-	RegionsInfoOutputRecommendationsSpecificCodeApSouth1     RegionsInfoOutputRecommendationsSpecificCode = "ap-south-1"
-	RegionsInfoOutputRecommendationsSpecificCodeApSoutheast1 RegionsInfoOutputRecommendationsSpecificCode = "ap-southeast-1"
-	RegionsInfoOutputRecommendationsSpecificCodeApSoutheast2 RegionsInfoOutputRecommendationsSpecificCode = "ap-southeast-2"
-	RegionsInfoOutputRecommendationsSpecificCodeCaCentral1   RegionsInfoOutputRecommendationsSpecificCode = "ca-central-1"
-	RegionsInfoOutputRecommendationsSpecificCodeEuCentral1   RegionsInfoOutputRecommendationsSpecificCode = "eu-central-1"
-	RegionsInfoOutputRecommendationsSpecificCodeEuCentral2   RegionsInfoOutputRecommendationsSpecificCode = "eu-central-2"
-	RegionsInfoOutputRecommendationsSpecificCodeEuNorth1     RegionsInfoOutputRecommendationsSpecificCode = "eu-north-1"
-	RegionsInfoOutputRecommendationsSpecificCodeEuWest1      RegionsInfoOutputRecommendationsSpecificCode = "eu-west-1"
-	RegionsInfoOutputRecommendationsSpecificCodeEuWest2      RegionsInfoOutputRecommendationsSpecificCode = "eu-west-2"
-	RegionsInfoOutputRecommendationsSpecificCodeEuWest3      RegionsInfoOutputRecommendationsSpecificCode = "eu-west-3"
-	RegionsInfoOutputRecommendationsSpecificCodeSaEast1      RegionsInfoOutputRecommendationsSpecificCode = "sa-east-1"
-	RegionsInfoOutputRecommendationsSpecificCodeUsEast1      RegionsInfoOutputRecommendationsSpecificCode = "us-east-1"
-	RegionsInfoOutputRecommendationsSpecificCodeUsEast2      RegionsInfoOutputRecommendationsSpecificCode = "us-east-2"
-	RegionsInfoOutputRecommendationsSpecificCodeUsWest1      RegionsInfoOutputRecommendationsSpecificCode = "us-west-1"
-	RegionsInfoOutputRecommendationsSpecificCodeUsWest2      RegionsInfoOutputRecommendationsSpecificCode = "us-west-2"
+	RegionsInfoV1OutputRecommendationsSpecificCodeApEast1      RegionsInfoV1OutputRecommendationsSpecificCode = "ap-east-1"
+	RegionsInfoV1OutputRecommendationsSpecificCodeApNortheast1 RegionsInfoV1OutputRecommendationsSpecificCode = "ap-northeast-1"
+	RegionsInfoV1OutputRecommendationsSpecificCodeApNortheast2 RegionsInfoV1OutputRecommendationsSpecificCode = "ap-northeast-2"
+	RegionsInfoV1OutputRecommendationsSpecificCodeApSouth1     RegionsInfoV1OutputRecommendationsSpecificCode = "ap-south-1"
+	RegionsInfoV1OutputRecommendationsSpecificCodeApSoutheast1 RegionsInfoV1OutputRecommendationsSpecificCode = "ap-southeast-1"
+	RegionsInfoV1OutputRecommendationsSpecificCodeApSoutheast2 RegionsInfoV1OutputRecommendationsSpecificCode = "ap-southeast-2"
+	RegionsInfoV1OutputRecommendationsSpecificCodeCaCentral1   RegionsInfoV1OutputRecommendationsSpecificCode = "ca-central-1"
+	RegionsInfoV1OutputRecommendationsSpecificCodeEuCentral1   RegionsInfoV1OutputRecommendationsSpecificCode = "eu-central-1"
+	RegionsInfoV1OutputRecommendationsSpecificCodeEuCentral2   RegionsInfoV1OutputRecommendationsSpecificCode = "eu-central-2"
+	RegionsInfoV1OutputRecommendationsSpecificCodeEuNorth1     RegionsInfoV1OutputRecommendationsSpecificCode = "eu-north-1"
+	RegionsInfoV1OutputRecommendationsSpecificCodeEuWest1      RegionsInfoV1OutputRecommendationsSpecificCode = "eu-west-1"
+	RegionsInfoV1OutputRecommendationsSpecificCodeEuWest2      RegionsInfoV1OutputRecommendationsSpecificCode = "eu-west-2"
+	RegionsInfoV1OutputRecommendationsSpecificCodeEuWest3      RegionsInfoV1OutputRecommendationsSpecificCode = "eu-west-3"
+	RegionsInfoV1OutputRecommendationsSpecificCodeSaEast1      RegionsInfoV1OutputRecommendationsSpecificCode = "sa-east-1"
+	RegionsInfoV1OutputRecommendationsSpecificCodeUsEast1      RegionsInfoV1OutputRecommendationsSpecificCode = "us-east-1"
+	RegionsInfoV1OutputRecommendationsSpecificCodeUsEast2      RegionsInfoV1OutputRecommendationsSpecificCode = "us-east-2"
+	RegionsInfoV1OutputRecommendationsSpecificCodeUsWest1      RegionsInfoV1OutputRecommendationsSpecificCode = "us-west-1"
+	RegionsInfoV1OutputRecommendationsSpecificCodeUsWest2      RegionsInfoV1OutputRecommendationsSpecificCode = "us-west-2"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoOutputRecommendationsSpecificCode enum.
-func (e RegionsInfoOutputRecommendationsSpecificCode) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoV1OutputRecommendationsSpecificCode enum.
+func (e RegionsInfoV1OutputRecommendationsSpecificCode) Valid() bool {
 	switch e {
-	case RegionsInfoOutputRecommendationsSpecificCodeApEast1:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeApEast1:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificCodeApNortheast1:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeApNortheast1:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificCodeApNortheast2:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeApNortheast2:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificCodeApSouth1:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeApSouth1:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificCodeApSoutheast1:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeApSoutheast1:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificCodeApSoutheast2:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeApSoutheast2:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificCodeCaCentral1:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeCaCentral1:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificCodeEuCentral1:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeEuCentral1:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificCodeEuCentral2:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeEuCentral2:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificCodeEuNorth1:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeEuNorth1:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificCodeEuWest1:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeEuWest1:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificCodeEuWest2:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeEuWest2:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificCodeEuWest3:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeEuWest3:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificCodeSaEast1:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeSaEast1:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificCodeUsEast1:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeUsEast1:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificCodeUsEast2:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeUsEast2:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificCodeUsWest1:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeUsWest1:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificCodeUsWest2:
+	case RegionsInfoV1OutputRecommendationsSpecificCodeUsWest2:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoOutputRecommendationsSpecificProvider.
+// Defines values for RegionsInfoV1OutputRecommendationsSpecificProvider.
 const (
-	RegionsInfoOutputRecommendationsSpecificProviderAWS       RegionsInfoOutputRecommendationsSpecificProvider = "AWS"
-	RegionsInfoOutputRecommendationsSpecificProviderAWSK8S    RegionsInfoOutputRecommendationsSpecificProvider = "AWS_K8S"
-	RegionsInfoOutputRecommendationsSpecificProviderAWSNIMBUS RegionsInfoOutputRecommendationsSpecificProvider = "AWS_NIMBUS"
+	RegionsInfoV1OutputRecommendationsSpecificProviderAWS       RegionsInfoV1OutputRecommendationsSpecificProvider = "AWS"
+	RegionsInfoV1OutputRecommendationsSpecificProviderAWSK8S    RegionsInfoV1OutputRecommendationsSpecificProvider = "AWS_K8S"
+	RegionsInfoV1OutputRecommendationsSpecificProviderAWSNIMBUS RegionsInfoV1OutputRecommendationsSpecificProvider = "AWS_NIMBUS"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoOutputRecommendationsSpecificProvider enum.
-func (e RegionsInfoOutputRecommendationsSpecificProvider) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoV1OutputRecommendationsSpecificProvider enum.
+func (e RegionsInfoV1OutputRecommendationsSpecificProvider) Valid() bool {
 	switch e {
-	case RegionsInfoOutputRecommendationsSpecificProviderAWS:
+	case RegionsInfoV1OutputRecommendationsSpecificProviderAWS:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificProviderAWSK8S:
+	case RegionsInfoV1OutputRecommendationsSpecificProviderAWSK8S:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificProviderAWSNIMBUS:
+	case RegionsInfoV1OutputRecommendationsSpecificProviderAWSNIMBUS:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoOutputRecommendationsSpecificStatus.
+// Defines values for RegionsInfoV1OutputRecommendationsSpecificStatus.
 const (
-	RegionsInfoOutputRecommendationsSpecificStatusCapacity RegionsInfoOutputRecommendationsSpecificStatus = "capacity"
-	RegionsInfoOutputRecommendationsSpecificStatusOther    RegionsInfoOutputRecommendationsSpecificStatus = "other"
+	RegionsInfoV1OutputRecommendationsSpecificStatusCapacity RegionsInfoV1OutputRecommendationsSpecificStatus = "capacity"
+	RegionsInfoV1OutputRecommendationsSpecificStatusOther    RegionsInfoV1OutputRecommendationsSpecificStatus = "other"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoOutputRecommendationsSpecificStatus enum.
-func (e RegionsInfoOutputRecommendationsSpecificStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoV1OutputRecommendationsSpecificStatus enum.
+func (e RegionsInfoV1OutputRecommendationsSpecificStatus) Valid() bool {
 	switch e {
-	case RegionsInfoOutputRecommendationsSpecificStatusCapacity:
+	case RegionsInfoV1OutputRecommendationsSpecificStatusCapacity:
 		return true
-	case RegionsInfoOutputRecommendationsSpecificStatusOther:
+	case RegionsInfoV1OutputRecommendationsSpecificStatusOther:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for RegionsInfoOutputRecommendationsSpecificType.
+// Defines values for RegionsInfoV1OutputRecommendationsSpecificType.
 const (
-	RegionsInfoOutputRecommendationsSpecificTypeSpecific RegionsInfoOutputRecommendationsSpecificType = "specific"
+	RegionsInfoV1OutputRecommendationsSpecificTypeSpecific RegionsInfoV1OutputRecommendationsSpecificType = "specific"
 )
 
-// Valid indicates whether the value is a known member of the RegionsInfoOutputRecommendationsSpecificType enum.
-func (e RegionsInfoOutputRecommendationsSpecificType) Valid() bool {
+// Valid indicates whether the value is a known member of the RegionsInfoV1OutputRecommendationsSpecificType enum.
+func (e RegionsInfoV1OutputRecommendationsSpecificType) Valid() bool {
 	switch e {
-	case RegionsInfoOutputRecommendationsSpecificTypeSpecific:
+	case RegionsInfoV1OutputRecommendationsSpecificTypeSpecific:
 		return true
 	default:
 		return false
@@ -7528,73 +7528,73 @@ type RealtimeConfigResponseOutput struct {
 	Suspend nullable.Nullable[bool] `json:"suspend"`
 }
 
-// RegionsInfoOutput defines model for RegionsInfo_Output.
-type RegionsInfoOutput struct {
+// RegionsInfoV1Output defines model for RegionsInfoV1_Output.
+type RegionsInfoV1Output struct {
 	All struct {
 		SmartGroup []struct {
-			Code RegionsInfoOutputAllSmartGroupCode `json:"code"`
-			Name string                             `json:"name"`
-			Type RegionsInfoOutputAllSmartGroupType `json:"type"`
+			Code RegionsInfoV1OutputAllSmartGroupCode `json:"code"`
+			Name string                               `json:"name"`
+			Type RegionsInfoV1OutputAllSmartGroupType `json:"type"`
 		} `json:"smartGroup"`
 		Specific []struct {
-			Code     RegionsInfoOutputAllSpecificCode     `json:"code"`
-			Name     string                               `json:"name"`
-			Provider RegionsInfoOutputAllSpecificProvider `json:"provider"`
-			Status   *RegionsInfoOutputAllSpecificStatus  `json:"status,omitempty"`
-			Type     RegionsInfoOutputAllSpecificType     `json:"type"`
+			Code     RegionsInfoV1OutputAllSpecificCode     `json:"code"`
+			Name     string                                 `json:"name"`
+			Provider RegionsInfoV1OutputAllSpecificProvider `json:"provider"`
+			Status   *RegionsInfoV1OutputAllSpecificStatus  `json:"status,omitempty"`
+			Type     RegionsInfoV1OutputAllSpecificType     `json:"type"`
 		} `json:"specific"`
 	} `json:"all"`
 	Recommendations struct {
 		SmartGroup struct {
-			Code RegionsInfoOutputRecommendationsSmartGroupCode `json:"code"`
-			Name string                                         `json:"name"`
-			Type RegionsInfoOutputRecommendationsSmartGroupType `json:"type"`
+			Code RegionsInfoV1OutputRecommendationsSmartGroupCode `json:"code"`
+			Name string                                           `json:"name"`
+			Type RegionsInfoV1OutputRecommendationsSmartGroupType `json:"type"`
 		} `json:"smartGroup"`
 		Specific []struct {
-			Code     RegionsInfoOutputRecommendationsSpecificCode     `json:"code"`
-			Name     string                                           `json:"name"`
-			Provider RegionsInfoOutputRecommendationsSpecificProvider `json:"provider"`
-			Status   *RegionsInfoOutputRecommendationsSpecificStatus  `json:"status,omitempty"`
-			Type     RegionsInfoOutputRecommendationsSpecificType     `json:"type"`
+			Code     RegionsInfoV1OutputRecommendationsSpecificCode     `json:"code"`
+			Name     string                                             `json:"name"`
+			Provider RegionsInfoV1OutputRecommendationsSpecificProvider `json:"provider"`
+			Status   *RegionsInfoV1OutputRecommendationsSpecificStatus  `json:"status,omitempty"`
+			Type     RegionsInfoV1OutputRecommendationsSpecificType     `json:"type"`
 		} `json:"specific"`
 	} `json:"recommendations"`
 }
 
-// RegionsInfoOutputAllSmartGroupCode defines model for RegionsInfoOutput.All.SmartGroup.Code.
-type RegionsInfoOutputAllSmartGroupCode string
+// RegionsInfoV1OutputAllSmartGroupCode defines model for RegionsInfoV1Output.All.SmartGroup.Code.
+type RegionsInfoV1OutputAllSmartGroupCode string
 
-// RegionsInfoOutputAllSmartGroupType defines model for RegionsInfoOutput.All.SmartGroup.Type.
-type RegionsInfoOutputAllSmartGroupType string
+// RegionsInfoV1OutputAllSmartGroupType defines model for RegionsInfoV1Output.All.SmartGroup.Type.
+type RegionsInfoV1OutputAllSmartGroupType string
 
-// RegionsInfoOutputAllSpecificCode defines model for RegionsInfoOutput.All.Specific.Code.
-type RegionsInfoOutputAllSpecificCode string
+// RegionsInfoV1OutputAllSpecificCode defines model for RegionsInfoV1Output.All.Specific.Code.
+type RegionsInfoV1OutputAllSpecificCode string
 
-// RegionsInfoOutputAllSpecificProvider defines model for RegionsInfoOutput.All.Specific.Provider.
-type RegionsInfoOutputAllSpecificProvider string
+// RegionsInfoV1OutputAllSpecificProvider defines model for RegionsInfoV1Output.All.Specific.Provider.
+type RegionsInfoV1OutputAllSpecificProvider string
 
-// RegionsInfoOutputAllSpecificStatus defines model for RegionsInfoOutput.All.Specific.Status.
-type RegionsInfoOutputAllSpecificStatus string
+// RegionsInfoV1OutputAllSpecificStatus defines model for RegionsInfoV1Output.All.Specific.Status.
+type RegionsInfoV1OutputAllSpecificStatus string
 
-// RegionsInfoOutputAllSpecificType defines model for RegionsInfoOutput.All.Specific.Type.
-type RegionsInfoOutputAllSpecificType string
+// RegionsInfoV1OutputAllSpecificType defines model for RegionsInfoV1Output.All.Specific.Type.
+type RegionsInfoV1OutputAllSpecificType string
 
-// RegionsInfoOutputRecommendationsSmartGroupCode defines model for RegionsInfoOutput.Recommendations.SmartGroup.Code.
-type RegionsInfoOutputRecommendationsSmartGroupCode string
+// RegionsInfoV1OutputRecommendationsSmartGroupCode defines model for RegionsInfoV1Output.Recommendations.SmartGroup.Code.
+type RegionsInfoV1OutputRecommendationsSmartGroupCode string
 
-// RegionsInfoOutputRecommendationsSmartGroupType defines model for RegionsInfoOutput.Recommendations.SmartGroup.Type.
-type RegionsInfoOutputRecommendationsSmartGroupType string
+// RegionsInfoV1OutputRecommendationsSmartGroupType defines model for RegionsInfoV1Output.Recommendations.SmartGroup.Type.
+type RegionsInfoV1OutputRecommendationsSmartGroupType string
 
-// RegionsInfoOutputRecommendationsSpecificCode defines model for RegionsInfoOutput.Recommendations.Specific.Code.
-type RegionsInfoOutputRecommendationsSpecificCode string
+// RegionsInfoV1OutputRecommendationsSpecificCode defines model for RegionsInfoV1Output.Recommendations.Specific.Code.
+type RegionsInfoV1OutputRecommendationsSpecificCode string
 
-// RegionsInfoOutputRecommendationsSpecificProvider defines model for RegionsInfoOutput.Recommendations.Specific.Provider.
-type RegionsInfoOutputRecommendationsSpecificProvider string
+// RegionsInfoV1OutputRecommendationsSpecificProvider defines model for RegionsInfoV1Output.Recommendations.Specific.Provider.
+type RegionsInfoV1OutputRecommendationsSpecificProvider string
 
-// RegionsInfoOutputRecommendationsSpecificStatus defines model for RegionsInfoOutput.Recommendations.Specific.Status.
-type RegionsInfoOutputRecommendationsSpecificStatus string
+// RegionsInfoV1OutputRecommendationsSpecificStatus defines model for RegionsInfoV1Output.Recommendations.Specific.Status.
+type RegionsInfoV1OutputRecommendationsSpecificStatus string
 
-// RegionsInfoOutputRecommendationsSpecificType defines model for RegionsInfoOutput.Recommendations.Specific.Type.
-type RegionsInfoOutputRecommendationsSpecificType string
+// RegionsInfoV1OutputRecommendationsSpecificType defines model for RegionsInfoV1Output.Recommendations.Specific.Type.
+type RegionsInfoV1OutputRecommendationsSpecificType string
 
 // RemoveNetworkBanRequest defines model for RemoveNetworkBanRequest.
 type RemoveNetworkBanRequest struct {

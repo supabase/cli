@@ -1,3 +1,4 @@
+import { Predicate } from "effect";
 import type { CliError, Command, HelpDoc } from "effect/cli";
 import { formatInvalidValueMessage } from "./invalid-value-message.ts";
 
@@ -36,7 +37,7 @@ function hasHelpDoc(command: Command.Command.Any): command is CommandWithHelpDoc
   return "buildHelpDoc" in command && typeof command.buildHelpDoc === "function";
 }
 
-function helpDocFor(
+export function helpDocFor(
   command: Command.Command.Any,
   commandPath: ReadonlyArray<string>,
 ): HelpDoc.HelpDoc | undefined {
@@ -281,7 +282,7 @@ export function formatCliErrorsForDisplay(
   let changed = false;
 
   for (const error of errors) {
-    if (error._tag === "UnrecognizedOption" && context) {
+    if (Predicate.isTagged(error, "UnrecognizedOption") && context) {
       const hint = buildSubcommandFlagHint(error, context);
       if (hint) {
         if (hint.consumedValue) suppressedUnknownSubcommands.add(hint.consumedValue);
@@ -296,12 +297,15 @@ export function formatCliErrorsForDisplay(
       }
     }
 
-    if (error._tag === "UnknownSubcommand" && suppressedUnknownSubcommands.has(error.subcommand)) {
+    if (
+      Predicate.isTagged(error, "UnknownSubcommand") &&
+      suppressedUnknownSubcommands.has(error.subcommand)
+    ) {
       changed = true;
       continue;
     }
 
-    if (error._tag === "InvalidValue") {
+    if (Predicate.isTagged(error, "InvalidValue")) {
       const message = formatInvalidValueMessage(error);
       if (message !== undefined) {
         changed = true;
