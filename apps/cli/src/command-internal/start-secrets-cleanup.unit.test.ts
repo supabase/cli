@@ -117,7 +117,7 @@ describe("cleanupStartSecrets", () => {
           yield* fs.makeDirectory(canary, { recursive: true });
           yield* fs.writeFileString(path.join(canary, "do-not-delete"), "canary");
           yield* cleanupStartSecrets(
-            [{ id: "abc123", name: "../../important", workdir: "" }],
+            [{ id: "abc123", name: "../../../important", workdir: "" }],
             workdir,
           );
           expect(yield* fs.exists(canary)).toBe(true);
