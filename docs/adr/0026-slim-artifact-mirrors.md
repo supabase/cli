@@ -78,9 +78,10 @@ without an entry, and the implicit default is `linked`.
 
 GitHub releases of slim-services are authoritative at resolution time. The CLI probes the
 `<producer>-<U>-r<N>` release assets (`SHA256SUMS`; a 404 is the only "not published" signal) and
-reads the GHCR digest, then writes both into the lock. S3 and ECR remain byte mirrors of those
-releases: downloads may come from any mirror, and every download is verified against the hashes
-and digests in the lock.
+reads the GHCR digest, then writes both into the lock. The lock pins the canonical GHCR image
+reference and rejects any other registry. S3 and ECR remain byte mirrors of those releases:
+downloads may come from any mirror, derived from the canonical reference at pull time, and every
+download is verified against the hashes and digests in the lock.
 
 ### Content pins, not runtime checksums
 

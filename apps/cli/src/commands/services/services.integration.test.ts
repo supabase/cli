@@ -694,7 +694,9 @@ major_version = 15
           remote: "17.6.1.200",
         }),
       );
-      expect(stack.out.stderrText).toContain("cannot be changed with supabase link");
+      expect(stack.out.stderrText).toContain(
+        "Run supabase link to update services set to linked (the default) in supabase/supabase.lock",
+      );
       expect(stack.out.stderrText).not.toContain("You are running different service versions");
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );

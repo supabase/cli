@@ -137,6 +137,8 @@ interface StackConfigOptions<E, R> {
   >;
   /** Fails with `frozen-missing` when there is no `supabase/config.toml` to lock. */
   readonly frozen?: boolean;
+  /** Marks `selection` as publishing the lock, so the local auth keys must validate before it runs. */
+  readonly publishesLock?: boolean;
 }
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -980,17 +982,6 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         return yield* new StackConfigError({ message: validationError });
       if (context.loaded === null)
         yield* rejectFrozenWithoutConfig(projectRoot, opts?.frozen === true);
-      const selection = yield* context.loaded !== null && opts?.selection !== undefined
-        ? opts.selection({
-            projectRoot,
-            majorVersion: validatedConfig.db.major_version,
-            orioledbVersion: validatedConfig.db.orioledb_version,
-            services: validatedConfig.local?.services,
-          })
-        : stackArtifactSelection(validatedConfig.db).pipe(
-            Effect.mapError((error) => new StackConfigError({ message: error.message })),
-          );
-
       const externalProviders = yield* Effect.try({
         try: () =>
           resolveAuthExternalProviders(
@@ -1031,55 +1022,57 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             message: cause instanceof Error ? cause.message : String(cause),
           }),
       });
-      const localKeys = Effect.try({
-        try: () => {
-          const configured = (value: string | undefined) =>
-            value === undefined || value === ""
-              ? undefined
-              : decryptAuthSecret(value, context.projectEnvValues);
-          const publishableKey = configured(auth.publishable_key);
-          const secretKey = configured(auth.secret_key);
-          const configuredAnonKey = configured(auth.anon_key);
-          const configuredServiceRoleKey = configured(auth.service_role_key);
-          const configuredSigningKeys = resolveConfiguredSigningKeys(
-            validatedConfig,
-            projectRoot,
-            context.projectEnvValues,
-          );
-          const signingKeys =
-            configuredSigningKeys ??
-            (auth.signing_keys_path === undefined || auth.signing_keys_path.length === 0
-              ? undefined
-              : [DEFAULT_SIGNING_KEY]);
-          const signingKey = signingKeys?.[0];
-          return {
-            ...(publishableKey === undefined ? {} : { publishableKey }),
-            ...(secretKey === undefined ? {} : { secretKey }),
-            ...(configuredAnonKey === undefined
-              ? signingKey === undefined
+      const localKeys = yield* Effect.cached(
+        Effect.try({
+          try: () => {
+            const configured = (value: string | undefined) =>
+              value === undefined || value === ""
+                ? undefined
+                : decryptAuthSecret(value, context.projectEnvValues);
+            const publishableKey = configured(auth.publishable_key);
+            const secretKey = configured(auth.secret_key);
+            const configuredAnonKey = configured(auth.anon_key);
+            const configuredServiceRoleKey = configured(auth.service_role_key);
+            const configuredSigningKeys = resolveConfiguredSigningKeys(
+              validatedConfig,
+              projectRoot,
+              context.projectEnvValues,
+            );
+            const signingKeys =
+              configuredSigningKeys ??
+              (auth.signing_keys_path === undefined || auth.signing_keys_path.length === 0
+                ? undefined
+                : [DEFAULT_SIGNING_KEY]);
+            const signingKey = signingKeys?.[0];
+            return {
+              ...(publishableKey === undefined ? {} : { publishableKey }),
+              ...(secretKey === undefined ? {} : { secretKey }),
+              ...(configuredAnonKey === undefined
+                ? signingKey === undefined
+                  ? {}
+                  : { anonKey: generateAsymmetricGoJwt(signingKey, "anon") }
+                : { anonKey: configuredAnonKey }),
+              ...(configuredServiceRoleKey === undefined
+                ? signingKey === undefined
+                  ? {}
+                  : { serviceRoleKey: generateAsymmetricGoJwt(signingKey, "service_role") }
+                : { serviceRoleKey: configuredServiceRoleKey }),
+              anonKeyIsOverride: configuredAnonKey !== undefined,
+              serviceRoleKeyIsOverride: configuredServiceRoleKey !== undefined,
+              ...(signingKeys === undefined
                 ? {}
-                : { anonKey: generateAsymmetricGoJwt(signingKey, "anon") }
-              : { anonKey: configuredAnonKey }),
-            ...(configuredServiceRoleKey === undefined
-              ? signingKey === undefined
-                ? {}
-                : { serviceRoleKey: generateAsymmetricGoJwt(signingKey, "service_role") }
-              : { serviceRoleKey: configuredServiceRoleKey }),
-            anonKeyIsOverride: configuredAnonKey !== undefined,
-            serviceRoleKeyIsOverride: configuredServiceRoleKey !== undefined,
-            ...(signingKeys === undefined
-              ? {}
-              : {
-                  gotrueJwtKeys: encodeJwkArray(signingKeys),
-                  publicSigningKeys: encodeJwkArray(signingKeys.map(toPublicJwk)),
-                }),
-          };
-        },
-        catch: (cause) =>
-          new StackConfigError({
-            message: cause instanceof Error ? cause.message : String(cause),
-          }),
-      });
+                : {
+                    gotrueJwtKeys: encodeJwkArray(signingKeys),
+                    publicSigningKeys: encodeJwkArray(signingKeys.map(toPublicJwk)),
+                  }),
+            };
+          },
+          catch: (cause) =>
+            new StackConfigError({
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
+        }),
+      );
       const remoteJwks = Effect.gen(function* () {
         return issuer === undefined
           ? undefined
@@ -1251,6 +1244,20 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       );
       const poolMode =
         validatedConfig.db.pooler.pool_mode === "session" ? ("session" as const) : "transaction";
+      const selection = yield* context.loaded !== null && opts?.selection !== undefined
+        ? (opts.publishesLock === true ? localKeys : Effect.void).pipe(
+            Effect.andThen(
+              opts.selection({
+                projectRoot,
+                majorVersion: validatedConfig.db.major_version,
+                orioledbVersion: validatedConfig.db.orioledb_version,
+                services: validatedConfig.local?.services,
+              }),
+            ),
+          )
+        : stackArtifactSelection(validatedConfig.db).pipe(
+            Effect.mapError((error) => new StackConfigError({ message: error.message })),
+          );
       const pgmetaCreation: ServiceCreationType = {
         service: "pgmeta",
         pin: selection.pgmeta,

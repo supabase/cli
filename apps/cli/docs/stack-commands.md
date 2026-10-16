@@ -202,7 +202,8 @@ catalog defaults. This inventory describes the lock or catalog, not running cont
 images, or service health. The Docker and native stack runtimes use the same versions, though a
 running stack launched by another CLI version or using mirrored images may differ. Legacy version
 pins and slim-image overrides do not apply in stack mode. Linked versions remain best-effort;
-catalog mismatches cannot be changed with `supabase link`.
+a mismatch warning recommends `supabase link`, which updates services set to `linked` (the
+default) in the lock, while services pinned in `[local.services]` keep their version.
 
 `SUPABASE_EXPERIMENTAL_STACK=1 supabase init` writes `[experimental] stack = true` into the new
 project config and omits the Docker-era default ports so the stack is not pinned to them.

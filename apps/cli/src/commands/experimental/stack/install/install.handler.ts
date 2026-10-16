@@ -94,6 +94,7 @@ export const stackInstall = Effect.fn("experimental.stack.install")(function* (
       return yield* loadStackConfig(settings.workdir, {
         context,
         frozen: flags.frozen,
+        publishesLock: true,
         // The runtime is checked after the config validates and before the lock is touched.
         selection: (request) =>
           pickRuntime.pipe(

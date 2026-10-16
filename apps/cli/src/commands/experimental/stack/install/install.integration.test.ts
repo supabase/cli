@@ -244,6 +244,27 @@ describe("experimental stack install", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live(
+    "fails with reason invalid-config on an escaping function entrypoint, writing no lock",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const host = yield* startReleaseFixture;
+        yield* publishAll(host);
+        const root = yield* project(
+          `${requestedVersions()}\n[functions.x]\nentrypoint = "../../outside.ts"\n`,
+        );
+
+        const error = yield* install(root, host).run.pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(StackCommandInstallError);
+        expect(error).toMatchObject({ reason: "invalid-config" });
+        expect(error.message).toContain("must remain within the project directory");
+        expect(yield* fs.exists(lockPath(root))).toBe(false);
+        expect(host.requests).toEqual([]);
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("fails with reason flags when the platform has no native artifacts", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

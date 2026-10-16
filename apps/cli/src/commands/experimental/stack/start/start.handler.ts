@@ -213,7 +213,12 @@ const loadStartConfig = Effect.fn("experimental.stack.start.loadConfig")(
       projectRoot,
       (message) => new StackConfigError({ message }),
     );
-    const config = yield* loadStackConfig(projectRoot, { context, selection, frozen });
+    const config = yield* loadStackConfig(projectRoot, {
+      context,
+      selection,
+      frozen,
+      publishesLock: true,
+    });
     const keys = yield* config.keys;
     const toml = yield* readDbToml(fs, path, projectRoot);
     return { context, config, keys, toml };

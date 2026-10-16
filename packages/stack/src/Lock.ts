@@ -5,6 +5,7 @@ import {
   type ArtifactSelection,
   type ServiceKind,
 } from "./Artifacts.ts";
+import { SLIM_IMAGE_GHCR_REGISTRY } from "./preparation/SlimEndpoints.ts";
 import { publish } from "./StackNamespace.ts";
 
 /** The `$schema` URL of lock format v1; it never changes once published. */
@@ -27,20 +28,25 @@ const LinkedVersion = Schema.Struct({ raw: Schema.String, version: Schema.String
  */
 const Resolution = Schema.Literals(["resolved", "unlinked", "unobserved", "unpublished"]);
 
-/** `[<registry>/]<producer>:<tag>@sha256:<digest>`; the registry host and path stay free for mirrors. */
-const IMAGE_REFERENCE = /^(?:.*\/)?([^/:@]+):([^/:@]+)@sha256:[0-9a-f]{64}$/u;
+/** `<producer>:<tag>@sha256:<digest>`, the part of a canonical image after the registry prefix. */
+const IMAGE_REFERENCE = /^([^/:@]+):([^/:@]+)@sha256:[0-9a-f]{64}$/u;
 
-/** The image of a pin must be the digest-pinned release `<upstreamVersion>-r<revision>` of the service's producer. */
+/**
+ * The image of a pin must be the digest-pinned GHCR release `<upstreamVersion>-r<revision>` of the
+ * service's producer; download mirrors are derived from it when pulling, never recorded.
+ */
 const resolvedPin = (kind: ServiceKind) =>
   ArtifactPin.check(
     Schema.makeFilter((pin) => {
       const producer = artifactSourceService(kind);
       const tag = `${pin.upstreamVersion}-r${pin.revision}`;
-      const match = IMAGE_REFERENCE.exec(pin.image);
-      if (match === null)
-        return `${kind} image "${pin.image}" must be <registry>/${producer}:${tag}@sha256:<64 hex digits>`;
+      const canonical = `${SLIM_IMAGE_GHCR_REGISTRY}${producer}:${tag}@sha256:`;
+      const match = pin.image.startsWith(SLIM_IMAGE_GHCR_REGISTRY)
+        ? IMAGE_REFERENCE.exec(pin.image.slice(SLIM_IMAGE_GHCR_REGISTRY.length))
+        : null;
+      if (match === null) return `${kind} image "${pin.image}" must be ${canonical}<64 hex digits>`;
       if (match[1] !== producer)
-        return `${kind} image "${pin.image}" is not a ${producer} image, expected <registry>/${producer}:${tag}@sha256:<digest>`;
+        return `${kind} image "${pin.image}" is not a ${producer} image, expected ${canonical}<digest>`;
       return match[2] === tag
         ? undefined
         : `${kind} image "${pin.image}" is tagged ${match[2]} but the pin is ${tag}`;

@@ -2,7 +2,7 @@ import { Schema } from "effect";
 
 const tags = ["local"];
 
-const upstreamVersion = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
+const upstreamVersion = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const malformedRevision = /-r(?:0\d+)?$/u;
 const orioledbMarker = /-orioledb(?:-|$)/u;
 

@@ -2842,6 +2842,18 @@ describe("experimental stack start service lock", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live("fails with invalid-config on a missing signing keys file, writing no lock", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* lockProject('[auth]\nsigning_keys_path = "missing-keys.json"\n');
+
+      const error = yield* lockedStart(root).run.pipe(Effect.flip);
+
+      expect(error).toMatchObject({ reason: "invalid-config" });
+      expect(yield* fs.exists(lockPath(root))).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live(
     "names [local.services.database] version when a service version swaps the database build",
     () =>

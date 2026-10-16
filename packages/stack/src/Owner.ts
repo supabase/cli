@@ -501,9 +501,10 @@ const makeOwner = Effect.fn("Owner.make")(function* (
   ) => ({ stackId, instanceRoot: path.join(options.root, databaseId), service, version });
 
   /**
-   * Runs `launch` with the database's schema-writer lease held until the service reports its first
-   * health result, which is when its migrations have finished; the lease also ends with the launch
-   * scope. A service on an external database has no local record and launches directly.
+   * Runs `launch` with the database's schema-writer lease held until the service first reports
+   * healthy, which is when its migrations have finished. A failed or interrupted check keeps the
+   * lease until the launch scope closes after the process is cleaned up, and a later successful
+   * probe releases it. A service on an external database has no local record and launches directly.
    */
   const launchAsSchemaWriter = Effect.fnUntraced(function* (
     context: ServiceLaunchContext<ServiceCreation>,
@@ -523,7 +524,10 @@ const makeOwner = Effect.fn("Owner.make")(function* (
     const session = yield* launch;
     return {
       ...session,
-      health: session.health.pipe(Effect.ensuring(Scope.close(lease, Exit.void))),
+      health: session.health.pipe(Effect.tap(() => Scope.close(lease, Exit.void))),
+      ...(session.probe === undefined
+        ? {}
+        : { probe: session.probe.pipe(Effect.tap(() => Scope.close(lease, Exit.void))) }),
     } satisfies RuntimeSession;
   });
 

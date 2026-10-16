@@ -102,6 +102,7 @@ export const stackUpdate = Effect.fn("experimental.stack.update")(function* (
       );
       return yield* loadStackConfig(settings.workdir, {
         context,
+        publishesLock: true,
         selection: (request) =>
           update(request).pipe(
             Effect.tap((result) => Ref.set(updated, result)),

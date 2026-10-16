@@ -267,20 +267,24 @@ whole composition, even for a member whose own change is purely a changed endpoi
 fails before modifying the stopped composition, naming the key or env var behind the change with its
 saved and requested values and suggesting reverting it. Only a database release-line change (the
 stock PostgreSQL major, or the exact OrioleDB build; path `pin`) or an endpoint change is
-incompatible; any other pin change, such as another service's catalog build or a same-major
-PostgreSQL build, restarts the service and does not block the start, except that a schema-owning
-service never moves to an older upstream than one that already migrated the database (see below).
+incompatible; any other pin change, such as another service's catalog build, restarts that
+service and does not block the re-plan, except that a schema-owning service never moves to an older
+upstream than one that already migrated the database (see below). A database pin change that keeps
+the release line, such as a different stock build within the same major, is also planned as a
+restart, but a database with initialized data then fails its start (see below).
 A saved OrioleDB build the catalog no longer carries is reported as non-editable, with no revert
 advice. Either way the failure suggests running the stack's exact `supabase stack destroy` command
 to recreate it.
 Switching between stock PostgreSQL and OrioleDB is a release-line change, reported as
 `db.orioledb_version` (or `SUPABASE_DB_ORIOLEDB_VERSION`) with `unset` standing for stock.
 Initialized database data is reused only by a slim-services revision of the build that created
-it (same line, major and upstream version). Every start that finds initialized data checks this,
-and a different build fails with advice to run `supabase stack destroy`. A first start records its
-identity in `.supabase-database-identity.json` before initializing data, so a first start
-interrupted before readiness resumes only on that build; initialized data with no recorded
-identity is never reused.
+it: the same release line, PostgreSQL major and upstream version, with any `-rN` revision. Every
+start that finds initialized data checks this before preparing or launching the database. A
+different line, major or upstream version fails the start, naming the recorded and requested builds
+and advising `supabase stack destroy`, which permanently deletes the stack's local database data. A
+first start records its identity in `.supabase-database-identity.json` before initializing data, so
+a first start interrupted before readiness resumes only on that build; initialized data with no
+recorded identity is never reused.
 Auth, Storage, Realtime, Analytics and the pooler own schemas in the database. The database
 instance root records the newest upstream version of each in `schema-writers.json`, raised under a
 per-database lock before a service or its one-shot initialization command migrates. A start whose

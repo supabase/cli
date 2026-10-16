@@ -281,6 +281,30 @@ describe("experimental stack update", () => {
     );
   });
 
+  it.live("fails on an escaping function entrypoint, leaving the lock byte for byte alone", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const host = yield* startReleaseFixture;
+      const root = yield* project({ auth: UPSTREAM });
+      publish(host, "auth", 0);
+      yield* seed(root, host);
+      publish(host, "auth", 1);
+      const written = yield* fs.readFileString(lockPath(root));
+      const config = yield* fs.readFileString(`${root}/supabase/config.toml`);
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        `${config}\n\n[functions.x]\nentrypoint = "../../outside.ts"\n`,
+      );
+
+      const error = yield* update(root, host, ["auth"]).run.pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(StackCommandUpdateError);
+      expect(error).toMatchObject({ reason: "invalid-config" });
+      expect(error.message).toContain("must remain within the project directory");
+      expect(yield* fs.readFileString(lockPath(root))).toBe(written);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("fails on an unknown service naming the valid ones, and writes nothing", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

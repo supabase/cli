@@ -223,9 +223,9 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
       rows,
       backend.kind === "stack"
         ? {
-            heading: "The CLI stack catalog versions differ from your linked project:",
+            heading: "The stack service versions differ from your linked project:",
             recommendation:
-              "These versions come from the CLI stack catalog and cannot be changed with supabase link.",
+              "Run supabase link to update services set to linked (the default) in supabase/supabase.lock; services pinned in [local.services] keep their version.",
           }
         : {},
     );

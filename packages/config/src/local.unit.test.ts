@@ -51,6 +51,7 @@ describe("[local.services]", () => {
     ["auth", "v2.197.0-r", /local\.services\.auth\.version/u],
     ["auth", "v2.197.0-r01", /local\.services\.auth\.version/u],
     ["auth", "v2 197", /local\.services\.auth\.version/u],
+    ["auth", "v2.197.0+build", /local\.services\.auth\.version/u],
     ["auth", "-v1", /local\.services\.auth\.version/u],
     ["auth", "default", /local\.services\.auth\.version "default"/u],
     ["auth", "17.6.1.200-orioledb", /orioledb.*only valid for the database/u],

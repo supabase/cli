@@ -146,11 +146,6 @@ describe("lock", () => {
     it.live.each([
       { name: "a revision above zero", repository: "ghcr.io/supabase/cli/postgrest", revision: 3 },
       { name: "revision zero", repository: "ghcr.io/supabase/cli/postgrest", revision: 0 },
-      {
-        name: "a mirror registry",
-        repository: "registry.example.com:5000/mirror/postgrest",
-        revision: 3,
-      },
     ])("accepts the image of $name", ({ repository, revision }) =>
       Effect.gen(function* () {
         const read = yield* readWithRest(
@@ -158,6 +153,20 @@ describe("lock", () => {
         );
 
         expect(Option.getOrThrow(read).services.rest.resolved.revision).toBe(revision);
+      }),
+    );
+
+    it.live("rejects an image of a registry other than the canonical one", () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          readWithRest(
+            restPin(`registry.example.com:5000/mirror/postgrest:v14.1-r3@sha256:${digest}`),
+          ),
+        );
+
+        expect(error).toBeInstanceOf(LockInvalidError);
+        expect(error.message).toContain("rest image");
+        expect(error.message).toContain("must be ghcr.io/supabase/cli/postgrest:v14.1-r3@sha256:");
       }),
     );
 
