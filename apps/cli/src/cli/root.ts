@@ -271,7 +271,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
               ? Layer.empty
               : stackBackendLayer(options.stackBackend),
             outputLayer,
-            makeGoProxyLayer({ globalArgs, parentOwnsCapturedSuccessTail: true }),
+            makeGoProxyLayer({ globalArgs, workdir, parentOwnsCapturedSuccessTail: true }),
           );
         }),
       ),

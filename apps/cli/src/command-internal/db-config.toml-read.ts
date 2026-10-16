@@ -38,9 +38,9 @@ import { Output } from "../shared/output/output.service.ts";
 type EnvLookup = (name: string) => string | undefined;
 
 /**
- * Subset of `supabase/config.toml` (plus the linked pooler URL) the db-config
- * resolver needs. A missing config file yields defaults; a malformed one aborts
- * the command instead of running against the default local database.
+ * Subset of `supabase/config.toml` the db-config resolver needs. A missing config file yields
+ * defaults; a malformed one aborts the command instead of running against the default local
+ * database.
  */
 export interface DbTomlValues {
   readonly projectEnv: Readonly<Record<string, string>>;
@@ -1097,12 +1097,11 @@ export const warnDeprecatedOrioleDBVersionEnv = Effect.fnUntraced(function* (
 });
 
 /**
- * Reads `<workdir>/supabase/config.toml` (db subtree + project id) and the linked
- * `<workdir>/supabase/.temp/pooler-url`. `fs`/`path` are passed in so the resolver
- * can capture them once and keep its own `R` at `never`.
+ * Reads `<workdir>/supabase/config.toml` (db subtree + project id). `fs`/`path` are passed in so
+ * the resolver can capture them once and keep its own `R` at `never`.
  *
- * Fails with `DbConfigLoadError` only when the config file is present but
- * unparseable; an absent file (and an absent/empty pooler-url file) is not an error.
+ * Fails with `DbConfigLoadError` only when the config file is present but unparseable; an absent
+ * file is not an error.
  */
 const readDbTomlCore = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,

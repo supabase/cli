@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/config"
 )
 
 func clearTelemetryEnv(t *testing.T) {
@@ -134,4 +135,10 @@ func TestUpdateNotifierEnabled(t *testing.T) {
 		t.Setenv("SUPABASE_NO_UPDATE_NOTIFIER", value)
 		assert.Equal(t, wantEnabled, updateNotifierEnabled(), "value %q", value)
 	}
+}
+
+func TestUpdateNotifierDisabledInStackMode(t *testing.T) {
+	t.Setenv("SUPABASE_NO_UPDATE_NOTIFIER", "")
+	t.Setenv(config.StackStateEnv, "1")
+	assert.False(t, updateNotifierEnabled())
 }

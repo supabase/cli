@@ -34,8 +34,10 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 - Every command that resolves a linked project ref for its own database
   connection has a TS-only `--project-ref` flag (no Go equivalent on any
   user-facing command — only the `SUPABASE_PROJECT_ID` env var could override
-  the linked ref; the sole Go registration is a hidden, non-user-facing seam,
-  `db declarative __catalog --project-ref`, `cmd/pgdelta_catalog.go:44`). This
+  the linked ref; the Go registrations are a hidden, non-user-facing seam,
+  `db declarative __catalog --project-ref`, `cmd/pgdelta_catalog.go:44`, and the
+  deprecated Go-delegated `db remote changes`, which receives the linked ref this
+  way in stack mode). This
   covers: `db push`, `db pull`, `db diff`, `db dump`, `db reset`, `db lint`,
   `db advisors`, `db query`; `migration list`/`up`/`down`/`repair`/`fetch`/`squash`;
   `seed buckets`; `storage ls`/`cp`/`mv`/`rm`; every `inspect db` subcommand and
@@ -56,13 +58,6 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   reuses the saved `supabase/.temp/pooler-url` whichever ref the env var names.
   The saved pooler URL, parent project, and branch name apply only when the
   resolved ref is the linked one.
-- In stack mode the Go-delegated `db remote changes` (which has no `--project-ref`
-  flag) receives the linked ref through `SUPABASE_PROJECT_ID`, since no
-  `.temp/project-ref` exists for the Go binary to read. Go also reads that variable
-  as the local `project_id`, so the delegated command's Docker resource names follow
-  the linked ref rather than the `config.toml` `project_id`. The command accepts no
-  flag that carries the ref instead. `gen keys` has `--project-ref` and uses it, so
-  it is unaffected.
 - `projects api-keys` has a TS-only `--reveal` flag (no Go equivalent). It sends
   `reveal=true` so the Management API returns the full secret keys (`sb_secret_...`) in
   full instead of redacting them, addressing issue #4775. Default behavior (omitted flag)

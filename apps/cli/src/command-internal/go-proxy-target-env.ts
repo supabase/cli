@@ -4,8 +4,6 @@ import { RemoteTarget } from "../config/remote-target.service.ts";
 import { remoteTargetRuntimeLayer } from "./management-api-runtime.layer.ts";
 import { softProjectStateMode } from "./project-state-mode.ts";
 
-const noEnv: Record<string, string> = {};
-
 const loadTarget = (projectRef: Option.Option<string>) =>
   Effect.gen(function* () {
     const remoteTarget = yield* RemoteTarget;
@@ -17,34 +15,21 @@ const loadTarget = (projectRef: Option.Option<string>) =>
     return target;
   });
 
-const linkedEnv = Effect.map(loadTarget(Option.none()), (target) => ({
-  SUPABASE_PROJECT_ID: target.ref,
-}));
-
 /**
- * Env that hands a Go-delegated command with no `--project-ref` flag its linked ref, since stack
- * mode keeps no `.temp/project-ref` for the Go binary to read. Go reads `SUPABASE_PROJECT_ID` as
- * its local `project_id` too, so Docker resource names follow the ref. The target runtime is
- * built only in stack mode, so legacy mode loads no profile and reads no link.
+ * The `--project-ref` argument and env for a Go-delegated command that accepts one: stack mode
+ * resolves the target in TypeScript and passes its ref explicitly, with the linked pooler URL
+ * only when the ref is the linked one; legacy mode forwards only the flag the user typed and
+ * never builds the target runtime.
  */
-export const goStandaloneLinkedTargetEnv = Effect.fn("GoProxy.standaloneLinkedTargetEnv")(
-  function* () {
-    if ((yield* softProjectStateMode) !== "stack") return noEnv;
-    return yield* linkedEnv.pipe(Effect.provide(remoteTargetRuntimeLayer));
-  },
-);
-
-/**
- * The `--project-ref` argument for a Go-delegated command that accepts one: stack mode resolves
- * the ref in TypeScript and passes it explicitly; legacy mode forwards only the flag the user
- * typed and never builds the target runtime.
- */
-export const goProjectRefArgs = Effect.fn("GoProxy.projectRefArgs")(function* (
+export const goProjectTarget = Effect.fn("GoProxy.projectTarget")(function* (
   projectRef: Option.Option<string>,
 ) {
   if ((yield* softProjectStateMode) !== "stack") {
-    return Option.isSome(projectRef) ? ["--project-ref", projectRef.value] : [];
+    const env: Record<string, string> = {};
+    return { args: Option.isSome(projectRef) ? ["--project-ref", projectRef.value] : [], env };
   }
   const target = yield* loadTarget(projectRef).pipe(Effect.provide(remoteTargetRuntimeLayer));
-  return ["--project-ref", target.ref];
+  const env: Record<string, string> = {};
+  if (target.poolerUrl !== undefined) env["SUPABASE_INTERNAL_POOLER_URL"] = target.poolerUrl;
+  return { args: ["--project-ref", target.ref], env };
 });

@@ -5,9 +5,43 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
+
+// StackStateEnv is set by the TypeScript CLI when the project keeps its linked state outside
+// supabase/.temp, so the files under it are neither read nor written.
+const StackStateEnv = "SUPABASE_INTERNAL_STACK_STATE"
+
+// StackPoolerUrlEnv carries the linked pooler connection string in stack mode, where
+// supabase/.temp/pooler-url is not read.
+const StackPoolerUrlEnv = "SUPABASE_INTERNAL_POOLER_URL"
+
+// UsesStackState reports whether supabase/.temp is off limits for this invocation.
+func UsesStackState() bool {
+	enabled, _ := strconv.ParseBool(os.Getenv(StackStateEnv))
+	return enabled
+}
+
+// readTempFile reads a file under supabase/.temp, which reads as absent in stack mode.
+func readTempFile(fsys fs.FS, path string) ([]byte, error) {
+	if UsesStackState() {
+		return nil, fs.ErrNotExist
+	}
+	return fs.ReadFile(fsys, path)
+}
+
+// readLinkedPoolerUrl returns the linked pooler connection string from supabase/.temp, or from the
+// environment in stack mode.
+func readLinkedPoolerUrl(fsys fs.FS, path string) ([]byte, error) {
+	if UsesStackState() {
+		return []byte(os.Getenv(StackPoolerUrlEnv)), nil
+	}
+	return fs.ReadFile(fsys, path)
+}
 
 type pathBuilder struct {
 	SupabaseDirPath        string
