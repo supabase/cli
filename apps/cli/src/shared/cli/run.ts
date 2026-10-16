@@ -567,7 +567,7 @@ export interface RunCliOptions<BeforeParseError = never> {
       /** Value-taking-token predicate for this argv (global + resolved leaf flags) — see `valueTakingFlagTokenPredicateForArgv`. */
       readonly isValueTakingFlagToken: (token: string) => boolean;
     },
-  ) => Effect.Effect<void>;
+  ) => Effect.Effect<void, never, FileSystem.FileSystem | Path.Path | RuntimeInfo>;
 }
 
 function cliProgramFor<
