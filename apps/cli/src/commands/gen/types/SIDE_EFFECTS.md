@@ -3,10 +3,10 @@
 Generates PostgREST client types against a direct PostgreSQL connection.
 Introspection runs in-process via `@supabase/postgrest-typegen`; the language
 comes from the `@supabase/typegen` registry, which lists every `--lang` value and
-either calls that language's generator in-process (TypeScript, Go, Python,
-Swift today) or runs the language's own tool in the directory the command was run from, with the
+either calls that language's generator in-process (TypeScript, Go, Python
+today) or runs the language's own tool in the directory the command was run from, with the
 introspected document on stdin (`--lang dart` runs `dart run supabase_typegen
---output -`). A bump of that dependency can add a `--lang` value or a language
+--output -`, `--lang swift` runs supabase-swift's `supabase-typegen`). A bump of that dependency can add a `--lang` value or a language
 flag; the CLI names no language itself. `--linked`/`--project-id` TypeScript
 output still comes from the Management API; every other language and target
 (including `--local` and `--db-url`) connects to the database and introspects
@@ -178,7 +178,8 @@ go`/`--lang swift`/`--lang python` — the defaults-only claim above holds only 
   over any of these three flags.
 - **Output compatibility with the previous pg-meta-based generator.** Measured against
   pg-meta's reference generators on the same schema:
-  - Go and Swift output are byte-identical.
+  - Go output is byte-identical. Swift output comes from supabase-swift's
+    `supabase-typegen` instead and emits `@Table` structs for the PostgREST v3 typed API.
   - TypeScript: a `NOT NULL` jsonb column now generates `NonNullable<Json>` instead of
     `Json` — the old type wrongly admitted `null` on a column the schema declares
     non-nullable.
@@ -191,8 +192,7 @@ go`/`--lang swift`/`--lang python` — the defaults-only claim above holds only 
     on these jsonb cases until the hosted service adopts the same generator.
 - `--schema` / `-s` accepts a comma-separated list of schemas to include.
 - Language flags are rendered from the registry's user-facing option specs; today that is
-  `--swift-access-control`, which accepts `internal` (default), `public`, `private` or
-  `package`. Every such flag is mutually exclusive with an _explicit_
+  `--swift-access-control`, which accepts `internal` (default) or `public`. Every such flag is mutually exclusive with an _explicit_
   `--linked`/`--project-id`; on the `--local`, `--db-url`, and implicit-linked-fallback
   paths the flags are parsed regardless of `--lang`, and only the values the chosen
   language declares reach its generator.
