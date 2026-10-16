@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { Writable } from "node:stream";
 import { beforeEach, vi } from "vitest";
 import {
   Cause,
@@ -408,9 +409,10 @@ describe("Output", () => {
         yield* out.warn("no files matched pattern: missing.sql");
 
         expect(mockClack.spinnerFactory).toHaveBeenNthCalledWith(2, { withGuide: false });
-        expect(mockClack.log.warn).toHaveBeenCalledWith("no files matched pattern: missing.sql", {
-          spacing: 0,
-        });
+        expect(mockClack.log.warn).toHaveBeenCalledWith(
+          "no files matched pattern: missing.sql",
+          expect.objectContaining({ spacing: 0 }),
+        );
         const [clear] = mockClack.spinnerHandle.clear.mock.invocationCallOrder;
         const [warn] = mockClack.log.warn.mock.invocationCallOrder;
         const [, resume] = mockClack.spinnerHandle.start.mock.invocationCallOrder;
@@ -859,6 +861,24 @@ describe("Output", () => {
         );
       }).pipe(provideLayer(stdio.layer));
     });
+  });
+
+  it.effect("ends a text command when a log line meets a closed stdout", () => {
+    mockClack.log.info.mockImplementation((message: string, opts: { output: Writable }) =>
+      opts.output.write(`${message}\n`),
+    );
+    const stdio = brokenStdio("stdout", "EPIPE");
+    const layer = textOutputLayer.pipe(
+      Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: false }), stdio.layer)),
+    );
+    return Effect.gen(function* () {
+      const out = yield* Output;
+      const exit = yield* Effect.exit(out.info("first"));
+      yield* out.info("second");
+
+      expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(StdoutClosedError);
+      expect(stdio.attempts).toEqual({ stdout: 1, stderr: 0 });
+    }).pipe(Effect.provide(layer));
   });
 
   describe("json layer", () => {

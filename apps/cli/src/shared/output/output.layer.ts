@@ -13,6 +13,7 @@ import {
   spinner,
   text,
 } from "@clack/prompts";
+import { Writable } from "node:stream";
 import { styleText } from "node:util";
 import {
   DateTime,
@@ -277,27 +278,19 @@ export const textOutputLayer = Layer.effect(
       paused.settle?.();
     };
 
-    const logAround = (
-      emit: (message: string, opts?: { spacing?: number }) => void,
-      message: string,
-    ) => {
-      const paused = pauseSpinner();
-      if (paused === undefined) emit(message);
-      else emit(message, { spacing: 0 });
-      resumeSpinner(paused);
-    };
-
     // A spinner due to appear during an unpaused write waits until such writes finish.
     let unpausedWrites = 0;
     let showWhenIdle: (() => void) | undefined;
 
-    const withSpinnerPaused = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    const withSpinnerPaused = <A, E, R>(
+      makeEffect: (spinnerPaused: boolean) => Effect.Effect<A, E, R>,
+    ): Effect.Effect<A, E, R> =>
       Effect.suspend(() => {
         const paused = pauseSpinner();
         if (paused !== undefined)
-          return effect.pipe(Effect.ensuring(Effect.sync(() => resumeSpinner(paused))));
+          return makeEffect(true).pipe(Effect.ensuring(Effect.sync(() => resumeSpinner(paused))));
         unpausedWrites += 1;
-        return effect.pipe(
+        return makeEffect(false).pipe(
           Effect.ensuring(
             Effect.sync(() => {
               unpausedWrites -= 1;
@@ -310,19 +303,37 @@ export const textOutputLayer = Layer.effect(
         );
       });
 
+    // clack writes to `process.stdout` itself; rendering into a buffer sends the line through
+    // `write`, which handles a closed stdout.
+    const logAround = (
+      emit: (message: string, opts: { spacing?: number; output: Writable }) => void,
+      message: string,
+    ) =>
+      withSpinnerPaused((spinnerPaused) => {
+        let rendered = "";
+        const output = new Writable({
+          write(chunk, _encoding, done) {
+            rendered += String(chunk);
+            done();
+          },
+        });
+        emit(message, spinnerPaused ? { spacing: 0, output } : { output });
+        return write(rendered);
+      });
+
     return Output.of({
       format: "text" as const,
       interactive: tty.stdoutIsTty,
       intro: (title: string) => Effect.sync(() => intro(title)),
       outro: (message: string) => Effect.sync(() => outro(message)),
-      info: (message: string) => Effect.sync(() => logAround(log.info, message)),
-      warn: (message: string) => Effect.sync(() => logAround(log.warn, message)),
-      error: (message: string) => Effect.sync(() => logAround(log.error, message)),
+      info: (message: string) => logAround(log.info, message),
+      warn: (message: string) => logAround(log.warn, message),
+      error: (message: string) => logAround(log.error, message),
       event: (event: StreamEvent) =>
         (event.type === "log-entry"
           ? Effect.succeed(`[${event.service}] ${event.line}`)
           : encodeJson(event)
-        ).pipe(Effect.flatMap((message) => Effect.sync(() => logAround(log.info, message)))),
+        ).pipe(Effect.flatMap((message) => logAround(log.info, message))),
       task: (message: string) =>
         Effect.gen(function* () {
           let shown = false;
@@ -487,7 +498,7 @@ export const textOutputLayer = Layer.effect(
           };
         }),
       result: () => Effect.void,
-      success: (message: string) => Effect.sync(() => logAround(log.success, message)),
+      success: (message: string) => logAround(log.success, message),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.sync(() => {
           // A command failure is terminal, so a still-shown task spinner is dropped.
@@ -516,9 +527,9 @@ export const textOutputLayer = Layer.effect(
           }
         }),
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
-        withSpinnerPaused(write(text, stream)),
+        withSpinnerPaused(() => write(text, stream)),
       rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
-        withSpinnerPaused(write(bytes, stream)),
+        withSpinnerPaused(() => write(bytes, stream)),
     });
   }),
 );
