@@ -12,7 +12,7 @@ import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../config/project-ref.service.ts";
+import { RemoteTarget, type ResolvedRemoteTarget } from "../config/remote-target.service.ts";
 import { bold } from "./colors.ts";
 import { promptYesNo } from "./prompt-yes-no.ts";
 import { ipv6Suggestion, isIPv6ConnectivityError } from "./connect-errors.ts";
@@ -70,7 +70,8 @@ import {
 } from "../commands/db/shared/pgdelta-engine.service.ts";
 import { type PgDeltaContext, isPgDeltaDebugEnabled, resolvePgDeltaProjectId } from "./pgdelta.ts";
 import { prepareShadowSource } from "../commands/db/shared/shadow-source.ts";
-import { currentStackBackend } from "./stack-backend.ts";
+import { currentStackBackend, usesStackState } from "./stack-backend.ts";
+import { stackProjectSelection } from "./stack-project-selection.ts";
 import { stackRejectNativeDockerDiffEngine } from "./stack-local-database.ts";
 import { stackPrepareShadowSource, stackWithShadowDatabase } from "./stack-shadow.ts";
 import type { DbPullFlags } from "../commands/db/pull/pull.command.ts";
@@ -257,9 +258,11 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
     // tell the user which `[remotes.*]` block matched. `--local`/`--db-url` never merge a
     // remote block, so only the linked path pre-resolves a ref.
     let linkedRef: string | undefined;
+    let linkedTarget: ResolvedRemoteTarget | undefined;
     if (connType === "linked") {
-      const projectRefResolver = yield* ProjectRefResolver;
-      linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
+      const remoteTarget = yield* RemoteTarget;
+      linkedTarget = yield* remoteTarget.load(flags.projectRef);
+      linkedRef = linkedTarget.ref;
       // Cache the ref the moment it's known, not after `toml`/`localInputs` below resolve
       // (both fallible): the project cache should still be written even when a later step
       // (config validation, connection, the pull itself) fails.
@@ -300,6 +303,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
       dnsResolver,
       password: flags.password ?? Option.none(),
       linkedProjectRef: flags.projectRef,
+      target: linkedTarget,
     });
     if (linkedRef === undefined) {
       linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
@@ -349,6 +353,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
                   dnsResolver,
                   password: flags.password ?? Option.none(),
                   linkedProjectRef: flags.projectRef,
+                  target: linkedTarget,
                 })
                 .pipe(Effect.orElseSucceed(() => Option.none()));
               if (Option.isSome(pooler)) {
@@ -484,13 +489,15 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           yield* makeDir(fs, path.dirname(migrationPath)).pipe(
             Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })),
           );
-          const image = (yield* resolveDbImage(
-            fs,
-            path,
-            cliSettings.workdir,
-            toml.majorVersion,
-            Option.getOrUndefined(toml.orioledbVersion),
-          )).image;
+          const image = (yield* usesStackState)
+            ? (yield* stackProjectSelection(cliSettings.workdir)).database.image
+            : (yield* resolveDbImage(
+                fs,
+                path,
+                cliSettings.workdir,
+                toml.majorVersion,
+                Option.getOrUndefined(toml.orioledbVersion),
+              )).image;
           // Default dump options: no schema filter (so the internal-schema exclude
           // list applies) and comments stripped.
           const dumpEnvOpt: DumpOptions = {
@@ -584,6 +591,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
                   dnsResolver,
                   password: flags.password ?? Option.none(),
                   linkedProjectRef: flags.projectRef,
+                  target: linkedTarget,
                 })
                 .pipe(Effect.orElseSucceed(() => Option.none())),
             runWithConn: runSchemaDump,

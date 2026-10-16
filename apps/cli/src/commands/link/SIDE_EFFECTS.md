@@ -21,7 +21,7 @@ counterpart exists for this behavior.
 > read — `link` never falls back to it there. It **is** read for the TS-only branch-name lookup above, which resolves
 > the currently-linked _parent_ project (env `SUPABASE_PROJECT_ID` → `linked-project.json` →
 > `project-ref` file, first ref-shaped candidate wins) before searching its branches. This
-> deliberately does NOT reuse `ProjectRefResolver.resolveOptional` — that resolves the
+> deliberately does NOT reuse `RemoteTarget.resolveOptional` — that resolves the
 > FINAL linked ref, which right after linking a branch would be the branch's own ref, breaking a
 > second `link <other-branch>` (CLI-2167 follow-up). `linked-project.json` works as the parent
 > candidate because `link`'s plain-project arm writes it for a real (non-404) project, and the 404
@@ -32,8 +32,8 @@ counterpart exists for this behavior.
 > lost until a real (non-404) `link` run. `LinkedProjectCache.cache` (the post-run
 > PersistentPostRun-parity fill) never overwrites an EXISTING file either way, so between the two,
 > the cache reliably tracks the last known-good parent project even across subsequent branch links.
-> This parent resolution is hoisted into `command-internal/parent-project-ref.ts`
-> (`resolveLinkedParentRef`), shared with the `branches` command family, which is
+> This parent resolution is `RemoteTarget.parent`
+> in `config/remote-target.layer.ts`, shared with the `branches` command family, which is
 > PARENT-scoped for the same reason — see `branches/list/SIDE_EFFECTS.md`.
 
 ## Files Written
@@ -149,6 +149,93 @@ name) and `parent_project_ref` (CLI-2167, TS-only, purely additive — absent fo
 project-ref link). The `Resolved branch "<name>"...` line above still goes out via `output.info`
 in these modes (stderr in `json`; a structured `log` event in `stream-json`) rather than
 `output.raw`. Warnings still go to stderr.
+
+## Stack mode
+
+When stack project-state mode is active (`SUPABASE_EXPERIMENTAL_STACK=1`, or `[experimental] stack`
+in `config.toml` with the variable unset), the link target is one gitignored document,
+`<workdir>/supabase/.link.json`, and nothing is written under `supabase/.temp/`:
+
+```json
+{
+  "project": { "ref": "…", "name": "…", "organization_id": "…", "organization_slug": "…" },
+  "active_branch": { "ref": "…", "name": "…", "is_default": false, "pooler_url": "…" },
+  "fetchedAt": "<ISO-8601 timestamp>"
+}
+```
+
+- `project` is the parent project; `active_branch.ref` is the ref commands act on, which is the
+  project's own ref unless a branch was linked (`name` and `is_default` appear for a branch
+  resolved by name; a raw branch ref whose parent is unknown records only `is_default: false`). When the ref is a branch project that `getProject` does not return, the
+  parent comes from the branch resolution, else from the previous document's project when that
+  project still lists the ref as a branch, else the ref itself.
+- `pooler_url` uses the same normalization as `.temp/pooler-url`; it is omitted with
+  `--skip-pooler` or when the project reports no primary pooler.
+- The document is written atomically after `supabase/.gitignore` gains `.link.json`,
+  `..link.json.*.tmp` (the staged write), `.supabase.lock.lease`, and `.supabase.lock.*.tmp` (the
+  staged lock write). The Postgres version and `linked-project.json` are not written.
+- A document that does not decode fails reads with `ProjectLinkMalformedError`, which suggests
+  running `supabase link` again; a read or write failure other than absence is
+  `ProjectLinkIoError`.
+- The organization and project `groupIdentify` calls fire from `link` itself, since the post-run
+  linked-project cache fill is a no-op in this mode. For other commands the fill writes
+  `$SUPABASE_HOME/project-cache/<ref>.json` (atomic, once per ref; see `docs/supabase-home.md`)
+  instead of `.temp/linked-project.json`.
+
+### Hosted versions in `supabase/supabase.lock`
+
+When the project has a `supabase/config.toml`, stack-mode `link` also records what the linked
+project or branch runs in `supabase/supabase.lock`. The config is validated first, so an invalid
+`supabase/config.toml` fails the link before any probe or write. Without a `config.toml` there is no
+lock, only `.link.json` is written, under the same project lease, and nothing below runs. A lease that
+stays busy fails the link with `LockResolutionError` reason `lease-busy` before anything is written.
+`supabase link` always needs a login. Under the project lease `supabase/.supabase.lock.lease` it:
+
+- Probes the target (the `link.probe` span; `stack update` runs the same probe under `update.probe`):
+  the database version from `getProject` (`database.version`), or from `getABranchConfig`
+  (`postgres_version`) when the ref is a branch the project lookup does not return, and the `rest`, `auth` and `storage` versions from the target's
+  tenant host (`/rest/v1/`, `/auth/v1/health`, `/storage/v1/version`) with the service-role key.
+  The key is sent as `apikey`, and as a bearer token unless it is an `sb_` key; it is never logged
+  or recorded. Services without a version endpoint are not probed.
+- Resolves the entries whose specifier is `linked` (the default) against the observations (the
+  `link.lock` span), looking each hosted version up on the slim-services release host
+  (`SUPABASE_INTERNAL_SLIM_RELEASES_URL` and `SUPABASE_INTERNAL_SLIM_REGISTRY_URL` redirect it), and
+  records every observation in its entry's `linked` field even when a specifier overrides it. The
+  lock's top-level `linked` gains the project, the branch (`ref`, `isDefault`; a project link
+  without a branch records the project ref as the branch ref, default) and `observedAt`. A branch
+  linked by ref or by name records the same identity; its name is kept only in `.link.json`.
+- A service the platform does not report, or a hosted version slim-services does not publish
+  (`resolution` `unobserved` or `unpublished`), takes the version bundled with the CLI. Services
+  with no version endpoint (`realtime`, `imgproxy`, `functions`, `studio`, `pgmeta`, `mail`,
+  `analytics`, `pooler`) are recorded as `unobserved` without a warning; one the probe should have
+  read (`database`, `rest`, `auth`, `storage`) warns. A database
+  whose hosted major differs from `db.major_version` does the same. A hosted or release-host
+  failure that is transient keeps the previous entry only when the remote, the specifier and
+  `db.major_version` are unchanged, else takes the bundled version as `unobserved`; both print a
+  warning with the cause. An entry that fell back and whose inputs are unchanged keeps its pin.
+  Linking to another project or branch keeps nothing observed on the old remote. An explicit
+  `<upstream>` or `<upstream>-r<N>` specifier that cannot be resolved fails the link, and a release
+  integrity mismatch always does.
+- Writes the lock (sorted-key JSON, atomically) only when it differs from the stored one, ignoring
+  `linked.observedAt`, plus the `supabase/.gitignore` entries, then writes `.link.json` while still
+  holding the lease. It prints the hosted and locked version of each service and, when the lock
+  changed, `Updated supabase/supabase.lock[: now observing <remote>] (<n> version changes). Review and commit it.`, else
+  `supabase/supabase.lock is already up to date.`; the report is printed right after the lock
+  write, so it stands even if a later step fails. In JSON output it adds `lock` (`file`, `written`, `services` with
+  `service`, `hosted`, `locked`, `resolution`).
+
+`--frozen`, or `CI` set (not empty, `false` or `0`) with an existing lock, makes `link` write only
+`.link.json`: the lock is untouched, and a warning lists the services whose hosted versions differ
+from it, advising `supabase stack update`. A missing lock is created even under `CI`. The probes
+still run. In legacy mode the flag is accepted and does nothing. `supabase unlink` never touches the
+lock.
+
+Network by command: `supabase link` reaches the Management API, the target's tenant host and the
+release host. `supabase start` and `supabase stack install` reach only the release host, only when
+they resolve a release, and never need a login or the Management API; `supabase stack update`
+reaches the Management API and tenant host only when a `linked` entry is re-resolved and
+`supabase/.link.json` exists (it then needs a login), plus the release host; `supabase stack
+outdated` reaches only the release host.
 
 ## Known divergence
 

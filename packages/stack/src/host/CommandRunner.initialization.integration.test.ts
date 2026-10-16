@@ -2,7 +2,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Deferred, Effect, Fiber, FileSystem, Layer, Path, Ref } from "effect";
 import { TestClock } from "effect/testing";
-import { catalogPins, resolveArtifact } from "../Artifacts.ts";
+import { resolveArtifact, type ArtifactPin } from "../Artifacts.ts";
 import { initialization } from "../Commands.ts";
 import {
   makeArtifactStore,
@@ -12,6 +12,7 @@ import {
 import { PreparationError } from "../preparation/Errors.ts";
 import type { StackCredentials } from "../StackNamespace.ts";
 import * as CommandRunner from "./CommandRunner.ts";
+import { selection } from "../../tests/pins.ts";
 
 const target =
   process.platform === "darwin" && process.arch === "arm64"
@@ -22,18 +23,14 @@ const target =
         ? "linux-arm64"
         : undefined;
 
-// The real catalog's default auth pin, not hardcoded — `resolveArtifact({ service: "auth",
-// version })` below would otherwise fail once a catalog bump moves past a literal.
-const authVersion = catalogPins().find((entry) => entry.sourceService === "auth" && entry.isDefault)
-  ?.pin.upstreamVersion;
-if (authVersion === undefined) {
-  throw new Error("no default auth catalog pin found");
-}
-
-const prepareAuthArtifact = Effect.fn(function* (cacheRoot: string, script: string) {
+const prepareAuthArtifact = Effect.fn(function* (
+  cacheRoot: string,
+  script: string,
+  pin: ArtifactPin = selection.auth,
+) {
   if (target === undefined) return yield* Effect.fail("Unsupported test platform");
   const fs = yield* FileSystem.FileSystem;
-  const { releaseVersion, natives } = yield* resolveArtifact({ service: "auth" });
+  const { releaseVersion, natives } = yield* resolveArtifact({ service: "auth", pin });
   const request: ArtifactRequest = {
     key: `slim-services/auth/${releaseVersion}/${target}`,
     requiredRuntimePaths: ["bin/auth"],
@@ -64,7 +61,12 @@ const prepareAuthArtifact = Effect.fn(function* (cacheRoot: string, script: stri
   yield* store.prepare(request);
 });
 
+const databaseId = "database";
+
 const makeRunner = Effect.fn(function* (root: string, cacheRoot: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(path.join(root, databaseId), { recursive: true });
   const layer = CommandRunner.layer({
     stackId: "initialization-command-test",
     root,
@@ -108,7 +110,8 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
         const error = yield* runner
           .run({
             command: initialization.auth({
-              version: authVersion,
+              pin: selection.auth,
+              databaseId,
               databaseUrl: "postgresql://invalid:invalid@127.0.0.1:1/postgres",
             }),
             credentials,
@@ -126,6 +129,105 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
         expect(error.message).toContain(`jwt=${credentials.jwtSecret}`);
         expect(error.message).toContain(`keys=${credentials.gotrueJwtKeys}`);
         expect(error.message.length).toBeLessThan(45_000);
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ),
+);
+
+it.live.skipIf(target === undefined || process.platform === "win32")(
+  "runs the selected pin of an initialization command, including one outside the catalog",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        if (target === undefined) return;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "initialization-command-pin-" });
+        const cacheRoot = path.join(root, "cache");
+        const pin: ArtifactPin = {
+          ...selection.auth,
+          upstreamVersion: "v0.0.1-selected",
+          revision: 7,
+          natives: {
+            ...selection.auth.natives,
+            [target]: { archive: "a".repeat(64), manifest: "b".repeat(64) },
+          },
+        };
+        yield* prepareAuthArtifact(
+          cacheRoot,
+          `#!${process.execPath}\nconsole.log("selected pin ran");\n`,
+          pin,
+        );
+        const runner = yield* makeRunner(root, cacheRoot);
+        const output: string[] = [];
+        const result = yield* runner.run({
+          command: initialization.auth({
+            pin,
+            databaseId,
+            databaseUrl: "postgresql://invalid:invalid@127.0.0.1:1/postgres",
+          }),
+          credentials,
+          stdout: (bytes) => Effect.sync(() => output.push(new TextDecoder().decode(bytes))),
+          stderr: () => Effect.void,
+        });
+
+        expect(result.exitCode).toBe(0);
+        expect(output.join("")).toContain("selected pin ran");
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    ),
+);
+
+it.live.skipIf(target === undefined || process.platform === "win32")(
+  "refuses an initialization command older than the one that last migrated the database",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        if (target === undefined) return;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "initialization-command-guard-" });
+        const cacheRoot = path.join(root, "cache");
+        const pinAt = (upstreamVersion: string, digest: string): ArtifactPin => ({
+          ...selection.auth,
+          upstreamVersion,
+          revision: 1,
+          natives: {
+            ...selection.auth.natives,
+            [target]: { archive: digest.repeat(64), manifest: digest.repeat(64) },
+          },
+        });
+        const newer = pinAt("v2.300.0", "c");
+        const older = pinAt("v2.299.0", "d");
+        yield* prepareAuthArtifact(
+          cacheRoot,
+          `#!${process.execPath}\nconsole.log("ran newer");\n`,
+          newer,
+        );
+        yield* prepareAuthArtifact(
+          cacheRoot,
+          `#!${process.execPath}\nconsole.log("ran older");\n`,
+          older,
+        );
+        const runner = yield* makeRunner(root, cacheRoot);
+        const output: string[] = [];
+        const run = (pin: ArtifactPin) =>
+          runner.run({
+            command: initialization.auth({
+              pin,
+              databaseId,
+              databaseUrl: "postgresql://invalid:invalid@127.0.0.1:1/postgres",
+            }),
+            credentials,
+            stdout: (bytes) => Effect.sync(() => output.push(new TextDecoder().decode(bytes))),
+            stderr: () => Effect.void,
+          });
+
+        expect((yield* run(newer)).exitCode).toBe(0);
+        const refused = yield* run(older).pipe(Effect.flip);
+        expect(refused.message).toContain("auth v2.299.0 is older than v2.300.0");
+        expect(refused.message).toContain("supabase stack destroy --stack-id");
+        expect((yield* run(newer)).exitCode).toBe(0);
+
+        expect(output.join("")).toBe("ran newer\nran newer\n");
       }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     ),
 );
@@ -151,7 +253,8 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
         const command = yield* runner
           .run({
             command: initialization.auth({
-              version: authVersion,
+              pin: selection.auth,
+              databaseId,
               databaseUrl: "postgresql://invalid:invalid@127.0.0.1:1/postgres",
             }),
             credentials,
@@ -209,7 +312,8 @@ it.effect.skipIf(target === undefined || process.platform === "win32")(
         const command = yield* runner
           .run({
             command: initialization.auth({
-              version: authVersion,
+              pin: selection.auth,
+              databaseId,
               databaseUrl: "postgresql://invalid:invalid@127.0.0.1:1/postgres",
             }),
             credentials,

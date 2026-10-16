@@ -238,14 +238,16 @@ EncryptionUnexpectedStatusError
 ExperimentalFeatureFlagError
 ExperimentalRequiredError
 ExperimentalStackDestroyError
+ExperimentalStackInstallError
 ExperimentalStackListError
 ExperimentalStackLogsError
-ExperimentalStackPrepareError
+ExperimentalStackOutdatedError
 ExperimentalStackRestartError
 ExperimentalStackStartError
 ExperimentalStackStatusError
 ExperimentalStackStopError
 ExperimentalStackTargetError
+ExperimentalStackUpdateError
 FeedbackBackendError
 FeedbackDeleteCancelledError
 FeedbackEmptyMessageError
@@ -334,6 +336,7 @@ LinkProjectStatusError
 LinkProjectStatusNetworkError
 LinkRefArgConflictError
 LocalDbRunningError
+LockResolutionError
 LoginCryptoError
 LoginDecryptError
 LoginFailedError
@@ -418,6 +421,8 @@ PostgresConfigUpdateUnmarshalError
 ProfileLoadError
 ProfileSaveError
 ProjectConfigParseError
+ProjectLinkIoError
+ProjectLinkMalformedError
 ProjectNotLinkedError
 ProjectPausedError
 ProjectRefNotLinkedError
@@ -518,6 +523,7 @@ SsoUpdateMetadataFileError
 SsoUpdateNetworkError
 SsoUpdateNotFoundError
 SsoUpdateUnexpectedStatusError
+StackArtifactSelectionError
 StackBootstrapError
 StackCatalogSetupError
 StackConfigError

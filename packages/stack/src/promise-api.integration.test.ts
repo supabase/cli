@@ -2,7 +2,13 @@ import { NodeServices, NodeSocketServer } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Redacted, Schema } from "effect";
 import * as NetAddress from "effect/net/NetAddress";
-import { discover, StackError, type LogRecord, type Observation } from "./index.ts";
+import {
+  discover,
+  LockUnsupportedVersionError,
+  StackError,
+  type LogRecord,
+  type Observation,
+} from "./index.ts";
 import { createTestStack } from "./testing.ts";
 
 const databaseSecret = (observation: Observation) =>
@@ -77,4 +83,24 @@ it.live(
       expect(yield* Effect.promise(() => discover({ stateRoot }))).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   { timeout: 120_000 },
+);
+
+it.live("rejects with the typed lock error when the project lock is from a newer CLI", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-promise-lock-" });
+    const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-promise-lock-root-" });
+    yield* fs.makeDirectory(`${projectRoot}/supabase`);
+    yield* fs.writeFileString(`${projectRoot}/supabase/supabase.lock`, '{"lockfileVersion":2}');
+
+    const failure = yield* Effect.promise(() =>
+      createTestStack({ runtime: "native", stateRoot, projectRoot }).then(
+        () => undefined,
+        (error: unknown) => error,
+      ),
+    );
+
+    expect(failure).toBeInstanceOf(LockUnsupportedVersionError);
+    expect(yield* Effect.promise(() => discover({ stateRoot }))).toEqual([]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

@@ -245,6 +245,8 @@ type (
 		// The json tag is the one that matters: the decoder runs with
 		// dc.TagName = "json". Omitted from toml so Go never emits the section.
 		Compute map[string]any `toml:"-" json:"compute"`
+		// Local is parsed but never read here; [local] is owned by the TS CLI (see Compute).
+		Local map[string]any `toml:"-" json:"local"`
 	}
 
 	config struct {
@@ -858,7 +860,7 @@ func (c *config) Load(path string, fsys fs.FS, overrides ...ConfigEditor) error 
 		return err
 	}
 	// TODO: move linked pooler connection string elsewhere
-	if connString, err := fs.ReadFile(fsys, builder.PoolerUrlPath); err == nil && len(connString) > 0 {
+	if connString, err := readLinkedPoolerUrl(fsys, builder.PoolerUrlPath); err == nil && len(connString) > 0 {
 		c.Db.Pooler.ConnectionString = string(connString)
 	}
 	if len(c.Api.ExternalUrl) == 0 {
@@ -890,41 +892,41 @@ func (c *config) Load(path string, fsys fs.FS, overrides ...ConfigEditor) error 
 		c.Db.Image = Images.Pg15
 	}
 	if c.Db.MajorVersion > 14 {
-		if version, err := fs.ReadFile(fsys, builder.PostgresVersionPath); err == nil {
+		if version, err := readTempFile(fsys, builder.PostgresVersionPath); err == nil {
 			// Only replace image if postgres version is above 15.1.0.55
 			if i := strings.IndexByte(c.Db.Image, ':'); VersionCompare(c.Db.Image[i+1:], "15.1.0.55") >= 0 {
 				c.Db.Image = replaceImageTag(Images.Pg, string(version))
 			}
 		}
-		if version, err := fs.ReadFile(fsys, builder.RestVersionPath); err == nil && len(version) > 0 {
+		if version, err := readTempFile(fsys, builder.RestVersionPath); err == nil && len(version) > 0 {
 			c.Api.Image = replaceImageTag(Images.Postgrest, string(version))
 		}
-		if version, err := fs.ReadFile(fsys, builder.GotrueVersionPath); err == nil && len(version) > 0 {
+		if version, err := readTempFile(fsys, builder.GotrueVersionPath); err == nil && len(version) > 0 {
 			c.Auth.Image = replaceImageTag(Images.Gotrue, string(version))
 		}
 	}
-	if version, err := fs.ReadFile(fsys, builder.StorageVersionPath); err == nil && len(version) > 0 {
+	if version, err := readTempFile(fsys, builder.StorageVersionPath); err == nil && len(version) > 0 {
 		c.Storage.Image = replaceImageTag(Images.Storage, string(version))
 	}
-	if version, err := fs.ReadFile(fsys, builder.StorageMigrationPath); err == nil && len(version) > 0 {
+	if version, err := readTempFile(fsys, builder.StorageMigrationPath); err == nil && len(version) > 0 {
 		c.Storage.TargetMigration = strings.TrimSpace(string(version))
 	}
-	if version, err := fs.ReadFile(fsys, builder.EdgeRuntimeVersionPath); err == nil && len(version) > 0 {
+	if version, err := readTempFile(fsys, builder.EdgeRuntimeVersionPath); err == nil && len(version) > 0 {
 		c.EdgeRuntime.Image = replaceImageTag(Images.EdgeRuntime, string(version))
 	}
-	if version, err := fs.ReadFile(fsys, builder.PoolerVersionPath); err == nil && len(version) > 0 {
+	if version, err := readTempFile(fsys, builder.PoolerVersionPath); err == nil && len(version) > 0 {
 		c.Db.Pooler.Image = replaceImageTag(Images.Supavisor, string(version))
 	}
-	if version, err := fs.ReadFile(fsys, builder.RealtimeVersionPath); err == nil && len(version) > 0 {
+	if version, err := readTempFile(fsys, builder.RealtimeVersionPath); err == nil && len(version) > 0 {
 		c.Realtime.Image = replaceImageTag(Images.Realtime, string(version))
 	}
-	if version, err := fs.ReadFile(fsys, builder.StudioVersionPath); err == nil && len(version) > 0 {
+	if version, err := readTempFile(fsys, builder.StudioVersionPath); err == nil && len(version) > 0 {
 		c.Studio.Image = replaceImageTag(Images.Studio, string(version))
 	}
-	if version, err := fs.ReadFile(fsys, builder.PgmetaVersionPath); err == nil && len(version) > 0 {
+	if version, err := readTempFile(fsys, builder.PgmetaVersionPath); err == nil && len(version) > 0 {
 		c.Studio.PgmetaImage = replaceImageTag(Images.Pgmeta, string(version))
 	}
-	if version, err := fs.ReadFile(fsys, builder.LogflareVersionPath); err == nil && len(version) > 0 {
+	if version, err := readTempFile(fsys, builder.LogflareVersionPath); err == nil && len(version) > 0 {
 		c.Analytics.Image = replaceImageTag(Images.Logflare, string(version))
 	}
 	// TODO: replace derived config resolution with viper decode hooks

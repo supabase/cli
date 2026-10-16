@@ -86,6 +86,20 @@ On failure, an `error` event is emitted instead:
 {"type":"error","code":"ApiError","message":"…"}
 ```
 
+## Stack mode
+
+In stack project-state mode the best-effort cleanup reads `supabase/.link.json` and removes it
+only when its `project.ref` or `active_branch.ref` equals the deleted ref; `supabase/.temp/` is
+not consulted. The mode is resolved before the DELETE call, so an invalid
+`SUPABASE_EXPERIMENTAL_STACK` fails before the project is deleted.
+
+When the link matches, the file is removed under the project lease `supabase/.supabase.lock.lease`
+(the lease `supabase link` publishes `.link.json` under), after reading the link again and
+re-checking the ref, so a concurrent `link` to another project keeps its link. A lease that stays
+busy fails the command with `LockResolutionError` reason `lease-busy` and exit code `1` after the
+project was deleted; the link document is left in place. The lease file is created only when the
+link matches.
+
 ## Notes
 
 - In interactive mode (when stdin is a TTY and no ref is provided), the CLI prompts the

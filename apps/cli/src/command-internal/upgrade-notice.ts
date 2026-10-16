@@ -2,8 +2,9 @@
  * Post-command upgrade notice: checks GitHub's latest release against the
  * running version and prints a notice to stderr, honoring
  * `SUPABASE_NO_UPDATE_NOTIFIER`. The tag is cached in the project's
- * `supabase/.temp/cli-latest`, else `<SUPABASE_HOME>/cli-latest`. A failed
- * fetch writes an empty cache as an offline backoff.
+ * `supabase/.temp/cli-latest` in legacy project-state mode, else
+ * `<SUPABASE_HOME>/cli-latest`. A failed fetch writes an empty cache as an
+ * offline backoff.
  */
 
 import { stripVTControlCharacters } from "node:util";
@@ -36,8 +37,10 @@ import {
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
 import { bold, yellow } from "./colors.ts";
+import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
 import { parseDotEnv } from "./dotenv.ts";
 import { candidateDotenvFilenames } from "./project-environment.ts";
+import { projectStateMode } from "./project-state-mode.ts";
 
 const LATEST_RELEASE_URL = "https://api.github.com/repos/supabase/cli/releases/latest";
 const CACHE_TTL_MS = 10 * 60 * 60 * 1000;
@@ -259,8 +262,10 @@ export interface UpgradeNoticeDeps {
   readonly cwd: string;
   readonly resolvedCwd?: string;
   readonly currentVersion: string;
-  /** The cache directory when `<base>/supabase` is not a real directory. */
+  /** The cache directory outside a legacy-mode project. */
   readonly supabaseHome: string;
+  /** Whether the project keeps its state in `supabase/.temp` rather than `$SUPABASE_HOME`. */
+  readonly usesLegacyProjectState: Effect.Effect<boolean, never, FileSystem.FileSystem | Path.Path>;
   readonly now: () => number;
   readonly fetchLatestTag: Effect.Effect<string, UpgradeNoticeFetchError>;
   readonly writeStderr: (text: string) => void;
@@ -300,10 +305,12 @@ export const runUpgradeNotice = Effect.fnUntraced(function* (
   if (updateNotifierDisabled(effectiveEnv("SUPABASE_NO_UPDATE_NOTIFIER"))) return;
   const debug = debugEnabled(deps, builtin, effectiveEnv("SUPABASE_DEBUG"));
   const supabaseDir = path.join(base, "supabase");
-  const inProject = isDirectoryEntry(yield* lstatEntry(fs, supabaseDir));
+  const inProject =
+    isDirectoryEntry(yield* lstatEntry(fs, supabaseDir)) && (yield* deps.usesLegacyProjectState);
   /* `resolve` drops a trailing `/` or `/.`, which would make the symlink check follow a symlinked home. */
-  const cacheDir = inProject ? path.join(supabaseDir, ".temp") : path.resolve(deps.supabaseHome);
-  const cacheFile = path.join(cacheDir, "cli-latest");
+  const projectState = legacyProjectStatePaths(path, base);
+  const cacheDir = inProject ? projectState.tempDir : path.resolve(deps.supabaseHome);
+  const cacheFile = inProject ? projectState.cliLatest : path.join(cacheDir, "cli-latest");
 
   // A hostile checkout can commit a symlink at any level of this well-known
   // path to clobber an arbitrary user-writable file (CWE-59), so a symlink
@@ -431,6 +438,7 @@ const NOTICE_ENV_KEYS = [
   "SUPABASE_DEBUG",
   "SUPABASE_WORKDIR",
   "SUPABASE_ENV",
+  "SUPABASE_EXPERIMENTAL_STACK",
 ];
 
 /**
@@ -471,6 +479,11 @@ export const upgradeNoticeHook = (
           resolvedCwd: info.workingDirectory,
           currentVersion: CLI_VERSION,
           supabaseHome: resolveSupabaseHomeValue(path, supabaseHome, runtime.homeDir),
+          /* An unreadable mode keeps the cache out of the project; a relative `--workdir` resolves against the process cwd. */
+          usesLegacyProjectState: projectStateMode({ args, cwd: runtime.cwd, env }).pipe(
+            Effect.map((mode) => mode === "legacy"),
+            Effect.orElseSucceed(() => false),
+          ),
           now: () => clock.currentTimeMillisUnsafe(),
           /* Runs inside the check span, so the fetch is its child span. */
           fetchLatestTag: fetchLatestTag.pipe(

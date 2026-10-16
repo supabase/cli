@@ -42,6 +42,7 @@ import {
 } from "./composition/Supabase.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { failureKind, isStackFailureKind, type StackFailureKind } from "./FailureKind.ts";
+import { initializedDatabaseIds } from "./internal/database-reuse.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { engineUnreachable, resolveEngineTarget } from "./runtime/Container.ts";
@@ -59,6 +60,7 @@ import { gatewayLog } from "./host/GatewayLog.ts";
 import type { LogPosition, LogRecord, StackLogRecord } from "./host/LogRecord.ts";
 import {
   ServiceCreationInput as ServiceCreationInputSchema,
+  ServiceRestartInput as ServiceRestartInputSchema,
   type ServiceCreation,
   type ServiceCreationInput as CatalogServiceCreationInput,
 } from "./services/Catalog.ts";
@@ -76,6 +78,22 @@ export { resolveNativePostgresUser } from "./runtime/postgres-user.ts";
 export { apiRoute, sharesApiEndpoint } from "./host/Endpoints.ts";
 export { gatewayLog };
 export { StackError } from "./Rpc.ts";
+/** Atomically writes a file so readers only ever see the prior or the complete new content. */
+export { NamespaceError, publish } from "./StackNamespace.ts";
+/** Holds an exclusive cross-process lock on a file for the enclosing scope, waiting up to a budget. */
+export { holdLock } from "./StackNamespace.ts";
+/** Whether a `holdLock` failure means another holder kept the lock for the whole budget. */
+export { isLockBusy } from "./StackNamespace.ts";
+export {
+  Lock,
+  LOCK_SCHEMA_URL,
+  LockInvalidError,
+  LockIoError,
+  LockUnsupportedVersionError,
+  lockSelection,
+  readLock,
+  writeLock,
+} from "./Lock.ts";
 export type { StackFailureKind } from "./FailureKind.ts";
 export type { ServiceCreation } from "./services/Catalog.ts";
 /** A service creation as `services.create` accepts it, before stack credentials fill its inputs. */
@@ -167,9 +185,10 @@ const failure = (operation: string, cause: unknown, kind?: StackFailureKind): St
 };
 
 type Kind = ServiceCreation["service"];
-type ServiceCreationRestartInput<K extends Kind> =
-  | Pick<Extract<ServiceCreationInput, { service: K }>, "config">
-  | Extract<ServiceCreationInput, { service: K }>;
+type ServiceCreationRestartInput<K extends Kind> = Omit<
+  Extract<ServiceCreationInput, { service: K }>,
+  "service" | "pin"
+>;
 /** An individually identified service controlled through the owner. */
 export interface ServiceInstance<K extends Kind = Kind> {
   readonly id: string;
@@ -282,7 +301,8 @@ export interface Stack {
      * inputs the composition supplies, without changing state or contacting the owner. A
      * `complete` request (the caller's whole desired composition) never falls back to a saved
      * sibling's port for a shared endpoint kind the request leaves out; a `partial` request
-     * (comparing only the kinds it names) does.
+     * (comparing only the kinds it names) does. A database line or major change is `incompatible`
+     * only while its data is initialized.
      */
     readonly plan: (
       services: ReadonlyArray<ServiceCreationInput>,
@@ -369,6 +389,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   );
   const crypto = yield* Crypto.Crypto;
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const handleScope = yield* Scope.Scope;
   const session = saved.lifetime === "session";
   const launchOptions = { ...locations, stackId: saved.id, lifeline: session };
@@ -609,9 +630,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     restart: (input) =>
       input === undefined
         ? call("restart", (rpc) => rpc.restartService({ id }))
-        : Schema.decodeUnknownEffect(ServiceCreationInputSchema)(
-            "service" in input ? input : { service, config: input.config },
-          ).pipe(
+        : Schema.decodeUnknownEffect(ServiceRestartInputSchema)({ service, ...input }).pipe(
             Effect.mapError((cause) => failure("restart", cause)),
             Effect.flatMap((creation) =>
               call("restart", (rpc) => rpc.restartService({ id, config: creation })),
@@ -846,19 +865,27 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
             ...(options?.reuseIds === undefined ? {} : { reuseIds: options.reuseIds }),
             ...(options?.keys === undefined ? {} : { keys: options.keys }),
             ...(options?.eager === undefined ? {} : { eager: options.eager }),
+            ...(options?.retainMembers === undefined
+              ? {}
+              : { retainMembers: options.retainMembers }),
           }),
         ).pipe(Effect.map((definitions) => definitions.map(instance))),
-      plan: (services: ReadonlyArray<ServiceCreationInput>, options?: PlanOptions) =>
-        Effect.forEach(services, (service) =>
+      plan: Effect.fn("Stack.plan")(function* (
+        services: ReadonlyArray<ServiceCreationInput>,
+        options?: PlanOptions,
+      ) {
+        const requested = yield* Effect.forEach(services, (service) =>
           Schema.decodeEffect(ServiceCreationInputSchema)(service),
-        ).pipe(
-          Effect.mapError((cause) => failure("plan", cause)),
-          Effect.flatMap((requested) =>
-            savedDefinition.pipe(
-              Effect.map((current) => planSupabaseComposition(current, requested, options)),
-            ),
-          ),
-        ),
+        ).pipe(Effect.mapError((cause) => failure("plan", cause)));
+        const current = yield* savedDefinition;
+        const initializedDatabases = yield* initializedDatabaseIds(
+          fs,
+          path,
+          path.join(locations.stateRoot, saved.id, "data"),
+          current.instances,
+        ).pipe(Effect.mapError((cause) => failure("plan", cause)));
+        return planSupabaseComposition(current, requested, { ...options, initializedDatabases });
+      }),
       configure: (config: Orchestrator.CompositionConfig) =>
         call("configureComposition", (rpc) => rpc.configureComposition(config)),
       describe: savedDefinition.pipe(Effect.map((current) => current.composition)),

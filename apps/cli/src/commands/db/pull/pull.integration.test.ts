@@ -74,10 +74,7 @@ import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
-import {
-  ProjectRefResolver,
-  PROJECT_NOT_LINKED_MESSAGE,
-} from "../../../config/project-ref.service.ts";
+import { PROJECT_NOT_LINKED_MESSAGE } from "../../../config/remote-target.service.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { type DbSession, DbConnection } from "../../../command-internal/db-connection.service.ts";
@@ -96,6 +93,7 @@ import type { DbRemoteCommitFlags } from "../remote/commit/commit.command.ts";
 import type { DbPullFlags } from "./pull.command.ts";
 import { dbPull } from "./pull.handler.ts";
 import { runDbPull } from "../../../command-internal/db-pull-run.ts";
+import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
   HttpClient.HttpClient,
@@ -177,7 +175,7 @@ interface SetupOpts {
   // `Option.none()` to exercise the config.toml/workdir-basename fallback
   // (`resolveLocalProjectId`).
   readonly projectId?: Option.Option<string>;
-  // Simulates an unlinked workdir: `loadProjectRef` fails with
+  // Simulates an unlinked workdir: `RemoteTarget.load` fails with
   // `ProjectRefNotLinkedError` absent an explicit `--project-ref` flag.
   readonly linkedFails?: boolean;
   // Swaps in the stateful Docker model (real `stop`/`cp`/`start`), required by the
@@ -458,17 +456,17 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // Mirrors the same ref `resolver`'s own mock embeds above, and gives an explicit
   // `--project-ref` flag top precedence over `opts.resolvedRef` (mirrors
   // `reset.integration.test.ts`'s identical mock).
-  const projectRefResolver = Layer.succeed(ProjectRefResolver, {
+  const projectRefResolver = stubRemoteTarget({
     resolve: () => Effect.succeed(opts.resolvedRef ?? VALID_REF),
     resolveForLink: () => Effect.succeed(opts.resolvedRef ?? VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(opts.resolvedRef ?? VALID_REF)),
-    loadProjectRef: (flagValue: Option.Option<string>) =>
+    load: (flagValue: Option.Option<string>) =>
       Option.isSome(flagValue) && flagValue.value.length > 0
         ? Effect.succeed(flagValue.value)
         : opts.linkedFails === true
           ? Effect.fail(new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
           : Effect.succeed(opts.resolvedRef ?? VALID_REF),
-    promptProjectRef: () => Effect.succeed(opts.resolvedRef ?? VALID_REF),
+    prompt: () => Effect.succeed(opts.resolvedRef ?? VALID_REF),
   });
 
   const workdirFiles = Layer.effectDiscard(

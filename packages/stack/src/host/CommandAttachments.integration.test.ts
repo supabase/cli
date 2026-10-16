@@ -3,6 +3,7 @@ import { Deferred, Effect, Fiber, Ref, Stream } from "effect";
 import { StackError } from "../Rpc.ts";
 import { postgres } from "../Commands.ts";
 import { makeCommandAttachments } from "./CommandAttachments.ts";
+import { selection } from "../../tests/pins.ts";
 
 it.live("stopAll waits for an admitted command to register and interrupt its runner", () =>
   Effect.scoped(
@@ -32,7 +33,7 @@ it.live("stopAll waits for an admitted command to register and interrupt its run
             attachmentId: "admitted",
             command: {
               type: "postgres",
-              command: postgres.psql({ major: 17 }),
+              command: postgres.psql({ pin: selection.database }),
               args: [],
               env: {},
               stdin: false,

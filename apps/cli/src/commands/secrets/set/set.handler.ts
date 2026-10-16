@@ -10,7 +10,7 @@ import { parse as parseDotenv } from "dotenv";
 import { Effect, FileSystem, Option, Path, Predicate, Redacted, Result, Schema } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -86,7 +86,7 @@ function filterDecodableSecrets(secrets: Record<string, unknown>): Record<string
 export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetFlags) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
+  const resolver = yield* RemoteTarget;
   const debugLogger = yield* DebugLogger;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
@@ -94,7 +94,7 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  const { ref } = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
     // Source 1: `[edge_runtime.secrets]` from `supabase/config.toml`. Only resolved values are

@@ -50,6 +50,18 @@ None beyond `--workdir` / `SUPABASE_WORKDIR` resolution.
 
 Emits a structured success (`{ project_ref }`) and suppresses the human `Finished` line.
 
+## Stack mode
+
+In stack project-state mode, `unlink` reads the ref from `supabase/.link.json`
+(`active_branch.ref`), removes that file instead of `supabase/.temp/`, and deletes the same
+keyring credential. A missing document fails with `ProjectRefNotLinkedError`; the legacy `.temp`
+directory is left untouched. The file is removed under the project lease
+`supabase/.supabase.lock.lease` (created if absent), the lease `supabase link` publishes
+`.link.json` under; a lease that stays busy fails with `LockResolutionError` reason `lease-busy`
+and exit code `1` before the link or the credential is touched. A document that does not decode is still removed, so a damaged link
+can be cleared; the ref is then unknown, so no credential is deleted and the structured success
+carries `project_ref: null`.
+
 ## Known divergence
 
 The `Finished supabase unlink.` line is emitted as **plain text**; the old Go CLI rendered

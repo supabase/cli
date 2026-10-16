@@ -1,3 +1,4 @@
+import { legacyProjectStateLayer } from "../../command-internal/legacy-project-state.layer.ts";
 import { Cause, Effect, Exit, FileSystem, Layer, Schema } from "effect";
 import { BunServices } from "@effect/platform-bun";
 import { CliOutput, Command, type HelpDoc } from "effect/cli";
@@ -60,6 +61,7 @@ const testRootLayer = (
     Layer.succeed(CliArgs, { args }),
     mockOutput({ format: "text" }).layer,
     BunServices.layer,
+    legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
     mockRuntimeInfo(),
     mockAnalytics().layer,
     mockTelemetryRuntime(),

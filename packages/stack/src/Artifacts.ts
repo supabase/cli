@@ -1,6 +1,7 @@
-import { Data, Effect, Path, Record } from "effect";
+import { Data, Effect, Path, Record, Schema } from "effect";
 import type { StackFailureKind } from "./FailureKind.ts";
 import { makeArtifactStore } from "./preparation/ArtifactStore.ts";
+import { SLIM_IMAGE_GHCR_REGISTRY, slimReleasesUrl } from "./preparation/SlimEndpoints.ts";
 import {
   makeSlimServicesSource,
   type SlimServicesArtifact,
@@ -37,20 +38,24 @@ export class ArtifactError extends Data.TaggedError("ArtifactError")<{
 }> {}
 
 /** Lowercase hexadecimal SHA-256 digest. */
-type Sha256 = string;
+const Sha256 = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
 
 /** Content digests of one native target's published archive and manifest. */
-export interface NativePin {
-  readonly archive: Sha256;
-  readonly manifest: Sha256;
-}
+export const NativePin = Schema.Struct({ archive: Sha256, manifest: Sha256 }).annotate({
+  identifier: "NativePin",
+});
+export interface NativePin extends Schema.Schema.Type<typeof NativePin> {}
 
-/** One published slim-services revision of an upstream version, pinned by content. */
-export interface ArtifactPin {
-  readonly upstreamVersion: string;
-  readonly revision: number;
+/**
+ * One published slim-services revision of an upstream version, pinned by content. A pin stands
+ * alone and need not be in the compiled catalog; a service kind's executable and runtime paths
+ * come from its artifact definition.
+ */
+export const ArtifactPin = Schema.Struct({
+  upstreamVersion: Schema.String,
+  revision: Schema.Int,
   /** `ghcr.io/supabase/cli/<service>:<release version>@sha256:<digest>`. */
-  readonly image: string;
+  image: Schema.String,
   /**
    * The exact upstream image this release was built or mirrored from, as slim-services recorded
    * it: the release manifest's `upstream_image` for a derived service, or the release's
@@ -58,9 +63,17 @@ export interface ArtifactPin {
    * the Dockerfile's `FROM` form — no leading `docker.io/`, no digest — so legacy non-slim mode
    * can use it as the upstream tag directly.
    */
-  readonly upstreamImage: string;
-  readonly natives: Readonly<Record<NativeTarget, NativePin>>;
-}
+  upstreamImage: Schema.String,
+  natives: Schema.Struct({
+    "darwin-arm64": NativePin,
+    "linux-amd64": NativePin,
+    "linux-arm64": NativePin,
+  }),
+}).annotate({ identifier: "ArtifactPin" });
+export interface ArtifactPin extends Schema.Schema.Type<typeof ArtifactPin> {}
+
+/** The pin each stack service runs, chosen once per command and written into every creation. */
+export type ArtifactSelection = Readonly<Record<ServiceKind, ArtifactPin>>;
 
 /** The published release version, `<upstream>-r<revision>`. */
 const releaseVersion = (pin: ArtifactPin): string => `${pin.upstreamVersion}-r${pin.revision}`;
@@ -83,12 +96,14 @@ export interface PreparedNativeArtifact {
   readonly executable: string;
   /** The generation's digest lock file; a native workload spawned from `root` pins this too. */
   readonly lockPath: string;
+  /** Whether this call downloaded the generation or found it already installed. */
+  readonly outcome: "cached" | "downloaded";
 }
 
 interface ArtifactDefinition {
   readonly sourceService: string;
-  readonly defaultVersion: string;
-  /** Pins keyed by upstream version. */
+  readonly defaultPin: ArtifactPin;
+  /** Compiled pins keyed by upstream version. */
   readonly pins: Readonly<Record<string, ArtifactPin>>;
   readonly requiredRuntimePaths: ReadonlyArray<string>;
   readonly executablePath: string;
@@ -102,13 +117,11 @@ const definition = (
   additionalPins: Readonly<Record<string, ArtifactPin>> = {},
 ): ArtifactDefinition => ({
   sourceService,
-  defaultVersion: pin.upstreamVersion,
+  defaultPin: pin,
   pins: { [pin.upstreamVersion]: pin, ...additionalPins },
   requiredRuntimePaths,
   executablePath,
 });
-
-const SLIM_IMAGE_GHCR_REGISTRY = "ghcr.io/supabase/cli/";
 
 const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   database: definition(
@@ -519,8 +532,6 @@ const platformText = (platform: { readonly os: string; readonly arch: string }):
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : typeof cause === "string" ? cause : String(cause);
 
-const SLIM_NATIVE_GITHUB_RELEASES = "https://github.com/supabase/slim-services/releases/download";
-
 /**
  * Public S3 copy of the release assets for hosts that block GitHub release downloads, such as
  * agent sandboxes that allow `*.amazonaws.com`.
@@ -540,11 +551,12 @@ const artifactFor = (
   service: ArtifactKind,
   resolved: ArtifactResolution,
   target: NativeTarget,
+  releasesUrl: string,
 ): SlimServicesArtifact => {
   const sourceService = definitions[service].sourceService;
   const releaseTag = `${sourceService}-${resolved.releaseVersion}`;
   const assetName = `${releaseTag}-${target}`;
-  const githubRelease = `${SLIM_NATIVE_GITHUB_RELEASES}/${releaseTag}`;
+  const githubRelease = `${releasesUrl}/${releaseTag}`;
   const supabaseS3 = `${SLIM_NATIVE_SUPABASE_S3_MIRROR}/${sourceService}/${resolved.releaseVersion}`;
   const pin = resolved.natives[target];
   return {
@@ -572,9 +584,10 @@ const artifactFor = (
   };
 };
 
+/** Binds an explicit pin to its service kind's executable and runtime paths. */
 export const resolveArtifact = Effect.fn("Artifacts.resolveArtifact")(function* (request: {
   readonly service: ArtifactKind;
-  readonly version?: string;
+  readonly pin: ArtifactPin;
 }) {
   if (!Object.hasOwn(definitions, request.service))
     return yield* new ArtifactError({
@@ -582,24 +595,32 @@ export const resolveArtifact = Effect.fn("Artifacts.resolveArtifact")(function* 
       kind: "configuration",
     });
   const selected = definitions[request.service];
-  const version = request.version ?? selected.defaultVersion;
-  const pin = Object.entries(selected.pins).find(([candidate]) => candidate === version)?.[1];
-  if (pin === undefined)
-    return yield* new ArtifactError({
-      message: `Unsupported ${request.service} artifact version: ${version}`,
-      service: request.service,
-      version,
-      kind: "configuration",
-    });
+  const { pin } = request;
   return {
     service: request.service,
-    version,
+    version: pin.upstreamVersion,
     releaseVersion: releaseVersion(pin),
     image: pin.image,
     natives: pin.natives,
     executablePath: selected.executablePath,
     requiredRuntimePaths: selected.requiredRuntimePaths,
   };
+});
+
+/** The compiled default pin of every stack service; the database runs the stock default line. */
+export const defaultArtifactSelection = (): ArtifactSelection => ({
+  database: definitions.database.defaultPin,
+  rest: definitions.rest.defaultPin,
+  auth: definitions.auth.defaultPin,
+  realtime: definitions.realtime.defaultPin,
+  storage: definitions.storage.defaultPin,
+  imgproxy: definitions.imgproxy.defaultPin,
+  functions: definitions.functions.defaultPin,
+  studio: definitions.studio.defaultPin,
+  pgmeta: definitions.pgmeta.defaultPin,
+  mail: definitions.mail.defaultPin,
+  analytics: definitions.analytics.defaultPin,
+  pooler: definitions.pooler.defaultPin,
 });
 
 const ORIOLEDB_SUFFIX = "-orioledb";
@@ -630,11 +651,34 @@ export const orioledbConfigVersion = (version: string): string =>
 export const orioledbVersions = (): ReadonlyArray<string> =>
   Object.keys(definitions.database.pins).filter(isOrioledbVersion).map(orioledbConfigVersion);
 
-/** Resolves a PostgreSQL major alias against the pinned stock database artifacts. */
-export const postgresVersion = (version: string): string =>
-  Object.keys(definitions.database.pins).find(
-    (candidate) => !isOrioledbVersion(candidate) && postgresMajor(candidate) === version,
-  ) ?? version;
+/**
+ * The compiled database pin for a PostgreSQL major alias (the pinned stock build of that major) or
+ * an exact pinned upstream version such as an OrioleDB build.
+ */
+export const databaseArtifactPin = (version: string): Effect.Effect<ArtifactPin, ArtifactError> => {
+  const pins = Object.values(definitions.database.pins);
+  const pin =
+    pins.find((candidate) => candidate.upstreamVersion === version) ??
+    pins.find(
+      (candidate) =>
+        !isOrioledbVersion(candidate.upstreamVersion) &&
+        postgresMajor(candidate.upstreamVersion) === version,
+    );
+  return pin === undefined
+    ? Effect.fail(
+        new ArtifactError({
+          message: `Unsupported database artifact version: ${version}`,
+          service: "database",
+          version,
+          kind: "configuration",
+        }),
+      )
+    : Effect.succeed(pin);
+};
+
+/** The slim-services producer that publishes releases of an artifact. */
+export const artifactSourceService = (service: ArtifactKind): string =>
+  definitions[service].sourceService;
 
 /** Service kinds the stack runs, in artifact catalog order; legacy-only artifacts are omitted. */
 export const artifactServiceKinds = (): ReadonlyArray<ServiceKind> =>
@@ -642,7 +686,7 @@ export const artifactServiceKinds = (): ReadonlyArray<ServiceKind> =>
 
 /**
  * Every catalog pin in catalog order, including additional upstream lines. `isDefault` marks the
- * pin `resolveArtifact` picks when no version is requested (postgres's 17.x line today); every
+ * pin the default selection runs (postgres's 17.x line today); every
  * other pin (postgres's 15.x and OrioleDB lines) carries `isDefault: false`.
  */
 export const catalogPins = (): ReadonlyArray<{
@@ -652,12 +696,12 @@ export const catalogPins = (): ReadonlyArray<{
   readonly isDefault: boolean;
 }> =>
   Record.keys(definitions).flatMap((service) => {
-    const { sourceService, defaultVersion, pins } = definitions[service];
+    const { sourceService, defaultPin, pins } = definitions[service];
     return Object.values(pins).map((pin) => ({
       service,
       sourceService,
       pin,
-      isDefault: pin.upstreamVersion === defaultVersion,
+      isDefault: pin.upstreamVersion === defaultPin.upstreamVersion,
     }));
   });
 
@@ -666,7 +710,7 @@ const artifactKey = (artifact: SlimServicesArtifact): string =>
 
 /** Builds the native store request shared by ahead-of-time preparation and launch-time use. */
 const nativeStoreRequest = Effect.fn("Artifacts.nativeStoreRequest")(function* (
-  request: { readonly service: ArtifactKind; readonly version?: string },
+  request: { readonly service: ArtifactKind; readonly pin: ArtifactPin },
   platform: { readonly os: string; readonly arch: string },
 ) {
   const resolved = yield* resolveArtifact(request);
@@ -679,7 +723,8 @@ const nativeStoreRequest = Effect.fn("Artifacts.nativeStoreRequest")(function* (
       platform: platformText(platform),
       kind: "platform-unsupported",
     });
-  const sourceArtifact = artifactFor(request.service, resolved, target);
+  const releasesUrl = yield* slimReleasesUrl;
+  const sourceArtifact = artifactFor(request.service, resolved, target, releasesUrl);
   const key = artifactKey(sourceArtifact);
   const source = makeSlimServicesSource((candidate) =>
     candidate.key === key ? sourceArtifact : undefined,
@@ -697,7 +742,11 @@ const nativeStoreRequest = Effect.fn("Artifacts.nativeStoreRequest")(function* (
 
 const toNativeArtifact = (
   resolved: ArtifactResolution,
-  prepared: { readonly path: string; readonly lockPath: string },
+  prepared: {
+    readonly path: string;
+    readonly lockPath: string;
+    readonly outcome: "cached" | "downloaded";
+  },
   path: Path.Path,
 ): PreparedNativeArtifact => ({
   service: resolved.service,
@@ -705,11 +754,12 @@ const toNativeArtifact = (
   root: prepared.path,
   executable: path.join(prepared.path, resolved.executablePath),
   lockPath: prepared.lockPath,
+  outcome: prepared.outcome,
 });
 
 /** Ahead-of-time: downloads and publishes the generation, but pins nothing. */
 export const prepareNativeArtifact = Effect.fn("Artifacts.prepareNativeArtifact")(function* (
-  request: { readonly service: ArtifactKind; readonly version?: string },
+  request: { readonly service: ArtifactKind; readonly pin: ArtifactPin },
   cacheRoot: string,
   platform: { readonly os: string; readonly arch: string } = {
     os: process.platform,
@@ -742,7 +792,7 @@ export const prepareNativeArtifact = Effect.fn("Artifacts.prepareNativeArtifact"
  * its paths. Every consumer must use the returned paths only inside this scope.
  */
 export const useNativeArtifact = Effect.fn("Artifacts.useNativeArtifact")(function* (
-  request: { readonly service: ServiceKind; readonly version?: string },
+  request: { readonly service: ServiceKind; readonly pin: ArtifactPin },
   cacheRoot: string,
   platform: { readonly os: string; readonly arch: string } = {
     os: process.platform,

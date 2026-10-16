@@ -155,10 +155,9 @@ This sketch retains the existing `services.create` shape while making creation i
 ```ts
 const shadow = await stack.services.create({
   service: "database",
-  config: {
-    version: "17",
-    endpoints: { sql: { port: "auto" } },
-  },
+  pin: selection.database,
+  config: {},
+  endpoints: { sql: { port: "auto" } },
 });
 
 try {
@@ -325,7 +324,9 @@ The backend provides mechanical operations: launch, observe exit/logs, stop and 
 
 A successful launch returns an owned runtime handle with readiness observation and cleanup. One shared readiness program belongs to each runtime launch and has a bounded outcome. Readiness timeout or initialization failure leaves the process running with unhealthy status and an actionable error. It does not automatically stop or restart the process. Stop remains available, and traffic/dependent launches do not treat unhealthy as ready. Initialization that requires a running process belongs to that runtime session, not the start transition. For PostgreSQL, healthy means required catalog initialization and credential reconciliation have completed—not merely that TCP accepts a connection. Stopping the running instance closes that session, settling its health probes and initialization helpers as ordinary resource cleanup. There are not two competing lifecycle operations.
 
-The database keeps only the initialization information needed to reuse its data on a normal stop/start. Data is reusable only within one release line: the PostgreSQL major for stock builds (`17`), so same-major minor upgrades keep their data, or the exact build for OrioleDB (`17.11.0.002-orioledb`), since a newer OrioleDB build may refuse older data. The readiness marker records the full artifact version, from which the line is derived. A first start records the requested line before initdb runs (a native line marker in the instance root, or the Docker storage marker), so a first start interrupted before readiness resumes only on that line. `PG_VERSION` records only the major, so data with neither a readiness marker nor a recorded line counts as the stock line and an OrioleDB request refuses it. Mark initialization complete only after it succeeds. If an ordinary stop interrupts application initialization, the recipe must either support a safe retry or report that initialization is incomplete; do not add a generic persisted operation journal or recovery workflow.
+The database keeps only the initialization information needed to reuse its data on a normal stop/start. Data is reusable only by a slim-services revision of the build that initialized it: its identity is `{line, major, build}`, where the build is the upstream version. A first start records the identity in `.supabase-database-identity.json` in the instance root before initdb runs, so a first start interrupted before readiness resumes only on that build; the readiness marker records only runtime and profile. `Database.prepare`, the gated launch, the Docker storage preparation and snapshot save and restore all check the recorded identity, and data with none is refused. Snapshot keys include the identity. Mark initialization complete only after it succeeds. If an ordinary stop interrupts application initialization, the recipe must either support a safe retry or report that initialization is incomplete; do not add a generic persisted operation journal or recovery workflow.
+
+Services that migrate schemas (Auth, Storage, Realtime, Analytics, the pooler) can never run an older upstream than the newest one that already migrated the database. The instance root records that version per service in `schema-writers.json`; a missing record is empty and the format is a plain object keyed by service. Before a service launch or a finite initialization command migrates, it holds a per-database-and-service SQLite lease and, under a database-scoped critical section, raises the record to the selected version with an atomic, fsynced rename; a selection older than the record fails with `SchemaWriterDowngrade` and the recreate advice instead. Versions order by their leading dotted number, which covers `v2.196.0`, `2026.10.05-sha-...` and `17.6.1.054`; a suffix is ignored and an unparseable version is oldest. The composition check reads the record before saving a changed pin, but only the launch and command guard hold the lease. Services without schemas accept any version change, and a service on an external database has no local record. The initialization RPCs carry the database instance id, which the owner validates, instead of deriving it from the URL.
 
 Unexpected process exit is observed by the living host. The execution records the exit result, cleans the exact owned session under its execution lock, and reports the exit once cleanup is confirmed, or a cleanup failure while resources remain. Nothing launches a replacement while resources are held. Old-handle events cannot affect a replacement. This adds no cleanup scanner: the host already owns the handle and its exit observation.
 
@@ -396,7 +397,7 @@ import { postgres } from "@supabase/stack";
 // Connection values are plain data, rendered for the stack runtime.
 const { databaseUrl } = await database.credentials({ from: "runtime" });
 const result = await stack.commands.run(
-  postgres.pgDump({ major: 17 }),
+  postgres.pgDump({ pin: selection.database }),
   {
     args: ["--dbname", databaseUrl, "--schema-only", "--no-owner"],
     stdout: (bytes) => destination.write(bytes),
@@ -407,16 +408,16 @@ const result = await stack.commands.run(
 
 // result: { jobId, exitCode }
 
-await stack.commands.run({ type: "auth.initialize", databaseUrl });
-await stack.commands.run({ type: "storage.initialize", databaseUrl, filePath });
-await stack.commands.run({ type: "realtime.initialize", databaseUrl });
+await stack.commands.run({ type: "auth.initialize", pin, databaseId, databaseUrl });
+await stack.commands.run({ type: "storage.initialize", pin, databaseId, databaseUrl, filePath });
+await stack.commands.run({ type: "realtime.initialize", pin, databaseId, databaseUrl });
 ```
 
-`postgres.pgDump({ major })` describes the selected client package and how to launch its native and container forms. The caller chooses the version; 17 is illustrative. The stack's runtime chooses the execution form. The invocation supplies ordinary arguments, environment and byte streams. Initialization invocations select Auth, Storage, or Realtime, provide the database URL, and provide Storage's file path. They require stack credentials already established by database or composition setup; credential lookup is read-only and fails when no stack identity has been established. They resolve the same service recipe artifact, environment, mounts and working directory as normal service launch while leaving no service instance behind. The CLI awaits selected initialization commands concurrently before applying its catalog overlay.
+`postgres.pgDump({ pin })` describes the selected client package and how to launch its native and container forms. The caller supplies the artifact pin. The stack's runtime chooses the execution form. The invocation supplies ordinary arguments, environment and byte streams. Initialization invocations select Auth, Storage, or Realtime, provide the database instance id and URL, and provide Storage's file path; the owner validates the id, and the schema-writers guard runs before the migration starts. They require stack credentials already established by database or composition setup; credential lookup is read-only and fails when no stack identity has been established. They resolve the same service recipe artifact, environment, mounts and working directory as normal service launch while leaving no service instance behind. The CLI awaits selected initialization commands concurrently before applying its catalog overlay.
 
 `databaseUrl` is a plain string. The same invocation can target the primary database, a shadow database or an external database without changing the command definition or the runner. The proxy handles any wake-up caused by connecting to a sleeping managed service. A URL obtained for container execution is already reachable from that container; endpoint address selection remains outside the generic command runner. The orchestrator uses the same endpoint renderer when supplying connection values to service instances. It handles the host gateway and the listener binding needed to reach it, not just hostname substitution, and returns an error if the selected networking configuration cannot reach the endpoint. Caller-supplied external URLs remain unchanged.
 
-Arguments are passed as an argument vector, not interpreted as shell text. Stdin accepts an optional asynchronous byte stream; stdout/stderr callbacks receive bytes and may return Promises, which the runner awaits for backpressure. All examples use byte sinks whose writes await capacity. `psql` uses the same operation with `postgres.psql({ major })`, optionally supplying stdin. Callers supply stdout/stderr sinks explicitly. Neither facade collects unbounded output into a return value.
+Arguments are passed as an argument vector, not interpreted as shell text. Stdin accepts an optional asynchronous byte stream; stdout/stderr callbacks receive bytes and may return Promises, which the runner awaits for backpressure. All examples use byte sinks whose writes await capacity. `psql` uses the same operation with `postgres.psql({ pin })`, optionally supplying stdin. Callers supply stdout/stderr sinks explicitly. Neither facade collects unbounded output into a return value.
 
 The operation settles after process exit, output delivery and owned-resource cleanup. PostgreSQL client commands return a nonzero process exit in `exitCode` for CLI-specific handling; initialization commands reject with a typed error on nonzero exit. Preparation, transport, sink and cleanup failures also reject with typed execution errors. Cancellation stops and cleans up the attached job and reports cancellation. The StackHost assigns `jobId` and owns the resources. No public job registry, job healthcheck, persistent command service or separate launch/attach/wait sequence is needed for these use cases.
 
@@ -814,6 +815,7 @@ Keep the contract narrow:
 - Both operations hold the instance's storage reservation in the lifecycle reducer and leave it stopped. While the reservation is held, a start keeps the instance stopped until it is released and another storage operation is rejected at once. A destroy waits for the storage operation to settle, then takes the reservation; once a destroy is pending, new storage operations are refused, so it cannot be starved. No new lifecycle states are necessary; the observable current operation identifies snapshot work. An armed wake route is not a substitute for explicit stop.
 - Native snapshots copy or clone the host data; container snapshots copy database data through a managed volume and helper. Docker data normally lives in a managed volume, while existing host data can be retained through the host-backed fallback; Podman always uses host-backed data. The host storage marker detects a missing or mismatched Docker volume; deleting that volume loses its database data.
 - Restore transfers compatible database contents, not the source instance's identity, public port claims or composition membership. The target retains its own data location and configuration, with database-specific credentials reconciled before readiness. Cache snapshots survive destruction of the source instance because their managed storage is separate; instance snapshots restore only into their own instance.
+- A snapshot carries the instance's schema-writers record (see below). Restore holds every service's schema-writer lease, so no writer is admitted or still migrating, and makes three publications: raise the target's record to the newer version of each service and fsync it, publish the data, then set the record to the snapshot's. A process killed after the first leaves the older writers refused, so a restore can never make a downgrade look safe; a failed restore leaves the record raised, which a reset clears.
 
 These are physical database snapshots for the cache use case. A `pg_dump` invocation remains an ordinary client command for logical exports. CLI code owns cache keys, migrations and the decision to fall back to rebuilding a baseline; managed storage owns publication and retention. The snapshot API does not acquire CLI cache policy.
 
@@ -821,7 +823,7 @@ These are physical database snapshots for the cache use case. A `pg_dump` invoca
 
 `DatabaseInstance.resetData` removes the selected database instance's owned data and initialization metadata while retaining its registration, configuration, composition bindings, and public port assignments. It is database-specific, alongside snapshot save and restore; other service types do not expose a reset operation.
 
-The caller must stop the database with wake disabled first. Reset holds the same storage reservation as snapshots and leaves the database stopped. Deletion uses the database's ownership checks and runtime-specific filesystem handling. The next normal start initializes a fresh PostgreSQL cluster using the retained configuration. Reset does not apply project migrations or seeds, stop other services, or resume the composition; those decisions belong to the CLI. It adds no lifecycle state or persisted recovery phase.
+The caller must stop the database with wake disabled first. Reset holds the same storage reservation as snapshots and leaves the database stopped. Deletion uses the database's ownership checks and runtime-specific filesystem handling. Reset holds every service's schema-writer lease and removes the data before the schema-writers record, so a crash in between leaves the record guarding an empty database. The next normal start initializes a fresh PostgreSQL cluster using the retained configuration. Reset does not apply project migrations or seeds, stop other services, or resume the composition; those decisions belong to the CLI. It adds no lifecycle state or persisted recovery phase.
 
 ## 9. What changes for the CLI
 

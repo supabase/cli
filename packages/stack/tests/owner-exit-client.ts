@@ -1,6 +1,7 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { Data, Effect, Layer, Predicate } from "effect";
 import * as Stack from "../src/index.ts";
+import { selection } from "./pins.ts";
 
 class FixtureError extends Data.TaggedError("OwnerExitFixtureError")<{
   readonly message: string;
@@ -51,6 +52,7 @@ const program = Effect.gen(function* () {
             const mail = yield* promise(() =>
               client.services.create({
                 service: "mail",
+                pin: selection.mail,
                 config: {},
                 endpoints: { http: { port: "auto" } },
               }),

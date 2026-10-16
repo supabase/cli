@@ -6,7 +6,7 @@ import {
   compose,
   type EntryCondition,
 } from "../../../command-internal/command-permissions/model.ts";
-import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { projectRefPicker } from "../../../config/remote-target.layer.ts";
 import { branchPrompt } from "../branches.prompt.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";

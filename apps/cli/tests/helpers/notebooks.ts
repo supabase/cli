@@ -9,8 +9,7 @@ import * as UrlParams from "effect/http/UrlParams";
 import { CommandPlatformApiFactory } from "../../src/auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../../src/auth/command-platform-api.service.ts";
 import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts";
-import { projectRefLayer } from "../../src/config/project-ref.layer.ts";
-import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
+import { remoteTargetLayer } from "../../src/config/remote-target.layer.ts";
 import { OutputFlag } from "../../src/command-internal/global-flags.ts";
 import {
   mockLinkedProjectCacheTracked,
@@ -21,6 +20,7 @@ import {
 import { mockOutput, mockContextualAnalytics, mockProcessControl, mockTty } from "./mocks.ts";
 import { realLinkedProjectCache } from "./permission-real-layers.ts";
 import { commandRuntimeLayer } from "../../src/shared/runtime/command-runtime.layer.ts";
+import { stubRemoteTarget } from "./remote-target.ts";
 
 /**
  * Shared scaffolding for the `supabase notebooks` command integration tests.
@@ -244,12 +244,12 @@ function testProjectRefLayer(linked: boolean) {
           }),
         ),
     });
-  return Layer.succeed(ProjectRefResolver, {
+  return stubRemoteTarget({
     resolve,
     resolveForLink: resolve,
     resolveOptional: (flag) => Effect.succeed(optional(flag)),
-    loadProjectRef: resolve,
-    promptProjectRef: () => resolve(Option.none()),
+    load: resolve,
+    prompt: () => resolve(Option.none()),
   });
 }
 
@@ -267,7 +267,7 @@ export interface NotebooksSetupOptions {
   readonly command?: "pull" | "push";
   readonly args?: ReadonlyArray<string>;
   /**
-   * Runs the real `projectRefLayer` (an unlinked workdir reaches its picker) and the real
+   * Runs the real `remoteTargetLayer` (an unlinked workdir reaches its picker) and the real
    * linked-project cache, so their `GET /v1/projects` and `GET /v1/projects/{ref}` calls go
    * through `routes`. Linkage then comes from the workdir's `.temp/project-ref`, not `linked`.
    */
@@ -292,7 +292,7 @@ export function setupNotebooks(options: NotebooksSetupOptions) {
       : mockCommandSettings({ workdir: options.workdir });
   const projectRef =
     options.realLayers === true
-      ? projectRefLayer.pipe(
+      ? remoteTargetLayer.pipe(
           Layer.provide(
             Layer.succeed(CommandPlatformApiFactory, {
               make: CommandPlatformApi.pipe(Effect.provide(http.layer)),

@@ -13,8 +13,8 @@
 > `branches` is PARENT-scoped: after `supabase link <branch>`, the on-disk `project-ref` file
 > holds the BRANCH's own ref, and the Management API returns 403 for a branch ref on every
 > branches-management endpoint. Every `branches` subcommand therefore resolves the project ref
-> via `resolveParentScopedProjectRef` (`command-internal/parent-project-ref.ts`) instead
-> of calling `ProjectRefResolver.resolve` directly: an explicit `--project-ref` still wins
+> via `RemoteTarget.resolveParentScoped` instead
+> of calling `RemoteTarget.resolve` directly: an explicit `--project-ref` still wins
 > outright; otherwise the PARENT is resolved as env `SUPABASE_PROJECT_ID` → `linked-project.json`'s
 > `ref` → the `project-ref` file, first ref-shaped candidate wins, falling through to
 > `resolver.resolve(None)`'s ordinary env/prompt/not-linked behavior when no candidate is
@@ -22,7 +22,7 @@
 > `project-ref` file then hold the same ref (CLI-2167 follow-up, TS-only divergence).
 
 > Pretty-table rendering ALSO makes its own independent, soft read of `<workdir>/supabase/.temp/project-ref`
-> (`ProjectRefResolver.resolveOptional`: env → file, never a prompt, never a failure) to find
+> (`RemoteTarget.resolveOptional`: env → file, never a prompt, never a failure) to find
 > the CURRENTLY linked ref (which may be a branch ref) for the `(active)` marker below — separate
 > from, and unconditional on, the PARENT-scoped `ref` resolution above. Missing/unreadable → no
 > marker, never an error (CLI-2167 follow-up, TS-only).

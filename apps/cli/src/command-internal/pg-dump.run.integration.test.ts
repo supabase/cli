@@ -7,6 +7,7 @@ import { NetworkIdFlag } from "./global-flags.ts";
 import { DockerRun } from "./docker-run.service.ts";
 import { BundledPostgresClient } from "./bundled-postgres-client.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
+import { selection } from "../../tests/helpers/pins.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 
 const stackFixture = (output: string) => {
@@ -115,7 +116,7 @@ describe("managed pg_dump runner", () => {
         EXTRA_FLAGS: '--exclude-table "public"."Users"',
       },
       onStdout: () => Effect.void,
-      client: { kind: "stack", stack: fixture.stack, command: "pg_dump", major: 17 },
+      client: { kind: "stack", stack: fixture.stack, command: "pg_dump", pin: selection.database },
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -173,7 +174,7 @@ describe("managed pg_dump runner", () => {
         Effect.sync(() => {
           chunks.push(bytes);
         }),
-      client: { kind: "stack", stack: fixture.stack, command: "pg_dump", major: 17 },
+      client: { kind: "stack", stack: fixture.stack, command: "pg_dump", pin: selection.database },
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

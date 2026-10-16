@@ -1,4 +1,4 @@
-import { Crypto, Effect, FileSystem, Path, Ref, Schema } from "effect";
+import { Crypto, Effect, FileSystem, Path, Ref, Schema, Tuple } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 import { HttpClient } from "effect/http";
 import { makeContainerRuntime } from "../runtime/Container.ts";
@@ -8,6 +8,7 @@ import {
   DatabaseConfig,
   DatabaseCreation,
   DatabaseEndpoints,
+  pinnedDatabaseConfig,
   type DatabaseComponent,
 } from "./Database.ts";
 import * as Analytics from "./Analytics.ts";
@@ -138,6 +139,11 @@ export const ServiceCreationInput = Schema.Union([
   Pooler.Creation,
 ]);
 export type ServiceCreationInput = Schema.Schema.Type<typeof ServiceCreationInput>;
+/** A restart candidate; a restart keeps the instance's saved pin. */
+export const ServiceRestartInput = ServiceCreationInput.mapMembers(
+  Tuple.map(Schema.fieldsAssign({ pin: Schema.optionalKey(Schema.Never) })),
+);
+export type ServiceRestartInput = Schema.Schema.Type<typeof ServiceRestartInput>;
 export const serviceSchemas = {
   database: DatabaseConfig,
   rest: Rest.Config,
@@ -213,21 +219,24 @@ const databaseRecipe = (
   definition: {
     prepare: (candidate) =>
       candidate.service === "database"
-        ? (component.definition.prepare?.(candidate.config) ?? Effect.void)
+        ? (component.definition.prepare?.(pinnedDatabaseConfig(candidate)) ?? Effect.void)
         : Effect.fail(serviceError("prepare", "Service kind cannot change during restart")),
     launch: (context) =>
       context.config.service === "database"
-        ? component.definition.launch({ ...context, config: context.config.config })
+        ? component.definition.launch({ ...context, config: pinnedDatabaseConfig(context.config) })
         : Effect.fail(serviceError("launch", "Service kind cannot change during restart")),
     removeData: (context) =>
       context.config.service === "database"
-        ? component.definition.removeData({ ...context, config: context.config.config })
+        ? component.definition.removeData({
+            ...context,
+            config: pinnedDatabaseConfig(context.config),
+          })
         : Effect.fail(serviceError("destroy", "Service kind cannot change during restart")),
   },
   resetDatabaseData: (context) =>
     context.config.service === "database"
       ? component
-          .resetData({ ...context, config: context.config.config })
+          .resetData({ ...context, config: pinnedDatabaseConfig(context.config) })
           .pipe(
             Effect.mapError(
               (cause) => new CatalogError({ operation: "reset", message: cause.message, cause }),
@@ -239,7 +248,7 @@ const databaseRecipe = (
   saveDatabaseSnapshot: (context, key, scope) =>
     context.config.service === "database"
       ? component
-          .saveSnapshot({ ...context, config: context.config.config }, key, scope)
+          .saveSnapshot({ ...context, config: pinnedDatabaseConfig(context.config) }, key, scope)
           .pipe(
             Effect.mapError(
               (cause) =>
@@ -252,7 +261,7 @@ const databaseRecipe = (
   restoreDatabaseSnapshot: (context, key, scope) =>
     context.config.service === "database"
       ? component
-          .restoreSnapshot({ ...context, config: context.config.config }, key, scope)
+          .restoreSnapshot({ ...context, config: pinnedDatabaseConfig(context.config) }, key, scope)
           .pipe(
             Effect.mapError(
               (cause) =>
@@ -300,12 +309,6 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
     Effect.gen(function* () {
       const endpointError = validateEndpointNames(input);
       if (endpointError !== undefined) return yield* endpointError;
-      if (isRecord(input) && input.service === "database" && input.version !== undefined)
-        return yield* new CatalogError({
-          operation: "config",
-          message: "Database artifact version belongs in config.version",
-          service: "database",
-        });
       const creation = yield* Schema.decodeUnknownEffect(ServiceCreation)(input).pipe(
         Effect.mapError(
           (cause) =>

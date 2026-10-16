@@ -100,7 +100,7 @@ export const rejectComputeEnvOutput = Effect.fnUntraced(function* () {
  * re-resolve to whichever project is currently linked — for `delete --yes`,
  * a same-named compute deleted without a prompt. Keyed off the flag, not the
  * resolved ref, so a link-supplied ref isn't echoed back as noise; an empty
- * flag value counts as "not supplied", matching `ProjectRefResolver`.
+ * flag value counts as "not supplied", matching `RemoteTarget`.
  */
 export const computeProjectRefSuffix = (projectRef: Option.Option<string>): string =>
   Option.isSome(projectRef) && projectRef.value.length > 0

@@ -22,6 +22,7 @@ import { Output } from "../../shared/output/output.service.ts";
 import type { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
@@ -82,6 +83,7 @@ export class ShadowDbError extends Data.TaggedError("ShadowDbError")<{
     | "port_conflict"
     | "filesystem"
     | "database";
+  readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     switch (this.reason) {
@@ -98,7 +100,12 @@ export class ShadowDbError extends Data.TaggedError("ShadowDbError")<{
       case "database":
         return { ...actionability.dbFinding, fingerprint_suffix: "database" };
       default:
-        return { ...actionability.invalidConfig, fingerprint_suffix: "container_configuration" };
+        return (
+          causeDeclaration(this.cause) ?? {
+            ...actionability.invalidConfig,
+            fingerprint_suffix: "container_configuration",
+          }
+        );
     }
   }
 }

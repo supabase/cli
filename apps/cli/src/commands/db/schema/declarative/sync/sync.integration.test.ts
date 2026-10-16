@@ -40,6 +40,11 @@ import {
 } from "../../../../../../tests/helpers/permission-real-layers.ts";
 import { unusedGateway } from "../../../../../../tests/helpers/unused-stack.ts";
 import {
+  legacyStateAccesses,
+  recordingFileSystem,
+  seedLegacyStateDecoys,
+} from "../../../../../../tests/helpers/legacy-state-guard.ts";
+import {
   alwaysReadyHttpClientLayer,
   defaultLocalResetRoute,
   localResetCreateArgs,
@@ -76,6 +81,7 @@ import {
 } from "../../../../../command-internal/global-flags.ts";
 import { CommandPlatformApi } from "../../../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../../../auth/command-platform-api-factory.service.ts";
+import { remoteTargetLayer as realRemoteTargetLayer } from "../../../../../config/remote-target.layer.ts";
 import { dockerRunLayer } from "../../../../../command-internal/docker-run.layer.ts";
 import { stackBackendLayer } from "../../../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../../../command-internal/stack-api.ts";
@@ -98,6 +104,7 @@ import { DeclarativeSeam } from "../../../shared/pgdelta.seam.service.ts";
 import { DeclarativeNotEnabledError } from "../declarative.errors.ts";
 import type { DbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
+import { selection } from "../../../../../../tests/helpers/pins.ts";
 
 interface SetupOpts {
   experimental?: boolean;
@@ -152,8 +159,8 @@ function syncStackApi(workdir: string, port: number) {
       id: "primary",
       config: {
         service: "database",
+        pin: selection.database,
         config: {
-          version: "17",
           databasePassword: Redacted.make("postgres"),
           jwtSecret: Redacted.make("secret"),
           jwtExpiry: 3600,
@@ -384,6 +391,25 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     }),
   );
   const projectHttp = recordingProjectHttpClient(VALID_REF);
+  const settings = mockCommandSettings({
+    workdir,
+    projectId: opts.projectId ?? Option.some("test"),
+  });
+  const tty = mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false });
+  const remoteTarget = realRemoteTargetLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        settings,
+        tty,
+        out.layer,
+        Layer.succeed(CommandPlatformApiFactory, {
+          make: CommandPlatformApi.pipe(Effect.provide(platformApi.layer)),
+        }),
+        BunServices.layer,
+      ),
+    ),
+  );
+  const recorder = recordingFileSystem();
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
@@ -404,8 +430,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
         })
       : resolver,
-    mockCommandSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
-    mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
+    settings,
+    tty,
+    remoteTarget,
     mockStdin(opts.stdinIsTty ?? false),
     experimentalFlag,
     cliArgs,
@@ -419,6 +446,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       make: CommandPlatformApi.pipe(Effect.provide(platformApi.layer)),
     }),
     BunServices.layer,
+    recorder.layer,
     // `child.layer` must be listed after `BunServices.layer` — `Layer.mergeAll` resolves a
     // duplicate service tag to whichever layer is listed last, so this mock overrides Bun's
     // real `ChildProcessSpawner` instead of the reverse.
@@ -434,6 +462,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   );
   return {
     layer,
+    accessed: recorder.accessed,
     out,
     child,
     dbExec,
@@ -1048,6 +1077,33 @@ describe("db schema declarative sync integration", () => {
       expect(s.dbConnectPorts).not.toContain(54322);
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "on the stack backend a failed apply saves its debug bundle outside supabase/.temp",
+    () => {
+      const s = setup(tmp.current, {
+        experimental: true,
+        diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+        stackBackend: true,
+        applyFails: true,
+      });
+      seedLegacyStateDecoys(tmp.current);
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* seedDeclarative(tmp.current);
+        const error = yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
+          Effect.flip,
+        );
+        expect(error._tag).toBe("DeclarativeApplyError");
+        const pgdeltaRoot = path.join(tmp.current, ".supabase", "tmp", "pgdelta");
+        const projectRoots = yield* fs.readDirectory(pgdeltaRoot);
+        expect(projectRoots).toHaveLength(1);
+        expect(yield* fs.exists(path.join(pgdeltaRoot, projectRoots[0] ?? "", "debug"))).toBe(true);
+        expect(legacyStateAccesses(s.accessed)).toEqual([]);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("refuses a known implicit-extension load failure under --yes", () => {
     const s = setup(tmp.current, {

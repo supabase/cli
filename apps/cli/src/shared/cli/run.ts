@@ -24,6 +24,8 @@ import { CLI_VERSION } from "./version.ts";
 import type { CliProjectHome } from "../config/cli-project-home.service.ts";
 import type { CliSettings } from "../config/cli-settings.service.ts";
 import type { ProjectLinkState } from "../config/project-link-state.service.ts";
+import { legacyProjectStateLayer } from "../../command-internal/legacy-project-state.layer.ts";
+import type { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
@@ -89,6 +91,7 @@ export type AllowedRunCliServices =
   | CommandRuntime
   | FileSystem.FileSystem
   | Crypto.Crypto
+  | LegacyProjectState
   | Path.Path
   | ProcessControl
   | ProjectLinkState
@@ -609,6 +612,7 @@ function cliProgramFor<
     Layer.provideMerge(cliProjectHomeLayerFor(runtimeLayer)),
     Layer.provideMerge(cliProjectContextLayerFor(runtimeLayer)),
     Layer.provideMerge(projectLinkStateLayer),
+    Layer.provideMerge(legacyProjectStateLayer),
     Layer.provideMerge(runtimeLayer),
     Layer.provideMerge(fallbackCommandLayer),
     Layer.provideMerge(Layer.succeed(CliArgs, { args })),

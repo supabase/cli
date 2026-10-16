@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Path } from "effect";
 import { StackApi, stackApiLayer } from "../../src/command-internal/stack-api.ts";
 import { destroyTestStacks } from "./stack-cleanup.ts";
+import { selection } from "./pins.ts";
 
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
 
@@ -29,7 +30,12 @@ describe("test stack cleanup", () => {
               Effect.succeed(undefined),
               () =>
                 Effect.gen(function* () {
-                  yield* stack.services.create({ service: "mail", config: {}, endpoints: {} });
+                  yield* stack.services.create({
+                    service: "mail",
+                    pin: selection.mail,
+                    config: {},
+                    endpoints: {},
+                  });
                   const before = yield* api.discover({ stateRoot });
                   expect(before).toHaveLength(1);
                   expect(before[0]?.host).toBeDefined();

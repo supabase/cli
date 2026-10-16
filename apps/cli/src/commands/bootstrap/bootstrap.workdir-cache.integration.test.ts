@@ -1,3 +1,4 @@
+import { legacyProjectStateLayer } from "../../command-internal/legacy-project-state.layer.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path, Schedule } from "effect";
@@ -219,6 +220,7 @@ describe("bootstrap linked-project cache location", () => {
 
         const layer = Layer.mergeAll(
           BunServices.layer,
+          legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
           out.layer,
           api.layer,
           api.factoryLayer,

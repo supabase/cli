@@ -8,7 +8,7 @@ import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { aqua, bold, yellow } from "../../../command-internal/colors.ts";
 import {
   loadProjectEnv,
@@ -68,11 +68,15 @@ const runDown = Effect.fnUntraced(function* (
 
   // Resolves before `--last` validation, so an unlinked/invalid target error
   // surfaces before the `--last must be greater than 0` error.
+  const remoteTarget = yield* RemoteTarget;
+  const linkedTarget =
+    connType === "linked" ? yield* remoteTarget.load(flags.projectRef) : undefined;
   const cfg = yield* resolver.resolve({
     dbUrl: flags.dbUrl,
     connType,
     dnsResolver,
     linkedProjectRef: flags.projectRef,
+    target: linkedTarget,
   });
 
   // Loads after the flag-group check above, so a flag conflict surfaces before
@@ -148,11 +152,9 @@ const runDown = Effect.fnUntraced(function* (
 
   // Attached to the whole flow via `Effect.ensuring` so the cache write still
   // runs on the `--last`/cancel failure paths.
-  if (connType === "linked") {
-    const projectRef = yield* ProjectRefResolver;
+  if (linkedTarget !== undefined) {
     const linkedProjectCache = yield* LinkedProjectCache;
-    const linkedRef = yield* projectRef.loadProjectRef(flags.projectRef);
-    return yield* downFlow.pipe(Effect.ensuring(linkedProjectCache.cache(linkedRef)));
+    return yield* downFlow.pipe(Effect.ensuring(linkedProjectCache.cache(linkedTarget.ref)));
   }
   return yield* downFlow;
 });

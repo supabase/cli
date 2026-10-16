@@ -1,3 +1,4 @@
+import { legacyProjectStatePaths } from "../../command-internal/legacy-project-state.paths.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
 import {
   CliConfigSchema,
@@ -1758,10 +1759,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     // same tree keyed by container name, so these secret env artifacts don't
     // leak on host disk indefinitely after the container is torn down.
     const stagingDir = path.join(
-      input.projectRoot,
-      "supabase",
-      ".temp",
-      "start-secrets",
+      legacyProjectStatePaths(path, input.projectRoot).startSecretsDir,
       containerId,
     );
     // A single directory-wide `rm` (not per-file cleanup closures) covers the
@@ -2042,7 +2040,7 @@ const startEdgeRuntime = Effect.fn("functions.serve.startEdgeRuntime")(function*
     });
     const localAuthArtifacts = yield* resolveLocalAuthArtifacts(resolved.auth, resolved.configPath);
     const edgeRuntimeVersionOverride = yield* resolveEdgeRuntimeVersionPin(
-      input.dependencies.supabaseDir,
+      input.dependencies.projectRoot,
     );
     const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
       resolved.edgeRuntime.deno_version,

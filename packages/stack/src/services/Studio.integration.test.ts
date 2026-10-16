@@ -2,6 +2,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer } from "effect";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
+import { selection } from "../../tests/pins.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 
 const options = (root: string) => ({
@@ -26,7 +27,11 @@ describe("studio recipe", () => {
           const siblingInstance = `${root}/functions-instance`;
           yield* fs.makeDirectory(siblingInstance, { recursive: true });
           const recipe = yield* makeServiceRecipe(
-            { service: "studio", config: { functionsRoot: siblingInstance } },
+            {
+              service: "studio",
+              pin: selection.studio,
+              config: { functionsRoot: siblingInstance },
+            },
             options(root),
           );
           const studio = yield* makeStandaloneService(recipe.definition, {

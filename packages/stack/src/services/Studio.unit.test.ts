@@ -1,8 +1,13 @@
 import { expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 import { makeSpec, type Creation } from "./Studio.ts";
+import { selection } from "../../tests/pins.ts";
 
-const creation = (config: Creation["config"]): Creation => ({ service: "studio", config });
+const creation = (config: Creation["config"]): Creation => ({
+  service: "studio",
+  pin: selection.studio,
+  config,
+});
 
 it.effect("points Studio's pg-meta connection at the bound database as the postgres role", () =>
   Effect.gen(function* () {

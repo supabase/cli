@@ -60,10 +60,9 @@ import {
 } from "../../../config/project-ref.errors.ts";
 import {
   INVALID_PROJECT_REF_MESSAGE,
-  ProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
   PROJECT_REF_PATTERN,
-} from "../../../config/project-ref.service.ts";
+} from "../../../config/remote-target.service.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags } from "../../../command-internal/db-config.types.ts";
@@ -84,6 +83,8 @@ import type { DbDumpFlags } from "./dump.command.ts";
 import { dbDump } from "./dump.handler.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
+import { selection } from "../../../../tests/helpers/pins.ts";
+import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -104,8 +105,8 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
   const id = "m".repeat(64);
   const creation: Extract<ServiceCreation, { service: "database" }> = {
     service: "database",
+    pin: selection.database,
     config: {
-      version: "17.6.1.173",
       databasePassword: Redacted.make("secret"),
       jwtSecret: Redacted.make("secret"),
       jwtExpiry: 3600,
@@ -277,12 +278,12 @@ function mockResolver(opts: {
 }
 
 /**
- * Mocks `ProjectRefResolver` for the up-front `loadProjectRef` pre-capture, mirroring
+ * Mocks `RemoteTarget` for the up-front `RemoteTarget.load` pre-capture, mirroring
  * push/diff's identical mock: an explicit `--project-ref` flag wins, a malformed value
  * fails with `InvalidProjectRefError`, and `opts.projectId` stands in for
  * `CommandSettings.projectId` consulted before falling back to `opts.ref`.
  */
-function mockProjectRefResolver(opts: {
+function mockRemoteTarget(opts: {
   projectId: Option.Option<string>;
   ref?: string;
   linkedFails?: boolean;
@@ -291,11 +292,11 @@ function mockProjectRefResolver(opts: {
     PROJECT_REF_PATTERN.test(ref)
       ? Effect.succeed(ref)
       : Effect.fail(new InvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE }));
-  const layer = Layer.succeed(ProjectRefResolver, {
+  const layer = stubRemoteTarget({
     resolve: () => Effect.succeed(opts.ref ?? VALID_REF),
     resolveForLink: () => Effect.succeed(opts.ref ?? VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(opts.ref ?? VALID_REF)),
-    loadProjectRef: (flagValue: Option.Option<string>) => {
+    load: (flagValue: Option.Option<string>) => {
       if (Option.isSome(flagValue) && flagValue.value.length > 0) {
         return validate(flagValue.value);
       }
@@ -306,7 +307,7 @@ function mockProjectRefResolver(opts: {
         ? Effect.fail(new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
         : Effect.succeed(opts.ref ?? VALID_REF);
     },
-    promptProjectRef: () => Effect.succeed(opts.ref ?? VALID_REF),
+    prompt: () => Effect.succeed(opts.ref ?? VALID_REF),
   });
   return { layer };
 }
@@ -465,7 +466,7 @@ function setup(opts: SetupOpts = {}) {
     resolveFails: opts.resolveFails,
     ref: opts.ref,
   });
-  const projectRef = mockProjectRefResolver({
+  const projectRef = mockRemoteTarget({
     projectId: opts.projectId ?? Option.none(),
     ref: opts.ref,
     linkedFails: opts.linkedFails,
@@ -1037,7 +1038,7 @@ describe("db dump integration", () => {
   it.effect(
     "rejects a malformed --project-ref on the linked path before resolving or caching",
     () => {
-      // `loadProjectRef` validates before `resolver.resolve()` runs, so a malformed
+      // `RemoteTarget.load` validates before `resolver.resolve()` runs, so a malformed
       // flag fails fast with no connection/API work and no cache write.
       const { layer, cache, resolver } = setup();
       return Effect.gen(function* () {

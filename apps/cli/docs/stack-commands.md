@@ -14,16 +14,18 @@ Native pg_cron runs jobs in background workers, so a job body cannot contain its
 default `max_worker_processes` to 17 to leave room for those workers; `postgresql.conf`,
 `ALTER SYSTEM`, and `[db.settings]` values take precedence.
 
-| Command                  | Purpose                                                                           |
-| ------------------------ | --------------------------------------------------------------------------------- |
-| `supabase stack destroy` | Permanently delete stacks and their data.                                         |
-| `supabase stack list`    | List persisted managed local stacks.                                              |
-| `supabase stack prepare` | Download artifacts without starting services.                                     |
-| `supabase stack start`   | Create or resume the project's stack.                                             |
-| `supabase stack status`  | Show identity, readiness, and drift, or export connection variables with `--env`. |
-| `supabase stack logs`    | Print retained stack logs; `-f` streams new lines.                                |
-| `supabase stack restart` | Restart an existing stack using its saved effective configuration.                |
-| `supabase stack stop`    | Stop a stack while retaining its data.                                            |
+| Command                   | Purpose                                                                           |
+| ------------------------- | --------------------------------------------------------------------------------- |
+| `supabase stack destroy`  | Permanently delete stacks and their data.                                         |
+| `supabase stack list`     | List persisted managed local stacks.                                              |
+| `supabase stack install`  | Resolve and lock service versions, then download artifacts without a stack.       |
+| `supabase stack update`   | Re-resolve locked service versions and rewrite `supabase/supabase.lock`.          |
+| `supabase stack outdated` | Report which locked service versions `stack update` would change.                 |
+| `supabase stack start`    | Create or resume the project's stack.                                             |
+| `supabase stack status`   | Show identity, readiness, and drift, or export connection variables with `--env`. |
+| `supabase stack logs`     | Print retained stack logs; `-f` streams new lines.                                |
+| `supabase stack restart`  | Restart an existing stack using its saved effective configuration.                |
+| `supabase stack stop`     | Stop a stack while retaining its data.                                            |
 
 Use each command's `--help` for its available targeting and runtime options.
 
@@ -37,15 +39,30 @@ stack, cannot reach its engine, the failure asks you to install or start it, and
 on platforms that support native. Project stacks created by database commands, and shadow stacks
 created without a project stack, use the same selection.
 
-`supabase stack prepare` downloads or pulls artifacts for the selected stack without starting
-services. If the target does not exist, prepare creates and registers it; the stack then appears in
-`supabase stack list` and can be removed with `supabase stack destroy`. Omit `--capability` to
-prepare every enabled capability, or repeat `--capability` up to ten times to select specific
-capabilities. Each occurrence names one capability; use separate flags rather than CSV.
+`supabase stack install` resolves the project's service versions into `supabase/supabase.lock`, the
+same way `stack start` does, then downloads everything the lock pins for the chosen runtime without
+creating or starting a stack. `--runtime native` downloads archives into the artifact cache; `docker`
+and `podman` pull images; `auto` selects as `stack start` does. With `--frozen`, or with `CI` set
+and an existing lock, a missing or out-of-date lock fails instead of being written. Artifacts that
+are already present are skipped, so a second run reports everything as cached.
 
 ```sh
-supabase stack prepare
-supabase stack prepare --capability rest --capability auth --output-format json
+supabase stack install
+supabase stack install --frozen --runtime native --output-format json
+```
+
+`supabase stack update [service...]` re-resolves the named services, or all of them, even when the
+lock is fresh: an upstream version moves to its newest revision, `bundled` moves to the version this
+CLI bundles, `linked` probes the linked project or branch again (this needs a login, like `supabase
+link`), and an exact `-r<N>` pin stays. It prints the diff and rewrites the lock without
+downloading anything; `CI` does not freeze it. `supabase stack outdated` is the read-only
+counterpart: it reports each service's locked and would-be version without a lease, a write, or a
+download, and reports a failed probe per row without failing. It reads only the lock and the
+release host, so a hosted version that moved since `supabase link` appears after `stack update`.
+
+```sh
+supabase stack outdated
+supabase stack update auth realtime
 ```
 
 ## Connection details after start
@@ -99,10 +116,10 @@ for example `api: 54321 → 26199`, and JSON/stream-json output add an `endpoint
 entry naming the endpoint, the `endpoints` keys it moved in `keys`, and its `from`/`to` port) to the
 success payload, present only when a change applied. A requested fixed port that is already taken
 fails the start with the usual port conflict; the new port stays saved and the previous automatic
-port is released, so starting again succeeds once the port is free. A changed artifact version or
-PostgreSQL major version still fails, naming the changed setting and suggesting
-`supabase stack destroy`. A changed port met by a stack whose owner is still running (for example
-after `stack prepare`) fails with advice to run `supabase stack stop`, then `supabase stack start`.
+port is released, so starting again succeeds once the port is free. A PostgreSQL build, line or major that differs
+from the one that initialized the data still fails, suggesting `supabase stack destroy`; only a new
+revision of the same build reuses it. A changed port met by a stack whose owner is still
+running fails with advice to run `supabase stack stop`, then `supabase stack start`.
 
 ## Exporting environment variables
 
@@ -176,15 +193,17 @@ precedence over `experimental.stack`; an unset or empty value falls back to the 
 Other values are rejected. The override is applied before reading the project configuration.
 
 `supabase services` follows the same backend selection. In stack mode it lists image versions and
-canonical `ghcr.io/supabase/cli/...` names from the installed CLI's artifact catalog, including
-Mailpit. PostgreSQL uses the selected major version (15 or 17), or the catalog's OrioleDB build
-when `db.orioledb_version` is set; invalid configuration, an unsupported PostgreSQL major, or an
-OrioleDB version the catalog does not pin warns with the cause and uses catalog defaults. This inventory describes the
-CLI catalog, not running containers, downloaded images, or service health. The Docker and native
-stack runtimes use the same catalog versions, though a running stack launched by another CLI
-version or using mirrored images may differ. Legacy version pins and slim-image overrides do not
-apply in stack mode. Linked versions remain best-effort; catalog mismatches cannot be changed with
-`supabase link`.
+canonical `ghcr.io/supabase/cli/...` names, including Mailpit. The versions come from
+`supabase/supabase.lock` when the project has a fresh one, else from the installed CLI's artifact
+catalog. PostgreSQL uses the selected major version (15 or 17), or the catalog's OrioleDB build when
+`db.orioledb_version` is set; invalid configuration, an unsupported PostgreSQL major, an OrioleDB
+version the catalog does not pin, or a stale or unreadable lock warns with the cause and uses
+catalog defaults. This inventory describes the lock or catalog, not running containers, downloaded
+images, or service health. The Docker and native stack runtimes use the same versions, though a
+running stack launched by another CLI version or using mirrored images may differ. Legacy version
+pins and slim-image overrides do not apply in stack mode. Linked versions remain best-effort;
+a mismatch warning recommends `supabase link`, which updates services set to `linked` (the
+default) in the lock, while services pinned in `[local.services]` keep their version.
 
 `SUPABASE_EXPERIMENTAL_STACK=1 supabase init` writes `[experimental] stack = true` into the new
 project config and omits the Docker-era default ports so the stack is not pinned to them.
@@ -287,6 +306,55 @@ The flag is local CLI configuration in `supabase/config.toml` or `supabase/confi
 excluded from hosted project configuration. Routing applies the CLI's working-directory rules,
 including `--workdir` and `SUPABASE_WORKDIR`, and prefers JSON when both files exist.
 
+Stack mode keeps its state under `SUPABASE_HOME` and never reads or writes `supabase/.temp`: Storage
+uploads live in `stacks/<stack-id>/uploads`, command scratch output (pgdelta debug bundles, Functions
+bundling) in `tmp`, the release-check cache in `cli-latest`, and service versions come from
+`supabase/supabase.lock`. See [Supabase home](supabase-home.md).
+
+## Service versions
+
+A stack runs the service versions pinned in `supabase/supabase.lock`, which `supabase start` writes
+and the project commits so a team and CI run the same builds. Request versions under
+`[local.services]`, per service or for all of them with `default`:
+
+```toml
+[local.services]
+default = { version = "bundled" } # `linked` (the default) or `bundled`
+
+[local.services.auth]
+version = "v2.197.0" # an upstream version: the highest published revision
+[local.services.realtime]
+version = "v1.30.2-r1" # exactly revision 1 of that upstream version
+```
+
+`linked` follows the hosted project: `supabase link` (in stack mode) probes the linked project or
+branch and records the version each service runs in the lock, then resolves `linked` entries to
+those releases. A project that was never linked pins the bundled version and records it as
+`unlinked`; a service the platform does not report, or a version slim-services does not publish,
+pins the bundled version as `unobserved` or `unpublished`. `supabase link --frozen`, or `link` under
+`CI` with an existing lock, records the link without changing the lock and warns when the hosted
+versions differ. `bundled` pins the bundled version explicitly. An upstream version, optionally
+with a `-r<N>` revision suffix, is resolved against the published slim-services releases and pinned
+by content. `[db] orioledb_version` is shorthand for
+the `database` specifier of that OrioleDB build, and a database version must match
+`db.major_version`.
+
+`supabase start` resolves only the services whose specifier changed, under a project lease that
+serializes concurrent starts (a start waits up to 60 seconds for the lease, then fails), and leaves
+the other pins where they are. Resolving a release specifier needs the network, so a first start
+with an explicit service version or `[db] orioledb_version` cannot run offline, even when the CLI
+bundles that version; a first start that keeps `linked` or `bundled` does not need it. `supabase
+start --frozen` fails instead of resolving when the lock is missing or stale; it is implied when
+`CI` is set and a lock exists. A start never calls the Management API and needs no login: it warns when `supabase/.link.json`
+targets another project or branch than the lock observed (run `supabase stack update`), and when
+this CLI bundles a newer revision of a locked version. A lock that is malformed, does not match the
+format, or comes from a newer CLI always fails the start. The lock's JSON Schema is published at
+`https://supabase.com/docs/cli/supabase-lock/v1.schema.json`. A database with initialized data keeps
+its build: changing its major or release line asks to destroy the stack, while a database that never
+initialized adopts the change. See the [`start` side
+effects](../src/commands/experimental/stack/start/SIDE_EFFECTS.md#service-versions-and-the-lock) for
+details.
+
 ## Port intents
 
 Host listener assignment for `supabase stack` is documented in [Port intents](./supabase-home.md#port-intents).
@@ -328,8 +396,8 @@ directory itself fails discovery, before any stop is attempted. Individual stop
 failures make the command fail and identify the affected stack IDs with their error details; no
 success or not-running summary is emitted when a stop fails.
 
-`supabase stack destroy --stack feature-a` permanently removes exactly that stack and its data after
-confirmation. Use `--yes` for unattended execution. Repeat `--stack-id` to destroy several stacks
+`supabase stack destroy --stack feature-a` permanently removes exactly that stack, its data and its Storage
+uploads (`stacks/<stack-id>/uploads`) after confirmation. Use `--yes` for unattended execution. Repeat `--stack-id` to destroy several stacks
 after one confirmation; every id must resolve before anything is destroyed, and a stack that fails
 to be destroyed does not stop the rest, though the command still fails.
 
@@ -383,8 +451,7 @@ way. A manually stopped capability keeps wake-up disabled until the stack starts
 states are observed directly by Storage operations, including `stack start`.
 
 **`stack start` seeds on first configured start.** When a `stack start` (or the top-level `start`
-under the flag) invocation runs the stack's first configured start, including after `stack prepare`
-— never when it resumes an existing one — and
+under the flag) invocation runs the stack's first configured start (never when it resumes an existing one) and
 Storage is not `disabled`, it seeds `[storage.buckets]` against the stack before printing status,
 reusing the `seed buckets` core. A project with no `[storage.buckets]` or
 `[storage.vector.buckets]` configured resolves no credentials and prints nothing. Auto-confirm is

@@ -12,6 +12,7 @@ import {
 } from "../preparation/ArtifactStore.ts";
 import { PreparationError } from "../preparation/Errors.ts";
 import * as CommandRunner from "./CommandRunner.ts";
+import { selection } from "../../tests/pins.ts";
 
 const target =
   process.platform === "darwin" && process.arch === "arm64"
@@ -34,6 +35,7 @@ const prepareDatabaseArtifact = Effect.fn(function* (cacheRoot: string) {
   const fs = yield* FileSystem.FileSystem;
   const { releaseVersion, natives, requiredRuntimePaths, executablePath } = yield* resolveArtifact({
     service: "database",
+    pin: selection.database,
   });
   const request: ArtifactRequest = {
     key: `slim-services/postgres/${releaseVersion}/${target}`,
@@ -123,7 +125,7 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
           .run({
             command: {
               type: "postgres",
-              command: postgres.psql({ major: 17 }),
+              command: postgres.psql({ pin: selection.database }),
               args: ["--version"],
               env: {},
               stdin: false,

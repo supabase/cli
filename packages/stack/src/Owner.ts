@@ -2,6 +2,7 @@ import {
   Context,
   Crypto,
   Effect,
+  Exit,
   Fiber,
   FileSystem,
   Layer,
@@ -18,6 +19,12 @@ import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import type { Rpc, RpcGroup } from "effect/rpc";
 import { failureMessage } from "./internal/failure-message.ts";
+import {
+  checkSchemaWriter,
+  holdSchemaWriter,
+  isSchemaWriter,
+  type SchemaWriterService,
+} from "./internal/schema-writers.ts";
 import * as Network from "./Network.ts";
 import type { NetworkEndpoint, NetworkNamespace } from "./Network.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -25,8 +32,11 @@ import type { CompositionConfig } from "./Orchestrator.ts";
 import {
   makeService,
   ServiceError,
+  type RuntimeSession,
   type ServiceInstance,
   type ServiceInstanceContext,
+  type ServiceLaunchContext,
+  type ServiceLaunchError,
 } from "./Service.ts";
 import { ProxyError } from "./Proxy.ts";
 import {
@@ -60,6 +70,7 @@ import {
   serviceSchemas,
   type CatalogRecipe,
   type ServiceCreationInput,
+  type ServiceRestartInput,
 } from "./services/Catalog.ts";
 import type { CatalogError } from "./services/Recipe.ts";
 import * as Container from "./runtime/Container.ts";
@@ -145,6 +156,10 @@ export interface Interface {
     StackCredentials,
     StackNamespace.NamespaceError | CredentialError
   >;
+  /** Fails unless `id` is a registered database instance, so a command cannot name another data directory. */
+  readonly requireDatabase: (
+    id: string,
+  ) => Effect.Effect<void, Orchestrator.OrchestratorError | ServiceError>;
   readonly namespace: {
     /** Stops every instance after in-flight definition changes settle, then removes containers. */
     readonly stop: Effect.Effect<void, NamespaceError>;
@@ -472,6 +487,50 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       ),
     );
 
+  /** The composition's local database instance, or `undefined` when the stack uses an external one. */
+  const compositionDatabaseId = Effect.gen(function* () {
+    const { members } = yield* orchestrator.composition;
+    const entries = yield* Effect.forEach(members, ({ id }) => orchestrator.get(id));
+    return entries.find((entry) => entry.service === "database")?.id;
+  });
+
+  const schemaWriterSelection = (
+    databaseId: string,
+    service: SchemaWriterService,
+    version: string,
+  ) => ({ stackId, instanceRoot: path.join(options.root, databaseId), service, version });
+
+  /**
+   * Runs `launch` with the database's schema-writer lease held until the service first reports
+   * healthy, which is when its migrations have finished. A failed or interrupted check keeps the
+   * lease until the launch scope closes after the process is cleaned up, and a later successful
+   * probe releases it. A service on an external database has no local record and launches directly.
+   */
+  const launchAsSchemaWriter = Effect.fnUntraced(function* (
+    context: ServiceLaunchContext<ServiceCreation>,
+    launch: Effect.Effect<RuntimeSession, ServiceError | ServiceLaunchError>,
+  ) {
+    const { service, pin } = context.config;
+    const databaseId = isSchemaWriter(service)
+      ? yield* compositionDatabaseId.pipe(Effect.mapError(serviceError("launch")))
+      : undefined;
+    if (!isSchemaWriter(service) || databaseId === undefined) return yield* launch;
+    const lease = yield* Scope.fork(context.scope, "sequential");
+    yield* holdSchemaWriter(
+      fs,
+      path,
+      schemaWriterSelection(databaseId, service, pin.upstreamVersion),
+    ).pipe(Scope.provide(lease), Effect.mapError(serviceError("launch")));
+    const session = yield* launch;
+    return {
+      ...session,
+      health: session.health.pipe(Effect.tap(() => Scope.close(lease, Exit.void))),
+      ...(session.probe === undefined
+        ? {}
+        : { probe: session.probe.pipe(Effect.tap(() => Scope.close(lease, Exit.void))) }),
+    } satisfies RuntimeSession;
+  });
+
   const register = Effect.fn("Owner.register")(function* (id: string, recipe: CatalogRecipe) {
     if (Option.isSome(yield* orchestrator.get(id).pipe(Effect.option)))
       return yield* new Orchestrator.OrchestratorError({
@@ -494,7 +553,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
             ),
             Effect.andThen(persistCreation({ id, creation }, context.config)),
             Effect.mapError(serviceError("state")),
-            Effect.andThen(recipe.definition.launch(context)),
+            Effect.andThen(launchAsSchemaWriter(context, recipe.definition.launch(context))),
           ),
       },
       {
@@ -656,6 +715,26 @@ const makeOwner = Effect.fn("Owner.make")(function* (
   const clearUnusedCredentials = updateState(withoutUnusedCredentials).pipe(
     Effect.catch((cause) => Effect.logWarning("Unused stack credentials were not cleared", cause)),
   );
+  /** Rejects a selection older than what already migrated the composition's database, before anything changes. */
+  const checkSchemaWriters = Effect.fn("Owner.checkSchemaWriters")(
+    function* (creations: ReadonlyArray<ServiceCreation>) {
+      const databaseId = yield* compositionDatabaseId;
+      if (databaseId === undefined) return;
+      yield* Effect.forEach(
+        creations,
+        ({ service, pin }) =>
+          isSchemaWriter(service)
+            ? checkSchemaWriter(
+                fs,
+                path,
+                schemaWriterSelection(databaseId, service, pin.upstreamVersion),
+              )
+            : Effect.void,
+        { discard: true },
+      );
+    },
+    Effect.mapError(serviceError("compose")),
+  );
   const compose = Effect.fn("Owner.compose")(
     function* (
       inputs: ReadonlyArray<ServiceCreationInput>,
@@ -663,6 +742,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
     ) {
       yield* resolveStackCredentials(yield* credentialOverrides(inputs), compositionOptions.keys);
       const creations = yield* Effect.forEach(inputs, resolveCredentials);
+      yield* checkSchemaWriters(creations);
       return yield* makeSupabaseComposition<ComposeError>(
         {
           currentComposition: orchestrator.composition,
@@ -721,16 +801,16 @@ const makeOwner = Effect.fn("Owner.make")(function* (
 
   const restart = Effect.fn("Owner.restart")(function* (
     id: string,
-    input: ServiceCreationInput | undefined,
+    input: ServiceRestartInput | undefined,
   ) {
     if (input === undefined) return yield* orchestrator.restart(id);
     const previous = yield* Ref.get((yield* orchestrator.get(id)).creation);
-    const next = yield* resolveCredentials(input);
-    if (next.service !== previous.service)
+    if (input.service !== previous.service)
       return yield* new ServiceError({
         operation: "restart",
         message: "Service kind cannot change",
       });
+    const next = yield* resolveCredentials({ ...input, pin: previous.pin });
     return yield* orchestrator.restart(id, next);
   });
 
@@ -858,8 +938,8 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       ).pipe(rpcError("restoreSnapshot")),
     resetData: ({ id }) =>
       databaseData(id, ({ resetDatabaseData }) => resetDatabaseData).pipe(rpcError("resetData")),
-    supabaseComposition: ({ services, reuseIds, keys, eager }) =>
-      definitionChange(compose(services, { reuseIds, keys, eager })).pipe(
+    supabaseComposition: ({ services, reuseIds, keys, eager, retainMembers }) =>
+      definitionChange(compose(services, { reuseIds, keys, eager, retainMembers })).pipe(
         rpcError("supabaseComposition"),
       ),
     configureComposition: (configuration) =>
@@ -900,6 +980,18 @@ const makeOwner = Effect.fn("Owner.make")(function* (
         },
       ).pipe(Effect.withSpan("Owner.claimEndpoints")),
     getStackCredentials,
+    requireDatabase: (id) =>
+      orchestrator.get(id).pipe(
+        Effect.filterOrFail(
+          (entry) => entry.service === "database",
+          () =>
+            new ServiceError({
+              operation: "initialize",
+              message: `Instance ${id} is not a database`,
+            }),
+        ),
+        Effect.asVoid,
+      ),
     namespace: {
       // Services stop in reverse dependency order with their listeners open, so a dependent's
       // graceful stop can still reach its prerequisites through the proxy.

@@ -26,6 +26,7 @@ import { create, open } from "../effect.ts";
 import * as StackNamespace from "../StackNamespace.ts";
 import { captureOwnerPid, watchLeaseRelease } from "../../tests/owner.ts";
 import { testEngine } from "../../tests/test-engine.ts";
+import { selection } from "../../tests/pins.ts";
 
 class PublishBarrierError extends Data.TaggedError("PublishBarrierError")<{
   readonly message: string;
@@ -358,7 +359,11 @@ it.live.skipIf(process.platform === "win32" || process.platform === "darwin")(
           startOwner: true,
         });
         yield* Effect.addFinalizer(() => stack.destroy.pipe(Effect.ignore));
-        const mail = yield* stack.services.create({ service: "mail", config: {} });
+        const mail = yield* stack.services.create({
+          service: "mail",
+          pin: selection.mail,
+          config: {},
+        });
         yield* mail.start;
         yield* mail.ready;
 

@@ -11,6 +11,7 @@ import {
   ProjectLinkState,
   type ProjectLinkStateValue,
 } from "../../src/shared/config/project-link-state.service.ts";
+import { legacyProjectStateLayer } from "../../src/command-internal/legacy-project-state.layer.ts";
 import { CliProjectContext } from "../../src/shared/config/cli-project-context.service.ts";
 import { NonInteractiveError } from "../../src/shared/output/errors.ts";
 import { Output } from "../../src/shared/output/output.service.ts";
@@ -672,6 +673,7 @@ export function emptyEnv() {
     cliProjectContextLayer,
     cliProjectHomeLayer,
     projectLinkStateLayer,
+    legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
     analytics.layer,
     mockTelemetryRuntime(),
     mockTty(),

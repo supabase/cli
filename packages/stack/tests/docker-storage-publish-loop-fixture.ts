@@ -3,6 +3,7 @@ import { Console, Crypto, Effect, FileSystem, Layer, Path } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 import { makeContainerRuntime } from "../src/runtime/Container.ts";
 import { makeDockerDatabaseStorage } from "../src/storage/DockerDatabaseStorage.ts";
+import { selection } from "./pins.ts";
 
 const [instanceRoot, root, cacheRoot] = process.argv.slice(2);
 if (instanceRoot === undefined || root === undefined || cacheRoot === undefined)
@@ -54,7 +55,7 @@ const program = Effect.scoped(
       container,
       spawner,
     });
-    yield* storage.markInitialized("17");
+    yield* storage.markInitialized(selection.database);
   }),
 ).pipe(Effect.provide(barrierFs.pipe(Layer.provideMerge(NodeServices.layer))));
 
