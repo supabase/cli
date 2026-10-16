@@ -110,32 +110,30 @@ describe("promptYesNo machine consent", () => {
 
 describe("promptYesNoOutcome piped answers", () => {
   const outcome = (piped: string) =>
-    Effect.runPromise(
-      Effect.gen(function* () {
-        const output = yield* Output;
-        return yield* promptYesNoOutcome(output, false, "Confirm?", false);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            mockOutput().layer,
-            mockStdin(false, piped),
-            mockTty({ stdinIsTty: false }),
-          ),
-        ),
+    Effect.gen(function* () {
+      const output = yield* Output;
+      return yield* promptYesNoOutcome(output, false, "Confirm?", false);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(mockOutput().layer, mockStdin(false, piped), mockTty({ stdinIsTty: false })),
       ),
     );
 
-  it("reports closed stdin as unanswered, taking the default", async () => {
-    expect(await outcome("")).toEqual({ value: false, answered: false });
-  });
+  it.effect("reports closed stdin as unanswered, taking the default", () =>
+    Effect.gen(function* () {
+      expect(yield* outcome("")).toEqual({ value: false, answered: false });
+    }),
+  );
 
-  it.each([
+  it.effect.each([
     ["\n", false],
     ["n\n", false],
     ["y\n", true],
-  ])("reports the piped line %j as an answer", async (piped, value) => {
-    expect(await outcome(piped)).toEqual({ value, answered: true });
-  });
+  ] as const)("reports the piped line %j as an answer", ([piped, value]) =>
+    Effect.gen(function* () {
+      expect(yield* outcome(piped)).toEqual({ value, answered: true });
+    }),
+  );
 });
 
 describe("promptYesNo piped text answers", () => {

@@ -382,7 +382,7 @@ describe("resolveArgvProfile", () => {
         ),
         Effect.flip,
       );
-      expect(error.message).toBe(`failed to read profile: Unsupported Config Type ""`);
+      expect(error.message).toBe(`failed to read profile: unsupported config file type ""`);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 });
