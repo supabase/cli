@@ -2,6 +2,10 @@ import { Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
+import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { requireExperimental } from "../../../command-internal/experimental-gate.ts";
 import { RESOURCE_OUTPUT_FORMATS } from "../../../command-internal/go-output-flag.ts";
@@ -26,6 +30,15 @@ export const vanitySubdomainsDeleteCommand = Command.make("delete", config).pipe
     "Deletes the vanity subdomain for a project, and reverts to using the project ref for routing.",
   ),
   Command.withShortDescription("Delete the vanity subdomain"),
+  withPermissions(
+    compose(
+      {
+        operations: [{ operationId: "v1-deactivate-vanity-subdomain-config", kind: "required" }],
+      },
+      projectRefPicker,
+      linkedProjectCache,
+    ),
+  ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // An invalid `-o` value must win over a missing `--experimental` flag, so this

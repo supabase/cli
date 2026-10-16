@@ -1,8 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
   VALID_REF,
@@ -12,6 +12,11 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import { ssoRemove } from "./remove.handler.ts";
@@ -23,6 +28,8 @@ const PROVIDER = {
   saml: { entity_id: "https://example.com" },
   domains: [{ domain: "example.com" }],
 };
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const tempRoot = useTempWorkdir("supabase-sso-remove-int-");
 
@@ -144,6 +151,7 @@ describe("sso remove integration", () => {
         `/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
       );
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
+      assertPermissionDrift({ command: "sso remove", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -176,10 +184,16 @@ describe("sso remove integration", () => {
   });
 
   it.effect("fires cli_upgrade_suggested when gated on 4xx", () => {
-    const { layer, analytics } = setup({ status: 404, body: {}, upgradeGate: "gated" });
+    const { layer, analytics, api } = setup({ status: 404, body: {}, upgradeGate: "gated" });
     return Effect.gen(function* () {
       yield* Effect.exit(ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }));
       expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(true);
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+        "GET https://api.supabase.com/v1/organizations/acme/entitlements",
+      ]);
+      assertPermissionDrift({ command: "sso remove", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -230,6 +244,48 @@ describe("sso remove integration", () => {
     return Effect.gen(function* () {
       yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
       expect(out.messages.some((m) => m.type === "success")).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists the picker's projects, removes the provider and fills the real cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.url === "https://api.supabase.com/v1/projects") {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (request.url === `https://api.supabase.com/v1/projects/${VALID_REF}`) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        return Effect.succeed(jsonResponse(request, 200, PROVIDER));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      tty: mockTty({ stdinIsTty: true }),
+      linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({ command: "sso remove", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 

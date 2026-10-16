@@ -91,7 +91,7 @@ export const dbConfigLinked = block("db-config", linkedEntries);
 /**
  * `DbConfigResolver` on the linked path; `--local` and `--db-url` make no API calls. Commands
  * include it with `withDbTarget`. The container retry that `db dump`, `db pull` and
- * `db remote commit` run is {@link dbConfigPoolerFallback}; `gen types --project-id` fetches the
+ * `db remote commit` run is {@link dbConfigPoolerFallback}; `gen types` fetches the
  * pooler config without `--project-ref`, so that command declares its own entry.
  */
 export const dbConfig = block(
@@ -102,38 +102,54 @@ export const dbConfig = block(
   })),
 );
 
-/**
- * `DbConfigResolver.resolvePoolerFallback`, the pooler retry after a linked dump, declarative export
- * or pull diff fails with an IPv6 connectivity error against a direct host the CLI could reach.
- */
-export const dbConfigPoolerFallback = block("db-config-pooler-fallback", [
+const poolerFallbackEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
   {
     operationId: "v1-get-pooler-config",
     kind: "required",
-    when: [{ dbTarget: ["linked"] }],
     context:
-      "a linked dump, declarative export or pull diff fails with an IPv6 connectivity error against the direct database host, and there is no usable saved supabase/.temp/pooler-url",
+      "the command's database work fails with an IPv6 connectivity error against the direct database host, and there is no usable saved supabase/.temp/pooler-url",
   },
   {
     operationId: "v1-create-login-role",
     kind: "required",
-    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    when: [{ flag: "password", present: false }],
     context:
-      "the same retry, and no database password supplied by the command (an empty one still mints a login role) or set in SUPABASE_DB_PASSWORD or the project .env",
+      "the same retry, and no database password supplied by the command (an empty one still mints a login role) or set in SUPABASE_DB_PASSWORD or the project .env (an ad-hoc project ref ignores the last two)",
   },
   {
     operationId: "v1-list-all-network-bans",
     kind: "best-effort",
-    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    when: [{ flag: "password", present: false }],
     context: "the same retry, after three failed attempts to connect as the temporary login role",
   },
   {
     operationId: "v1-delete-network-bans",
     kind: "best-effort",
-    when: [{ dbTarget: ["linked"] }, { flag: "password", present: false }],
+    when: [{ flag: "password", present: false }],
     context: "the same retry, after three failed attempts to connect as the temporary login role",
   },
-]);
+];
+
+/**
+ * The same calls as {@link dbConfigPoolerFallback} without its target condition, for `gen types`,
+ * which picks its target from flag values.
+ */
+export const dbConfigPoolerFallbackLinked = block(
+  "db-config-pooler-fallback",
+  poolerFallbackEntries,
+);
+
+/**
+ * `DbConfigResolver.resolvePoolerFallback`, the pooler retry after a linked dump, declarative export
+ * or pull diff fails with an IPv6 connectivity error against a direct host the CLI could reach.
+ */
+export const dbConfigPoolerFallback = block(
+  "db-config-pooler-fallback",
+  poolerFallbackEntries.map((entry) => ({
+    ...entry,
+    when: [{ dbTarget: ["linked" as const] }, ...(entry.when ?? [])],
+  })),
+);
 
 const DIRECT_PORT = 5432;
 const TCP_PROBE_TIMEOUT = Duration.seconds(5);

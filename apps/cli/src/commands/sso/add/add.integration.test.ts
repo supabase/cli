@@ -1,10 +1,20 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Predicate, Stdio } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Predicate,
+  Schema,
+  Stdio,
+} from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
-import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
   DEFAULT_API_URL,
@@ -15,6 +25,11 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { ProfileFlag } from "../../../command-internal/global-flags.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
@@ -29,6 +44,8 @@ const RESPONSE_PROVIDER = {
   },
   domains: [{ domain: "example.com" }],
 };
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const tempRoot = useTempWorkdir("supabase-sso-add-int-");
 
@@ -52,6 +69,8 @@ interface SetupOpts {
    * carries a `--profile` the parser would have consumed.
    */
   profileFlag?: string;
+  /** The `SUPABASE_PROFILE` value `CommandSettings` captured. */
+  profileEnv?: string;
 }
 
 function jsonResponse(
@@ -144,7 +163,10 @@ function setup(opts: SetupOpts = {}) {
     },
   });
 
-  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const cliSettings = mockCommandSettings({
+    workdir: tempRoot.current,
+    profileEnvValue: Option.fromUndefinedOr(opts.profileEnv),
+  });
   const layer = Layer.mergeAll(
     buildTestRuntime({
       out,
@@ -215,6 +237,58 @@ describe("sso add integration", () => {
       expect(req).toBeDefined();
       expect(req?.url).toContain(`/v1/projects/${VALID_REF}/config/auth/sso/providers`);
       expect(req?.body).toHaveProperty("type", "saml");
+      assertPermissionDrift({ command: "sso add", requests: api.requests, exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists the projects for the picker and fills the linked-project cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.method === "GET" && request.url === `${DEFAULT_API_URL}/v1/projects`) {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (
+          request.method === "GET" &&
+          request.url === `${DEFAULT_API_URL}/v1/projects/${VALID_REF}`
+        ) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        return Effect.succeed(jsonResponse(request, 201, RESPONSE_PROVIDER));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings,
+        tty: mockTty({ stdinIsTty: true }),
+        linkedProjectCache: realLinkedProjectCache({
+          httpClient: api.httpClientLayer,
+          cliSettings,
+        }),
+      }),
+      Stdio.layerTest({ args: Effect.succeed(["sso", "add", "--type", "saml"]) }),
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* ssoAdd(defaultFlags);
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET ${DEFAULT_API_URL}/v1/projects`,
+        `POST ${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
+        `GET ${DEFAULT_API_URL}/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toContain(RESPONSE_PROVIDER.id);
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({ command: "sso add", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
@@ -901,10 +975,16 @@ describe("sso add integration", () => {
   });
 
   it.effect("fires cli_upgrade_suggested on 404 when entitlement is gated", () => {
-    const { layer, analytics } = setup({ status: 404, body: {}, upgradeGate: "gated" });
+    const { layer, analytics, api } = setup({ status: 404, body: {}, upgradeGate: "gated" });
     return Effect.gen(function* () {
       yield* Effect.exit(ssoAdd(defaultFlags));
       expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(true);
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `POST ${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
+        `GET ${DEFAULT_API_URL}/v1/projects/${VALID_REF}`,
+        `GET ${DEFAULT_API_URL}/v1/organizations/acme/entitlements`,
+      ]);
+      assertPermissionDrift({ command: "sso add", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1099,9 +1179,6 @@ describe("sso add integration", () => {
     return path;
   });
 
-  const withProfileEnv = <A, E, R>(value: string | undefined, body: Effect.Effect<A, E, R>) =>
-    withEnvVar("SUPABASE_PROFILE", value, body);
-
   it.effect(
     "profile emulation: --domains consuming --profile POSTs to the env profile's host, not the parsed file's",
     () =>
@@ -1111,6 +1188,7 @@ describe("sso add integration", () => {
         const { layer, api, cache } = setup({
           cliArgs: ["sso", "add", "--type", "saml", "--domains", "--profile", alternate],
           profileFlag: alternate,
+          profileEnv: envProfile,
         });
         return yield* Effect.gen(function* () {
           yield* ssoAdd(defaultFlags);
@@ -1121,7 +1199,7 @@ describe("sso add integration", () => {
           );
           expect(posts[0]?.body).toHaveProperty("domains", ["--profile"]);
           expect(cache.cachedApiUrl).toBe("http://reconciled.example");
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(envProfile, body));
+        }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1153,7 +1231,7 @@ describe("sso add integration", () => {
           expect(dump).toContain(`failed to read profile: Unsupported Config Type ""`);
         }
         expect(api.requests.length).toBe(0);
-      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -1172,7 +1250,7 @@ describe("sso add integration", () => {
         expect(posts[0]?.url).toBe(
           `http://second.example/v1/projects/${VALID_REF}/config/auth/sso/providers`,
         );
-      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+      }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1221,7 +1299,7 @@ describe("sso add integration", () => {
           ).toBe(false);
         }
         expect(api.requests.length).toBe(0);
-      }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -1241,7 +1319,7 @@ describe("sso add integration", () => {
           expect(posts[0]?.url).toBe(
             `${DEFAULT_API_URL}/v1/projects/${VALID_REF}/config/auth/sso/providers`,
           );
-        }).pipe(Effect.provide(layer), (body) => withProfileEnv(undefined, body));
+        }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(BunServices.layer)),
   );
 });

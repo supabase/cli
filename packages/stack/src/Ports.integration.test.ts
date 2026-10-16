@@ -451,7 +451,11 @@ it.live("reserveNativePort skips a port a wildcard listener already holds", () =
       // past the wildcard listener instead of merely missing it by chance.
       const key = keyWithFirstCandidate(blocked.port);
 
-      const reserved = yield* reserveNativePort(key, new Set());
+      const reserved = yield* reserveNativePort(key, {
+        excluded: new Set(),
+        claim: () => Effect.succeed(true),
+        claimScope: yield* Scope.Scope,
+      });
       expect(reserved.port).not.toBe(blocked.port);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
@@ -462,12 +466,18 @@ it.live("reserveNativePort excludes a port a previous attempt lost from the next
     Effect.gen(function* () {
       const key = `native-exclude-${randomUUID()}`;
       const firstScope = yield* Scope.make();
-      const first = yield* reserveNativePort(key, new Set()).pipe(
+      const claim = () => Effect.succeed(true);
+      const claimScope = yield* Scope.Scope;
+      const first = yield* reserveNativePort(key, { excluded: new Set(), claim, claimScope }).pipe(
         Effect.provideService(Scope.Scope, firstScope),
       );
       yield* Scope.close(firstScope, Exit.void);
 
-      const second = yield* reserveNativePort(key, new Set([first.port]));
+      const second = yield* reserveNativePort(key, {
+        excluded: new Set([first.port]),
+        claim,
+        claimScope,
+      });
       expect(second.port).not.toBe(first.port);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
@@ -696,6 +706,207 @@ it.live("a pinned port inside the native backend range names the range and the e
 
       expect(failure.message).toContain("db:sql");
       expect(failure.message).toContain("native service backends");
+    }),
+  ).pipe(withRegistry),
+);
+
+const randomNativePort = () =>
+  nativePortBase + (Math.abs(Hash.string(randomUUID())) % nativePortSpan);
+
+type NativeClaim = (port: number) => Effect.Effect<boolean, PortError, Scope.Scope>;
+
+/** Two registered stacks; any registry row either leaves behind is swept when the test scope closes. */
+const twoNativeStacks = Effect.gen(function* () {
+  const stacks = yield* twoProjects;
+  yield* Effect.addFinalizer(() =>
+    Effect.forEach([stacks.a, stacks.b], (id) =>
+      stacks.registry.releaseStack(stacks.stateRoot, id),
+    ).pipe(Effect.ignore),
+  );
+  return stacks;
+});
+
+const closeableScope = Effect.acquireRelease(Scope.make(), (scope) =>
+  Scope.close(scope, Exit.void),
+);
+
+/** Takes the first random native port `acquire` gets, tolerating other test files holding ports. */
+const acquireFreeNativePort = <E, R>(acquire: (port: number) => Effect.Effect<boolean, E, R>) =>
+  Effect.gen(function* () {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const port = randomNativePort();
+      if (yield* acquire(port)) return port;
+    }
+    return yield* Effect.die("No native port was free for the fixture");
+  });
+
+/**
+ * Reserves a backend port the way `ProcessRecipe` does: the placeholder closes right before the
+ * backend spawns, while the claim stays open for as long as the backend runs.
+ */
+const reserveForBackend = Effect.fn(function* (key: string, claim: NativeClaim) {
+  const claimScope = yield* closeableScope;
+  const placeholderScope = yield* closeableScope;
+  const reserved = yield* reserveNativePort(key, {
+    excluded: new Set(),
+    claim,
+    claimScope,
+  }).pipe(Scope.provide(placeholderScope));
+  yield* Scope.close(placeholderScope, Exit.void);
+  return reserved.port;
+});
+
+it.live(
+  "a native port whose placeholder closed while its backend starts is not handed to another stack",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { state, ports, a, b } = yield* twoNativeStacks;
+        yield* state.acquireLease(a);
+        const keyA = `native-claim-${randomUUID()}`;
+        const portA = yield* reserveForBackend(keyA, (port) => ports.claimNative(a, keyA, port));
+
+        const keyB = keyWithFirstCandidate(portA);
+        const reservedB = yield* reserveNativePort(keyB, {
+          excluded: new Set(),
+          claim: (port) => ports.claimNative(b, keyB, port),
+          claimScope: yield* Scope.Scope,
+        });
+
+        expect(reservedB.port).not.toBe(portA);
+      }),
+    ).pipe(withRegistry),
+);
+
+it.live("two endpoints of one stack that start at the same native port get distinct ports", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { ports, a } = yield* twoNativeStacks;
+      const keyOne = `native-claim-${randomUUID()}`;
+      const portOne = yield* reserveForBackend(keyOne, (port) =>
+        ports.claimNative(a, keyOne, port),
+      );
+
+      const keyTwo = keyWithFirstCandidate(portOne);
+      const reservedTwo = yield* reserveNativePort(keyTwo, {
+        excluded: new Set(),
+        claim: (port) => ports.claimNative(a, keyTwo, port),
+        claimScope: yield* Scope.Scope,
+      });
+
+      expect(reservedTwo.port).not.toBe(portOne);
+    }),
+  ).pipe(withRegistry),
+);
+
+it.live("a candidate that cannot be bound is not left claimed for another stack", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { state, ports, a, b } = yield* twoNativeStacks;
+      yield* state.acquireLease(a);
+      const blocked = yield* bindNativeWildcard();
+      yield* Effect.addFinalizer(() =>
+        Effect.callback<void>((resume) => {
+          blocked.server.close(() => resume(Effect.void));
+        }),
+      );
+      const key = keyWithFirstCandidate(blocked.port);
+
+      const reserved = yield* reserveNativePort(key, {
+        excluded: new Set(),
+        claim: (port) => ports.claimNative(a, key, port),
+        claimScope: yield* Scope.Scope,
+      });
+
+      expect(reserved.port).not.toBe(blocked.port);
+      expect(yield* Effect.scoped(ports.claimNative(b, "other", blocked.port))).toBe(true);
+    }),
+  ).pipe(withRegistry),
+);
+
+it.live("reserveNativePort fails on the first claim error rather than hand out a port", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const key = `native-claim-${randomUUID()}`;
+      let claims = 0;
+
+      const failure = yield* reserveNativePort(key, {
+        excluded: new Set(),
+        claim: () =>
+          Effect.suspend(() => {
+            claims++;
+            return Effect.fail(new PortError({ key, message: "registry unavailable" }));
+          }),
+        claimScope: yield* Scope.Scope,
+      }).pipe(Effect.flip);
+
+      expect(failure).toBeInstanceOf(PortError);
+      expect(failure.message).toContain("registry unavailable");
+      expect(claims).toBe(1);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("closing a native port claim frees the port for another running stack", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { state, ports, a, b } = yield* twoNativeStacks;
+      yield* state.acquireLease(a);
+      const claimScope = yield* closeableScope;
+      const port = yield* acquireFreeNativePort((candidate) =>
+        ports.claimNative(a, "api", candidate),
+      ).pipe(Scope.provide(claimScope));
+
+      const whileHeld = yield* Effect.scoped(ports.claimNative(b, "api", port));
+      yield* Scope.close(claimScope, Exit.void);
+      const afterClose = yield* Effect.scoped(ports.claimNative(b, "api", port));
+
+      expect(whileHeld).toBe(false);
+      expect(afterClose).toBe(true);
+    }),
+  ).pipe(withRegistry),
+);
+
+for (const scenario of [
+  { name: "a stack that is registered but has no running owner", registered: true },
+  { name: "a stack whose registration is gone", registered: false },
+] as const) {
+  it.live(`a native port claim left by ${scenario.name} is taken over`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { ports, registry, stateRoot, a, b } = yield* twoNativeStacks;
+        const holder = scenario.registered ? a : `native-ghost-${randomUUID()}`;
+        yield* Effect.addFinalizer(() =>
+          registry.releaseStack(stateRoot, holder).pipe(Effect.ignore),
+        );
+        const port = yield* acquireFreeNativePort((candidate) =>
+          registry
+            .reserve(stateRoot, holder, `native:left-behind@${candidate}`, candidate)
+            .pipe(Effect.map((taken) => taken === undefined)),
+        );
+
+        const claimed = yield* Effect.scoped(ports.claimNative(b, "api", port));
+
+        expect(claimed).toBe(true);
+      }),
+    ).pipe(withRegistry),
+  );
+}
+
+it.live("a native port claim this process never made for the same stack is taken over", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { ports, registry, stateRoot, a } = yield* twoNativeStacks;
+      const key = "api";
+      const port = yield* acquireFreeNativePort((candidate) =>
+        registry
+          .reserve(stateRoot, a, `native:${key}@${candidate}`, candidate)
+          .pipe(Effect.map((taken) => taken === undefined)),
+      );
+
+      const claimed = yield* Effect.scoped(ports.claimNative(a, key, port));
+
+      expect(claimed).toBe(true);
     }),
   ).pipe(withRegistry),
 );

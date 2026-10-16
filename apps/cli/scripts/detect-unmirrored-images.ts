@@ -64,11 +64,36 @@ export async function partitionUnmirroredImages(
   };
 }
 
+/**
+ * Interprets a `docker buildx imagetools inspect` result. Only a registry "not found" means the
+ * image is unmirrored; any other failure (auth, rate limit, network) throws, so a registry outage
+ * fails detection instead of re-pushing every image.
+ */
+export function inspectResultIsMirrored(
+  target: string,
+  exit: number | NodeJS.Signals | null,
+  stderr: string,
+): boolean {
+  if (exit === 0) {
+    return true;
+  }
+  if (stderr.trimEnd().endsWith(": not found")) {
+    return false;
+  }
+  throw new Error(`could not inspect ${target} (exit ${exit}): ${stderr.trim()}`);
+}
+
 function imageExistsOnMirror(target: string): Promise<boolean> {
   const result = spawnSync("docker", ["buildx", "imagetools", "inspect", target], {
-    stdio: "ignore",
+    encoding: "utf8",
+    stdio: ["ignore", "ignore", "pipe"],
   });
-  return Promise.resolve(result.status === 0);
+  if (result.error) {
+    throw result.error;
+  }
+  return Promise.resolve(
+    inspectResultIsMirrored(target, result.status ?? result.signal, result.stderr),
+  );
 }
 
 if (import.meta.main) {

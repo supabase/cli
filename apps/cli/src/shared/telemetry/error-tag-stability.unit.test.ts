@@ -187,7 +187,7 @@ describe("error tag stability", () => {
     ),
   );
 
-  it.live("keeps every Data.TaggedError tag literal identical to the committed snapshot", () =>
+  it.effect("keeps every Data.TaggedError tag literal identical to the committed snapshot", () =>
     Effect.gen(function* () {
       const currentTagSet = new Set(productionDeclarations.map((declaration) => declaration.tag));
 

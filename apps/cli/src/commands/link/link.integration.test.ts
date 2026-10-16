@@ -23,10 +23,13 @@ import {
   mockAnalytics,
   mockContextualAnalytics,
   mockOutput,
+  mockTty,
 } from "../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
+  mockCommandPlatformApi,
   statusCodeFailure,
   transportFailure,
   mockCommandSettings,
@@ -35,6 +38,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
 import { link } from "./link.handler.ts";
 import { linkHandler } from "./link.command.ts";
 import type { LinkFlags } from "./link.command.ts";
@@ -1520,4 +1524,158 @@ describe("link integration", () => {
       },
     );
   });
+});
+
+// Records the Management API requests `link` makes, which the service-level mock above cannot.
+describe("link permissions", () => {
+  const API = "https://api.supabase.com";
+
+  function setupRecording(
+    opts: {
+      readonly selectResponses?: ReadonlyArray<string>;
+    } = {},
+  ) {
+    const out = mockOutput({ format: "text", promptSelectResponses: opts.selectResponses });
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.sync(() => {
+          const { pathname } = new URL(request.url);
+          if (request.method !== "GET") {
+            return jsonResponse(request, 404, { message: "unexpected request" });
+          }
+          if (pathname === "/v1/projects") {
+            return jsonResponse(request, 200, [HEALTHY_PROJECT]);
+          }
+          const match = /^\/v1\/projects\/([a-z]{20})(\/.*)?$/.exec(pathname);
+          if (match === null) {
+            // Tenant service probes: unreachable, which the link tolerates.
+            return jsonResponse(request, 404, {});
+          }
+          const [, ref, rest = ""] = match;
+          if (rest === "") {
+            return ref === BRANCH_PROJECT_REF
+              ? jsonResponse(request, 404, { message: "not found" })
+              : jsonResponse(request, 200, { ...HEALTHY_PROJECT, id: ref, ref });
+          }
+          if (rest === "/branches") return jsonResponse(request, 200, [LINK_BRANCH]);
+          if (rest === "/api-keys") return jsonResponse(request, 200, SERVICE_KEYS);
+          if (rest === "/config/storage") {
+            return jsonResponse(request, 200, {
+              migrationVersion: "2026-01-01-000000",
+            });
+          }
+          if (rest === "/config/database/pooler") {
+            return jsonResponse(request, 200, POOLER_PRIMARY);
+          }
+          return jsonResponse(request, 404, { message: "unexpected request" });
+        }),
+    });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings: mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      }),
+      tty: mockTty({ stdinIsTty: true }),
+    });
+    return { layer, api, out, workdir: tempRoot.current };
+  }
+
+  const managementCalls = (api: { requests: ReadonlyArray<{ method: string; url: string }> }) =>
+    api.requests
+      .filter(({ url }) => url.startsWith(API))
+      .map(({ method, url }) => `${method} ${url.slice(API.length)}`);
+
+  it.effect("links by --project-ref, reading the project, its keys, storage and the pooler", () => {
+    const { layer, api, workdir } = setupRecording();
+    return Effect.gen(function* () {
+      yield* link(flags());
+
+      expect(managementCalls(api)).toEqual([
+        `GET /v1/projects/${VALID_REF}`,
+        `GET /v1/projects/${VALID_REF}/api-keys`,
+        `GET /v1/projects/${VALID_REF}/config/storage`,
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+      ]);
+      expect(api.requests.find(({ url }) => url.endsWith("/api-keys"))?.urlParams).toContain(
+        "reveal=true",
+      );
+      expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
+      assertPermissionDrift({
+        command: "link",
+        activeFlags: { "project-ref": true, "skip-pooler": false },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists the projects for the picker when no ref is given on a TTY", () => {
+    const { layer, api } = setupRecording({ selectResponses: [VALID_REF] });
+    return Effect.gen(function* () {
+      yield* link(flags({ projectRef: Option.none() }));
+
+      expect(managementCalls(api)).toEqual([
+        "GET /v1/projects",
+        `GET /v1/projects/${VALID_REF}`,
+        `GET /v1/projects/${VALID_REF}/api-keys`,
+        `GET /v1/projects/${VALID_REF}/config/storage`,
+        `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+      ]);
+      assertPermissionDrift({
+        command: "link",
+        activeFlags: { "skip-pooler": false },
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("resolves a branch name through the linked parent's branch list", () => {
+    const { layer, api, workdir } = setupRecording();
+    return Effect.gen(function* () {
+      yield* writeLinkedParentRef(workdir, PARENT_REF);
+
+      yield* link(flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }));
+
+      expect(managementCalls(api)).toEqual([
+        `GET /v1/projects/${PARENT_REF}/branches`,
+        `GET /v1/projects/${BRANCH_PROJECT_REF}`,
+        `GET /v1/projects/${BRANCH_PROJECT_REF}/api-keys`,
+        `GET /v1/projects/${BRANCH_PROJECT_REF}/config/storage`,
+        `GET /v1/projects/${BRANCH_PROJECT_REF}/config/database/pooler`,
+      ]);
+      assertPermissionDrift({
+        command: "link",
+        activeFlags: { "skip-pooler": false },
+        requests: api.requests,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "verifies a cached parent against its branch list when linking a raw branch ref",
+    () => {
+      const { layer, api, workdir } = setupRecording();
+      return Effect.gen(function* () {
+        yield* writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(PARENT_REF));
+
+        yield* link(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
+
+        expect(managementCalls(api)).toEqual([
+          `GET /v1/projects/${BRANCH_PROJECT_REF}`,
+          `GET /v1/projects/${BRANCH_PROJECT_REF}/api-keys`,
+          `GET /v1/projects/${BRANCH_PROJECT_REF}/config/storage`,
+          `GET /v1/projects/${BRANCH_PROJECT_REF}/config/database/pooler`,
+          `GET /v1/projects/${PARENT_REF}/branches`,
+        ]);
+        assertPermissionDrift({
+          command: "link",
+          activeFlags: { "project-ref": true, "skip-pooler": false },
+          requests: api.requests,
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });

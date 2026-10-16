@@ -584,6 +584,7 @@ UnknownComputeSizeError
 UnlinkRefReadError
 UnlinkTempRemovalError
 UnsafeFunctionDownloadPathError
+UpgradeNoticeFetchError
 VanitySubdomainsActivateNetworkError
 VanitySubdomainsActivateUnexpectedStatusError
 VanitySubdomainsCheckNetworkError

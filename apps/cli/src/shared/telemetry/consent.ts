@@ -35,7 +35,7 @@ const decodeCurrentTelemetryConfigFile = Schema.decodeUnknownEffect(TelemetryCon
 const decodeLegacyTelemetryConfigFile = Schema.decodeUnknownEffect(
   Schema.fromJsonString(LegacyTelemetryConfigSchema),
 );
-const encodeTelemetryConfig = Schema.encodeUnknownSync(TelemetryConfigSchema);
+const encodeTelemetryConfig = Schema.encodeEffect(TelemetryConfigSchema);
 
 function encodePrettyJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -114,9 +114,8 @@ export const writeTelemetryConfig = Effect.fnUntraced(function* (
     Effect.succeed(tmpPath),
     (temporary) =>
       Effect.gen(function* () {
-        yield* fs.writeFileString(temporary, encodePrettyJson(encodeTelemetryConfig(config)), {
-          mode: 0o600,
-        });
+        const encoded = yield* encodeTelemetryConfig(config);
+        yield* fs.writeFileString(temporary, encodePrettyJson(encoded), { mode: 0o600 });
         yield* fs.rename(temporary, configPath).pipe(
           Effect.retry({
             schedule: retrySchedule,

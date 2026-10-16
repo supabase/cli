@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 import {
   makeComputeProject,
   setupCompute,
@@ -8,6 +8,12 @@ import {
   computeRoute,
   COMPUTE_PROJECT_REF,
 } from "../../../../../tests/helpers/compute.ts";
+import {
+  assertBlockDrift,
+  assertPermissionDrift,
+} from "../../../../../tests/helpers/permission-drift.ts";
+import { projectResponse } from "../../../../../tests/helpers/permission-real-layers.ts";
+import { computeRead } from "../../../../shared/compute/compute-api.ts";
 import {
   InvalidComputeNameError,
   ComputeNotDeployedError,
@@ -35,7 +41,7 @@ describe("compute status", () => {
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const repo = yield* project();
-      const { layer, out } = setupCompute({
+      const { layer, out, http } = setupCompute({
         workdir: repo.dir,
         routes: {
           [getRoute]: {
@@ -67,6 +73,61 @@ describe("compute status", () => {
         expect(stdout).toContain("2/3 ready, 3 live, 1 stale");
         expect(stdout).toContain(`https://${COMPUTE_PROJECT_REF}.supabase.co/compute/v1/api`);
         expect(stdout).toContain(path.join("supabase", "compute", "api"));
+        expect(http.routeKeys).toEqual([getRoute]);
+        assertPermissionDrift({
+          command: "compute status",
+          variant: { computeEnabled: true },
+          requests: http.driftRequests,
+          exact: true,
+        });
+        assertBlockDrift(computeRead, {
+          requests: http.driftRequests.filter(
+            (request) => new URL(request.url).pathname === computeRoute("/api"),
+          ),
+        });
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("picks the project, reads the compute and records the linked project", () =>
+    Effect.gen(function* () {
+      const repo = yield* project();
+      const { layer, out, http } = setupCompute({
+        workdir: repo.dir,
+        realLayers: true,
+        interactive: true,
+        promptSelectResponses: [COMPUTE_PROJECT_REF],
+        routes: {
+          "GET /v1/projects": { status: 200, body: [projectResponse(COMPUTE_PROJECT_REF)] },
+          [`GET /v1/projects/${COMPUTE_PROJECT_REF}`]: {
+            status: 200,
+            body: projectResponse(COMPUTE_PROJECT_REF),
+          },
+          [getRoute]: {
+            status: 200,
+            body: { data: computeResource({ name: "api", runtime: "node", imageVersion: "v3" }) },
+          },
+        },
+      });
+
+      return yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* computeStatus({ name: "api", projectRef: Option.none() });
+
+        expect(http.routeKeys).toEqual([
+          "GET /v1/projects",
+          getRoute,
+          `GET /v1/projects/${COMPUTE_PROJECT_REF}`,
+        ]);
+        expect(out.promptSelectCalls).toHaveLength(1);
+        expect(out.stdoutText).toContain("v3");
+        expect(yield* fs.exists(`${repo.dir}/supabase/.temp/linked-project.json`)).toBe(true);
+        assertPermissionDrift({
+          command: "compute status",
+          variant: { computeEnabled: true },
+          requests: http.driftRequests,
+          exact: true,
+        });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -265,7 +326,7 @@ describe("compute status", () => {
   it.effect("fails with `not deployed` and points at push", () =>
     Effect.gen(function* () {
       const repo = yield* project();
-      const { layer } = setupCompute({
+      const { layer, http } = setupCompute({
         workdir: repo.dir,
         routes: {
           [getRoute]: {
@@ -286,6 +347,12 @@ describe("compute status", () => {
         expect(error).toBeInstanceOf(ComputeNotDeployedError);
         const suggestion = error instanceof ComputeNotDeployedError ? error.suggestion : "";
         expect(suggestion).toContain("supabase compute push api");
+        expect(http.routeKeys).toEqual([getRoute]);
+        assertPermissionDrift({
+          command: "compute status",
+          variant: { computeEnabled: true },
+          requests: http.driftRequests,
+        });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );

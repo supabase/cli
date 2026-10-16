@@ -74,7 +74,8 @@ a narrow race against the pre-bind probe before a brand-new listener exists.
 Native backend ports (not publicly exposed) are reserved from 10000–19999, disjoint from the public
 auto range and below the OS ephemeral range on every supported platform; this range is not
 configurable, and a public port pinned inside it is rejected. A host whose ephemeral range has been widened to overlap it reintroduces the
-ephemeral-port race this reservation exists to avoid.
+ephemeral-port race this reservation exists to avoid. Each native backend port is also claimed in
+the same registry while its service runs.
 
 For a new stack, `--runtime auto` selects Docker when its engine answers, then Podman when its
 engine answers, then native on Linux x64/arm64 and macOS arm64. Each probe resolves the engine

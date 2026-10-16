@@ -1,6 +1,7 @@
 import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { dbBranchSwitch } from "./switch.handler.ts";
+import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const config = {
   branchName: Argument.String("branch name").pipe(
@@ -13,5 +14,6 @@ export type DbBranchSwitchFlags = CliCommand.Command.Config.Infer<typeof config>
 export const dbBranchSwitchCommand = Command.make("switch", config).pipe(
   Command.withDescription("Switch the active branch."),
   Command.withShortDescription("Switch the active branch"),
+  withPermissions({ status: "unmapped", reason: "go-delegated" }),
   Command.withHandler((flags) => dbBranchSwitch(flags)),
 );

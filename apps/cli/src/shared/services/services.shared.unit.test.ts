@@ -643,9 +643,11 @@ describe("services shared", () => {
 
   it.live("skips remote lookups for a malformed project ref", () =>
     Effect.gen(function* () {
+      const requests: Array<string> = [];
       const server = yield* serve({
         port: 0,
-        fetch() {
+        fetch(request) {
+          requests.push(request.url);
           throw new Error("no request should be made for a malformed project ref");
         },
       });
@@ -659,6 +661,7 @@ describe("services shared", () => {
       });
 
       expect(result).toEqual({});
+      expect(requests).toEqual([]);
     }),
   );
 

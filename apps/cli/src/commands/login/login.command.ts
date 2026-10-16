@@ -5,6 +5,9 @@ import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { loginRuntimeLayer } from "./login.layers.ts";
 import { login } from "./login.handler.ts";
+import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { compose } from "../../command-internal/command-permissions/model.ts";
+import { loginProfile } from "../../command-internal/login-api.layer.ts";
 
 const config = {
   token: Flag.String("token").pipe(
@@ -26,6 +29,9 @@ export type LoginFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const loginCommand = Command.make("login", config).pipe(
   Command.withDescription("Authenticate using an access token."),
   Command.withShortDescription("Authenticate using an access token"),
+  withPermissions(
+    compose({ operations: [], noApiEffectFlags: ["token", "name", "no-browser"] }, loginProfile),
+  ),
   Command.withHandler((flags) =>
     login(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),

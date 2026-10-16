@@ -5,6 +5,7 @@ import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { issueBug, issueDocs, issueFeature } from "./issue.handler.ts";
+import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 
 const issueNoBrowserFlag = Flag.Boolean("no-browser").pipe(
   Flag.withDescription("Print the issue form URL without opening a browser."),
@@ -77,6 +78,20 @@ const issueBugCommand = Command.make("bug", issueBugConfig).pipe(
       description: "Print a prefilled issue URL with a crash report ID",
     },
   ]),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: [
+      "area",
+      "command",
+      "actual-output",
+      "expected-behavior",
+      "reproduce",
+      "crash-report-id",
+      "docker-services",
+      "additional-context",
+      "no-browser",
+    ],
+  }),
   Command.withHandler((flags) =>
     issueBug(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
@@ -94,6 +109,18 @@ const issueFeatureCommand = Command.make("feature", issueFeatureConfig).pipe(
       description: "Open a prefilled feature request",
     },
   ]),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: [
+      "existing-issues",
+      "area",
+      "problem",
+      "proposed-solution",
+      "alternatives",
+      "additional-context",
+      "no-browser",
+    ],
+  }),
   Command.withHandler((flags) =>
     issueFeature(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
@@ -111,6 +138,17 @@ const issueDocsCommand = Command.make("docs", issueDocsConfig).pipe(
       description: "Open a prefilled documentation issue",
     },
   ]),
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: [
+      "link",
+      "issue-type",
+      "problem",
+      "improvement",
+      "additional-context",
+      "no-browser",
+    ],
+  }),
   Command.withHandler((flags) =>
     issueDocs(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),

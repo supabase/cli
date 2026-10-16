@@ -1,19 +1,27 @@
 import { type V1ListAllNetworkBansOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
   buildTestRuntime,
+  jsonResponse,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import {
+  projectResponse,
+  realLinkedProjectCache,
+} from "../../../../tests/helpers/permission-real-layers.ts";
 import { networkBansGet } from "./get.handler.ts";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const SAMPLE_BANS: typeof V1ListAllNetworkBansOutput.Type = {
   banned_ipv4_addresses: ["192.168.0.1", "192.168.0.2"],
@@ -185,6 +193,83 @@ describe("network-bans get integration", () => {
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.method).toBe("POST");
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/network-bans/retrieve`);
+      assertPermissionDrift({ command: "network-bans get", requests: api.requests, exact: true });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lists the picker's projects, the bans and fills the real linked-project cache", () => {
+    const out = mockOutput({ promptSelectResponses: [VALID_REF] });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.url === "https://api.supabase.com/v1/projects") {
+          return Effect.succeed(jsonResponse(request, 200, [projectResponse(VALID_REF)]));
+        }
+        if (request.url === `https://api.supabase.com/v1/projects/${VALID_REF}`) {
+          return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
+        }
+        return Effect.succeed(jsonResponse(request, 201, SAMPLE_BANS));
+      },
+    });
+    const cliSettings = mockCommandSettings({
+      workdir: tempRoot.current,
+      projectId: Option.none(),
+    });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      tty: mockTty({ stdinIsTty: true }),
+      linkedProjectCache: realLinkedProjectCache({
+        httpClient: api.httpClientLayer,
+        cliSettings,
+      }),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
+      expect(yield* fs.exists(cachePath)).toBe(false);
+      yield* networkBansGet({ projectRef: Option.none() });
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        "GET https://api.supabase.com/v1/projects",
+        `POST https://api.supabase.com/v1/projects/${VALID_REF}/network-bans/retrieve`,
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
+      ]);
+      expect(out.stdoutText).toBe('[\n  "192.168.0.1",\n  "192.168.0.2"\n]\n');
+      expect(yield* decodeJson(yield* fs.readFileString(cachePath))).toMatchObject({
+        ref: VALID_REF,
+      });
+      assertPermissionDrift({
+        command: "network-bans get",
+        requests: api.requests,
+        exact: true,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("ignores an empty --project-ref and resolves the saved ref without the picker", () => {
+    const out = mockOutput();
+    const api = mockCommandPlatformApi({ response: { status: 201, body: SAMPLE_BANS } });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings: mockCommandSettings({ workdir: tempRoot.current, projectId: Option.none() }),
+      tty: mockTty({ stdinIsTty: true }),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(`${tempRoot.current}/supabase/.temp`, { recursive: true });
+      yield* fs.writeFileString(`${tempRoot.current}/supabase/.temp/project-ref`, VALID_REF);
+      yield* networkBansGet({ projectRef: Option.some("") });
+      expect(out.promptSelectCalls).toHaveLength(0);
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `POST https://api.supabase.com/v1/projects/${VALID_REF}/network-bans/retrieve`,
+      ]);
+      assertPermissionDrift({
+        command: "network-bans get",
+        activeFlags: { "project-ref": "" },
+        requests: api.requests,
+        exact: true,
+      });
     }).pipe(Effect.provide(layer));
   });
 

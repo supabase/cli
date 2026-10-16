@@ -6,6 +6,7 @@ import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
+import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { unlink } from "./unlink.handler.ts";
@@ -30,6 +31,7 @@ const unlinkRuntimeLayer = Layer.mergeAll(
 export const unlinkCommand = Command.make("unlink").pipe(
   Command.withDescription("Unlink a Supabase project."),
   Command.withShortDescription("Unlink a Supabase project"),
+  withPermissions({ operations: [] }),
   Command.withHandler(() => unlink().pipe(withCommandTelemetry(), withJsonErrorHandling)),
   Command.provide(unlinkRuntimeLayer),
 );
