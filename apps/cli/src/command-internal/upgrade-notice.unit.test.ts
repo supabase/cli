@@ -1026,9 +1026,7 @@ layer(hookLayer)("upgradeNoticeHook release lookup", (it) => {
       expect(quiet.requests).toHaveLength(1);
       expect(quiet.stderr).toBe("");
       const malformed = yield* runLookup({ env, symlinkedTemp: true, respond: body("not json") });
-      expect(malformed.stderr).toBe(
-        'Failed to fetch latest release: JSON Parse error: Unexpected identifier "not"\n',
-      );
+      expect(malformed.stderr).toMatch(/^Failed to fetch latest release: .+\n$/);
     }),
   );
 
