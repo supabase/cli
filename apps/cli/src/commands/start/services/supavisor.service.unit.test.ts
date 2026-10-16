@@ -34,7 +34,7 @@ describe("buildSupavisorStartCmd", () => {
 });
 
 describe("buildSupavisorContainerSpec", () => {
-  test("Cmd only ever references the fixed /app/pooler_tenant.exs path, with no Entrypoint override (start.go:1201-1237)", () => {
+  test("Cmd only ever references the fixed /app/pooler_tenant.exs path, with no Entrypoint override", () => {
     const spec = buildSupavisorContainerSpec(base);
     expect(spec.entrypoint).toBeUndefined();
     expect(spec.cmd).toEqual([
@@ -44,7 +44,7 @@ describe("buildSupavisorContainerSpec", () => {
     ]);
   });
 
-  test("carries the rendered pooler.exs tenant script as a secretFile bind-mounted at /app/pooler_tenant.exs, not a post-start docker exec (start.go:1201-1237)", () => {
+  test("carries the rendered pooler.exs tenant script as a secretFile bind-mounted at /app/pooler_tenant.exs, not a post-start docker exec", () => {
     const spec = buildSupavisorContainerSpec(base);
     expect(spec.secretFiles).toHaveLength(1);
     const tenantFile = spec.secretFiles?.[0];
@@ -66,12 +66,12 @@ describe("buildSupavisorContainerSpec", () => {
     expect(cmdText).not.toContain("db_password");
   });
 
-  test("uses the hardcoded pooler-dev tenant id, not a config-supplied value (config.go:465)", () => {
+  test("uses the hardcoded pooler-dev tenant id, not a config-supplied value", () => {
     const spec = buildSupavisorContainerSpec(base);
     expect(spec.secretFiles?.[0]?.content).toContain('"external_id" => "pooler-dev"');
   });
 
-  test("binds the transaction port (6543) to the host when pool_mode is transaction (start.go:1194-1200)", () => {
+  test("binds the transaction port (6543) to the host when pool_mode is transaction", () => {
     const spec = buildSupavisorContainerSpec({ ...base, poolMode: "transaction" });
     expect(spec.ports).toEqual([{ hostPort: "54329", containerPort: "6543" }]);
     expect(spec.exposedPorts).toEqual([
@@ -81,12 +81,12 @@ describe("buildSupavisorContainerSpec", () => {
     ]);
   });
 
-  test("binds the session port (5432) to the host when pool_mode is session (start.go:1198-1199)", () => {
+  test("binds the session port (5432) to the host when pool_mode is session", () => {
     const spec = buildSupavisorContainerSpec({ ...base, poolMode: "session" });
     expect(spec.ports).toEqual([{ hostPort: "54329", containerPort: "5432" }]);
   });
 
-  test("sets the hardcoded local-dev secrets and both JWT env vars (start.go:1219-1232)", () => {
+  test("sets the hardcoded local-dev secrets and both JWT env vars", () => {
     const spec = buildSupavisorContainerSpec(base);
     expect(spec.env).toMatchObject({
       PORT: "4000",
@@ -105,7 +105,7 @@ describe("buildSupavisorContainerSpec", () => {
     });
   });
 
-  test("builds the remaining identity/network fields (start.go:1215-1263)", () => {
+  test("builds the remaining identity/network fields", () => {
     const spec = buildSupavisorContainerSpec(base);
     expect(spec.image).toBe("supabase/supavisor:2.0.0");
     expect(spec.containerName).toBe("supabase_pooler_proj");

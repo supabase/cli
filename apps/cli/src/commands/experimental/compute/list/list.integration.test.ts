@@ -10,6 +10,7 @@ import {
 } from "../../../../../tests/helpers/compute.ts";
 import { assertPermissionDrift } from "../../../../../tests/helpers/permission-drift.ts";
 import { projectResponse } from "../../../../../tests/helpers/permission-real-layers.ts";
+import { resolveWorkdir } from "../../../../config/command-settings.layer.ts";
 import { ProjectRefNotLinkedError } from "../../../../config/project-ref.errors.ts";
 import { ComputeEnvNotSupportedError } from "../compute.errors.ts";
 import {
@@ -332,12 +333,12 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.effect("serialises the inventory for the Go -o flag", () =>
+  it.effect("serialises the inventory for the -o flag", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "json",
+        outputFlag: "json",
         routes: {
           [listRoute]: {
             status: 200,
@@ -367,7 +368,7 @@ describe("compute list", () => {
       const repo = yield* project();
       const { layer, http } = setupCompute({
         workdir: repo.dir,
-        goOutput: "env",
+        outputFlag: "env",
         routes: { [listRoute]: { status: 200, body: { data: [] } } },
       });
 
@@ -614,7 +615,7 @@ describe("compute list", () => {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "toml",
+        outputFlag: "toml",
         routes: {
           [listRoute]: {
             status: 200,
@@ -639,7 +640,7 @@ describe("compute list", () => {
       const repo = yield* project();
       const { layer, out } = setupCompute({
         workdir: repo.dir,
-        goOutput: "yaml",
+        outputFlag: "yaml",
         routes: {
           [listRoute]: {
             status: 200,
@@ -663,12 +664,12 @@ describe("compute list", () => {
   // other resource command, including this one, renders text for them too.
   it.effect.each(["pretty", "table", "csv"] as const)(
     "renders text rather than TOML for -o %s",
-    (goOutput) =>
+    (outputFlag) =>
       Effect.gen(function* () {
         const repo = yield* project();
         const { layer, out } = setupCompute({
           workdir: repo.dir,
-          goOutput,
+          outputFlag,
           routes: {
             [listRoute]: {
               status: 200,
@@ -699,8 +700,6 @@ describe("compute list", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  // The default workdir resolution only probes config.toml, so a config.json-only
-  // project invoked from a subdirectory relies on this second climb to be found.
   it.effect(
     "discovers a config.json-only project's [compute.*] entry from a subdirectory when --workdir is defaulted",
     () =>
@@ -718,9 +717,10 @@ describe("compute list", () => {
         const sub = path.join(created.dir, "nested", "dir");
         yield* fs.makeDirectory(sub, { recursive: true });
 
+        const resolved = yield* resolveWorkdir(Option.none(), Option.none(), sub, path);
         const { layer, out } = setupCompute({
-          workdir: sub,
-          explicitWorkdir: false,
+          workdir: resolved.workdir,
+          explicitWorkdir: resolved.explicit,
           routes: { [listRoute]: { status: 200, body: { data: [] } } },
         });
 

@@ -27,7 +27,6 @@ import {
   cliConfigValueSourceAt,
   isObject,
   type LoadedCliConfig,
-  type InternalLoadCliConfigOptions,
 } from "./config-document.ts";
 import {
   configJsonPath,
@@ -253,7 +252,7 @@ describe("config io", () => {
     ).toThrow();
   });
 
-  test("only validates the highest-priority enabled sms provider during decode (Go switch parity)", () => {
+  test("only validates the highest-priority enabled sms provider during decode", () => {
     // Providers are validated in a fixed priority order (twilio, twilio_verify, messagebird,
     // textlocal, vonage); only the first enabled one is checked, so a complete, higher-priority
     // `twilio` block plus an incomplete, lower-priority `messagebird` block must decode fine.
@@ -304,7 +303,7 @@ describe("config io", () => {
     ).toThrow();
   });
 
-  test("decodes an unmodeled email template/notification name (Go map[string] parity)", () => {
+  test("decodes an unmodeled email template/notification name", () => {
     // `auth.email.template`/`notification` are open maps with no key restriction, and every
     // entry is validated regardless of name — an unrecognized key like
     // `[auth.email.template.custom]` is a legitimate config shape, not a decode error.
@@ -459,8 +458,6 @@ stack = true
     }
   });
 
-  // Go-parity callers (legacy `status`/`stop`) pass `tomlOnly: true` so a stray `config.json`
-  // never wins over `config.toml`.
   test("loads TOML instead of JSON when tomlOnly is set, even if JSON exists", async () => {
     const cwd = makeTempProject();
     const jsonPath = await runConfigEffect(configJsonPath(cwd));
@@ -1077,7 +1074,7 @@ enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
     ["f", false],
     ["FALSE", false],
   ] as const)(
-    "resolves env() on boolean fields using Go's strconv.ParseBool acceptance set (%s -> %s)",
+    "resolves env() on boolean fields using the boolean acceptance set (%s -> %s)",
     async (envValue, expected) => {
       const cwd = makeTempProject();
 
@@ -1101,9 +1098,9 @@ enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
     },
   );
 
-  test("splits a comma-separated string literal into a slice (Go's StringToSliceHookFunc)", async () => {
+  test("splits a comma-separated string literal into a slice", async () => {
     // A plain string value for a `[]string` field like `additional_redirect_urls` decodes fine
-    // when `goViperCompat` is set, not just via `env(...)`.
+    // when `cliCompat` is set, not just via `env(...)`.
     const cwd = makeTempProject();
 
     try {
@@ -1117,7 +1114,7 @@ additional_redirect_urls = "http://a,http://b"
 `,
       );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { goViperCompat: true }));
+      const loaded = await runConfigEffect(loadCliConfig(cwd, { cliCompat: true }));
       expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -1139,7 +1136,7 @@ additional_redirect_urls = "env(SUPABASE_REDIRECT_URLS)"
       );
       await writeFile(join(cwd, "supabase", ".env"), "SUPABASE_REDIRECT_URLS=http://a,http://b\n");
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { goViperCompat: true }));
+      const loaded = await runConfigEffect(loadCliConfig(cwd, { cliCompat: true }));
       expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -1160,7 +1157,7 @@ additional_redirect_urls = ""
 `,
       );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { goViperCompat: true }));
+      const loaded = await runConfigEffect(loadCliConfig(cwd, { cliCompat: true }));
       expect(loaded!.config.auth.additional_redirect_urls).toEqual([]);
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -1188,7 +1185,7 @@ additional_redirect_urls = ["http://a", "http://b"]
     }
   });
 
-  test("preserves env() literals on string fields when the var is unset (Go parity)", async () => {
+  test("preserves env() literals on string fields when the var is unset", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -1209,7 +1206,7 @@ jwt_secret = "env(MISSING_SECRET)"
     }
   });
 
-  test("preserves env() literals on string fields when the var is set but empty (Go parity)", async () => {
+  test("preserves env() literals on string fields when the var is set but empty", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -1290,9 +1287,9 @@ port = "env(SUPABASE_DB_PORT_TEST)"
     }
   });
 
-  // Pins pre-Go-parity default behavior, so `packages/stack` and the functions manifest (which
-  // don't pass `goViperCompat`) don't inherit the Go-parity CLI's stricter/wider semantics.
-  test("loads successfully with a duplicate [remotes.*] project_id when goViperCompat is omitted", async () => {
+  // Pins the strict default so callers that don't pass `cliCompat` don't inherit the CLI's
+  // config-loading semantics.
+  test("loads successfully with a duplicate [remotes.*] project_id when cliCompat is omitted", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -1345,7 +1342,7 @@ runtime = "deno"
     }
   });
 
-  test("loads successfully with an invalid [remotes.*] project_id format when goViperCompat is omitted", async () => {
+  test("loads successfully with an invalid [remotes.*] project_id format when cliCompat is omitted", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -1367,7 +1364,7 @@ project_id = "not-a-ref"
     }
   });
 
-  test("does not split a comma-separated string literal for an array field when goViperCompat is omitted", async () => {
+  test("does not split a comma-separated string literal for an array field when cliCompat is omitted", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -1398,34 +1395,7 @@ additional_redirect_urls = "http://a,http://b"
     }
   });
 
-  test("does not warn on a deprecated provider (but still strips it) when goViperCompat is omitted", async () => {
-    const cwd = makeTempProject();
-    const warnings: Array<string> = [];
-    const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-      warnings.push(args.map((a) => String(a)).join(" "));
-    });
-
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "abc123"
-
-[auth.external.slack]
-enabled = true
-`,
-      );
-
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect("slack" in loaded!.config.auth.external).toBe(false);
-      expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
-    } finally {
-      errorSpy.mockRestore();
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
-
-  test("does not resolve a lowercase-named env() reference when goViperCompat is omitted", async () => {
+  test("does not resolve a lowercase-named env() reference when cliCompat is omitted", async () => {
     const previous = process.env.lowercase_ref_default_off_test;
     process.env.lowercase_ref_default_off_test = "lowercase-ref-value";
     const cwd = makeTempProject();
@@ -1449,7 +1419,7 @@ enabled = true
     }
   });
 
-  test("resolves a lowercase-named env() reference when goViperCompat is true", async () => {
+  test("resolves a lowercase-named env() reference when cliCompat is true", async () => {
     const previous = process.env.lowercase_ref_default_on_test;
     process.env.lowercase_ref_default_on_test = "lowercase-ref-value";
     const cwd = makeTempProject();
@@ -1461,7 +1431,7 @@ enabled = true
         `project_id = "env(lowercase_ref_default_on_test)"\n`,
       );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { goViperCompat: true }));
+      const loaded = await runConfigEffect(loadCliConfig(cwd, { cliCompat: true }));
       expect(loaded!.config.project_id).toBe("lowercase-ref-value");
     } finally {
       if (previous === undefined) {
@@ -1938,7 +1908,7 @@ project_id = "dupref"
 `);
     try {
       const message = await Effect.runPromise(
-        loadCliConfig(cwd, { goViperCompat: true }).pipe(
+        loadCliConfig(cwd, { cliCompat: true }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
@@ -1951,9 +1921,9 @@ project_id = "dupref"
     }
   });
 
-  // `goViperCompat` is required even though `projectRef` is passed: the duplicate/format checks
-  // are gated solely on `goViperCompat`, not on whether a remote is being selected.
-  test("rejects duplicate project_id across remotes with Go's message", async () => {
+  // `cliCompat` is required even though `projectRef` is passed: the duplicate/format checks
+  // are gated solely on `cliCompat`, not on whether a remote is being selected.
+  test("rejects duplicate project_id across remotes", async () => {
     const cwd = await writeTomlProject(`project_id = "baseref"
 
 [remotes.a]
@@ -1964,7 +1934,7 @@ project_id = "dupref"
 `);
     try {
       const message = await Effect.runPromise(
-        loadCliConfig(cwd, { projectRef: "dupref", goViperCompat: true }).pipe(
+        loadCliConfig(cwd, { projectRef: "dupref", cliCompat: true }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
@@ -1993,7 +1963,7 @@ project_id = "dupref"
 `);
     try {
       const message = await Effect.runPromise(
-        loadCliConfig(cwd, { projectRef: "previewref", goViperCompat: true }).pipe(
+        loadCliConfig(cwd, { projectRef: "previewref", cliCompat: true }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
@@ -2021,7 +1991,7 @@ max_rows = 2
 `);
     try {
       const message = await Effect.runPromise(
-        loadCliConfig(cwd, { projectRef: "previewref", goViperCompat: true }).pipe(
+        loadCliConfig(cwd, { projectRef: "previewref", cliCompat: true }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
@@ -2045,7 +2015,7 @@ project_id = "not-a-ref"
 `);
     try {
       const message = await Effect.runPromise(
-        loadCliConfig(cwd, { goViperCompat: true }).pipe(
+        loadCliConfig(cwd, { cliCompat: true }).pipe(
           Effect.catchTag("InvalidRemoteProjectIdError", (error) => Effect.succeed(error.message)),
           Effect.provide(BunServices.layer),
         ),
@@ -2112,14 +2082,14 @@ enabled = true
     }
   });
 
-  test("resolves env() on a lowercase-named variable, matching Go's case-agnostic matcher", async () => {
-    // Env-var matching is case-agnostic when `goViperCompat` is set; without it, the strict
+  test("resolves env() on a lowercase-named variable", async () => {
+    // Env-var matching is case-agnostic when `cliCompat` is set; without it, the strict
     // SCREAMING_SNAKE_CASE matcher wouldn't match this lowercase name at all.
     const previous = process.env.project_id;
     process.env.project_id = "lowercase-ref";
     const cwd = await writeTomlProject(`project_id = "env(project_id)"\n`);
     try {
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { goViperCompat: true }));
+      const loaded = await runConfigEffect(loadCliConfig(cwd, { cliCompat: true }));
       expect(loaded!.config.project_id).toBe("lowercase-ref");
     } finally {
       if (previous === undefined) {
@@ -2131,7 +2101,7 @@ enabled = true
     }
   });
 
-  test("does not match a remote whose project_id is env(REF) against the resolved ref (Go parity)", async () => {
+  test("does not match a remote whose project_id is env(REF) against the resolved ref", async () => {
     // A `[remotes.x] project_id = "env(REF)"` never matches a caller-supplied, already-resolved
     // `REF`: matching compares the literal `env(REF)` string, not what it resolves to.
     const previous = process.env.SUPABASE_REMOTE_ENV_REF_TEST;
@@ -2280,454 +2250,218 @@ major_version = "not-a-number"
   });
 });
 
-describe("config io deprecated [inbucket] back-compat", () => {
-  let warnings: Array<string> = [];
-  let errorSpy: MockInstance<typeof console.error> | undefined;
-
-  function captureWarnings() {
-    warnings = [];
-    // loadCliConfigFile emits the deprecation warning via Console.error, whose
-    // default implementation delegates to globalThis.console.error (stderr).
-    errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-      warnings.push(args.map((a) => String(a)).join(" "));
-    });
-  }
-
-  afterEach(() => {
-    errorSpy?.mockRestore();
-    errorSpy = undefined;
-  });
-
-  async function loadToml(contents: string) {
-    const cwd = makeTempProject();
+describe("config io removed keys", () => {
+  async function writeToml(cwd: string, contents: string) {
     const path = await runConfigEffect(configTomlPath(cwd));
     await mkdir(join(cwd, "supabase"), { recursive: true });
     await writeFile(path, contents);
+    return path;
+  }
+
+  async function loadToml(contents: string) {
+    const cwd = makeTempProject();
     try {
-      return await runConfigEffect(loadCliConfigFile(path));
+      return await runConfigEffect(loadCliConfigFile(await writeToml(cwd, contents)));
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
   }
 
-  test("loads a deprecated [inbucket] section as [local_smtp]", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
+  async function loadTomlFailure(contents: string) {
+    const cwd = makeTempProject();
+    try {
+      const error = await runConfigEffect(
+        Effect.flip(loadCliConfigFile(await writeToml(cwd, contents))),
+      );
+      if (error._tag !== "CliConfigRemovedKeyError") {
+        throw error;
+      }
+      return error;
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }
 
-[inbucket]
-enabled = true
-port = 12345
-`,
-    );
-
-    expect(loaded.config.local_smtp.enabled).toBe(true);
-    expect(loaded.config.local_smtp.port).toBe(12345);
-    expect("inbucket" in loaded.config).toBe(false);
-    expect(loaded.document).not.toHaveProperty("inbucket");
-    expect(loaded.document).toHaveProperty("local_smtp");
-    expect(
-      warnings.some((m) =>
-        m.includes(
-          "WARN: config section [inbucket] is deprecated and will be removed in v3, use [local_smtp] instead.",
-        ),
-      ),
-    ).toBe(true);
-  });
-
-  test("fills schema defaults when a deprecated [inbucket] section is partial", async () => {
-    const loaded = await loadToml(
-      `project_id = "abc123"
-
-[inbucket]
-port = 9999
-`,
-    );
-
-    // enabled is omitted by the user; the schema default (true) must survive the
-    // inbucket -> local_smtp rewrite rather than collapsing to a zero value.
-    expect(loaded.config.local_smtp.enabled).toBe(true);
-    expect(loaded.config.local_smtp.port).toBe(9999);
-  });
-
-  test("prefers an explicit [local_smtp] when both sections are present", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
-
-[inbucket]
-enabled = true
-port = 11111
-
-[local_smtp]
-enabled = true
-port = 22222
-`,
-    );
-
-    expect(loaded.config.local_smtp.port).toBe(22222);
-    expect(loaded.document).not.toHaveProperty("inbucket");
-    // The deprecation warning still fires because the deprecated key was present.
-    expect(warnings.some((m) => m.includes("[inbucket] is deprecated"))).toBe(true);
-  });
-
-  test("normalizes a deprecated [remotes.*.inbucket] section", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
-
-[remotes.staging]
+  const stagingRemote = `[remotes.staging]
 project_id = "stagingrefaaaaaaaaaa"
+`;
 
+  test("the config schema accepts only an empty experimental.orioledb_version", () => {
+    const decode = Schema.decodeUnknownSync(CliConfigSchema);
+    expect(() => decode({ experimental: { orioledb_version: "" } })).not.toThrow();
+    expect(() => decode({ experimental: { orioledb_version: "17.0.1.084-orioledb" } })).toThrow();
+  });
+
+  test.each([
+    {
+      name: "[inbucket] whatever its contents",
+      toml: "[inbucket]\nenabled = false\n",
+      key: "[inbucket]",
+      replacement: "[local_smtp]",
+    },
+    {
+      name: "[remotes.*.inbucket]",
+      toml: `${stagingRemote}\n[remotes.staging.inbucket]\nport = 33333\n`,
+      key: "[remotes.staging.inbucket]",
+      replacement: "[remotes.staging.local_smtp]",
+    },
+    {
+      name: "a non-empty experimental.orioledb_version",
+      toml: '[experimental]\norioledb_version = "15.1.0.150"\n',
+      key: "experimental.orioledb_version",
+      replacement: "db.orioledb_version",
+    },
+    {
+      name: "a non-string experimental.orioledb_version",
+      toml: "[experimental]\norioledb_version = 1\n",
+      key: "experimental.orioledb_version",
+      replacement: "db.orioledb_version",
+    },
+    {
+      name: "a remote's non-empty experimental.orioledb_version",
+      toml: `${stagingRemote}\n[remotes.staging.experimental]\norioledb_version = "15.1.0.150"\n`,
+      key: "remotes.staging.experimental.orioledb_version",
+      replacement: "remotes.staging.db.orioledb_version",
+    },
+    {
+      name: "an enabled [auth.external.slack]",
+      toml: "[auth.external.slack]\nenabled = true\n",
+      key: "[auth.external.slack]",
+      replacement: "[auth.external.slack_oidc]",
+    },
+    {
+      name: "a disabled [auth.external.linkedin]",
+      toml: "[auth.external.linkedin]\nenabled = false\n",
+      key: "[auth.external.linkedin]",
+      replacement: "[auth.external.linkedin_oidc]",
+    },
+    {
+      name: "a remote's [auth.external.linkedin]",
+      toml: `${stagingRemote}\n[remotes.staging.auth.external.linkedin]\nenabled = true\n`,
+      key: "[remotes.staging.auth.external.linkedin]",
+      replacement: "[remotes.staging.auth.external.linkedin_oidc]",
+    },
+  ])("rejects $name", async ({ toml, key, replacement }) => {
+    const error = await loadTomlFailure(`project_id = "abc123"\n\n${toml}`);
+
+    expect(error.removedKeys).toEqual([{ key, replacement }]);
+  });
+
+  test("names the key, the file and the replacement", async () => {
+    const error = await loadTomlFailure('project_id = "abc123"\n\n[inbucket]\nenabled = true\n');
+
+    expect(error.message).toBe(
+      "[inbucket] in supabase/config.toml is no longer supported. Use [local_smtp] instead.",
+    );
+  });
+
+  test("reports every removed key in one error, the top level before each remote", async () => {
+    const error = await loadTomlFailure(
+      `project_id = "abc123"
+
+[inbucket]
+enabled = true
+
+[experimental]
+orioledb_version = "15.1.0.150"
+
+[auth.external.slack]
+enabled = true
+
+${stagingRemote}
 [remotes.staging.inbucket]
 enabled = true
-port = 33333
-`,
-    );
 
-    const staging = loaded.config.remotes.staging;
-    expect(staging?.local_smtp?.port).toBe(33333);
-    expect(staging).not.toHaveProperty("inbucket");
-    expect(
-      warnings.some((m) =>
-        m.includes(
-          "WARN: config section [remotes.staging.inbucket] is deprecated and will be removed in v3, use [remotes.staging.local_smtp] instead.",
-        ),
-      ),
-    ).toBe(true);
-  });
-
-  test("does not warn when only [local_smtp] is used", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
-
-[local_smtp]
-enabled = true
-port = 54324
-`,
-    );
-
-    expect(loaded.config.local_smtp.port).toBe(54324);
-    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
-  });
-});
-
-describe("config io deprecated experimental.orioledb_version back-compat", () => {
-  let warnings: Array<string> = [];
-  let errorSpy: MockInstance<typeof console.error> | undefined;
-
-  function captureWarnings() {
-    warnings = [];
-    errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-      warnings.push(args.map((a) => String(a)).join(" "));
-    });
-  }
-
-  afterEach(() => {
-    errorSpy?.mockRestore();
-    errorSpy = undefined;
-  });
-
-  async function loadToml(contents: string) {
-    const cwd = makeTempProject();
-    const path = await runConfigEffect(configTomlPath(cwd));
-    await mkdir(join(cwd, "supabase"), { recursive: true });
-    await writeFile(path, contents);
-    try {
-      return await runConfigEffect(loadCliConfigFile(path));
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  }
-
-  test("promotes a non-empty legacy experimental.orioledb_version to db.orioledb_version", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
-
-[experimental]
-orioledb_version = "15.1.0.150"
-`,
-    );
-
-    expect(loaded.config.db.orioledb_version).toBe("15.1.0.150");
-    expect(loaded.config.experimental.orioledb_version).toBeUndefined();
-    expect(loaded.document).not.toHaveProperty("experimental.orioledb_version");
-    expect(
-      warnings.some((m) =>
-        m.includes(
-          "WARN: experimental.orioledb_version is deprecated and will be removed in v3, use db.orioledb_version instead.",
-        ),
-      ),
-    ).toBe(true);
-  });
-
-  test("does not warn and stays absent when the legacy value is an empty string", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
-
-[experimental]
-orioledb_version = ""
-`,
-    );
-
-    expect(loaded.config.db.orioledb_version).toBeUndefined();
-    expect(loaded.config.experimental.orioledb_version).toBeUndefined();
-    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
-  });
-
-  test("promotes a non-empty legacy value when db.orioledb_version is present but empty", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
-
-[db]
-orioledb_version = ""
-
-[experimental]
-orioledb_version = "15.1.0.150"
-`,
-    );
-
-    expect(loaded.config.db.orioledb_version).toBe("15.1.0.150");
-    expect(
-      warnings.some((m) =>
-        m.includes(
-          "WARN: experimental.orioledb_version is deprecated and will be removed in v3, use db.orioledb_version instead.",
-        ),
-      ),
-    ).toBe(true);
-  });
-
-  test("an explicit db.orioledb_version wins over a non-empty legacy value, but still warns", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
-
-[db]
-orioledb_version = "17.0.0.1"
-
-[experimental]
-orioledb_version = "15.1.0.150"
-`,
-    );
-
-    expect(loaded.config.db.orioledb_version).toBe("17.0.0.1");
-    expect(
-      warnings.some((m) =>
-        m.includes(
-          "WARN: experimental.orioledb_version is deprecated and will be removed in v3, use db.orioledb_version instead.",
-        ),
-      ),
-    ).toBe(true);
-  });
-
-  test("rejects a non-string legacy experimental.orioledb_version instead of silently discarding it", async () => {
-    const cwd = makeTempProject();
-    const path = await runConfigEffect(configTomlPath(cwd));
-    await mkdir(join(cwd, "supabase"), { recursive: true });
-    await writeFile(
-      path,
-      `project_id = "abc123"
-
-[experimental]
-orioledb_version = 1
-`,
-    );
-    try {
-      const exit = await Effect.runPromiseExit(
-        loadCliConfigFile(path).pipe(Effect.provide(BunServices.layer)),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const error = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(error)).toBe(true);
-        if (Option.isSome(error)) {
-          expect(error.value._tag).toBe("CliConfigParseError");
-        }
-      }
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
-
-  test("rejects a non-string canonical db.orioledb_version beside a valid legacy value", async () => {
-    const cwd = makeTempProject();
-    const path = await runConfigEffect(configTomlPath(cwd));
-    await mkdir(join(cwd, "supabase"), { recursive: true });
-    await writeFile(
-      path,
-      `project_id = "abc123"
-
-[db]
-orioledb_version = 1
-
-[experimental]
-orioledb_version = "15.1.0.150"
-`,
-    );
-    try {
-      const exit = await Effect.runPromiseExit(
-        loadCliConfigFile(path).pipe(Effect.provide(BunServices.layer)),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const error = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(error)).toBe(true);
-        if (Option.isSome(error)) {
-          expect(error.value._tag).toBe("CliConfigParseError");
-        }
-      }
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
-
-  test("normalizes a deprecated remotes.*.experimental.orioledb_version", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
-
-[remotes.staging]
-project_id = "stagingrefaaaaaaaaaa"
-
-[remotes.staging.experimental]
-orioledb_version = "15.1.0.150"
-`,
-    );
-
-    const staging = loaded.config.remotes.staging;
-    expect(staging?.db?.orioledb_version).toBe("15.1.0.150");
-    expect(
-      warnings.some((m) =>
-        m.includes(
-          "WARN: remotes.staging.experimental.orioledb_version is deprecated and will be removed in v3, use remotes.staging.db.orioledb_version instead.",
-        ),
-      ),
-    ).toBe(true);
-  });
-});
-
-describe("config io deprecated [auth.external.{linkedin,slack}] back-compat", () => {
-  let warnings: Array<string> = [];
-  let errorSpy: MockInstance<typeof console.error> | undefined;
-
-  function captureWarnings() {
-    warnings = [];
-    errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-      warnings.push(args.map((a) => String(a)).join(" "));
-    });
-  }
-
-  afterEach(() => {
-    errorSpy?.mockRestore();
-    errorSpy = undefined;
-  });
-
-  async function loadToml(contents: string, options?: InternalLoadCliConfigOptions) {
-    const cwd = makeTempProject();
-    const path = await runConfigEffect(configTomlPath(cwd));
-    await mkdir(join(cwd, "supabase"), { recursive: true });
-    await writeFile(path, contents);
-    try {
-      return await runConfigEffect(loadCliConfigFile(path, options));
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  }
-
-  test("loads a bare [auth.external.slack] block without required fields", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
-
-[auth.external.slack]
-enabled = true
-`,
-      { goViperCompat: true },
-    );
-
-    expect("slack" in loaded.config.auth.external).toBe(false);
-    expect(loaded.document).not.toHaveProperty("auth.external.slack");
-    expect(
-      warnings.some((m) =>
-        m.includes(
-          'WARN: disabling deprecated "slack" provider. It will be removed in v3, use [auth.external.slack_oidc] instead.',
-        ),
-      ),
-    ).toBe(true);
-  });
-
-  test("loads a bare [auth.external.linkedin] block without required fields", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
-
-[auth.external.linkedin]
-enabled = true
-`,
-      { goViperCompat: true },
-    );
-
-    expect("linkedin" in loaded.config.auth.external).toBe(false);
-    expect(
-      warnings.some((m) =>
-        m.includes(
-          'WARN: disabling deprecated "linkedin" provider. It will be removed in v3, use [auth.external.linkedin_oidc] instead.',
-        ),
-      ),
-    ).toBe(true);
-  });
-
-  test("does not warn when the deprecated section is present but disabled", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
-
-[auth.external.slack]
+[remotes.staging.auth.external.linkedin]
 enabled = false
 `,
     );
 
-    expect("slack" in loaded.config.auth.external).toBe(false);
-    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+    expect(error.message).toBe(
+      [
+        "supabase/config.toml uses config keys that are no longer supported:",
+        "  [inbucket]: use [local_smtp] instead.",
+        "  experimental.orioledb_version: use db.orioledb_version instead.",
+        "  [auth.external.slack]: use [auth.external.slack_oidc] instead.",
+        "  [remotes.staging.inbucket]: use [remotes.staging.local_smtp] instead.",
+        "  [remotes.staging.auth.external.linkedin]: use [remotes.staging.auth.external.linkedin_oidc] instead.",
+      ].join("\n"),
+    );
   });
 
-  test("does not warn when only [auth.external.slack_oidc] is used", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
+  test("saves over a config that uses removed keys and keeps its $schema", async () => {
+    const cwd = makeTempProject();
+    const schemaRef = "./node_modules/@supabase/config/schema.json";
 
-[auth.external.slack_oidc]
-enabled = true
-client_id = "abc"
-secret = "shh"
-`,
-    );
+    try {
+      const filePath = await writeToml(
+        cwd,
+        `"$schema" = "${schemaRef}"\nproject_id = "abc123"\n\n[inbucket]\nenabled = true\n`,
+      );
 
-    expect(loaded.config.auth.external.slack_oidc.enabled).toBe(true);
-    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+      const saved = await runConfigEffect(
+        saveCliConfig({ cwd, config: decodeCliConfig({ project_id: "abc123" }) }),
+      );
+
+      expect(saved.schemaRef).toBe(schemaRef);
+      const content = await readFile(filePath, "utf8");
+      expect(content).toContain(`"$schema" = "${schemaRef}"`);
+      expect(content).not.toContain("inbucket");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
-  test("strips a deprecated [remotes.*.auth.external.slack] block without warning for an unselected remote", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
+  describe("an empty experimental.orioledb_version", () => {
+    let errorSpy: MockInstance<typeof console.error> | undefined;
 
-[remotes.staging]
-project_id = "stagingrefaaaaaaaaaa"
+    afterEach(() => {
+      errorSpy?.mockRestore();
+      errorSpy = undefined;
+    });
 
-[remotes.staging.auth.external.slack]
-enabled = true
+    test("loads silently and leaves no trace in the loaded document", async () => {
+      errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const loaded = await loadToml(
+        `project_id = "abc123"
+
+[experimental]
+orioledb_version = ""
+
+${stagingRemote}
+[remotes.staging.experimental]
+orioledb_version = ""
 `,
-    );
+      );
 
-    // Not requesting `projectRef` means no remote is selected, so `remotes` survives
-    // decode verbatim (minus the deprecated key) rather than being merged/dropped.
-    expect(loaded.config.remotes.staging?.auth.external).not.toHaveProperty("slack");
-    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(loaded.rawDocument).toEqual({
+        project_id: "abc123",
+        experimental: {},
+        remotes: { staging: { project_id: "stagingrefaaaaaaaaaa", experimental: {} } },
+      });
+      expect(loaded.document).not.toHaveProperty("experimental.orioledb_version");
+      expect(loaded.config.db.orioledb_version).toBeUndefined();
+      expect(loaded.valueOrigins?.map((origin) => origin.path.join("."))).not.toContain(
+        "experimental.orioledb_version",
+      );
+    });
+
+    test("leaves db.orioledb_version as written", async () => {
+      const loaded = await loadToml(
+        `project_id = "abc123"
+
+[db]
+orioledb_version = "15.1.0.150"
+
+[experimental]
+orioledb_version = ""
+`,
+      );
+
+      expect(loaded.config.db.orioledb_version).toBe("15.1.0.150");
+    });
   });
 });
 
@@ -2911,11 +2645,48 @@ describe("writeCliConfigDocumentText", () => {
 });
 
 describe("decodeCliConfigDocumentForValidationEffect", () => {
+  test("fails with CliConfigRemovedKeyError naming every removed key, remotes included", async () => {
+    const error = await runConfigEffect(
+      Effect.flip(
+        decodeCliConfigDocumentForValidationEffect(
+          {
+            project_id: "abc123",
+            inbucket: { enabled: true },
+            remotes: { staging: { experimental: { orioledb_version: "15.1.0.150" } } },
+          },
+          { cliCompat: true, path: "supabase/config.toml", format: "toml" },
+        ),
+      ),
+    );
+
+    expect(error).toMatchObject({
+      _tag: "CliConfigRemovedKeyError",
+      removedKeys: [
+        { key: "[inbucket]", replacement: "[local_smtp]" },
+        {
+          key: "remotes.staging.experimental.orioledb_version",
+          replacement: "remotes.staging.db.orioledb_version",
+        },
+      ],
+    });
+  });
+
+  test("tolerates an empty experimental.orioledb_version", async () => {
+    const config = await runConfigEffect(
+      decodeCliConfigDocumentForValidationEffect(
+        { project_id: "abc123", experimental: { orioledb_version: "" } },
+        { cliCompat: true, path: "supabase/config.toml", format: "toml" },
+      ),
+    );
+
+    expect(config).toEqual(decodeCliConfig({ project_id: "abc123" }));
+  });
+
   test("decodes a valid document successfully", async () => {
     const config = await runConfigEffect(
       decodeCliConfigDocumentForValidationEffect(
         { project_id: "abc123" },
-        { goViperCompat: true, path: "supabase/config.toml", format: "toml" },
+        { cliCompat: true, path: "supabase/config.toml", format: "toml" },
       ),
     );
     expect(config.project_id).toBe("abc123");
@@ -2928,7 +2699,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
     };
     const exit = await Effect.runPromiseExit(
       decodeCliConfigDocumentForValidationEffect(document, {
-        goViperCompat: true,
+        cliCompat: true,
         path: "supabase/config.toml",
         format: "toml",
       }).pipe(Effect.provide(BunServices.layer)),
@@ -2960,7 +2731,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
     };
     const config = await runConfigEffect(
       decodeCliConfigDocumentForValidationEffect(document, {
-        goViperCompat: true,
+        cliCompat: true,
         path: "supabase/config.toml",
         format: "toml",
       }),
@@ -2985,7 +2756,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
             project_id: "abc123",
             db: { major_version: "env(SUPABASE_VALIDATION_PG_VERSION_TEST)" },
           },
-          { goViperCompat: true, path, format: "toml" },
+          { cliCompat: true, path, format: "toml" },
         ),
       );
       expect(config.db.major_version).toBe(16);
@@ -3013,7 +2784,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
     };
     const config = await runConfigEffect(
       decodeCliConfigDocumentForValidationEffect(document, {
-        goViperCompat: true,
+        cliCompat: true,
         path: "supabase/config.toml",
         format: "toml",
       }),
@@ -3033,7 +2804,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
     };
     const exit = await Effect.runPromiseExit(
       decodeCliConfigDocumentForValidationEffect(document, {
-        goViperCompat: true,
+        cliCompat: true,
         path: "supabase/config.toml",
         format: "toml",
         remoteName: "staging",
@@ -3064,7 +2835,7 @@ describe("decodeCliConfigDocumentForValidationEffect", () => {
     };
     const config = await runConfigEffect(
       decodeCliConfigDocumentForValidationEffect(document, {
-        goViperCompat: true,
+        cliCompat: true,
         path: "supabase/config.toml",
         format: "toml",
       }),

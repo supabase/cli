@@ -1,22 +1,30 @@
 import { Command } from "effect/cli";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
-import { inspectDbTotalIndexSize } from "./total-index-size.handler.ts";
-import {
-  INSPECT_DB_FLAGS,
-  INSPECT_DB_PERMISSIONS,
-  inspectDbCommandHandler,
-} from "../inspect-db-command.ts";
-import { inspectDbRuntimeLayer } from "../db.layers.ts";
+import { removedCommand } from "../../../../command-internal/removed-command.ts";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { telemetryStateLayer } from "../../../../telemetry/telemetry-state.layer.ts";
+import { INSPECT_DB_FLAGS } from "../inspect-db-command.ts";
+import { inspectDbCommandPath } from "../db.layers.ts";
 
 export const inspectDbTotalIndexSizeCommand = Command.make(
   "total-index-size",
   INSPECT_DB_FLAGS,
 ).pipe(
-  Command.withDescription(
-    'Show total size of all indexes. Deprecated: use "index-stats" instead; removed in v3.',
+  Command.withDescription("Removed: use `supabase inspect db index-stats` instead."),
+  Command.withShortDescription("Removed: use `inspect db index-stats` instead"),
+  // Removed: fails before any Management API call, so no flag changes what it calls.
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["db-url", "linked", "local", "project-ref"],
+  }),
+  Command.withHandler(() =>
+    removedCommand("Use `supabase inspect db index-stats` instead.").pipe(
+      withCommandTelemetry(),
+      withJsonErrorHandling,
+    ),
   ),
-  Command.withShortDescription("Show total index size (deprecated)"),
-  withPermissions(INSPECT_DB_PERMISSIONS),
-  Command.withHandler(inspectDbCommandHandler(inspectDbTotalIndexSize)),
-  Command.provide(inspectDbRuntimeLayer("total-index-size")),
+  Command.provide(commandRuntimeLayer(inspectDbCommandPath("total-index-size"))),
+  Command.provide(telemetryStateLayer),
 );

@@ -9,7 +9,7 @@ import { commandCredentialsLayer } from "../../auth/command-credentials.layer.ts
 import { commandPlatformApiFactoryLayer } from "../../auth/command-platform-api-factory.layer.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
-import { RESOURCE_OUTPUT_FORMATS } from "../../command-internal/go-output-flag.ts";
+import { RESOURCE_OUTPUT_FORMATS } from "../../command-internal/output-formats.ts";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
 import { stringSliceFlag } from "../../command-internal/string-slice-flag.ts";
 import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";
@@ -18,8 +18,10 @@ import { machineErrorContextLayer } from "../../shared/output/machine-error-cont
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { status } from "./status.handler.ts";
+import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 
-// pflag-style string-slice flags: each occurrence is CSV-split and accumulated across repeats,
+// String-slice flags: each occurrence is CSV-split and accumulated across repeats,
 // so `--override-name a=1,b=2` is two overrides, not one. Malformed CSV fails at parse time.
 export const statusOverrideNameFlag = stringSliceFlag(
   "override-name",
@@ -103,4 +105,6 @@ export const statusCommand = Command.make("status", config).pipe(
     ),
   ),
   Command.provide(statusRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

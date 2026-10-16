@@ -267,9 +267,8 @@ export function pullRetryHint(
   const commandByStep: Record<PullStepId, string> = {
     config: `supabase config pull --project-ref ${ref}${remoteLabelFlag}`,
     migration_history: `supabase migration fetch --project-ref ${ref}`,
-    // `pullDbStep` runs with `forceMigrationMode: true`, overriding any ambient `--experimental`
-    // gate; `--experimental=false` reproduces that override so this suggested command performs
-    // the same operation the failed step did.
+    // `db pull` rejects an ambient `--experimental`/`SUPABASE_EXPERIMENTAL` without `--declarative`;
+    // `--experimental=false` keeps this suggested command from failing on it.
     db: `supabase db pull --project-ref ${ref} --experimental=false`,
     functions: `supabase functions download --project-ref ${ref}`,
   };
