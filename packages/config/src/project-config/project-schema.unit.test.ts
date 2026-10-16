@@ -431,9 +431,14 @@ describe("ProjectConfigSchema derivation AST-walk exhaustiveness", () => {
 
 describe("ProjectConfigSchema local-only sections", () => {
   test("a full CliConfig's local-only sections are silently ignored, not validated or echoed back", () => {
-    const result = decodeProjectConfig(getDefaultCliConfig());
+    const result = decodeProjectConfig({
+      ...getDefaultCliConfig(),
+      project_id: "demo",
+      target: "remote",
+    });
     for (const localOnlyKey of [
       "project_id",
+      "target",
       "studio",
       "edge_runtime",
       "analytics",

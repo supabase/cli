@@ -102,6 +102,7 @@ import { StackNativeEngineError } from "../../../command-internal/stack-local-da
 import { PGADMIN_DESKTOP_NOTE_PREFIX, PGADMIN_DIFF_HEADER } from "./pgadmin-diff.ts";
 
 interface SetupOpts {
+  readonly explicitWorkdir?: boolean;
   readonly format?: OutputFormat;
   readonly isLocal?: boolean;
   readonly linkedRef?: string;
@@ -494,6 +495,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     proxy,
     mockCommandSettings({
       workdir,
+      explicitWorkdir: opts.explicitWorkdir,
       projectId: opts.projectId ?? Option.some("test"),
       ...(opts.realLayers === true ? { projectHost: "invalid" } : {}),
     }),
@@ -1381,6 +1383,45 @@ describe("db diff", () => {
       }).pipe(Effect.provide(s.layer));
     },
   );
+
+  describe("workspace target with --use-pg-schema", () => {
+    const pinnedEnv = ConfigProvider.layer(
+      ConfigProvider.fromEnvRecord({}, { preserveEmptyStrings: true }),
+    );
+    const withTarget = (target: string) => ({
+      explicitWorkdir: true,
+      files: { "supabase/config.toml": `target = "${target}"\n` },
+    });
+
+    it.effect("forwards --linked to the delegated child when target = remote", () => {
+      const s = setup(tmp.current, withTarget("remote"));
+      return Effect.gen(function* () {
+        yield* dbDiff(flags({ usePgSchema: Option.some(true) }));
+        expect(s.proxyCalls[0]?.args).toEqual(["db", "diff", "--use-pg-schema", "--linked"]);
+        expect(stderr(s.out)).toContain(
+          'Targeting the linked project (target = "remote" from supabase/config.toml)',
+        );
+      }).pipe(Effect.provide(Layer.mergeAll(s.layer, pinnedEnv)));
+    });
+
+    it.effect("delegates without a target flag when target = local", () => {
+      const s = setup(tmp.current, withTarget("local"));
+      return Effect.gen(function* () {
+        yield* dbDiff(flags({ usePgSchema: Option.some(true) }));
+        expect(s.proxyCalls[0]?.args).toEqual(["db", "diff", "--use-pg-schema"]);
+        expect(stderr(s.out)).not.toContain("Targeting the linked project");
+      }).pipe(Effect.provide(Layer.mergeAll(s.layer, pinnedEnv)));
+    });
+
+    it.effect("lets an explicit --local win over target = remote", () => {
+      const s = setup(tmp.current, withTarget("remote"));
+      return Effect.gen(function* () {
+        yield* dbDiff(flags({ usePgSchema: Option.some(true), local: Option.some(true) }));
+        expect(s.proxyCalls[0]?.args).toEqual(["db", "diff", "--use-pg-schema", "--local"]);
+        expect(stderr(s.out)).not.toContain("Targeting the linked project");
+      }).pipe(Effect.provide(Layer.mergeAll(s.layer, pinnedEnv)));
+    });
+  });
 
   it.effect(
     "hands the deprecated OrioleDB version alias to the --use-pg-schema Go child under its new name and warns once",

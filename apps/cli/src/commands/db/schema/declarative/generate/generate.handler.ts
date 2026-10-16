@@ -6,6 +6,11 @@ import {
   resolveYesWithProjectEnv,
 } from "../../../../../command-internal/global-flags.ts";
 import { promptYesNo } from "../../../../../command-internal/prompt-yes-no.ts";
+import { dbTargetSelectionOf } from "../../../../../command-internal/db-target-flags.ts";
+import {
+  passwordDroppedByWorkspaceTarget,
+  resolveDbTarget,
+} from "../../../../../command-internal/workspace-target.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
@@ -69,8 +74,8 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
   // `--yes` or `SUPABASE_YES` (shell env or project `.env`) must auto-confirm the prompts below.
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
 
-  // The resolved linked ref (explicit `--linked` only), hoisted so the post-run
-  // linked-project cache finalizer can read it after the body resolves it.
+  // The resolved linked ref (set when `--linked` or the workspace target selects linked), hoisted
+  // so the post-run linked-project cache finalizer can read it after the body resolves it.
   const linkedProjectRef = yield* Ref.make<string | undefined>(undefined);
 
   yield* Effect.gen(function* () {
@@ -98,14 +103,33 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
       });
     }
 
-    // Explicit `--linked` re-loads config with the resolved ref, so a matching `[remotes.<ref>]`
-    // block overrides `experimental.pgdelta.*` downstream only, not the gate above. Smart-mode's
-    // "Linked project" choice does not re-load, so only `flags.linked` triggers this.
+    const resolvedTarget = yield* resolveDbTarget({
+      command: "db schema declarative generate",
+      selection: dbTargetSelectionOf({
+        dbUrl: Option.isSome(flags.dbUrl),
+        linked: Option.isSome(flags.linked),
+        local: Option.isSome(flags.local),
+      }),
+      projectRefSet: false,
+      legacyDefault: "local",
+    });
+    const droppedPassword = passwordDroppedByWorkspaceTarget(resolvedTarget, flags.password);
+    if (droppedPassword !== undefined) {
+      return yield* new DeclarativeMutuallyExclusiveFlagsError({ message: droppedPassword });
+    }
+    const workspaceConnType =
+      resolvedTarget.source === "workspace" ? resolvedTarget.connType : undefined;
+    const linkedSelected = Option.isSome(flags.linked) || workspaceConnType === "linked";
+    const localSelected = Option.isSome(flags.local) || workspaceConnType === "local";
+
+    // An explicit linked target re-loads config with the resolved ref, so a matching
+    // `[remotes.<ref>]` block overrides `experimental.pgdelta.*` downstream only, not the gate
+    // above. Smart-mode's "Linked project" choice does not re-load.
     let toml = baseToml;
-    // The resolved linked ref (explicit `--linked` only) is threaded into the raw-shadow export
-    // source, so its platform setup uses the remote-merged config, and into the post-run
-    // linked-project cache finalizer below.
-    if (Option.isSome(flags.linked)) {
+    // The resolved linked ref (set when `--linked` or the workspace target selects linked) is
+    // threaded into the raw-shadow export source, so its platform setup uses the remote-merged
+    // config, and into the post-run linked-project cache finalizer below.
+    if (linkedSelected) {
       const linkedRef = Option.isSome(cliSettings.projectId)
         ? cliSettings.projectId
         : yield* readProjectRefFile(fs, path, cliSettings.workdir);
@@ -166,8 +190,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
         : {}),
     };
 
-    const hasExplicitTarget =
-      Option.isSome(flags.local) || Option.isSome(flags.linked) || Option.isSome(flags.dbUrl);
+    const hasExplicitTarget = localSelected || linkedSelected || Option.isSome(flags.dbUrl);
     yield* Effect.annotateCurrentSpan({
       "declarative.target_mode": hasExplicitTarget ? "explicit" : "smart",
       "schema.count": flags.schema.length,
@@ -177,11 +200,12 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     let overwrite: boolean;
     if (hasExplicitTarget) {
       const seam = yield* DeclarativeSeam;
-      if (Option.isSome(flags.local)) {
-        // Target selection keys off flag presence, but auto-start gates on the boolean value, so
-        // `--local=false` selects the local target but must not start a stopped stack.
+      if (localSelected) {
+        // Target selection keys off flag presence or the workspace target, but auto-start gates on
+        // the boolean value, so `--local=false` selects the local target but must not start a
+        // stopped stack.
         yield* seam.ensureLocalPostgresImageCurrent;
-        if (Option.getOrElse(flags.local, () => false)) {
+        if (Option.getOrElse(flags.local, () => true)) {
           yield* seam.ensureLocalDatabaseStarted;
         }
         target = yield* resolveLocalTargetEndpoint(local, dnsResolver);
@@ -218,8 +242,8 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
       let linkedRef = Option.none<string>();
       if (hasMigrations) {
         // Only decides whether to offer the linked choice, so swallow a broken
-        // `.temp/project-ref` here (omit the choice) rather than aborting; the explicit
-        // `--linked` branch above still propagates a real failure.
+        // `.temp/project-ref` here (omit the choice) rather than aborting; the explicit linked
+        // branch above still propagates a real failure.
         linkedRef = Option.isSome(cliSettings.projectId)
           ? cliSettings.projectId
           : yield* readProjectRefFile(fs, path, cliSettings.workdir).pipe(
@@ -269,9 +293,9 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     // Starting or resetting the local database loads the project context, which would print the
     // OrioleDB env WARN again.
     withSingleOrioleDBVersionEnvWarning,
-    // Writes the linked-project cache for any resolved ref, on success and failure. Only
-    // explicit `--linked` resolves a ref here; the cache layer no-ops when the file exists, the
-    // token is missing, or the GET is non-200.
+    // Writes the linked-project cache for any resolved ref, on success and failure. Only an
+    // explicit linked target (`--linked` or the workspace target) resolves a ref here; the cache
+    // layer no-ops when the file exists, the token is missing, or the GET is non-200.
     Effect.ensuring(
       Effect.flatMap(Ref.get(linkedProjectRef), (ref) =>
         ref !== undefined ? linkedProjectCache.cache(ref) : Effect.void,

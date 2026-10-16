@@ -249,6 +249,8 @@ type (
 
 	config struct {
 		baseConfig
+		// Target is owned by the TS CLI; it is declared so UnmarshalExact accepts the key.
+		Target  string                `toml:"-" json:"target"`
 		Remotes map[string]baseConfig `toml:"remotes" json:"remotes"`
 	}
 

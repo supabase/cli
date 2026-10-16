@@ -3,7 +3,11 @@ import { Effect, FileSystem, Option, Ref } from "effect";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
-import { changedLinkedLocalFlags } from "../../../command-internal/db-target-flags.ts";
+import {
+  changedLinkedLocalFlags,
+  dbTargetSelectionOf,
+} from "../../../command-internal/db-target-flags.ts";
+import { resolveDbTarget } from "../../../command-internal/workspace-target.ts";
 import { seedBucketsRun } from "../../../command-internal/seed-buckets.ts";
 import { requireExplicitWorkdirProject } from "../../../command-internal/workdir-project.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
@@ -48,7 +52,17 @@ export const seedBuckets = Effect.fn("seed.buckets")(function* (
     // merged over the base config by `loadCliConfig`. `--linked` selects the
     // linked path whenever it's set, even `--linked=false`.
     const setFlags = changedLinkedLocalFlags(cliArgs.args);
-    const isLinked = setFlags.includes("linked");
+    const target = yield* resolveDbTarget({
+      command: "seed buckets",
+      selection: dbTargetSelectionOf({
+        dbUrl: false,
+        linked: setFlags.includes("linked"),
+        local: setFlags.includes("local"),
+      }),
+      projectRefSet: Option.isSome(flags.projectRef),
+      legacyDefault: "local",
+    });
+    const isLinked = target.connType === "linked";
 
     // `--project-ref` never implies `--linked` and must not be silently
     // discarded on the local target — see push.handler.ts's identical guard

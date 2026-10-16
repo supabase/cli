@@ -9,6 +9,11 @@
       "type": "string",
       "description": "A string used to distinguish different Supabase projects on the same host. Defaults to the working directory name when running `supabase init`."
     },
+    "target": {
+      "type": "string",
+      "enum": ["local", "remote"],
+      "description": "Which instance commands that can run against either the local stack or the linked project use by default: \"local\" or \"remote\". Overridden by `SUPABASE_TARGET`."
+    },
     "analytics": {
       "type": "object",
       "properties": {

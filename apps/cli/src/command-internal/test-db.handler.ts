@@ -17,6 +17,7 @@ import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
 import { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import { DockerRun } from "./docker-run.service.ts";
 import { resolveDbTargetFlags } from "./db-target-flags.ts";
+import { resolveDbTarget } from "./workspace-target.ts";
 import { DebugFlag, DnsResolverFlag, NetworkIdFlag } from "./global-flags.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
@@ -135,8 +136,13 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
   yield* Effect.gen(function* () {
     // Selection is keyed off flag presence, not its boolean value: `--linked=false`
     // and `--no-linked` both count as explicitly setting `linked`.
-    const target = resolveDbTargetFlags(cliArgs.args);
-    const { setFlags } = target;
+    const target = yield* resolveDbTarget({
+      command: "test db",
+      selection: resolveDbTargetFlags(cliArgs.args),
+      projectRefSet: Option.isSome(flags.projectRef),
+      legacyDefault: "local",
+    });
+    const { setFlags, connType } = target;
     if (setFlags.length > 1) {
       return yield* Effect.fail(
         new TestDbMutuallyExclusiveFlagsError({
@@ -144,8 +150,6 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
         }),
       );
     }
-
-    const connType = target.connType ?? "local";
 
     // `--project-ref` never implies `--linked`; see push.handler.ts's
     // identical guard (db push) for the rationale.

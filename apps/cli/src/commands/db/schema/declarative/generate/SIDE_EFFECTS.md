@@ -41,16 +41,40 @@ formatting without disabling safe compaction.
 
 ## Environment Variables
 
-| Variable                                 | Purpose                                                                                                                                                                                                                                                                                              | Required? |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_ACCESS_TOKEN`                  | auth token for `--linked`                                                                                                                                                                                                                                                                            | no        |
-| `DB_PASSWORD`                            | password for `--linked` / `--db-url`                                                                                                                                                                                                                                                                 | no        |
-| `SUPABASE_HOME`                          | overrides the `~/.supabase` root (access token and other CLI state)                                                                                                                                                                                                                                  | no        |
-| `PGDELTA_DEBUG`                          | bundled-engine debug artifacts                                                                                                                                                                                                                                                                       | no        |
-| `SUPABASE_SERVICES_HOSTNAME`             | local DB host for `--local`                                                                                                                                                                                                                                                                          | no        |
-| `DOCKER_HOST`                            | tcp daemon host used as the local DB host fallback                                                                                                                                                                                                                                                   | no        |
-| `SUPABASE_USE_SLIM_IMAGES`               | resolves the expected local `db` image for the stale-container guard from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB tags the catalog does not pin, and flag-off `15.8.1.085` stay on docker.io | no        |
-| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.`                                                           | no        |
+| Variable                                 | Purpose                                                                                                                                                                                                                                                                                              | Required?                                                    |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `SUPABASE_ACCESS_TOKEN`                  | auth token for `--linked`                                                                                                                                                                                                                                                                            | no                                                           |
+| `DB_PASSWORD`                            | password for `--linked` / `--db-url`                                                                                                                                                                                                                                                                 | no                                                           |
+| `SUPABASE_HOME`                          | overrides the `~/.supabase` root (access token and other CLI state)                                                                                                                                                                                                                                  | no                                                           |
+| `PGDELTA_DEBUG`                          | bundled-engine debug artifacts                                                                                                                                                                                                                                                                       | no                                                           |
+| `SUPABASE_SERVICES_HOSTNAME`             | local DB host for `--local`                                                                                                                                                                                                                                                                          | no                                                           |
+| `DOCKER_HOST`                            | tcp daemon host used as the local DB host fallback                                                                                                                                                                                                                                                   | no                                                           |
+| `SUPABASE_USE_SLIM_IMAGES`               | resolves the expected local `db` image for the stale-container guard from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB tags the catalog does not pin, and flag-off `15.8.1.085` stay on docker.io | no                                                           |
+| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.`                                                           | no                                                           |
+| `SUPABASE_TARGET`                        | workspace target (`local` or `remote`) used when no selector flag is given; overrides `target` in `supabase/config.toml`                                                                                                                                                                             | no (falls back to config `target`, then the command default) |
+
+## Target selection
+
+With no `--local`, `--linked` or `--db-url` flag, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
+shell environment first, then the project `.env*` files), then `target` in `supabase/config.toml` (or
+`config.json`), then the local default. `remote` targets the linked project through the existing
+linked path (same prompts and checks as `--linked`). An explicit selector flag always wins over the
+target. `--project-ref` is not a selector: a `remote` target resolves it to the linked project, while with no target or
+`target = "local"` it behaves exactly as it did before the target existed. An invalid `SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. The project `.env*` files and the config are only read for the target when no selector flag is given; an unreadable or malformed one exits `1` with `DbConfigLoadError` instead of counting as unset.
+No deprecation warning is written: the local default is unchanged. When the target is set the no-flag target prompt is skipped; when it is unset the smart prompt is unchanged.
+
+When the target resolves to the linked project, the command writes one line to **stderr** naming where the
+setting came from, so a config-driven target is never silent:
+
+```
+Targeting the linked project (target = "remote" from <source>)
+```
+
+`<source>` is `SUPABASE_TARGET`, the `.env*` file that set it (for example `supabase/.env.local` or `.env`), `supabase/config.toml` or `supabase/config.json`.
+Nothing is written when a selector flag decides the target.
+
+With a `local` workspace target and no selector flag, `--password` fails with the mutually-exclusive-flags
+error instead of being silently dropped; pass `--linked` or set `target = "remote"`.
 
 ## Exit Codes
 
@@ -59,6 +83,7 @@ formatting without disabling safe compaction.
 | `0`  | success (files written, or skipped after a declined prompt)           |
 | `1`  | pg-delta not enabled (no `--experimental` / `[experimental.pgdelta]`) |
 | `1`  | conflicting `--db-url`/`--linked`/`--local` (mutually exclusive)      |
+| `1`  | `--password` with a `local` workspace target and no selector flag     |
 | `1`  | non-interactive mode with no explicit target                          |
 | `1`  | local-database bring-up / pg-delta engine / export failure            |
 

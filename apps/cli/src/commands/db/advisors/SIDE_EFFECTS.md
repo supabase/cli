@@ -41,15 +41,36 @@ One connection. Within one transaction: `BEGIN` → `set local search_path = ''`
 
 ## Environment Variables
 
-| Variable                | Purpose                                                              | Required?                                 |
-| ----------------------- | -------------------------------------------------------------------- | ----------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token for `--linked`                                            | no (keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROJECT_ID`   | linked project ref override (superseded by `--project-ref` when set) | no                                        |
-| `SUPABASE_PROFILE`      | API profile (built-in name or YAML path)                             | no                                        |
-| `PGHOST` / `PGPORT` / … | connection overrides (local / `--db-url`)                            | no                                        |
+| Variable                | Purpose                                                                                                                  | Required?                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `SUPABASE_ACCESS_TOKEN` | auth token for `--linked`                                                                                                | no (keyring → `~/.supabase/access-token`)                    |
+| `SUPABASE_PROJECT_ID`   | linked project ref override (superseded by `--project-ref` when set)                                                     | no                                                           |
+| `SUPABASE_PROFILE`      | API profile (built-in name or YAML path)                                                                                 | no                                                           |
+| `PGHOST` / `PGPORT` / … | connection overrides (local / `--db-url`)                                                                                | no                                                           |
+| `SUPABASE_TARGET`       | workspace target (`local` or `remote`) used when no selector flag is given; overrides `target` in `supabase/config.toml` | no (falls back to config `target`, then the command default) |
 
 The API base URL is derived from `SUPABASE_PROFILE`; `SUPABASE_API_URL` is **not**
 honored (see `command-settings.layer.unit.test.ts`).
+
+## Target selection
+
+With no `--local`, `--linked` or `--db-url` flag, the command follows the workspace target: `SUPABASE_TARGET` (`local` or `remote`;
+shell environment first, then the project `.env*` files), then `target` in `supabase/config.toml` (or
+`config.json`), then the local default. `remote` targets the linked project through the existing
+linked path (same prompts and checks as `--linked`). An explicit selector flag always wins over the
+target. `--project-ref` is not a selector: a `remote` target resolves it to the linked project, while with no target or
+`target = "local"` it behaves exactly as it did before the target existed. An invalid `SUPABASE_TARGET` or `target` value exits `1` with `WorkspaceTargetError`. The project `.env*` files and the config are only read for the target when no selector flag is given; an unreadable or malformed one exits `1` with `DbConfigLoadError` instead of counting as unset.
+No deprecation warning is written: the local default is unchanged.
+
+When the target resolves to the linked project, the command writes one line to **stderr** naming where the
+setting came from, so a config-driven target is never silent:
+
+```
+Targeting the linked project (target = "remote" from <source>)
+```
+
+`<source>` is `SUPABASE_TARGET`, the `.env*` file that set it (for example `supabase/.env.local` or `.env`), `supabase/config.toml` or `supabase/config.json`.
+Nothing is written when a selector flag decides the target.
 
 ## Exit Codes
 

@@ -10,6 +10,11 @@ import { DbConfigResolver } from "../../../command-internal/db-config.service.ts
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
 import {
+  passwordDroppedByWorkspaceTarget,
+  resolveDbTarget,
+  type ResolvedDbTarget,
+} from "../../../command-internal/workspace-target.ts";
+import {
   listRemoteMigrations,
   loadLocalVersions,
 } from "../../../command-internal/migration-history.ts";
@@ -21,10 +26,7 @@ import { makeMigrationListRows, migrationListTableCells } from "./list.format.ts
 
 const LIST_HEADERS = ["Local", "Remote", "Time (UTC)"] as const;
 
-const runList = Effect.fnUntraced(function* (
-  flags: MigrationListFlags,
-  target: ReturnType<typeof resolveDbTargetFlags>,
-) {
+const runList = Effect.fnUntraced(function* (flags: MigrationListFlags, target: ResolvedDbTarget) {
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
   const connection = yield* DbConnection;
@@ -46,10 +48,14 @@ const runList = Effect.fnUntraced(function* (
         "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
     });
   }
+  const droppedPassword = passwordDroppedByWorkspaceTarget(target, flags.password);
+  if (droppedPassword !== undefined) {
+    return yield* new MigrationPasswordFlagsError({ message: droppedPassword });
+  }
 
   // `--project-ref` never implies `--linked` and must not be silently
   // discarded on a non-linked target; see push.handler.ts's identical guard.
-  if (Option.isSome(flags.projectRef) && (target.connType ?? "linked") !== "linked") {
+  if (Option.isSome(flags.projectRef) && target.connType !== "linked") {
     return yield* new MigrationTargetFlagsError({
       message:
         "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
@@ -59,7 +65,7 @@ const runList = Effect.fnUntraced(function* (
   const listBody = Effect.gen(function* () {
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
-      connType: target.connType ?? "linked",
+      connType: target.connType,
       dnsResolver,
       password: flags.password,
       linkedProjectRef: flags.projectRef,
@@ -99,7 +105,7 @@ const runList = Effect.fnUntraced(function* (
 
   // `--linked` resolves the project ref and writes the linked-project cache; `--local`
   // / `--db-url` leave the ref empty.
-  if ((target.connType ?? "linked") === "linked") {
+  if (target.connType === "linked") {
     const projectRef = yield* ProjectRefResolver;
     const linkedProjectCache = yield* LinkedProjectCache;
     const ref = yield* projectRef.loadProjectRef(flags.projectRef);
@@ -111,6 +117,13 @@ const runList = Effect.fnUntraced(function* (
 export const migrationList = Effect.fn("migration.list")(function* (flags: MigrationListFlags) {
   const telemetryState = yield* TelemetryState;
   const cliArgs = yield* CliArgs;
-  const target = resolveDbTargetFlags(cliArgs.args);
-  yield* runList(flags, target).pipe(Effect.ensuring(telemetryState.flush));
+  yield* Effect.gen(function* () {
+    const target = yield* resolveDbTarget({
+      command: "migration list",
+      selection: resolveDbTargetFlags(cliArgs.args),
+      projectRefSet: Option.isSome(flags.projectRef),
+      legacyDefault: "linked",
+    });
+    yield* runList(flags, target);
+  }).pipe(Effect.ensuring(telemetryState.flush));
 });

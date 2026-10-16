@@ -17,6 +17,7 @@ import {
   StorageLocalFlagDef,
   StorageProjectRefFlagDef,
   assertStorageTargetsExclusive,
+  resolveStorageTarget,
 } from "../storage.flags.ts";
 import { storageCp } from "./cp.handler.ts";
 
@@ -101,6 +102,12 @@ export const storageCpCommand = Command.make("cp", config).pipe(
       yield* requireExperimental;
       const cliArgs = yield* CliArgs;
       yield* assertStorageTargetsExclusive(cliArgs.args);
+      const local = yield* resolveStorageTarget({
+        command: "storage cp",
+        args: cliArgs.args,
+        local: flags.local,
+        projectRef: flags.projectRef,
+      });
       const telemetryFlags = {
         recursive: flags.recursive,
         cacheControl: flags.cacheControl,
@@ -110,7 +117,7 @@ export const storageCpCommand = Command.make("cp", config).pipe(
         local: flags.local,
         "project-ref": flags.projectRef,
       };
-      return yield* storageCp(flags).pipe(
+      return yield* storageCp({ ...flags, local }).pipe(
         // Not in the safe-flags allowlist, so `--project-ref` stays redacted.
         withCommandTelemetry({ flags: telemetryFlags }),
       );
