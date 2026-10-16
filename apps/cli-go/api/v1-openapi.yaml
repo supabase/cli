@@ -606,7 +606,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RegionsInfo_Output'
+                $ref: '#/components/schemas/RegionsInfoV1_Output'
       security:
         - bearer: []
       summary: Gets the list of available regions that can be used for a new project
@@ -9229,7 +9229,7 @@ components:
         - region
         - created_at
         - status
-    RegionsInfo_Output:
+    RegionsInfoV1_Output:
       type: object
       properties:
         recommendations:
