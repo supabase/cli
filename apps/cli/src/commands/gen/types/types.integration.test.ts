@@ -70,6 +70,11 @@ import { genTypes } from "./types.handler.ts";
 import { localDbContainerId, parseQueryTimeoutMillis, rootCaBundle } from "./types.shared.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import {
+  legacyStateAccesses,
+  recordingFileSystem,
+  seedLegacyStateDecoys,
+} from "../../../../tests/helpers/legacy-state-guard.ts";
+import {
   type GenTypesGenerateError,
   GenTypesGenerationError,
   GenTypesGenerator,
@@ -505,6 +510,7 @@ const setup = Effect.fnUntraced(function* (
     },
   });
 
+  const recorder = recordingFileSystem();
   const runtime = buildTestRuntime({
     out,
     api,
@@ -515,11 +521,13 @@ const setup = Effect.fnUntraced(function* (
     }),
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
+    fileSystem: recorder.layer,
   });
 
   const layer = Layer.mergeAll(
     runtime,
     BunServices.layer,
+    recorder.layer,
     child.layer,
     Stdio.layerTest({ args: Effect.succeed(opts.args ?? ["gen", "types"]) }),
     Layer.succeed(OutputFlag, opts.goOutput ?? Option.none()),
@@ -541,6 +549,7 @@ const setup = Effect.fnUntraced(function* (
     api,
     generator,
     layer,
+    accessed: recorder.accessed,
   };
 });
 
@@ -2718,6 +2727,35 @@ describe("gen types", () => {
   });
 
   describe("Local generation: stack backend (no Docker inspection at all)", () => {
+    it.effect("ignores a legacy rest-version pin and never touches supabase/.temp", () =>
+      Effect.gen(function* () {
+        const workdir = yield* makeWorkdir("supabase-gen-types-stack-decoy-");
+        const { layer, generator, accessed } = yield* setup({
+          workdir,
+          dbConfigResolve: () =>
+            Effect.succeed(
+              localResolvedConfig({
+                host: "127.0.0.1",
+                port: 54321,
+                user: "postgres",
+                password: "postgres",
+                database: "postgres",
+              }),
+            ),
+        });
+        seedLegacyStateDecoys(workdir);
+
+        yield* genTypes(defaultFlags({ local: true })).pipe(
+          Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))),
+        );
+
+        expect(generator.calls).toHaveLength(1);
+        expect(generator.calls[0]?.options["detect-one-to-one-relationships"]).toBe(true);
+        expect(accessed.some((entry) => entry.endsWith("config.toml"))).toBe(true);
+        expect(legacyStateAccesses(accessed)).toEqual([]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
     it.effect("resolves the stack local database directly, without inspecting any container", () =>
       Effect.gen(function* () {
         const workdir = yield* makeWorkdir("supabase-gen-types-stack-local-");

@@ -9,6 +9,7 @@ import {
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
 import { legacyProjectStatePaths, type LegacyStateFile } from "./legacy-project-state.paths.ts";
+import { usesStackState } from "./stack-backend.ts";
 
 /** A saved `.temp` pin is not a usable image tag. The file is left unchanged. */
 export class InvalidServiceVersionTagError extends Data.TaggedError(
@@ -50,14 +51,15 @@ const VERSION_FILES = [
  * (including not-exist) resolves to "" for that file. A pin that is not a usable
  * image tag fails; the file is not rewritten.
  */
-export const readServiceVersionOverrides = Effect.fnUntraced(function* (
+export const readServiceVersionOverrides = Effect.fn("ServiceVersionOverrides.read")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
   majorVersion: number | undefined,
 ) {
-  const paths = legacyProjectStatePaths(path, workdir);
   const versions: LocalServiceVersionOverrides = {};
+  if (yield* usesStackState) return versions;
+  const paths = legacyProjectStatePaths(path, workdir);
 
   for (const [service, file, shouldRead] of VERSION_FILES) {
     if (shouldRead !== undefined && !shouldRead(majorVersion)) {

@@ -62,6 +62,11 @@ import {
   type StubbedRequest,
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
+import {
+  legacyStateAccesses,
+  recordingFileSystem,
+  seedLegacyStateDecoys,
+} from "../../../../tests/helpers/legacy-state-guard.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
@@ -1029,6 +1034,7 @@ function setup(
           }),
         );
   const projectHttp = recordingProjectHttpClient(VALID_REF);
+  const recorder = recordingFileSystem();
   const layer = Layer.mergeAll(
     out.layer,
     conn.layer,
@@ -1041,6 +1047,7 @@ function setup(
       : resolver.layer,
     mockCommandSettings({ workdir }),
     BunServices.layer,
+    recorder.layer,
     child.layer,
     mockLocalDockerEngineUnavailableLayer,
     mockRuntimeInfo({ platform: "linux" }),
@@ -1098,6 +1105,7 @@ function setup(
     catalogApplied: catalog?.applied ?? [],
     requests,
     projectHttp,
+    accessed: recorder.accessed,
   };
 }
 
@@ -1297,6 +1305,21 @@ describe("db reset", () => {
         // No `[storage.buckets]`/`[storage.vector.buckets]` configured, so there is nothing to
         // skip even though this fixture's storage capability defaults to "stopped".
         expect(out.stderrText).not.toContain("skipped seeding storage buckets");
+      });
+    });
+
+    it.effect("a stack reset never reads or writes supabase/.temp", () => {
+      seedLegacyStateDecoys(tmp.current);
+      const { layer, accessed } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(accessed.some((entry) => entry.endsWith("config.toml"))).toBe(true);
+        expect(legacyStateAccesses(accessed)).toEqual([]);
       });
     });
 

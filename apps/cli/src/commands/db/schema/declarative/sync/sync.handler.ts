@@ -1,4 +1,4 @@
-import { legacyProjectStatePaths } from "../../../../../command-internal/legacy-project-state.paths.ts";
+import { pgdeltaScratchDir } from "../../../../../command-internal/scratch-paths.ts";
 import { Clock, DateTime, Effect, FileSystem, Option, Path, Ref, Result } from "effect";
 
 import { withSingleOrioleDBVersionEnvWarning } from "../../../../../command-internal/local-config-values.ts";
@@ -145,7 +145,7 @@ const runDbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(funct
     // a bare `extension.sql` is ambiguous in a tree with nested schema folders.
     const extensionSqlRel = path.join(declarativeDirRel, "extension.sql");
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
-    const tempDir = legacyProjectStatePaths(path, cliSettings.workdir).pgdeltaDir;
+    const tempDir = yield* pgdeltaScratchDir(cliSettings.workdir);
     const run: DeclarativeRunContext = {
       pgDelta: {
         // `resolvePgDeltaProjectId` resolves `SUPABASE_PROJECT_ID` env → config.toml's

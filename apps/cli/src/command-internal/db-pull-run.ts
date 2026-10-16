@@ -70,7 +70,8 @@ import {
 } from "../commands/db/shared/pgdelta-engine.service.ts";
 import { type PgDeltaContext, isPgDeltaDebugEnabled, resolvePgDeltaProjectId } from "./pgdelta.ts";
 import { prepareShadowSource } from "../commands/db/shared/shadow-source.ts";
-import { currentStackBackend } from "./stack-backend.ts";
+import { currentStackBackend, usesStackState } from "./stack-backend.ts";
+import { stackProjectSelection } from "./stack-project-selection.ts";
 import { stackRejectNativeDockerDiffEngine } from "./stack-local-database.ts";
 import { stackPrepareShadowSource, stackWithShadowDatabase } from "./stack-shadow.ts";
 import type { DbPullFlags } from "../commands/db/pull/pull.command.ts";
@@ -488,13 +489,15 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           yield* makeDir(fs, path.dirname(migrationPath)).pipe(
             Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })),
           );
-          const image = (yield* resolveDbImage(
-            fs,
-            path,
-            cliSettings.workdir,
-            toml.majorVersion,
-            Option.getOrUndefined(toml.orioledbVersion),
-          )).image;
+          const image = (yield* usesStackState)
+            ? (yield* stackProjectSelection(cliSettings.workdir)).database.image
+            : (yield* resolveDbImage(
+                fs,
+                path,
+                cliSettings.workdir,
+                toml.majorVersion,
+                Option.getOrUndefined(toml.orioledbVersion),
+              )).image;
           // Default dump options: no schema filter (so the internal-schema exclude
           // list applies) and comments stripped.
           const dumpEnvOpt: DumpOptions = {

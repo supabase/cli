@@ -22,6 +22,11 @@ import * as HttpClient from "effect/http/HttpClient";
 
 import { mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
+  legacyStateAccesses,
+  recordingFileSystem,
+  seedLegacyStateDecoys,
+} from "../../../tests/helpers/legacy-state-guard.ts";
+import {
   VALID_REF,
   buildTestRuntime,
   mockCommandSettings,
@@ -85,6 +90,7 @@ const tempDirExists = (workdir: string) =>
   });
 
 function setup(opts: SetupOpts = {}) {
+  const recorder = recordingFileSystem();
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockTelemetryStateTracked();
   const credentials = mockCommandCredentialsTracked({ deleteFails: opts.deleteFails });
@@ -100,12 +106,20 @@ function setup(opts: SetupOpts = {}) {
       cliSettings,
       analytics: mockAnalytics(),
       telemetry: telemetry.layer,
+      fileSystem: recorder.layer,
     }),
     credentials.layer,
     ...(opts.removeFails === true ? [failingRemoveStateLayer] : []),
     ...(opts.stack === true ? [projectStateModeLayer("stack")] : []),
   );
-  return { layer, out, telemetry, credentials, workdir: tempRoot.current };
+  return {
+    layer,
+    out,
+    telemetry,
+    credentials,
+    workdir: tempRoot.current,
+    accessed: recorder.accessed,
+  };
 }
 
 describe("unlink integration", () => {
@@ -341,12 +355,14 @@ describe("unlink integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.effect("leaves the legacy temp dir alone", () => {
-      const { layer, workdir } = setup({ stack: true });
+    it.effect("leaves the legacy temp dir alone without reading or writing it", () => {
+      const { layer, workdir, accessed } = setup({ stack: true });
+      seedLegacyStateDecoys(workdir);
       return Effect.gen(function* () {
         yield* seedLinkDocument(workdir, VALID_REF);
-        yield* seedProjectRef(workdir, VALID_REF);
         yield* unlink();
+        expect(accessed.some((entry) => entry.includes(".link.json"))).toBe(true);
+        expect(legacyStateAccesses(accessed)).toEqual([]);
         expect(yield* tempDirExists(workdir)).toBe(true);
       }).pipe(Effect.provide(layer));
     });

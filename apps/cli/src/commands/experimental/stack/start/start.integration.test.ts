@@ -46,6 +46,11 @@ import {
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { containerEngineSpawner } from "../../../../../tests/helpers/child-process-spawner.ts";
 import {
+  legacyStateAccesses,
+  recordingFileSystem,
+  seedLegacyStateDecoys,
+} from "../../../../../tests/helpers/legacy-state-guard.ts";
+import {
   database15,
   orioledb as orioledbPin,
   orioledbConfigVersion,
@@ -985,6 +990,26 @@ describe("experimental stack start", () => {
       expect(byPrefix.stdoutText).toContain(
         `Run supabase status --env --workdir ${workdir} --stack-id ${fixture.stack.id} to export`,
       );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("keeps storage uploads under SUPABASE_HOME and never touches supabase/.temp", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-uploads-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "start-uploads"\n');
+      seedLegacyStateDecoys(root);
+      const excluded = ["auth", "realtime", "functions", "mail", "analytics", "pooler"];
+      const fixture = fakeStack();
+      const recorder = recordingFileSystem();
+
+      yield* stackStart(flags(excluded)).pipe(
+        Effect.provide(Layer.mergeAll(layers(root, fixture), recorder.layer)),
+      );
+
+      expect(yield* fs.exists(`${root}/.supabase/stacks/${fixture.stack.id}/uploads`)).toBe(true);
+      expect(legacyStateAccesses(recorder.accessed)).toEqual([]);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

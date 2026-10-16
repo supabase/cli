@@ -305,6 +305,11 @@ The flag is local CLI configuration in `supabase/config.toml` or `supabase/confi
 excluded from hosted project configuration. Routing applies the CLI's working-directory rules,
 including `--workdir` and `SUPABASE_WORKDIR`, and prefers JSON when both files exist.
 
+Stack mode keeps its state under `SUPABASE_HOME` and never reads or writes `supabase/.temp`: Storage
+uploads live in `stacks/<stack-id>/uploads`, command scratch output (pgdelta debug bundles, Functions
+bundling) in `tmp`, the release-check cache in `cli-latest`, and service versions come from
+`supabase/supabase.lock`. See [Supabase home](supabase-home.md).
+
 ## Service versions
 
 A stack runs the service versions pinned in `supabase/supabase.lock`, which `supabase start` writes
@@ -390,8 +395,8 @@ directory itself fails discovery, before any stop is attempted. Individual stop
 failures make the command fail and identify the affected stack IDs with their error details; no
 success or not-running summary is emitted when a stop fails.
 
-`supabase stack destroy --stack feature-a` permanently removes exactly that stack and its data after
-confirmation. Use `--yes` for unattended execution. Repeat `--stack-id` to destroy several stacks
+`supabase stack destroy --stack feature-a` permanently removes exactly that stack, its data and its Storage
+uploads (`stacks/<stack-id>/uploads`) after confirmation. Use `--yes` for unattended execution. Repeat `--stack-id` to destroy several stacks
 after one confirmation; every id must resolve before anything is destroyed, and a stack that fails
 to be destroyed does not stop the rest, though the command still fails.
 

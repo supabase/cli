@@ -2,6 +2,7 @@ import * as BunServices from "@effect/platform-bun/BunServices";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
+import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
@@ -98,6 +99,7 @@ function setup() {
     unusedAdapter,
     debug,
     mockOutput().layer,
+    mockCommandSettings({ workdir: "/unused-pgdelta-next-workdir" }),
   );
   return {
     state,

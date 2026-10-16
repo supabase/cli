@@ -1,4 +1,3 @@
-import { legacyProjectStatePaths } from "../../../../command-internal/legacy-project-state.paths.ts";
 import {
   defaultRuntime,
   isOrioledbVersion,
@@ -56,6 +55,7 @@ import { hasConfiguredBuckets, seedBucketsRun } from "../../../../command-intern
 import { loadLocalProjectContext } from "../../../../command-internal/local-project-context.ts";
 import {
   loadStackConfig,
+  stackUploadsDir,
   StackConfigError,
   stackEndpointSetting,
   stackMajorVersionSetting,
@@ -864,12 +864,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     }
     if (requested.some(({ service }) => service === "storage"))
       yield* fs
-        .makeDirectory(
-          path.join(legacyProjectStatePaths(path, target.projectRoot).stackUploadsDir, stack.id),
-          {
-            recursive: true,
-          },
-        )
+        .makeDirectory(stackUploadsDir(path, settings.supabaseHome, stack.id), {
+          recursive: true,
+        })
         .pipe(
           Effect.mapError(
             (cause) =>

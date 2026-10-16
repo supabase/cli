@@ -36,7 +36,6 @@ describe("legacyProjectStatePaths", () => {
       expect(paths.linkedProjectCache).toBe(path.join(tempDir, "linked-project.json"));
       expect(paths.cliLatest).toBe(path.join(tempDir, "cli-latest"));
       expect(paths.pgdeltaDir).toBe(path.join(tempDir, "pgdelta"));
-      expect(paths.stackUploadsDir).toBe(path.join(tempDir, "stack-uploads"));
       expect(paths.startSecretsDir).toBe(path.join(tempDir, "start-secrets"));
     }).pipe(Effect.provide(BunServices.layer)),
   );

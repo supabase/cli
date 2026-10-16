@@ -1,11 +1,17 @@
 import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
-import { Effect, type FileSystem, type Path } from "effect";
+import { usesStackState } from "./stack-backend.ts";
+import { Effect, type FileSystem, Option, type Path } from "effect";
 import { DENO1_EDGE_RUNTIME_VERSION } from "../shared/functions/functions.shared.ts";
 import {
   dockerfileServiceImage,
   dockerfileServiceImageRaw,
 } from "../shared/services/dockerfile-images.ts";
-import { slimImageForCurrentPin, slimImagesEnabled } from "../shared/services/slim-images.ts";
+import {
+  imageTag,
+  slimImageForCurrentPin,
+  slimImagesEnabled,
+} from "../shared/services/slim-images.ts";
+import { readLockedPins } from "./stack-lock.ts";
 
 /**
  * Resolves the edge-runtime Docker image: the default tag comes from the Dockerfile image, a
@@ -22,13 +28,27 @@ export const edgeRuntimeDockerfileImage = Effect.map(slimImagesEnabled, (slim) =
 // applies for the functions Docker paths reading the same pin file.
 const EDGE_RUNTIME_DENO1_IMAGE = `supabase/edge-runtime:${DENO1_EDGE_RUNTIME_VERSION}`;
 
+const imageForPin = Effect.fnUntraced(function* (pinned: string) {
+  if (pinned === DENO1_EDGE_RUNTIME_VERSION) {
+    return EDGE_RUNTIME_DENO1_IMAGE;
+  }
+  return slimImageForCurrentPin(
+    "edgeruntime",
+    dockerfileServiceImageRaw("edgeruntime"),
+    pinned.length > 0 ? pinned : undefined,
+    yield* slimImagesEnabled,
+  );
+});
+
 /**
  * Resolves the edge-runtime image, honoring the pinned tag in
- * `supabase/.temp/edge-runtime-version` and the `deno_version` selector (default 2 → Dockerfile
- * image; 1 → `deno1`). The version pin is applied first, then `deno_version = 1` overrides to
- * `deno1`. Historical pins stay on docker.io — those slim tags are not published.
+ * `supabase/.temp/edge-runtime-version` (legacy state only; stack state uses
+ * {@link resolveLockedEdgeRuntimeImage}) and the `deno_version` selector
+ * (default 2 → Dockerfile image; 1 → `deno1`). The version pin is applied first, then
+ * `deno_version = 1` overrides to `deno1`. Historical pins stay on docker.io — those slim tags
+ * are not published.
  */
-export const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
+export const resolveEdgeRuntimeImage = Effect.fn("EdgeRuntimeImage.resolve")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
@@ -37,20 +57,36 @@ export const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
   if (denoVersion === 1) {
     return EDGE_RUNTIME_DENO1_IMAGE;
   }
-  const raw = dockerfileServiceImageRaw("edgeruntime");
-  const pinned = yield* fs
-    .readFileString(legacyProjectStatePaths(path, workdir).edgeRuntimeVersion)
-    .pipe(
-      Effect.map((s) => s.trim()),
-      Effect.orElseSucceed(() => ""),
-    );
-  if (pinned === DENO1_EDGE_RUNTIME_VERSION) {
+  const pinned = (yield* usesStackState)
+    ? ""
+    : yield* fs.readFileString(legacyProjectStatePaths(path, workdir).edgeRuntimeVersion).pipe(
+        Effect.map((s) => s.trim()),
+        Effect.orElseSucceed(() => ""),
+      );
+  return yield* imageForPin(pinned);
+});
+
+/**
+ * The edge-runtime image for tool containers in stack state mode: the release locked for
+ * Functions in `supabase/supabase.lock` (the pinned slim image when slim images are enabled, else
+ * its upstream image), else the bundled one. Reads only the lock, so a stale lock or an invalid
+ * config does not block it; an unreadable lock fails.
+ */
+export const resolveLockedEdgeRuntimeImage = Effect.fn("EdgeRuntimeImage.resolveLocked")(function* (
+  workdir: string,
+  denoVersion: number,
+) {
+  if (denoVersion === 1) {
     return EDGE_RUNTIME_DENO1_IMAGE;
   }
-  return slimImageForCurrentPin(
-    "edgeruntime",
-    raw,
-    pinned.length > 0 ? pinned : undefined,
-    yield* slimImagesEnabled,
+  const locked = yield* readLockedPins(workdir);
+  if (Option.isSome(locked) && (yield* slimImagesEnabled)) {
+    return locked.value.functions.image;
+  }
+  return yield* imageForPin(
+    Option.match(locked, {
+      onNone: () => "",
+      onSome: (selection) => imageTag(selection.functions.upstreamImage) ?? "",
+    }),
   );
 });

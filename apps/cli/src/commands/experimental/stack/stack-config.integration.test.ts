@@ -15,6 +15,7 @@ import {
 } from "../../../../tests/helpers/pins.ts";
 import { renderCliConfigTemplate } from "../../../shared/init/project-init.templates.ts";
 
+import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
 import { loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
 import {
@@ -24,7 +25,13 @@ import {
 
 const load = (projectRoot: string) =>
   loadStackConfig(projectRoot).pipe(
-    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+    Effect.provide(
+      Layer.mergeAll(
+        BunServices.layer,
+        runtimeInfoLayer,
+        mockCommandSettings({ workdir: projectRoot }),
+      ),
+    ),
   );
 
 const project = (contents: string, options: Parameters<typeof createStackConfigProject>[1] = {}) =>

@@ -622,9 +622,10 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       );
 
       // Only forces v9 compat from the rest-version file's image tag when the database's
-      // major version is > 14, so older databases aren't forced into v9 mode.
+      // major version is > 14, so older databases aren't forced into v9 mode. A stack runs
+      // the PostgREST release it locked, so it has no pin file to consult.
       const restVersion =
-        config.majorVersion > 14
+        backend.kind === "legacy" && config.majorVersion > 14
           ? (yield* legacyState
               .read(cliSettings.workdir, "restVersion")
               .pipe(Effect.orElseSucceed(() => ""))).trim()

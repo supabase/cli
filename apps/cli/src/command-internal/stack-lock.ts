@@ -632,6 +632,15 @@ export const readLockedSelection = Effect.fn("StackLock.read")(function* (reques
 });
 
 /**
+ * The pins the project lock holds, without loading config or checking staleness; `None` when
+ * there is no lock. For hosted-only commands that just need the locked release of one service.
+ */
+export const readLockedPins = Effect.fn("StackLock.readPins")(function* (projectRoot: string) {
+  const lock = yield* readLock(projectRoot).pipe(Effect.mapError(lockFailure));
+  return Option.map(lock, lockSelection);
+});
+
+/**
  * The pins of a fresh lock, or the bundled ones when the project has no lock yet. Commands that
  * never resolve use this to run the versions `start` locked; a stale lock still fails.
  */
@@ -668,6 +677,28 @@ const holdLease = Effect.fn("StackLock.lease")(function* (projectRoot: string) {
 /** Runs `effect` under the project lease that `supabase link` publishes `.link.json` under. */
 export const withProjectLease = <A, E, R>(projectRoot: string, effect: Effect.Effect<A, E, R>) =>
   holdLease(projectRoot).pipe(Effect.andThen(effect), Effect.scoped);
+
+/**
+ * Fails a project without `supabase/config.toml` that is frozen, explicitly or by `CI` with a
+ * lock present: with no config the lock cannot be checked, so the bundled versions must not
+ * silently stand in for it.
+ */
+export const rejectFrozenWithoutConfig = Effect.fn("StackLock.rejectFrozenWithoutConfig")(
+  function* (projectRoot: string, frozen: boolean) {
+    if (frozen)
+      return yield* new LockResolutionError({
+        reason: "frozen-missing",
+        message: `${LOCK_FILE} not found; run supabase start locally and commit it`,
+      });
+    if (!(yield* continuousIntegration)) return;
+    const lock = yield* readLock(projectRoot).pipe(Effect.mapError(lockFailure));
+    if (Option.isSome(lock))
+      return yield* new LockResolutionError({
+        reason: "frozen-missing",
+        message: `supabase/config.toml not found, so ${LOCK_FILE} cannot be checked in CI; commit supabase/config.toml next to it`,
+      });
+  },
+);
 
 /** A service the lock gained or moved to another release. */
 interface LockChange {
@@ -895,28 +926,6 @@ const lockWarnings = Effect.fn("StackLock.warn")(function* (
       `This CLI bundles newer revisions of locked versions: ${outdated.join(", ")}. Run supabase stack outdated to review, supabase stack update to adopt them.`,
     );
 });
-
-/**
- * Fails a project without `supabase/config.toml` that is frozen, explicitly or by `CI` with a
- * lock present: with no config the lock cannot be checked, so the bundled versions must not
- * silently stand in for it.
- */
-export const rejectFrozenWithoutConfig = Effect.fn("StackLock.rejectFrozenWithoutConfig")(
-  function* (projectRoot: string, frozen: boolean) {
-    if (frozen)
-      return yield* new LockResolutionError({
-        reason: "frozen-missing",
-        message: `${LOCK_FILE} not found; run supabase start locally and commit it`,
-      });
-    if (!(yield* continuousIntegration)) return;
-    const lock = yield* readLock(projectRoot).pipe(Effect.mapError(lockFailure));
-    if (Option.isSome(lock))
-      return yield* new LockResolutionError({
-        reason: "frozen-missing",
-        message: `supabase/config.toml not found, so ${LOCK_FILE} cannot be checked in CI; commit supabase/config.toml next to it`,
-      });
-  },
-);
 
 /**
  * Selects the pins a stack command runs from `supabase/supabase.lock`, under the project lease:

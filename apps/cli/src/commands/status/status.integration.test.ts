@@ -25,6 +25,11 @@ import { vi } from "vitest";
 
 import { mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";
 import {
+  legacyStateAccesses,
+  recordingFileSystem,
+  seedLegacyStateDecoys,
+} from "../../../tests/helpers/legacy-state-guard.ts";
+import {
   statusCodeFailure,
   transportFailure,
   mockCommandSettings,
@@ -360,8 +365,10 @@ function setup(opts: SetupOpts = {}) {
       ? undefined
       : mockCommandPlatformApiFactoryDirect(opts.apiFactory);
 
+  const recorder = recordingFileSystem();
   const layer = Layer.mergeAll(
     BunServices.layer,
+    recorder.layer,
     runtimeInfoLayer,
     out.layer,
     cliSettings,
@@ -374,7 +381,16 @@ function setup(opts: SetupOpts = {}) {
     ...(opts.apiFactoryLayer === undefined ? [] : [opts.apiFactoryLayer]),
   );
 
-  return { workdir, out, telemetry, child, layer, apiMock, apiFactoryMock };
+  return {
+    workdir,
+    out,
+    telemetry,
+    child,
+    layer,
+    apiMock,
+    apiFactoryMock,
+    accessed: recorder.accessed,
+  };
 }
 
 /**
@@ -1287,6 +1303,22 @@ content_path = "./supabase/templates/password_changed_notification.html"
             ),
           ).toBe(true);
           expect(apiMock?.requests).toEqual([]);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.effect(
+      "stack mode: never reads or writes supabase/.temp and ignores a legacy link there",
+      () => {
+        const { layer, out, workdir, accessed } = setup({ projectStateMode: "stack" });
+        seedLegacyStateDecoys(workdir);
+        return Effect.gen(function* () {
+          yield* writeConfig();
+          yield* status(flags());
+          expect(out.stdoutText).not.toContain("Linked Project");
+          expect(out.stdoutText).not.toContain("decoy");
+          expect(accessed.some((entry) => entry.endsWith("config.toml"))).toBe(true);
+          expect(legacyStateAccesses(accessed)).toEqual([]);
         }).pipe(Effect.provide(layer));
       },
     );

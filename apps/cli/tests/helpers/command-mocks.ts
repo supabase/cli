@@ -1426,6 +1426,8 @@ export interface BuildTestRuntimeOpts {
   readonly goOutput?: Option.Option<GoOutputValue>;
   /** Raw argv seen by the handler (e.g. to exercise an explicit `--yes=false`). */
   readonly cliArgs?: ReadonlyArray<string>;
+  /** Replaces the Bun `FileSystem` every service in the runtime reads and writes through. */
+  readonly fileSystem?: Layer.Layer<FileSystem.FileSystem>;
 }
 
 export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
@@ -1438,6 +1440,10 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
   const analytics = (opts.analytics ?? mockAnalytics()).layer;
   const goOutput = opts.goOutput ?? Option.none<GoOutputValue>();
   const httpClient = opts.api.httpClientLayer;
+  const platform =
+    opts.fileSystem === undefined
+      ? BunServices.layer
+      : Layer.merge(BunServices.layer, opts.fileSystem);
 
   // When the caller doesn't expose an HttpClient layer, use a stub that fails
   // loudly if any code path tries to consume it. Always wiring HttpClient at
@@ -1472,10 +1478,10 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
       Layer.provide(opts.cliSettings),
       Layer.provide(tty),
       Layer.provide(opts.out.layer),
-      Layer.provide(BunServices.layer),
+      Layer.provide(platform),
     ),
-    BunServices.layer,
-    legacyProjectStateLayer.pipe(Layer.provide(BunServices.layer)),
+    platform,
+    legacyProjectStateLayer.pipe(Layer.provide(platform)),
     Layer.succeed(OutputFlag, goOutput),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
     linkedProjectCache,

@@ -18,7 +18,8 @@ describe("pg-delta next artifact generation", () => {
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "pgdelta-next-artifacts-" });
       const debugId = formatPgDeltaNextDebugId(Date.UTC(2024, 0, 2, 3, 4, 5, 678), "diff");
-      const debugDir = yield* savePgDeltaNextDebugArtifacts(fs, path, root, debugId, "diff", {
+      const pgdeltaDir = legacyProjectStatePaths(path, root).pgdeltaDir;
+      const debugDir = yield* savePgDeltaNextDebugArtifacts(fs, path, pgdeltaDir, debugId, "diff", {
         sourceSnapshot: '{"source":true}\n',
         desiredSnapshot: '{"desired":true}\n',
         plan: '{"plan":true}\n',
@@ -30,10 +31,8 @@ describe("pg-delta next artifact generation", () => {
           .pipe(Effect.flatMap(Schema.decodeEffect(UnknownFromJsonString)));
 
       expect(debugId).toBe("20240102-030405-678-diff");
-      expect(pgDeltaNextTempPath(path, root)).not.toBe(
-        legacyProjectStatePaths(path, root).pgdeltaDir,
-      );
-      expect(debugDir).toBe(path.join(pgDeltaNextTempPath(path, root), "debug", debugId));
+      expect(pgDeltaNextTempPath(path, pgdeltaDir)).not.toBe(pgdeltaDir);
+      expect(debugDir).toBe(path.join(pgDeltaNextTempPath(path, pgdeltaDir), "debug", debugId));
       expect(yield* readJson("metadata.json")).toEqual({
         version: 1,
         generation: "v2",

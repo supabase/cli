@@ -25,7 +25,6 @@ export type LegacyStateFile =
 export interface LegacyProjectStatePaths extends Readonly<Record<LegacyStateFile, string>> {
   readonly tempDir: string;
   readonly pgdeltaDir: string;
-  readonly stackUploadsDir: string;
   readonly startSecretsDir: string;
 }
 
@@ -54,7 +53,6 @@ export function legacyProjectStatePaths(
     linkedProjectCache: inTemp("linked-project.json"),
     cliLatest: inTemp("cli-latest"),
     pgdeltaDir: inTemp("pgdelta"),
-    stackUploadsDir: inTemp("stack-uploads"),
     startSecretsDir: inTemp("start-secrets"),
   };
 }

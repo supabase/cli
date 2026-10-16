@@ -144,6 +144,7 @@ layer(BunServices.layer)("runUpgradeNotice", (it) => {
       cwd: workdir,
       currentVersion: opts.currentVersion ?? "2.113.0",
       supabaseHome,
+      usesLegacyProjectState: Effect.succeed(true),
       now: () => clock.currentTimeMillisUnsafe(),
       fetchLatestTag: Effect.suspend(() => {
         fetchCalls += 1;

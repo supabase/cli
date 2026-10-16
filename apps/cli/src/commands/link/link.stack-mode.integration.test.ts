@@ -7,6 +7,11 @@ import { TestClock } from "effect/testing";
 
 import { mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
+  legacyStateAccesses,
+  recordingFileSystem,
+  seedLegacyStateDecoys,
+} from "../../../tests/helpers/legacy-state-guard.ts";
+import {
   VALID_REF,
   buildTestRuntime,
   mockCommandPlatformApiService,
@@ -101,6 +106,7 @@ interface SetupOpts {
 }
 
 function setup(opts: SetupOpts = {}) {
+  const recorder = recordingFileSystem();
   const out = mockOutput({ format: "text" });
   const apiMock = mockCommandPlatformApiService({
     v1: {
@@ -118,10 +124,11 @@ function setup(opts: SetupOpts = {}) {
       cliSettings: mockCommandSettings({ workdir: tempRoot.current, projectId: Option.none() }),
       analytics: mockAnalytics(),
       telemetry: mockTelemetryStateTracked().layer,
+      fileSystem: recorder.layer,
     }),
     projectStateModeLayer("stack"),
   );
-  return { layer, workdir: tempRoot.current };
+  return { layer, workdir: tempRoot.current, accessed: recorder.accessed };
 }
 
 const flags = (overrides: Partial<LinkFlags> = {}): LinkFlags => ({
@@ -165,6 +172,19 @@ describe("link integration in stack mode", () => {
         fetchedAt: expect.any(String),
       });
       expect(yield* tempDirExists(workdir)).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("never reads or writes supabase/.temp and ignores a legacy link left there", () => {
+    const { layer, workdir, accessed } = setup();
+    seedLegacyStateDecoys(workdir);
+    return Effect.gen(function* () {
+      yield* link(flags());
+
+      const document = yield* readProjectLink(workdir);
+      expect(Option.map(document, (value) => value.project.ref)).toEqual(Option.some(VALID_REF));
+      expect(accessed.some((entry) => entry.includes(".link.json"))).toBe(true);
+      expect(legacyStateAccesses(accessed)).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 

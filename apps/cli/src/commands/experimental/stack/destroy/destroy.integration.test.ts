@@ -1,7 +1,18 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { StackError } from "@supabase/stack/effect";
-import { Effect, FileSystem, Layer, Option, Path, Schema, Sink, Stdio, Stream } from "effect";
+import {
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Schema,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
 import { CliOutput, Command } from "effect/cli";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { jsonOutputLayer } from "../../../../shared/output/output.layer.ts";
@@ -23,6 +34,7 @@ import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shar
 import { stackDestroyCommand } from "./destroy.command.ts";
 import { stackDestroy } from "./destroy.handler.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
+import { stackUploadsDir } from "../../../../command-internal/stack-config.ts";
 
 const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
 const refuseDestroy = (
@@ -51,6 +63,24 @@ const refuseDestroy = (
         }),
       ),
   });
+const refuseUploadsRemoval = Layer.effect(
+  FileSystem.FileSystem,
+  Effect.map(FileSystem.FileSystem, (fs) => ({
+    ...fs,
+    remove: (target: string, options?: Parameters<FileSystem.FileSystem["remove"]>[1]) =>
+      target.endsWith("uploads")
+        ? Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: "remove",
+              description: "denied",
+              pathOrDescriptor: target,
+            }),
+          )
+        : fs.remove(target, options),
+  })),
+).pipe(Layer.provide(BunServices.layer));
 const runDestroy = <A, E, R>(layer: Layer.Layer<A, E, R>, argv: ReadonlyArray<string>) =>
   Command.runWith(stackDestroyCommand.pipe(Command.provide(layer)), { version: "0.0.0-test" })(
     argv,
@@ -126,7 +156,7 @@ describe("stack destroy", () => {
       const error = yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer), Effect.flip);
       expect(error.reason).toBe("cancelled");
       expect(f.output.promptConfirmCalls.map(({ message }) => message)).toEqual([
-        `Permanently destroy stack ${f.stack.id} at ${f.projectRoot} and its owned data? Storage upload files will be preserved.`,
+        `Permanently destroy stack ${f.stack.id} at ${f.projectRoot} and its owned data?`,
       ]);
       const saved = yield* f.api.discover(f.locations);
       expect(saved.map(({ definition }) => definition.id)).toEqual([f.stack.id]);
@@ -162,7 +192,7 @@ describe("stack destroy", () => {
         other.id,
       ]);
       expect(f.output.stderrText).toContain(
-        `Permanently destroying stack ${f.stack.id} at ${f.projectRoot} and its owned data. Storage upload files will be preserved.\n`,
+        `Permanently destroying stack ${f.stack.id} at ${f.projectRoot} and its owned data.\n`,
       );
       expect(f.output.stderrText).not.toContain("[y/N]");
       expect(f.output.promptConfirmCalls).toEqual([]);
@@ -215,6 +245,9 @@ describe("stack destroy", () => {
     Effect.gen(function* () {
       const f = yield* fixture(true);
       const id = "d".repeat(64);
+      const uploads = stackUploadsDir(f.path, f.root, id);
+      yield* f.fs.makeDirectory(uploads, { recursive: true });
+      yield* f.fs.writeFileString(f.path.join(uploads, "object.txt"), "upload");
       let destroyed = 0;
       const api = Layer.succeed(StackApi, {
         ...f.api,
@@ -236,8 +269,9 @@ describe("stack destroy", () => {
       );
 
       expect(destroyed).toBe(1);
+      expect(yield* f.fs.exists(uploads)).toBe(false);
       expect(f.output.stderrText).toContain(
-        `Permanently destroying the containers deleted stack ${id} left behind. Storage upload files will be preserved.\n`,
+        `Permanently destroying the containers deleted stack ${id} left behind.\n`,
       );
       expect(f.output.stdoutText).toContain(`Removed the containers stack ${id} left behind.`);
       expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
@@ -281,7 +315,23 @@ describe("stack destroy", () => {
   );
 
   it.live(
-    "destroys a live namespace and standalone services while preserving caller-owned uploads",
+    "removes the stack's Storage uploads, leaving only the empty data directory to prune",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture(true);
+        const uploads = stackUploadsDir(f.path, f.root, f.stack.id);
+        yield* f.fs.makeDirectory(f.path.join(uploads, "bucket"), { recursive: true });
+        yield* f.fs.writeFileString(f.path.join(uploads, "bucket", "object.txt"), "upload");
+        yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer));
+        expect(yield* f.fs.exists(uploads)).toBe(false);
+        expect(yield* f.fs.readDirectory(f.path.join(f.locations.stateRoot, f.stack.id))).toEqual([
+          "data",
+        ]);
+      }).pipe(Effect.provide(live)),
+  );
+
+  it.live(
+    "destroys a live namespace and standalone services while leaving files outside the stack directory",
     () =>
       Effect.gen(function* () {
         const f = yield* fixture(true);
@@ -354,7 +404,7 @@ describe("stack destroy", () => {
         third.id,
       ]);
       expect(output.stderrText).toBe(
-        `Permanently destroying stack ${f.stack.id} at ${f.projectRoot} and its owned data; stack ${second.id} at ${f.projectRoot} and its owned data. Storage upload files will be preserved.\n`,
+        `Permanently destroying stack ${f.stack.id} at ${f.projectRoot} and its owned data; stack ${second.id} at ${f.projectRoot} and its owned data.\n`,
       );
       expect(output.messages).toContainEqual(
         expect.objectContaining({
@@ -429,7 +479,7 @@ describe("stack destroy", () => {
 
       expect(error.reason).toBe("cancelled");
       expect(f.output.promptConfirmCalls.map(({ message }) => message)).toEqual([
-        `Permanently destroy stack ${f.stack.id} at ${f.projectRoot} and its owned data; stack ${second.id} at ${f.projectRoot} and its owned data? Storage upload files will be preserved.`,
+        `Permanently destroy stack ${f.stack.id} at ${f.projectRoot} and its owned data; stack ${second.id} at ${f.projectRoot} and its owned data?`,
       ]);
       expect(
         (yield* f.api.discover(f.locations)).map(({ definition }) => definition.id).toSorted(),
@@ -535,7 +585,7 @@ describe("stack destroy", () => {
 
       expect(removed).toBe(1);
       expect(f.output.stderrText).toBe(
-        `Permanently destroying stack ${f.stack.id} at ${f.projectRoot} and its owned data; the containers deleted stack ${id} left behind. Storage upload files will be preserved.\n`,
+        `Permanently destroying stack ${f.stack.id} at ${f.projectRoot} and its owned data; the containers deleted stack ${id} left behind.\n`,
       );
       expect(f.output.stdoutText).toBe(
         `Stack ${f.stack.id} destroyed.\nRemoved the containers stack ${id} left behind.\n`,
@@ -597,6 +647,64 @@ describe("stack destroy", () => {
           suggestion: `Resolve each error, then run "supabase stack destroy --stack-id ${f.stack.id} --yes" to retry the stacks that failed.`,
         },
       });
+      expect(processControl.exitCode).toBe(1);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("counts a stack as destroyed when only its uploads directory could not be removed", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture(true);
+      const second = yield* f.api.create({
+        ...f.locations,
+        projectRoot: f.root,
+        name: "second",
+        runtime: "native",
+      });
+      const stdout: Array<string> = [];
+      const stdio = Layer.succeed(
+        Stdio.Stdio,
+        Stdio.make({
+          args: Effect.succeed([]),
+          stdin: Stream.empty,
+          stdout: () =>
+            Sink.forEach((item: string | Uint8Array) =>
+              Effect.sync(() => {
+                stdout.push(typeof item === "string" ? item : new TextDecoder().decode(item));
+              }),
+            ),
+          stderr: () => Sink.forEach(() => Effect.void),
+        }),
+      );
+      const processControl = mockProcessControl();
+
+      yield* runDestroy(
+        Layer.merge(
+          f.layer,
+          Layer.mergeAll(
+            refuseUploadsRemoval,
+            jsonOutputLayer.pipe(Layer.provide(stdio)),
+            processControl.layer,
+          ),
+        ),
+        ["--stack-id", f.stack.id, "--stack-id", second.id],
+      );
+
+      expect(yield* f.api.discover(f.locations)).toEqual([]);
+      const uploads = stackUploadsDir(f.path, f.root, f.stack.id);
+      const secondUploads = stackUploadsDir(f.path, f.root, second.id);
+      expect(
+        yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(stdout.join("")),
+      ).toMatchObject({
+        destroyed_stacks: expect.arrayContaining([{ id: f.stack.id }, { id: second.id }]),
+        _tag: "Error",
+        error: {
+          code: "ExperimentalStackDestroyError",
+          message: "Failed to destroy 2 managed stack(s).",
+          suggestion: expect.stringContaining(`Remove ${uploads} manually.`),
+        },
+      });
+      expect(stdout.join("")).toContain(`Remove ${secondUploads} manually.`);
+      expect(stdout.join("")).not.toContain("to retry the stacks that failed");
       expect(processControl.exitCode).toBe(1);
     }).pipe(Effect.provide(live)),
   );

@@ -82,7 +82,7 @@ const storage = (s3ProtocolEnabled: boolean): ServiceCreation => ({
   service: "storage",
   pin: selection.storage,
   config: {
-    filePath: "/project/supabase/.temp/stack-uploads",
+    filePath: "/home/stacks/stack-id/uploads",
     jwtSecret,
     s3ProtocolEnabled,
     s3AccessKeyId: "local-access-key",
@@ -678,7 +678,7 @@ it.effect("omits Storage S3 details for a Storage member saved without S3 keys",
       services: storageServices({
         service: "storage",
         pin: selection.storage,
-        config: { filePath: "/project/supabase/.temp/stack-uploads", jwtSecret },
+        config: { filePath: "/home/stacks/stack-id/uploads", jwtSecret },
         endpoints: { http: { port: 54321 } },
       }),
       reachable: true,

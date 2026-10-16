@@ -2,8 +2,8 @@
  * On-disk locations for pg-delta-adjacent cache/snapshot artefacts.
  *
  * Two roots:
- * - `LegacyProjectStatePaths.pgdeltaDir`: project-local (`supabase/.temp/pgdelta`) — catalog
- *   snapshots and debug bundles (Go-shared, workspace-mounted).
+ * - `pgdeltaScratchDir`: `supabase/.temp/pgdelta` in legacy state (Go-shared, workspace-mounted),
+ *   `$SUPABASE_HOME/tmp/pgdelta/<project hash>` in stack state — catalog snapshots and debug bundles.
  * - {@link shadowBaselineCacheDir}: global under `SUPABASE_HOME` — the shadow
  *   baseline PGDATA tars, shared across worktrees with the same settings.
  */

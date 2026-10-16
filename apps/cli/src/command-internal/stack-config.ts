@@ -1,4 +1,4 @@
-import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
+import { CommandSettings } from "../config/command-settings.service.ts";
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
 import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { validateCliConfig } from "@supabase/config/effect";
@@ -114,8 +114,15 @@ interface StackStartConfig {
 type StackConfigEffect<E, R> = Effect.Effect<
   StackStartConfig,
   StackConfigError | LockResolutionError | E,
-  FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto | R
+  FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto | CommandSettings | R
 >;
+
+/** Host directory holding a stack's Storage objects, beside its runtime state. */
+export const stackUploadsDir = (
+  path: Pick<Path.Path, "join">,
+  supabaseHome: string,
+  stackId: string,
+): string => path.join(supabaseHome, "stacks", stackId, "uploads");
 
 interface StackConfigOptions<E, R> {
   /** An already-loaded project context to reuse. */
@@ -1010,6 +1017,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         },
       );
       const path = yield* Path.Path;
+      const { supabaseHome } = yield* CommandSettings;
       const auth = validatedConfig.auth;
       const issuer = yield* Effect.try({
         try: () => {
@@ -1243,7 +1251,6 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       );
       const poolMode =
         validatedConfig.db.pooler.pool_mode === "session" ? ("session" as const) : "transaction";
-      const storagePath = legacyProjectStatePaths(path, projectRoot).stackUploadsDir;
       const pgmetaCreation: ServiceCreationType = {
         service: "pgmeta",
         pin: selection.pgmeta,
@@ -1355,7 +1362,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     pin: selection.storage,
                     config: {
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
-                      filePath: `${storagePath}/${stackId}`,
+                      filePath: stackUploadsDir(path, supabaseHome, stackId),
                       fileSizeLimit: storageFileSizeLimit,
                       s3ProtocolEnabled: validatedConfig.storage.s3_protocol.enabled,
                       s3AccessKeyId: DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
@@ -1374,7 +1381,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   {
                     service: "imgproxy" as const,
                     pin: selection.imgproxy,
-                    config: { filePath: `${storagePath}/${stackId}` },
+                    config: { filePath: stackUploadsDir(path, supabaseHome, stackId) },
                     endpoints: { http: endpoint(undefined) },
                   } satisfies ServiceCreationType,
                 ]

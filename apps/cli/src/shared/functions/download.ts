@@ -1,4 +1,5 @@
-import { legacyProjectStatePaths } from "../../command-internal/legacy-project-state.paths.ts";
+import { scratchDir } from "../../command-internal/scratch-paths.ts";
+import { usesStackState } from "../../command-internal/stack-backend.ts";
 import { BunPath } from "@effect/platform-bun";
 import { operationDefinitions, SupabaseApiInputError, type ApiClient } from "@supabase/api/effect";
 import { randomUUID } from "node:crypto";
@@ -966,26 +967,31 @@ const downloadWithDockerUnbundle = Effect.fn("functions.download.dockerUnbundle"
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
-  const tempDir = legacyProjectStatePaths(path, dependencies.projectRoot).tempDir;
-  yield* fs.makeDirectory(tempDir, { recursive: true }).pipe(
+  const scratch = yield* scratchDir(dependencies.projectRoot);
+  yield* fs.makeDirectory(scratch, { recursive: true }).pipe(
     Effect.mapError(
       (error) =>
         new FunctionEszipDownloadError({
-          message: `failed to mkdir: ${hostErrorMessage(error, tempDir)}`,
+          message: `failed to mkdir: ${hostErrorMessage(error, scratch)}`,
         }),
     ),
   );
+  // `$SUPABASE_HOME/tmp` is shared by every project, so stack state gives each run its own
+  // directory; legacy state keeps the fixed `supabase/.temp/output_<slug>.eszip`.
+  const ownsTempDir = yield* usesStackState;
+  const eszipPrefix = `.supabase-eszip-${slug}-`;
+  const tempDir = ownsTempDir
+    ? yield* fs.makeTempDirectory({ directory: scratch, prefix: eszipPrefix }).pipe(
+        Effect.mapError(
+          (error) =>
+            new FunctionEszipDownloadError({
+              message: `failed to mkdir: ${hostErrorMessage(error, path.join(scratch, eszipPrefix))}`,
+            }),
+        ),
+      )
+    : scratch;
   const eszipFileName = `output_${slug}.eszip`;
   const eszipPath = path.join(tempDir, eszipFileName);
-  yield* fs.writeFile(eszipPath, eszip).pipe(
-    Effect.mapError(
-      (error) =>
-        new FunctionEszipDownloadError({
-          message: `failed to download file: ${hostErrorMessage(error, eszipPath)}`,
-        }),
-    ),
-  );
-
   // `Effect.ensuring` below wraps every step from here on so a failure
   // resolving the network/volume, spawning Docker, or a non-zero container
   // exit all still clean up the temp eszip file, not just the happy path.
@@ -997,10 +1003,21 @@ const downloadWithDockerUnbundle = Effect.fn("functions.download.dockerUnbundle"
   const cleanupEszip = debugEnabled
     ? Effect.void
     : fs
-        .remove(eszipPath, { force: true })
+        .remove(ownsTempDir ? tempDir : eszipPath, { force: true, recursive: ownsTempDir })
         .pipe(
           Effect.catch((error) => output.raw(`${hostErrorMessage(error, eszipPath)}\n`, "stderr")),
         );
+
+  yield* fs.writeFile(eszipPath, eszip).pipe(
+    Effect.mapError(
+      (error) =>
+        new FunctionEszipDownloadError({
+          message: `failed to download file: ${hostErrorMessage(error, eszipPath)}`,
+        }),
+    ),
+    // Only a run-owned directory is removed here; legacy leaves the fixed file in place.
+    Effect.tapError(() => (ownsTempDir ? cleanupEszip : Effect.void)),
+  );
 
   const { projectId, denoVersion, image, projectEnvValues } = edgeRuntimeImage;
   const functionsDir = path.resolve(dependencies.projectRoot, "supabase", "functions");

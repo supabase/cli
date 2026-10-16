@@ -52,6 +52,11 @@ import {
   type SetupStorageStackApiOptions,
 } from "../../../../tests/helpers/storage.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
+import {
+  legacyStateAccesses,
+  recordingFileSystem,
+  seedLegacyStateDecoys,
+} from "../../../../tests/helpers/legacy-state-guard.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -243,6 +248,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
       : undefined;
 
   const stackApi = buildStorageStackApi(workdir, opts.stackApi);
+  const recorder = recordingFileSystem();
 
   const layer = Layer.mergeAll(
     out.layer,
@@ -251,6 +257,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     ConfigProvider.layer(ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true })),
     mockCommandSettings({ workdir, explicitWorkdir: opts.explicitWorkdir ?? false }),
     BunServices.layer,
+    recorder.layer,
     runtimeInfoLayer,
     // Seed-bucket prompts model an interactive user answering via `confirm`.
     mockTty({ stdinIsTty: true, stdoutIsTty: false }),
@@ -281,6 +288,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     linkedCache,
     stackCalls: stackApi.stackCalls,
     managementRequests: recorded?.requests ?? [],
+    accessed: recorder.accessed,
   };
 });
 
@@ -3052,6 +3060,27 @@ describe("stack backend", () => {
         requests.some((r) => r.method === "POST" && r.url.endsWith("/storage/v1/bucket")),
       ).toBe(true);
       expect(requests.some((r) => r.url.includes("/storage/v1/object/"))).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("seeds buckets without reading or writing supabase/.temp", () =>
+    Effect.gen(function* () {
+      const { layer, accessed } = yield* setupSeedBuckets(tmp.current, {
+        toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
+        files: { "supabase/assets/a.txt": "hello" },
+        stackBackend: true,
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+          { method: "POST", match: "/storage/v1/object/", body: {} },
+        ],
+      });
+      seedLegacyStateDecoys(tmp.current);
+
+      yield* seedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+
+      expect(accessed.some((entry) => entry.endsWith("a.txt"))).toBe(true);
+      expect(legacyStateAccesses(accessed)).toEqual([]);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

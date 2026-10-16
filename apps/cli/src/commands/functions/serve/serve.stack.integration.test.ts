@@ -28,6 +28,11 @@ import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import {
+  legacyStateAccesses,
+  recordingFileSystem,
+  seedLegacyStateDecoys,
+} from "../../../../tests/helpers/legacy-state-guard.ts";
+import {
   mockOutput,
   mockProcessControl,
   mockRuntimeInfo,
@@ -313,8 +318,10 @@ const fixture = (
       findDeleted: () => Effect.die("unused"),
     } satisfies StackApi["Service"];
     const api = Layer.succeed(StackApi, apiService);
+    const recorder = recordingFileSystem();
     const layer = Layer.mergeAll(
       BunServices.layer,
+      recorder.layer,
       api,
       mockCommandSettings({
         workdir: options.standaloneProjectRoot ?? "/project",
@@ -329,6 +336,7 @@ const fixture = (
     );
     return {
       layer,
+      accessed: recorder.accessed,
       signal,
       started,
       output,
@@ -422,6 +430,34 @@ describe("experimental Stack Functions serve", () => {
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
     }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "serves on the bundled pin without reading supabase/.temp, whatever a legacy pin says",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-no-legacy-state-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "functions-no-legacy-state"\n\n[edge_runtime]\nenabled = true\n',
+        );
+        seedLegacyStateDecoys(root);
+        const state = yield* fixture({ standaloneProjectRoot: root });
+        const run = yield* functionsServeStack(flags()).pipe(
+          Effect.provide(state.layer),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.await(state.started);
+
+        expect(state.createdFunctions?.pin).toEqual(selection.functions);
+        expect(state.accessed.some((entry) => entry.endsWith("config.toml"))).toBe(true);
+        expect(legacyStateAccesses(state.accessed)).toEqual([]);
+
+        yield* Deferred.succeed(state.signal, undefined);
+        yield* Fiber.join(run);
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live("refreshes remote JWKS before creating standalone Functions", () =>

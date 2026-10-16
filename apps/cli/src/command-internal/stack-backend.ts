@@ -10,7 +10,11 @@ import {
 } from "effect";
 import { extractCommandPath, hasRootVersionFlag } from "../shared/cli/run.ts";
 import type { ExperimentalFeatureFlagError } from "./experimental-feature.ts";
-import { projectStateMode, type ProjectStateMode } from "./project-state-mode.ts";
+import {
+  projectStateMode,
+  type ProjectStateMode,
+  softProjectStateMode,
+} from "./project-state-mode.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -65,6 +69,16 @@ export const currentStackBackend: Effect.Effect<{ readonly kind: StackBackend },
   Effect.serviceOption(StackBackendContext).pipe(
     Effect.map((value) => Option.getOrElse(value, () => ({ kind: "legacy" as const }))),
   );
+
+/**
+ * Whether this command keeps project state in `$SUPABASE_HOME` instead of `supabase/.temp`: it was
+ * routed to the stack backend, or the project is in stack state mode (commands that are never
+ * routed, such as `functions deploy`).
+ */
+export const usesStackState: Effect.Effect<boolean> = Effect.gen(function* () {
+  if ((yield* currentStackBackend).kind === "stack") return true;
+  return (yield* softProjectStateMode) === "stack";
+});
 
 /**
  * Resolves the project state mode and, for the commands `experimental.stack` routes, the backend.

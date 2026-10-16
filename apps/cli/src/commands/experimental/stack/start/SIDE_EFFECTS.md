@@ -41,7 +41,7 @@ loading fails when they are set.
 Secrets needed by enabled services are passed to the runtime. State and service data live under
 `$SUPABASE_HOME/stacks/<stack-id>/` (`~/.supabase/stacks/<stack-id>/` by default); native artifacts
 use `$SUPABASE_HOME/cache/stack`, keyed by content digest and retired automatically once unused for
-30 days. Storage files use the caller-owned project directory `supabase/.temp/stack-uploads/<stack-id>/`.
+30 days. Storage files use `<SUPABASE_HOME>/stacks/<stack-id>/uploads/`; the command reads and writes nothing under `supabase/.temp`.
 Functions preparation may build the project's source.
 The owner persists each service's output under `$SUPABASE_HOME/stacks/<stack-id>/logs/`, keeping at
 most about 10 MiB (plus the segment being written) per service instance. Destroying an instance or
