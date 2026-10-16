@@ -155,7 +155,7 @@ export function flagAliasesFor(
  * Builds a lookup for whether an argv token (a canonical `--name` or an alias) at `commandPath`
  * belongs to a value-taking flag (any flag whose type isn't `"boolean"`), answering `false` for
  * every token when `commandPath` doesn't resolve to a real command. Used by `run.ts`'s
- * `isMissingFlagTokenPresent` to detect when pflag would have consumed the token as a preceding
+ * `isMissingFlagTokenPresent` to detect when the token would have been consumed as a preceding
  * flag's value instead of treating it as its own occurrence.
  */
 export function isValueTakingFlagTokenFor(

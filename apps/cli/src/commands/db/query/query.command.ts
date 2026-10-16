@@ -11,9 +11,11 @@ import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
-import { QUERY_OUTPUT_FORMATS } from "../../../command-internal/go-output-flag.ts";
+import { QUERY_OUTPUT_FORMATS } from "../../../command-internal/output-formats.ts";
 import { dbQuery } from "./query.handler.ts";
 import { dbQueryRuntimeLayer } from "./query.layers.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 
 /**
  * `db query` needs its own `--output`/`-o` (`json|table|csv`), but Effect CLI keeps one global
@@ -93,4 +95,6 @@ export const dbQueryCommand = Command.make("query", config).pipe(
     ),
   ),
   Command.provide(dbQueryRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

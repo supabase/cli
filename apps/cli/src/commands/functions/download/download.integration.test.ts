@@ -34,6 +34,7 @@ import {
   withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockContextualAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   assertBlockDrift,
@@ -44,13 +45,13 @@ import {
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
-import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
+import { sanitizeProjectId } from "../../../shared/config/project-id.ts";
 import { containerRuntimeNotFoundMessage } from "../../../command-internal/container-cli.ts";
 import {
   downloadFunctions,
   functionsDownload as functionsDownloadCalls,
 } from "../../../shared/functions/download.ts";
-import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
+import { functionsLocalConfigLoader } from "../../../command-internal/functions-local-config.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ConflictingFunctionDownloadFlagsError } from "../../../shared/functions/download.errors.ts";
 import { FunctionsApiStatusError } from "../../../shared/functions/functions-api.errors.ts";
@@ -143,12 +144,17 @@ function mockDockerRunSpawnFailure() {
 
 const tempRoot = useTempWorkdir("supabase-functions-download-legacy-");
 
+const workdirProjectId = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  return sanitizeProjectId(path.basename(tempRoot.current));
+});
+
 const baseFlags: FunctionsDownloadFlags = {
   functionName: Option.some("hello-world"),
   projectRef: Option.none(),
   useApi: false,
   useDocker: false,
-  legacyBundle: false,
+  legacyBundle: Option.none(),
 };
 
 function multipartResponse(
@@ -181,32 +187,6 @@ function multipartResponse(
   );
 }
 
-function mockProxy() {
-  const calls: Array<ReadonlyArray<string>> = [];
-  const envs: Array<Record<string, string> | undefined> = [];
-  const captureCalls: Array<ReadonlyArray<string>> = [];
-  const captureEnvs: Array<Record<string, string> | undefined> = [];
-  return {
-    calls,
-    envs,
-    captureCalls,
-    captureEnvs,
-    layer: Layer.succeed(GoProxy, {
-      exec: (args, opts) =>
-        Effect.sync(() => {
-          calls.push([...args]);
-          envs.push(opts?.env);
-        }),
-      execCapture: (args, opts) =>
-        Effect.sync(() => {
-          captureCalls.push([...args]);
-          captureEnvs.push(opts?.env);
-          return "";
-        }),
-    }),
-  };
-}
-
 describe("functions download", () => {
   it.effect("downloads a function natively into the legacy workdir", () => {
     const out = mockOutput({ format: "text" });
@@ -216,10 +196,10 @@ describe("functions download", () => {
           ? Effect.succeed(multipartResponse(request))
           : Effect.succeed(jsonResponse(request, 200, {})),
     });
-    const proxy = mockProxy();
     const linkedProjectCache = mockLinkedProjectCacheTracked();
     const telemetry = mockTelemetryStateTracked();
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -227,7 +207,6 @@ describe("functions download", () => {
         linkedProjectCache: linkedProjectCache.layer,
         telemetry: telemetry.layer,
       }),
-      proxy.layer,
       Stdio.layerTest({
         args: Effect.succeed([
           "functions",
@@ -244,7 +223,6 @@ describe("functions download", () => {
       const path = yield* Path.Path;
       yield* functionsDownload(baseFlags);
 
-      expect(proxy.calls).toEqual([]);
       expect(
         yield* fs.readFileString(
           path.join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
@@ -291,7 +269,7 @@ describe("functions download", () => {
           cliSettings,
         }),
       }),
-      mockProxy().layer,
+      cliConfigValuesTestLayer,
       Stdio.layerTest({
         args: Effect.succeed(["functions", "download", "hello-world", "--use-api"]),
       }),
@@ -345,7 +323,7 @@ describe("functions download", () => {
         api,
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      mockProxy().layer,
+      cliConfigValuesTestLayer,
       Stdio.layerTest({
         args: Effect.succeed([
           "functions",
@@ -391,12 +369,12 @@ describe("functions download", () => {
     ],
   ) {
     return Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out: mockOutput({ format: "text" }),
         api: mockCommandPlatformApi({ handler }),
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      mockProxy().layer,
       Stdio.layerTest({ args: Effect.succeed(args) }),
     );
   }
@@ -511,7 +489,11 @@ describe("functions download", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
-      yield* fs.writeFileString(path.join(tempRoot.current, "supabase", ".temp"), "");
+      // A dangling `.temp` link reads as unlinked yet cannot be created.
+      yield* fs.symlink(
+        path.join(tempRoot.current, "missing-target"),
+        path.join(tempRoot.current, "supabase", ".temp"),
+      );
 
       const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
 
@@ -582,6 +564,7 @@ describe("functions download", () => {
           : Effect.void,
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api: mockCommandPlatformApi({
@@ -589,7 +572,6 @@ describe("functions download", () => {
         }),
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      mockProxy().layer,
       child.layer,
       Stdio.layerTest({
         args: Effect.succeed([
@@ -612,68 +594,54 @@ describe("functions download", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live(
-    "runs the native Docker unbundle path by default (Go parity), with no flags passed",
-    () => {
-      const out = mockOutput({ format: "text" });
-      const api = mockCommandPlatformApi();
-      const proxy = mockProxy();
-      // Non-empty stdout/stderr exercises both the text-mode stdout routing
-      // and always-to-stderr branches in `downloadWithDockerUnbundle`.
-      const child = mockDockerUnbundle({
-        runStdout: ["unbundle: wrote index.ts"],
-        runStderr: ["unbundle: warning about deno.json"],
-      });
-      const layer = Layer.mergeAll(
-        buildTestRuntime({
-          out,
-          api,
-          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-        }),
-        proxy.layer,
-        child.layer,
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "functions",
-            "download",
-            "hello-world",
-            "--project-ref",
-            PROJECT_ID,
-          ]),
-        }),
-      );
+  it.live("runs the native Docker unbundle path by default, with no flags passed", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi();
+    // Non-empty stdout/stderr exercises both the text-mode stdout routing
+    // and always-to-stderr branches in `downloadWithDockerUnbundle`.
+    const child = mockDockerUnbundle({
+      runStdout: ["unbundle: wrote index.ts"],
+      runStderr: ["unbundle: warning about deno.json"],
+    });
+    const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+      }),
+      child.layer,
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "download", "hello-world", "--project-ref", PROJECT_ID]),
+      }),
+    );
 
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        yield* functionsDownload({ ...baseFlags, useDocker: true });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* functionsDownload({ ...baseFlags, useDocker: true });
 
-        expect(proxy.calls).toEqual([]);
-        expect(proxy.captureCalls).toEqual([]);
-        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
-          `GET https://api.supabase.com/v1/projects/${PROJECT_ID}/functions/hello-world/body`,
-        ]);
-        assertPermissionDrift({ command: "functions download", requests: api.requests });
-        expect(
-          child.spawned.some(
-            (spawned) => spawned.command === "docker" && spawned.args[0] === "run",
-          ),
-        ).toBe(true);
-        expect(out.stderrText).toContain("Downloading function: hello-world\n");
-        expect(out.stdoutText).toContain("unbundle: wrote index.ts\n");
-        expect(out.stderrText).toContain("unbundle: warning about deno.json\n");
-        // Unlike the server-side and --legacy-bundle paths, the native Docker
-        // path never prints a "Downloaded Function ..." success line.
-        expect(out.stderrText).not.toContain("Downloaded Function");
-        // No `--debug` — the temp eszip file is removed after the run.
-        expect(
-          yield* fs.exists(
-            path.join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
-          ),
-        ).toBe(false);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${PROJECT_ID}/functions/hello-world/body`,
+      ]);
+      assertPermissionDrift({ command: "functions download", requests: api.requests });
+      expect(
+        child.spawned.some((spawned) => spawned.command === "docker" && spawned.args[0] === "run"),
+      ).toBe(true);
+      expect(out.stderrText).toContain("Downloading function: hello-world\n");
+      expect(out.stdoutText).toContain("unbundle: wrote index.ts\n");
+      expect(out.stderrText).toContain("unbundle: warning about deno.json\n");
+      // Unlike the server-side path, the native Docker path never prints a
+      // "Downloaded Function ..." success line.
+      expect(out.stderrText).not.toContain("Downloaded Function");
+      // No `--debug` — the temp eszip file is removed after the run.
+      expect(
+        yield* fs.exists(
+          path.join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
+        ),
+      ).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect(
     "does not treat the --use-docker default as conflicting with an explicit --use-api",
@@ -685,14 +653,13 @@ describe("functions download", () => {
             ? Effect.succeed(multipartResponse(request))
             : Effect.succeed(jsonResponse(request, 200, {})),
       });
-      const proxy = mockProxy();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
-        proxy.layer,
         Stdio.layerTest({
           args: Effect.succeed([
             "functions",
@@ -712,7 +679,6 @@ describe("functions download", () => {
         // the explicit `--use-api`.
         yield* functionsDownload({ ...baseFlags, useApi: true, useDocker: true });
 
-        expect(proxy.calls).toEqual([]);
         expect(
           yield* fs.readFileString(
             path.join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
@@ -727,15 +693,14 @@ describe("functions download", () => {
     () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
-      const proxy = mockProxy();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
-        proxy.layer,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed([
@@ -754,8 +719,6 @@ describe("functions download", () => {
         // `--use-api=false` leaves `--use-docker`'s own default (true) in effect.
         yield* functionsDownload({ ...baseFlags, useApi: false, useDocker: true });
 
-        expect(proxy.calls).toEqual([]);
-        expect(proxy.captureCalls).toEqual([]);
         expect(
           child.spawned.some(
             (spawned) => spawned.command === "docker" && spawned.args[0] === "run",
@@ -770,17 +733,16 @@ describe("functions download", () => {
     () => {
       const out = mockOutput({ format: "json" });
       const api = mockCommandPlatformApi();
-      const proxy = mockProxy();
       // Non-empty container stdout exercises the machine-mode branch that
       // routes it to stderr, keeping stdout payload-only.
       const child = mockDockerUnbundle({ runStdout: ["unbundle: wrote index.ts"] });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
-        proxy.layer,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed([
@@ -798,8 +760,6 @@ describe("functions download", () => {
       return Effect.gen(function* () {
         yield* functionsDownload({ ...baseFlags, useDocker: true });
 
-        expect(proxy.calls).toEqual([]);
-        expect(proxy.captureCalls).toEqual([]);
         expect(
           child.spawned.some(
             (spawned) => spawned.command === "docker" && spawned.args[0] === "run",
@@ -827,15 +787,14 @@ describe("functions download", () => {
             )
           : Effect.succeed(jsonResponse(request, 200, {})),
     });
-    const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      proxy.layer,
       child.layer,
       Stdio.layerTest({
         args: Effect.succeed([
@@ -856,8 +815,6 @@ describe("functions download", () => {
         useDocker: true,
       });
 
-      expect(proxy.calls).toEqual([]);
-      expect(proxy.captureCalls).toEqual([]);
       expect(
         child.spawned.filter(
           (spawned) => spawned.command === "docker" && spawned.args[0] === "run",
@@ -894,15 +851,14 @@ describe("functions download", () => {
   it.live("runs docker with the expected binds, network, and unbundle command", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
-    const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      proxy.layer,
       child.layer,
       Stdio.layerTest({
         args: Effect.succeed([
@@ -924,7 +880,7 @@ describe("functions download", () => {
       // own Docker-bundling path.
       expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
         command: "docker",
-        args: ["network", "inspect", `supabase_network_${PROJECT_ID}`],
+        args: ["network", "inspect", `supabase_network_${yield* workdirProjectId}`],
       });
       expect(child.spawned.find((spawned) => spawned.args[0] === "volume")).toEqual({
         command: "docker",
@@ -932,10 +888,10 @@ describe("functions download", () => {
           "volume",
           "create",
           "--label",
-          `com.supabase.cli.project=${PROJECT_ID}`,
+          `com.supabase.cli.project=${yield* workdirProjectId}`,
           "--label",
-          `com.docker.compose.project=${PROJECT_ID}`,
-          `supabase_edge_runtime_${PROJECT_ID}`,
+          `com.docker.compose.project=${yield* workdirProjectId}`,
+          `supabase_edge_runtime_${yield* workdirProjectId}`,
         ],
       });
 
@@ -948,14 +904,14 @@ describe("functions download", () => {
       );
       const functionsDir = path.resolve(tempRoot.current, "supabase", "functions");
       expect(runCommand?.args).toContain(
-        `supabase_edge_runtime_${PROJECT_ID}:/root/.cache/deno:rw`,
+        `supabase_edge_runtime_${yield* workdirProjectId}:/root/.cache/deno:rw`,
       );
       expect(runCommand?.args).toContain(
         `${hostEszipPath}:/root/eszips/output_hello-world.eszip:ro`,
       );
       expect(runCommand?.args).toContain(`${functionsDir}:/home/deno:rw`);
       expect(runCommand?.args).toContain("--network");
-      expect(runCommand?.args).toContain(`supabase_network_${PROJECT_ID}`);
+      expect(runCommand?.args).toContain(`supabase_network_${yield* workdirProjectId}`);
       // The unbundle tail is always the last 6 args regardless of whether
       // `--add-host` (Linux-only) was inserted before it.
       expect(runCommand?.args.slice(-6)).toEqual([
@@ -976,15 +932,14 @@ describe("functions download", () => {
     // `deploy.ts`'s `buildDockerBinds` applies the same carve-out.
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
-    const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      proxy.layer,
       child.layer,
       Stdio.layerTest({
         args: Effect.succeed([
@@ -998,31 +953,28 @@ describe("functions download", () => {
       }),
     );
 
-    return Effect.gen(function* () {
-      const path = yield* Path.Path;
-      yield* functionsDownload({ ...baseFlags, useDocker: true });
+    return withConfigEnv(
+      { BITBUCKET_CLONE_DIR: "" },
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        yield* functionsDownload({ ...baseFlags, useDocker: true });
 
-      const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-      expect(runCommand?.args).not.toContain(
-        `supabase_edge_runtime_${PROJECT_ID}:/root/.cache/deno:rw`,
-      );
-      const hostEszipPath = path.resolve(
-        tempRoot.current,
-        "supabase",
-        ".temp",
-        "output_hello-world.eszip",
-      );
-      expect(runCommand?.args).toContain(
-        `${hostEszipPath}:/root/eszips/output_hello-world.eszip:ro`,
-      );
-      expect(child.spawned.some((spawned) => spawned.args[0] === "volume")).toBe(false);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.provideService(
-        ConfigProvider.ConfigProvider,
-        ConfigProvider.fromEnvRecord({ BITBUCKET_CLONE_DIR: "" }, { preserveEmptyStrings: true }),
-      ),
-    );
+        const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+        expect(runCommand?.args).not.toContain(
+          `supabase_edge_runtime_${yield* workdirProjectId}:/root/.cache/deno:rw`,
+        );
+        const hostEszipPath = path.resolve(
+          tempRoot.current,
+          "supabase",
+          ".temp",
+          "output_hello-world.eszip",
+        );
+        expect(runCommand?.args).toContain(
+          `${hostEszipPath}:/root/eszips/output_hello-world.eszip:ro`,
+        );
+        expect(child.spawned.some((spawned) => spawned.args[0] === "volume")).toBe(false);
+      }),
+    ).pipe(Effect.provide(layer));
   });
 
   it.live("requests the raw eszip body instead of a negotiated JSON response", () => {
@@ -1031,15 +983,14 @@ describe("functions download", () => {
     // risk a negotiated response instead of the raw eszip body.
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
-    const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      proxy.layer,
       child.layer,
       Stdio.layerTest({
         args: Effect.succeed([
@@ -1064,15 +1015,14 @@ describe("functions download", () => {
   it.live("uses an explicit --network-id override instead of the derived network name", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
-    const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      proxy.layer,
       child.layer,
       Stdio.layerTest({
         args: Effect.succeed([
@@ -1100,7 +1050,7 @@ describe("functions download", () => {
       });
       const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
       expect(runCommand?.args).toContain("custom-network");
-      expect(runCommand?.args).not.toContain(`supabase_network_${PROJECT_ID}`);
+      expect(runCommand?.args).not.toContain(`supabase_network_${yield* workdirProjectId}`);
     }).pipe(Effect.provide(layer));
   });
 
@@ -1109,15 +1059,14 @@ describe("functions download", () => {
     () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
-      const proxy = mockProxy();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
-        proxy.layer,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed([
@@ -1137,10 +1086,10 @@ describe("functions download", () => {
 
         expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
           command: "docker",
-          args: ["network", "inspect", `supabase_network_${PROJECT_ID}`],
+          args: ["network", "inspect", `supabase_network_${yield* workdirProjectId}`],
         });
         const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-        expect(runCommand?.args).toContain(`supabase_network_${PROJECT_ID}`);
+        expect(runCommand?.args).toContain(`supabase_network_${yield* workdirProjectId}`);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1148,15 +1097,14 @@ describe("functions download", () => {
   it.live("honors the final occurrence of a repeated --network-id flag", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
-    const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      proxy.layer,
       child.layer,
       Stdio.layerTest({
         args: Effect.succeed([
@@ -1188,15 +1136,14 @@ describe("functions download", () => {
     () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
-      const proxy = mockProxy();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
-        proxy.layer,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed([
@@ -1217,7 +1164,7 @@ describe("functions download", () => {
         yield* functionsDownload({ ...baseFlags, useDocker: true });
 
         const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-        expect(runCommand?.args).toContain(`supabase_network_${PROJECT_ID}`);
+        expect(runCommand?.args).toContain(`supabase_network_${yield* workdirProjectId}`);
         expect(runCommand?.args).not.toContain("custom-network");
       }).pipe(Effect.provide(layer));
     },
@@ -1226,21 +1173,19 @@ describe("functions download", () => {
   it.live(
     "does not climb to an ancestor project's config.toml for the Docker download path",
     () => {
-      // No ancestor climb: `resolveEdgeRuntimeImage` uses `search: false`, so
-      // a nested workdir without its own config.toml falls back to
-      // `--project-ref` rather than an ancestor's `project_id`.
+      // A nested workdir without its own config.toml is named after the workdir,
+      // not an ancestor's `project_id` and not `--project-ref`.
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
-      const proxy = mockProxy();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const nestedWorkdir = `${tempRoot.current}/nested`;
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
           cliSettings: mockCommandSettings({ workdir: nestedWorkdir }),
         }),
-        proxy.layer,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed([
@@ -1268,29 +1213,26 @@ describe("functions download", () => {
 
         expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
           command: "docker",
-          args: ["network", "inspect", `supabase_network_${PROJECT_ID}`],
+          args: ["network", "inspect", "supabase_network_nested"],
         });
         const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-        expect(runCommand?.args).toContain(`supabase_network_${PROJECT_ID}`);
+        expect(runCommand?.args).toContain("supabase_network_nested");
         expect(runCommand?.args).not.toContain("supabase_network_ancestor-project");
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.live("prefers config.toml over a stray config.json for the Docker download path", () => {
-    // Uses `resolveEdgeRuntimeImage`'s `tomlOnly: true`, so a workdir with
-    // both files resolves `project_id` from config.toml, not config.json.
+  it.live("prefers config.json over config.toml for the Docker download path", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
-    const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      proxy.layer,
       child.layer,
       Stdio.layerTest({
         args: Effect.succeed([
@@ -1320,8 +1262,8 @@ describe("functions download", () => {
       yield* functionsDownload({ ...baseFlags, useDocker: true });
 
       const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-      expect(runCommand?.args).toContain("supabase_network_toml-project");
-      expect(runCommand?.args).not.toContain("supabase_network_json-project");
+      expect(runCommand?.args).toContain("supabase_network_json-project");
+      expect(runCommand?.args).not.toContain("supabase_network_toml-project");
     }).pipe(Effect.provide(layer));
   });
 
@@ -1331,15 +1273,14 @@ describe("functions download", () => {
     // passed straight through to `docker run --network`.
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
-    const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      proxy.layer,
       child.layer,
       Stdio.layerTest({
         args: Effect.succeed([
@@ -1370,15 +1311,14 @@ describe("functions download", () => {
     // must not get a second `v`.
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
-    const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      proxy.layer,
       child.layer,
       Stdio.layerTest({
         args: Effect.succeed([
@@ -1413,15 +1353,14 @@ describe("functions download", () => {
   it.live("keeps the temporary eszip file when --debug is passed", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
-    const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      proxy.layer,
       child.layer,
       Stdio.layerTest({
         args: Effect.succeed([
@@ -1454,15 +1393,14 @@ describe("functions download", () => {
     () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
-      const proxy = mockProxy();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
-        proxy.layer,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed([
@@ -1496,17 +1434,16 @@ describe("functions download", () => {
     () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
-      const proxy = mockProxy();
       // Every docker command (including the `docker info` probe) fails,
       // modeling Docker not running.
       const child = mockChildProcessSpawner({ exitCode: 1 });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
-        proxy.layer,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed([
@@ -1540,18 +1477,17 @@ describe("functions download", () => {
   );
 
   describe("docker unbundle container failures", () => {
-    it.live("fails with the legacy-bundle suggestion when the container exits non-zero", () => {
+    it.live("fails with the redeploy suggestion when the container exits non-zero", () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
-      const proxy = mockProxy();
       const child = mockDockerUnbundle({ runExitCode: 1, runStderr: ["boom"] });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
-        proxy.layer,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed([
@@ -1572,7 +1508,7 @@ describe("functions download", () => {
         expect(error).toMatchObject({
           message: "error running container: exit 1",
           suggestion:
-            "\nIf your function is deployed using CLI < 1.120.0, trying running supabase functions download --legacy-bundle hello-world instead.",
+            "\nRetry with supabase functions download --use-api hello-world to unbundle server-side. If that also fails and the Function was deployed with a CLI older than 1.120.0, redeploy it with the current CLI.",
         });
       }).pipe(Effect.provide(layer));
     });
@@ -1582,7 +1518,6 @@ describe("functions download", () => {
       () => {
         const out = mockOutput({ format: "text" });
         const api = mockCommandPlatformApi();
-        const proxy = mockProxy();
         const child = mockDockerUnbundle({
           runExitCode: 1,
           // Full-line, case-insensitive match required; a substring like
@@ -1590,12 +1525,12 @@ describe("functions download", () => {
           runStderr: ["invalid eszip v2"],
         });
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
             cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           }),
-          proxy.layer,
           child.layer,
           Stdio.layerTest({
             args: Effect.succeed([
@@ -1627,7 +1562,7 @@ describe("functions download", () => {
             message: "error running container: exit 1",
             suggestion:
               "Please use deno v2 in supabase/config.toml to download this Function:\n\n[edge_runtime]\ndeno_version = 2\n" +
-              "\nIf your function is deployed using CLI < 1.120.0, trying running supabase functions download --legacy-bundle hello-world instead.",
+              "\nRetry with supabase functions download --use-api hello-world to unbundle server-side. If that also fails and the Function was deployed with a CLI older than 1.120.0, redeploy it with the current CLI.",
           });
         }).pipe(Effect.provide(layer));
       },
@@ -1638,15 +1573,14 @@ describe("functions download", () => {
       () => {
         const out = mockOutput({ format: "text" });
         const api = mockCommandPlatformApi();
-        const proxy = mockProxy();
         const child = mockDockerUnbundle({ runExitCode: 1, runStderr: ["permission denied"] });
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
             cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           }),
-          proxy.layer,
           child.layer,
           Stdio.layerTest({
             args: Effect.succeed([
@@ -1675,7 +1609,7 @@ describe("functions download", () => {
 
           expect(error).toMatchObject({
             suggestion:
-              "\nIf your function is deployed using CLI < 1.120.0, trying running supabase functions download --legacy-bundle hello-world instead.",
+              "\nRetry with supabase functions download --use-api hello-world to unbundle server-side. If that also fails and the Function was deployed with a CLI older than 1.120.0, redeploy it with the current CLI.",
           });
         }).pipe(Effect.provide(layer));
       },
@@ -1685,7 +1619,6 @@ describe("functions download", () => {
   it.live("fails when ensureDockerNetwork can't create a missing network", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
-    const proxy = mockProxy();
     const spawnerOpts: {
       exitCode?: number;
       stderr?: string[];
@@ -1697,12 +1630,12 @@ describe("functions download", () => {
     };
     const child = mockChildProcessSpawner(spawnerOpts);
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      proxy.layer,
       child.layer,
       Stdio.layerTest({
         args: Effect.succeed([
@@ -1723,7 +1656,7 @@ describe("functions download", () => {
 
       expect(error).toBeInstanceOf(Error);
       expect(error).toMatchObject({
-        message: `failed to create docker network: supabase_network_${PROJECT_ID}`,
+        message: `failed to create docker network: supabase_network_${yield* workdirProjectId}`,
       });
       expect(child.spawned.some((spawned) => spawned.args[0] === "volume")).toBe(false);
       expect(child.spawned.some((spawned) => spawned.args[0] === "run")).toBe(false);
@@ -1743,15 +1676,14 @@ describe("functions download", () => {
     () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
-      const proxy = mockProxy();
       const child = mockDockerRunSpawnFailure();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
-        proxy.layer,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed([
@@ -1777,7 +1709,7 @@ describe("functions download", () => {
         expect(error).toMatchObject({
           message: `failed to run the edge-runtime unbundle container: ${containerRuntimeNotFoundMessage}`,
           suggestion:
-            "\nIf your function is deployed using CLI < 1.120.0, trying running supabase functions download --legacy-bundle hello-world instead.",
+            "\nRetry with supabase functions download --use-api hello-world to unbundle server-side. If that also fails and the Function was deployed with a CLI older than 1.120.0, redeploy it with the current CLI.",
         });
         expect(child.spawned.some((spawned) => spawned.args[0] === "run")).toBe(true);
         expect(
@@ -1789,62 +1721,56 @@ describe("functions download", () => {
     },
   );
 
-  it.live(
-    "reports no functions found without delegating when the project is empty in machine mode",
-    () => {
-      const out = mockOutput({ format: "json" });
-      const api = mockCommandPlatformApi({
-        handler: (request) =>
-          request.url.endsWith("/functions")
-            ? Effect.succeed(jsonResponse(request, 200, []))
-            : Effect.succeed(jsonResponse(request, 200, {})),
+  it.live("reports no functions found when the project is empty in machine mode", () => {
+    const out = mockOutput({ format: "json" });
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        request.url.endsWith("/functions")
+          ? Effect.succeed(jsonResponse(request, 200, []))
+          : Effect.succeed(jsonResponse(request, 200, {})),
+    });
+    // Stand-in for the real `ChildProcessSpawner`: `useDocker: true` still
+    // probes `docker info` even with no functions to download, so this must
+    // not spawn a real `docker` process.
+    const child = mockChildProcessSpawner({ exitCode: 0 });
+    const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+      }),
+      child.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "--project-ref",
+          "abcdefghijklmnopqrst",
+          "--output-format",
+          "json",
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* functionsDownload({
+        ...baseFlags,
+        functionName: Option.none(),
+        useDocker: true,
       });
-      const proxy = mockProxy();
-      // Stand-in for the real `ChildProcessSpawner`: `useDocker: true` still
-      // probes `docker info` even with no functions to download, so this must
-      // not spawn a real `docker` process.
-      const child = mockChildProcessSpawner({ exitCode: 0 });
-      const layer = Layer.mergeAll(
-        buildTestRuntime({
-          out,
-          api,
-          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-        }),
-        proxy.layer,
-        child.layer,
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "functions",
-            "download",
-            "--project-ref",
-            "abcdefghijklmnopqrst",
-            "--output-format",
-            "json",
-          ]),
+
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          message: "No functions found.",
+          data: { function_slugs: [], project_ref: "abcdefghijklmnopqrst" },
         }),
       );
+    }).pipe(Effect.provide(layer));
+  });
 
-      return Effect.gen(function* () {
-        yield* functionsDownload({
-          ...baseFlags,
-          functionName: Option.none(),
-          useDocker: true,
-        });
-
-        expect(proxy.calls).toEqual([]);
-        expect(proxy.captureCalls).toEqual([]);
-        expect(out.messages).toContainEqual(
-          expect.objectContaining({
-            type: "success",
-            message: "No functions found.",
-            data: { function_slugs: [], project_ref: "abcdefghijklmnopqrst" },
-          }),
-        );
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.live("fails before delegating when the pre-flight function list fails in machine mode", () => {
+  it.live("fails when the pre-flight function list fails in machine mode", () => {
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({
       handler: (request) =>
@@ -1852,15 +1778,14 @@ describe("functions download", () => {
           ? Effect.succeed(jsonResponse(request, 500, { message: "unavailable" }))
           : Effect.succeed(jsonResponse(request, 200, {})),
     });
-    const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      proxy.layer,
       child.layer,
       Stdio.layerTest({
         args: Effect.succeed([
@@ -1882,8 +1807,6 @@ describe("functions download", () => {
       }).pipe(Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(proxy.calls).toEqual([]);
-      expect(proxy.captureCalls).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -1898,15 +1821,14 @@ describe("functions download", () => {
           ? Effect.succeed(jsonResponse(request, 200, [{}]))
           : Effect.succeed(jsonResponse(request, 200, {})),
     });
-    const proxy = mockProxy();
     const child = mockChildProcessSpawner({ exitCode: 0 });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      proxy.layer,
       child.layer,
       Stdio.layerTest({
         args: Effect.succeed([
@@ -1928,7 +1850,6 @@ describe("functions download", () => {
       }).pipe(Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(proxy.calls).toEqual([]);
       expect(out.messages).not.toContainEqual(
         expect.objectContaining({ type: "success", message: "No functions found." }),
       );
@@ -1954,14 +1875,13 @@ describe("functions download", () => {
                 ? Effect.succeed(jsonResponse(request, 500, { message: "unavailable" }))
                 : Effect.succeed(jsonResponse(request, 200, {})),
       });
-      const proxy = mockProxy();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
-        proxy.layer,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "download", "--project-ref", PROJECT_ID]),
         }),
@@ -1991,64 +1911,16 @@ describe("functions download", () => {
     },
   );
 
-  it.effect(
-    "forwards only --legacy-bundle to the Go proxy, not the --use-docker default too",
-    () => {
-      const out = mockOutput({ format: "text" });
-      const api = mockCommandPlatformApi();
-      const proxy = mockProxy();
-      const layer = Layer.mergeAll(
-        buildTestRuntime({
-          out,
-          api,
-          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-        }),
-        proxy.layer,
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "functions",
-            "download",
-            "hello-world",
-            "--legacy-bundle",
-            "--project-ref",
-            "abcdefghijklmnopqrst",
-          ]),
-        }),
-      );
-
-      return Effect.gen(function* () {
-        // `useDocker: true` mirrors the flag's own default even though only
-        // `--legacy-bundle` was passed; forwarding both would make the Go
-        // binary's own MarkFlagsMutuallyExclusive reject the combination.
-        yield* functionsDownload({ ...baseFlags, useDocker: true, legacyBundle: true });
-
-        expect(proxy.calls).toEqual([
-          [
-            "functions",
-            "download",
-            "hello-world",
-            "--project-ref",
-            "abcdefghijklmnopqrst",
-            "--legacy-bundle",
-          ],
-        ]);
-        expect(proxy.envs).toEqual([{ SUPABASE_TELEMETRY_DISABLED: "1" }]);
-        expect(api.requests).toEqual([]);
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect("rejects an invalid slug before ever reaching the Go proxy", () => {
+  it.effect("rejects an invalid slug before any download work happens", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
-    const proxy = mockProxy();
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      proxy.layer,
       Stdio.layerTest({
         args: Effect.succeed([
           "functions",
@@ -2061,8 +1933,6 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
-      // `useDocker: true` reflects the flag's own default; slug validation
-      // must run before the Go proxy sees this argv.
       const exit = yield* functionsDownload({
         ...baseFlags,
         functionName: Option.some("../../etc"),
@@ -2070,65 +1940,59 @@ describe("functions download", () => {
       }).pipe(Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(proxy.calls).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "does not redact --project-ref in cli_command_executed (Go parity: cmd/functions.go:178)",
-    () => {
-      const out = mockOutput({ format: "text" });
-      const api = mockCommandPlatformApi({
-        handler: (request) =>
-          request.url.endsWith("/body")
-            ? Effect.succeed(multipartResponse(request))
-            : Effect.succeed(jsonResponse(request, 200, {})),
+  it.effect("does not redact --project-ref in cli_command_executed", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        request.url.endsWith("/body")
+          ? Effect.succeed(multipartResponse(request))
+          : Effect.succeed(jsonResponse(request, 200, {})),
+    });
+    const analytics = mockContextualAnalytics();
+    const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        analytics,
+      }),
+      commandRuntimeLayer(["functions", "download"]).pipe(Layer.provide(BunCrypto.layer)),
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--project-ref",
+          "abcdefghijklmnopqrst",
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* functionsDownloadHandler({
+        ...baseFlags,
+        projectRef: Option.some("abcdefghijklmnopqrst"),
       });
-      const proxy = mockProxy();
-      const analytics = mockContextualAnalytics();
-      const layer = Layer.mergeAll(
-        buildTestRuntime({
-          out,
-          api,
-          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-          analytics,
-        }),
-        proxy.layer,
-        commandRuntimeLayer(["functions", "download"]).pipe(Layer.provide(BunCrypto.layer)),
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "functions",
-            "download",
-            "hello-world",
-            "--project-ref",
-            "abcdefghijklmnopqrst",
-          ]),
-        }),
-      );
 
-      return Effect.gen(function* () {
-        yield* functionsDownloadHandler({
-          ...baseFlags,
-          projectRef: Option.some("abcdefghijklmnopqrst"),
-        });
+      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
+      expect(event?.properties.flags).toEqual({ "project-ref": "abcdefghijklmnopqrst" });
+    }).pipe(Effect.provide(layer));
+  });
 
-        const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-        expect(event?.properties.flags).toEqual({ "project-ref": "abcdefghijklmnopqrst" });
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect("rejects the bundler mutex with cobra's exact error text", () => {
+  it.effect("rejects the bundler mutex with the exact error text", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
-    const proxy = mockProxy();
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
       }),
-      proxy.layer,
       Stdio.layerTest({
         args: Effect.succeed(["functions", "download", "--use-api", "--use-docker"]),
       }),
@@ -2146,9 +2010,8 @@ describe("functions download", () => {
         throw new Error(`unexpected error: ${String(error)}`);
       }
       expect(error.message).toBe(
-        "if any flags in the group [use-api use-docker legacy-bundle] are set none of the others can be; [use-api use-docker] were all set",
+        "if any flags in the group [use-api use-docker] are set none of the others can be; [use-api use-docker] were all set",
       );
-      expect(proxy.calls).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -2158,15 +2021,14 @@ describe("functions download", () => {
       () => {
         const out = mockOutput({ format: "text" });
         const api = mockCommandPlatformApi();
-        const proxy = mockProxy();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
             cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           }),
-          proxy.layer,
           child.layer,
           Stdio.layerTest({
             args: Effect.succeed([
@@ -2205,15 +2067,14 @@ describe("functions download", () => {
       () => {
         const out = mockOutput({ format: "text" });
         const api = mockCommandPlatformApi();
-        const proxy = mockProxy();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
             cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           }),
-          proxy.layer,
           child.layer,
           Stdio.layerTest({
             args: Effect.succeed([
@@ -2255,15 +2116,14 @@ describe("functions download", () => {
       () => {
         const out = mockOutput({ format: "text" });
         const api = mockCommandPlatformApi();
-        const proxy = mockProxy();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
             cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           }),
-          proxy.layer,
           child.layer,
           Stdio.layerTest({
             args: Effect.succeed([
@@ -2295,15 +2155,14 @@ describe("functions download", () => {
       () => {
         const out = mockOutput({ format: "text" });
         const api = mockCommandPlatformApi();
-        const proxy = mockProxy();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
             cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           }),
-          proxy.layer,
           child.layer,
           Stdio.layerTest({
             args: Effect.succeed([
@@ -2335,15 +2194,14 @@ describe("functions download", () => {
     it.live("prefers an explicit --network-id flag over SUPABASE_NETWORK_ID", () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
-      const proxy = mockProxy();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
-        proxy.layer,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed([
@@ -2379,15 +2237,14 @@ describe("functions download", () => {
       () => {
         const out = mockOutput({ format: "text" });
         const api = mockCommandPlatformApi();
-        const proxy = mockProxy();
         const child = mockChildProcessSpawner({ exitCode: 0 });
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
             cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           }),
-          proxy.layer,
           child.layer,
           Stdio.layerTest({
             args: Effect.succeed([
@@ -2462,14 +2319,13 @@ describe("functions download", () => {
 
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
-      const proxy = mockProxy();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
-        proxy.layer,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed([
@@ -2498,51 +2354,47 @@ describe("functions download", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live(
-      "labels the unbundle container with the resolved project id (Go parity: docker.go:349-386)",
-      () => {
-        const out = mockOutput({ format: "text" });
-        const api = mockCommandPlatformApi();
-        const proxy = mockProxy();
-        const child = mockChildProcessSpawner({ exitCode: 0 });
-        const layer = Layer.mergeAll(
-          buildTestRuntime({
-            out,
-            api,
-            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-          }),
-          proxy.layer,
-          child.layer,
-          Stdio.layerTest({
-            args: Effect.succeed([
-              "functions",
-              "download",
-              "hello-world",
-              "--use-docker",
-              "--project-ref",
-              PROJECT_ID,
-            ]),
-          }),
+    it.live("labels the unbundle container with the project id derived from the workdir", () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi();
+      const child = mockChildProcessSpawner({ exitCode: 0 });
+      const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        }),
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "functions",
+            "download",
+            "hello-world",
+            "--use-docker",
+            "--project-ref",
+            PROJECT_ID,
+          ]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* functionsDownload({ ...baseFlags, useDocker: true });
+
+        const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+        expect(runCommand?.args).toEqual(
+          expect.arrayContaining([
+            "--label",
+            `com.supabase.cli.project=${yield* workdirProjectId}`,
+            "--label",
+            `com.docker.compose.project=${yield* workdirProjectId}`,
+          ]),
         );
-
-        return Effect.gen(function* () {
-          yield* functionsDownload({ ...baseFlags, useDocker: true });
-
-          const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-          expect(runCommand?.args).toEqual(
-            expect.arrayContaining([
-              "--label",
-              `com.supabase.cli.project=${PROJECT_ID}`,
-              "--label",
-              `com.docker.compose.project=${PROJECT_ID}`,
-            ]),
-          );
-        }).pipe(Effect.provide(layer));
-      },
-    );
+      }).pipe(Effect.provide(layer));
+    });
   });
 
-  describe("docker-not-running warning styling (Go parity: download.go:146; only WARNING: is styled)", () => {
+  describe("docker-not-running warning styling (only WARNING: is styled)", () => {
     it.live("wraps only the WARNING token, not the rest of the fallback line", () => {
       // Uses a marker `styleWarning` instead of `functionsDownload`'s real
       // `yellow` hook, which is TTY-gated and inert under vitest.
@@ -2555,6 +2407,7 @@ describe("functions download", () => {
       });
       const child = mockChildProcessSpawner({ exitCode: 1 });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -2581,10 +2434,9 @@ describe("functions download", () => {
             api: platformApi,
             projectRoot: tempRoot.current,
             rawArgs: ["functions", "download", "hello-world", "--project-ref", PROJECT_ID],
-            goConfigCompat: functionsGoConfigCompat,
+            localConfigLoader: functionsLocalConfigLoader,
             edgeRuntimeVersion: "1.69.12",
             resolveProjectRef: () => Effect.succeed(PROJECT_ID),
-            proxyDownload: () => Effect.die("unexpected proxy invocation"),
             styleWarning: (text) => `<warn>${text}</warn>`,
           },
         );

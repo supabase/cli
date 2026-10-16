@@ -6,7 +6,7 @@ import { SERVICE_CATALOG } from "../../command-internal/service-catalog.ts";
  * is the actual container start sequence. Expressed as `service` keys so the `excludeKey` strings
  * stay single-sourced from the catalog.
  */
-const EXCLUDABLE_SERVICE_KEYS_IN_GO_ORDER: ReadonlyArray<string> = [
+const EXCLUDABLE_SERVICE_KEYS_IN_START_ORDER: ReadonlyArray<string> = [
   "gotrue",
   "realtime",
   "storage",
@@ -30,9 +30,10 @@ const EXCLUDE_KEY_BY_SERVICE = new Map(
  * The valid `--exclude` values, in the canonical order above. Postgres has no `excludeKey` (it's
  * never excludable), so `db`/`postgres` are rejected the same as any other unrecognized string.
  */
-export const START_EXCLUDABLE_KEYS: ReadonlyArray<string> = EXCLUDABLE_SERVICE_KEYS_IN_GO_ORDER.map(
-  (service) => EXCLUDE_KEY_BY_SERVICE.get(service) ?? "",
-);
+export const START_EXCLUDABLE_KEYS: ReadonlyArray<string> =
+  EXCLUDABLE_SERVICE_KEYS_IN_START_ORDER.map(
+    (service) => EXCLUDE_KEY_BY_SERVICE.get(service) ?? "",
+  );
 
 export interface StartExcludePartition {
   /** Raw `--exclude` values that matched a `START_EXCLUDABLE_KEYS` entry, in input order. */

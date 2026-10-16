@@ -20,15 +20,23 @@ import {
   rootFlagTokens,
 } from "../shared/cli/run.ts";
 import { CLI_UPGRADE_GUIDE_URL, CLI_VERSION, parseSemver } from "../shared/cli/version.ts";
-import { resolveSupabaseHome } from "../shared/config/supabase-home.ts";
+import { candidateDotenvFilenames, readShellEnvironment } from "../shared/config/cli-config-env.ts";
+import { readSupabaseHome } from "../shared/config/supabase-home.ts";
 import { bold, yellow } from "./colors.ts";
-import { parseDotEnv } from "./dotenv.ts";
-import { candidateDotenvFilenames } from "./project-environment.ts";
+import { parseDotEnv } from "../shared/config/dotenv.ts";
 
 const LATEST_RELEASE_URL = "https://api.github.com/repos/supabase/cli/releases/latest";
 const CACHE_TTL_MS = 10 * 60 * 60 * 1000;
 /** Bounds this pre-exit hook's latency. */
 const FETCH_TIMEOUT_MS = 800;
+
+const UPGRADE_NOTICE_ENV_NAMES = [
+  "SUPABASE_NO_UPDATE_NOTIFIER",
+  "SUPABASE_WORKDIR",
+  "SUPABASE_ENV",
+  "SUPABASE_DEBUG",
+  "GITHUB_TOKEN",
+];
 
 /** Recognized "true" spellings; anything else, including garbage, leaves the notifier on. */
 const PARSE_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
@@ -160,7 +168,12 @@ function resolveNoticeBaseDir(
   }
   let current = cwd;
   while (true) {
-    if (existsSync(join(current, "supabase", "config.toml"))) return current;
+    if (
+      existsSync(join(current, "supabase", "config.json")) ||
+      existsSync(join(current, "supabase", "config.toml"))
+    ) {
+      return current;
+    }
     const parent = dirname(current);
     if (parent === current) return cwd;
     current = parent;
@@ -170,7 +183,7 @@ function resolveNoticeBaseDir(
 /**
  * The project dotenv chain as a merged map: `<base>/supabase` then `<base>`,
  * first file to define a key wins, shell env always beats a chain value —
- * same precedence as `resolveProjectEnvironmentValues`. Read for every real
+ * same precedence as `loadCliProjectEnvFiles`. Read for every real
  * command since this hook can't tell whether the command loads config; the
  * only effect is a suppressed notice or extra debug diagnostic either way.
  */
@@ -184,8 +197,10 @@ async function projectDotenvValues(
   const dirs = dirname(base) === base ? [join(base, "supabase")] : [join(base, "supabase"), base];
   for (const dir of dirs) {
     for (const filename of candidateDotenvFilenames(env["SUPABASE_ENV"] || "development")) {
-      const contents = await readFile(join(dir, filename), "utf8").catch(() => undefined);
-      if (contents === undefined) continue;
+      const bytes = await readFile(join(dir, filename)).catch(() => undefined);
+      if (bytes === undefined) continue;
+      // TextDecoder drops a leading byte-order mark, as the main loader's reader does.
+      const contents = new TextDecoder().decode(bytes);
       try {
         for (const [key, value] of Object.entries(parseDotEnv(contents))) {
           if (!(key in merged)) merged[key] = value;
@@ -313,10 +328,12 @@ export async function runUpgradeNotice(
   return { cache: cachePathIsSafe ? (inProject ? "project" : "user") : "disabled", cacheFresh };
 }
 
-async function fetchLatestReleaseTag(): Promise<string> {
+async function fetchLatestReleaseTag(
+  env: Readonly<Record<string, string | undefined>>,
+): Promise<string> {
   // Authenticates when GITHUB_TOKEN is set, for the higher rate limit on
   // shared-egress CI runners.
-  const token = process.env["GITHUB_TOKEN"];
+  const token = env["GITHUB_TOKEN"];
   const response = await fetch(LATEST_RELEASE_URL, {
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     headers: {
@@ -339,43 +356,47 @@ export const upgradeNoticeHook = (
   args: ReadonlyArray<string>,
   info: {
     readonly cleanShowHelp: boolean;
-    readonly delegatedToGo: boolean;
     readonly workingDirectory?: string;
     readonly isValueTakingFlagToken: (token: string) => boolean;
   },
-  fetchLatestTag: () => Promise<string> = fetchLatestReleaseTag,
+  fetchLatestTag: (
+    env: Readonly<Record<string, string | undefined>>,
+  ) => Promise<string> = fetchLatestReleaseTag,
 ): Effect.Effect<void> =>
-  info.delegatedToGo
-    ? Effect.void
-    : Effect.gen(function* () {
-        const context = yield* Effect.context();
-        const outcome = yield* Effect.promise(() =>
-          runUpgradeNotice({
-            env: process.env,
-            args,
-            cleanShowHelp: info.cleanShowHelp,
-            isValueTakingFlagToken: info.isValueTakingFlagToken,
-            cwd: process.cwd(),
-            resolvedCwd: info.workingDirectory,
-            currentVersion: CLI_VERSION,
-            supabaseHome: resolveSupabaseHome({ join }, process.env, homedir()),
-            now: Date.now,
-            // Runs under the check span's context so the fetch is its child span.
-            fetchLatestTag: () =>
-              Effect.runPromiseWith(context)(
-                Effect.tryPromise({ try: fetchLatestTag, catch: (error) => error }).pipe(
-                  Effect.withSpan("UpgradeNotice.fetch"),
-                ),
-              ),
-            writeStderr: (text) => {
-              process.stderr.write(text);
-            },
-          }),
-        );
-        if (outcome !== undefined) {
-          yield* Effect.annotateCurrentSpan({
-            "cache.location": outcome.cache,
-            "cache.hit": outcome.cacheFresh,
-          });
-        }
-      }).pipe(Effect.withSpan("UpgradeNotice.check"), Effect.ignoreCause);
+  Effect.gen(function* () {
+    const context = yield* Effect.context();
+    const shell = yield* readShellEnvironment({ names: UPGRADE_NOTICE_ENV_NAMES }).pipe(
+      Effect.map((environment) => Object.fromEntries(environment.entries())),
+      Effect.orElseSucceed((): Record<string, string> => ({})),
+    );
+    const supabaseHome = yield* readSupabaseHome({ join }, homedir());
+    const outcome = yield* Effect.promise(() =>
+      runUpgradeNotice({
+        env: shell,
+        args,
+        cleanShowHelp: info.cleanShowHelp,
+        isValueTakingFlagToken: info.isValueTakingFlagToken,
+        cwd: process.cwd(),
+        resolvedCwd: info.workingDirectory,
+        currentVersion: CLI_VERSION,
+        supabaseHome,
+        now: Date.now,
+        // Runs under the check span's context so the fetch is its child span.
+        fetchLatestTag: () =>
+          Effect.runPromiseWith(context)(
+            Effect.tryPromise({ try: () => fetchLatestTag(shell), catch: (error) => error }).pipe(
+              Effect.withSpan("UpgradeNotice.fetch"),
+            ),
+          ),
+        writeStderr: (text) => {
+          process.stderr.write(text);
+        },
+      }),
+    );
+    if (outcome !== undefined) {
+      yield* Effect.annotateCurrentSpan({
+        "cache.location": outcome.cache,
+        "cache.hit": outcome.cacheFresh,
+      });
+    }
+  }).pipe(Effect.withSpan("UpgradeNotice.check"), Effect.ignoreCause);

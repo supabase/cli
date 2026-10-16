@@ -78,7 +78,7 @@ export function statusGroups(
 
 /**
  * Display width for this command's inputs: URLs/keys/labels are always plain ASCII, so every
- * rune is width 1. The fixed group-title emoji are the only non-ASCII runes ever rendered,
+ * character is width 1. The fixed group-title emoji are the only non-ASCII characters ever rendered,
  * and their widths are hardcoded in {@link HEADER_DISPLAY_WIDTH} instead of computed
  * generically.
  */
