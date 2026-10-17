@@ -9,6 +9,11 @@
     "!packages/stack/**",
     "!apps/cli/src/commands/**",
     "!apps/cli/src/shared/**",
+    "!apps/cli/src/telemetry/analytics.*",
+    "!apps/cli/src/telemetry/command-telemetry-attributes.ts",
+    "!apps/cli/src/telemetry/linked-project-cache.*",
+    "!apps/cli/src/telemetry/telemetry-output-format.*",
+    "!apps/cli/src/telemetry/telemetry-state.*",
     // Last match wins across the whole list: keep bare re-exclusions after every
     // `!` entry that would otherwise re-include them.
     "apps/cli/src/shared/cli/bin.ts",
