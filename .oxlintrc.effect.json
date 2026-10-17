@@ -8,6 +8,7 @@
     "**",
     "!packages/stack/**",
     "!apps/cli/src/auth/**",
+    "!apps/cli/src/cli/**",
     "!apps/cli/src/commands/**",
     "!apps/cli/src/config/**",
     "!apps/cli/src/shared/**",
