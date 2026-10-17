@@ -7,7 +7,9 @@
   "ignorePatterns": [
     "**",
     "!packages/stack/**",
+    "!apps/cli/src/auth/**",
     "!apps/cli/src/commands/**",
+    "!apps/cli/src/config/**",
     "!apps/cli/src/shared/**",
     "!apps/cli/src/telemetry/**",
     // Last match wins across the whole list: keep bare re-exclusions after every
