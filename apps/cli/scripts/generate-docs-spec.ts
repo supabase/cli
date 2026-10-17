@@ -7,6 +7,8 @@
  * The version defaults to `latest` (a leading `v` is stripped); the workspace `package.json`
  * version is a semantic-release placeholder and is never used here.
  */
+import { BunServices } from "@effect/platform-bun";
+import { Effect } from "effect";
 import path from "node:path";
 import process from "node:process";
 import { readDocsContent } from "../src/docs/docs-spec.content.ts";
@@ -19,7 +21,12 @@ function resolveVersion(): string {
   return argument.startsWith("v") ? argument.slice(1) : argument;
 }
 
-const content = readDocsContent(path.resolve(import.meta.dir, "../docs"));
+const content = await Effect.runPromise(
+  readDocsContent(path.resolve(import.meta.dir, "../docs")).pipe(
+    Effect.provide(BunServices.layer),
+    Effect.mapError((error) => error.cause ?? error),
+  ),
+);
 
 const spec = buildDocsSpec({
   root: rootCommand,
