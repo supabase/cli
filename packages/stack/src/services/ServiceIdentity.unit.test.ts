@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 import * as Realtime from "./Realtime.ts";
+import type { ServiceEndpoint } from "./Recipe.ts";
 import * as Rest from "./Rest.ts";
 import * as Storage from "./Storage.ts";
 import * as Studio from "./Studio.ts";
@@ -29,6 +30,26 @@ it("forwards a PostgREST HMAC secret when JWKS is omitted", () => {
 
   expect(env.PGRST_JWT_SECRET).toBe("active-hmac-secret");
 });
+
+it.effect("probes PostgREST readiness on its admin server port", () =>
+  Effect.gen(function* () {
+    const spec = Rest.makeSpec();
+    const creation = yield* Schema.decodeEffect(Rest.Creation)({
+      service: "rest",
+      config: { databaseUrl: "postgresql://localhost/postgres", jwtSecret: "active-hmac-secret" },
+    });
+    const endpoints: ReadonlyMap<string, ServiceEndpoint> = new Map([
+      ["http", { kind: "tcp" as const, host: "127.0.0.1", port: 54321 }],
+      ["admin", { kind: "tcp" as const, host: "127.0.0.1", port: 54322 }],
+    ]);
+    const env = yield* spec.env(creation, endpoints, false);
+
+    expect(spec.healthPort).toBe("admin");
+    expect(spec.healthPath).toBe("/ready");
+    expect(env.PGRST_SERVER_PORT).toBe("54321");
+    expect(env.PGRST_ADMIN_SERVER_PORT).toBe("54322");
+  }),
+);
 
 it("forwards Realtime JWKS while retaining its default JWT secret", () => {
   const creation = Schema.decodeSync(Realtime.Creation)({
