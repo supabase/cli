@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, readdirSync, rmSync, unlinkSync, writeFileSync }
 import { request as httpRequest } from "node:http";
 import { join } from "node:path";
 import { URL } from "node:url";
+import { BunFileSystem, BunPath } from "@effect/platform-bun";
+import { Effect, Layer } from "effect";
 import type {
   FixtureEntry,
   FixtureRequest,
@@ -155,11 +157,17 @@ interface ReplayServerOptions {
   port?: number;
   /** Optional Postgres mock server to control via /_ctrl/pg-* endpoints. */
   pgMock?: PgMockHandle;
+  /** Proxy to staging and record fixtures instead of replaying them. */
+  record: boolean;
+  /** Staging Management API base URL; required when recording. */
+  stagingUrl: string | undefined;
 }
 
+const fixtureFileLayer = Layer.mergeAll(BunFileSystem.layer, BunPath.layer);
+
 export async function startReplayServer(options: ReplayServerOptions): Promise<ReplayServerHandle> {
-  const isRecord = process.env["RECORD"] === "true";
-  const stagingUrl = process.env["SUPABASE_STAGING_URL"];
+  const isRecord = options.record;
+  const stagingUrl = options.stagingUrl;
 
   if (isRecord && !stagingUrl) {
     throw new Error("RECORD=true requires SUPABASE_STAGING_URL to be set");
@@ -173,7 +181,11 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
     rmSync(join(options.fixturesDir, "scenarios"), { recursive: true, force: true });
   }
 
-  const store: FixtureStore = isRecord ? new Map() : loadFixtures(options.fixturesDir);
+  const store: FixtureStore = isRecord
+    ? new Map()
+    : await Effect.runPromise(
+        loadFixtures(options.fixturesDir).pipe(Effect.provide(fixtureFileLayer)),
+      );
 
   const counters: SequenceCounters = new Map();
   const requestLog: RecordedRequest[] = [];
@@ -920,7 +932,11 @@ async function handleControl(req: Request, url: URL, ctx: ControlContext): Promi
       const { name } = (await req.json()) as { name: string };
 
       if (!ctx.isRecord) {
-        const interactions = loadScenario(join(ctx.fixturesDir, "scenarios"), name);
+        const interactions = await Effect.runPromise(
+          loadScenario(join(ctx.fixturesDir, "scenarios"), name).pipe(
+            Effect.provide(fixtureFileLayer),
+          ),
+        );
         if (!interactions) {
           return new Response(
             JSON.stringify({

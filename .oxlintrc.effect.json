@@ -9,12 +9,17 @@
     "!packages/api/**",
     "!packages/config/**",
     "!packages/stack/**",
+    "!apps/cli-e2e/src/server/**",
+    "!apps/cli-e2e/src/tests/env.ts",
+    "!apps/cli-e2e/tests/**",
+    "!apps/cli-e2e/vitest.config.ts",
     "!apps/cli/**",
     "!apps/docs/**",
     "!packages/cli-test-helpers/**",
     "!tools/**",
     // Last match wins across the whole list: keep bare re-exclusions after every
     // `!` entry that would otherwise re-include them.
+    "apps/cli-e2e/src/server/replay-server.ts",
     "apps/cli/src/shared/cli/bin.ts",
     "apps/cli/src/shared/compute/stacks/**",
     "apps/cli/src/shared/feedback/database.types.ts",

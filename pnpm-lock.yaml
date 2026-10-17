@@ -439,9 +439,15 @@ importers:
 
   apps/cli-e2e:
     dependencies:
+      '@effect/platform-bun':
+        specifier: 'catalog:'
+        version: 4.0.2(effect@4.0.2)
       '@supabase/cli-test-helpers':
         specifier: workspace:*
         version: link:../../packages/cli-test-helpers
+      effect:
+        specifier: 'catalog:'
+        version: 4.0.2
     devDependencies:
       '@tsconfig/bun':
         specifier: 'catalog:'
