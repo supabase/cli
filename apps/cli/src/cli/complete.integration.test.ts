@@ -1,5 +1,6 @@
+import { BunCrypto } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
-import { describe, expect, it } from "vitest";
 import { CurrentAnalyticsContext } from "../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { EventCommandExecuted, PropExitCode } from "../shared/telemetry/event-catalog.ts";
@@ -37,8 +38,9 @@ function makeCaptureTelemetry(
   analyticsLayer: Layer.Layer<Analytics>,
 ): CompleteDeps["captureTelemetry"] {
   return (exitCode, durationMs) =>
-    Effect.runPromise(
-      captureCompleteTelemetryEffect(exitCode, durationMs).pipe(Effect.provide(analyticsLayer)),
+    captureCompleteTelemetryEffect(exitCode, durationMs).pipe(
+      Effect.provide([analyticsLayer, BunCrypto.layer]),
+      Effect.ignore,
     );
 }
 
@@ -62,43 +64,55 @@ function makeDeps(argv: ReadonlyArray<string>, captureTelemetry: CompleteDeps["c
 }
 
 describe("__complete telemetry (CLI-1965 review finding)", () => {
-  it("fires cli_command_executed with command: __complete and exit_code: 0 for a normal completion request", async () => {
-    const analytics = mockAnalyticsWithContext();
-    const { deps } = makeDeps(
-      ["__complete", "migration", "li"],
-      makeCaptureTelemetry(analytics.layer),
-    );
+  it.effect(
+    "fires cli_command_executed with command: __complete and exit_code: 0 for a normal completion request",
+    () =>
+      Effect.gen(function* () {
+        const analytics = mockAnalyticsWithContext();
+        const { deps } = makeDeps(
+          ["__complete", "migration", "li"],
+          makeCaptureTelemetry(analytics.layer),
+        );
 
-    expect(await tryComplete(deps)).toBe(true);
+        expect(yield* tryComplete(deps)).toBe(true);
 
-    const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
-    expect(event).toBeDefined();
-    expect(event?.command).toBe("__complete");
-    expect(event?.properties[PropExitCode]).toBe(0);
-  });
+        const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
+        expect(event).toBeDefined();
+        expect(event?.command).toBe("__complete");
+        expect(event?.properties[PropExitCode]).toBe(0);
+      }),
+  );
 
-  it("records exit_code: 1 for an unresolvable completion request (zero completion args)", async () => {
-    const analytics = mockAnalyticsWithContext();
-    const { deps } = makeDeps(["__complete"], makeCaptureTelemetry(analytics.layer));
+  it.effect(
+    "records exit_code: 1 for an unresolvable completion request (zero completion args)",
+    () =>
+      Effect.gen(function* () {
+        const analytics = mockAnalyticsWithContext();
+        const { deps } = makeDeps(["__complete"], makeCaptureTelemetry(analytics.layer));
 
-    expect(await tryComplete(deps)).toBe(true);
+        expect(yield* tryComplete(deps)).toBe(true);
 
-    const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
-    expect(event).toBeDefined();
-    expect(event?.properties[PropExitCode]).toBe(1);
-  });
+        const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
+        expect(event).toBeDefined();
+        expect(event?.properties[PropExitCode]).toBe(1);
+      }),
+  );
 
-  it("records command: __complete — never __completeNoDesc — when invoked via the no-descriptions alias", async () => {
-    const analytics = mockAnalyticsWithContext();
-    const { deps } = makeDeps(
-      ["__completeNoDesc", "migration", "li"],
-      makeCaptureTelemetry(analytics.layer),
-    );
+  it.effect(
+    "records command: __complete — never __completeNoDesc — when invoked via the no-descriptions alias",
+    () =>
+      Effect.gen(function* () {
+        const analytics = mockAnalyticsWithContext();
+        const { deps } = makeDeps(
+          ["__completeNoDesc", "migration", "li"],
+          makeCaptureTelemetry(analytics.layer),
+        );
 
-    await tryComplete(deps);
+        yield* tryComplete(deps);
 
-    const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
-    expect(event?.command).toBe("__complete");
-    expect(event?.command).not.toBe("__completeNoDesc");
-  });
+        const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
+        expect(event?.command).toBe("__complete");
+        expect(event?.command).not.toBe("__completeNoDesc");
+      }),
+  );
 });
