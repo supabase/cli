@@ -6,6 +6,7 @@
   },
   "ignorePatterns": [
     "**",
+    "!packages/api/src/**",
     "!packages/config/**",
     "!packages/stack/**",
     "!apps/cli/src/auth/**",
@@ -23,6 +24,7 @@
     "apps/cli/src/shared/cli/bin.ts",
     "apps/cli/src/shared/compute/stacks/**",
     "apps/cli/src/shared/feedback/database.types.ts",
+    "packages/api/src/generated/contracts.ts",
     "!apps/cli/tests/helpers/branches-live.ts",
     "!apps/cli/tests/helpers/compute.ts",
     "!apps/cli/tests/helpers/migration-live.ts",
