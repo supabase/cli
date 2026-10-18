@@ -5,7 +5,7 @@ import { ProjectConfigParseError } from "../errors.ts";
 import { isSecretPath, secretPathPatterns } from "../lib/secret-paths.ts";
 import { getDefaultCliConfig, omitDefaultValues, subtractCliConfig } from "../sparse.ts";
 import type { EffectiveConfig } from "../sparse.ts";
-import { Schema } from "effect";
+import { DateTime, Schema } from "effect";
 import {
   attachApiResponse,
   comparableProjectConfigPaths,
@@ -2049,7 +2049,7 @@ describe("review round: absent anchors, exponent-free seconds, non-plain values 
   });
 
   test("non-plain structured-cloneable values are rejected before attach", () => {
-    for (const nonPlain of [new Map(), new Set(), new Date()]) {
+    for (const nonPlain of [new Map(), new Set(), DateTime.toDateUtc(DateTime.nowUnsafe())]) {
       let thrown: unknown;
       try {
         attachApiResponse({}, { x: nonPlain as unknown as ReadonlyJsonValue } as unknown as Record<
