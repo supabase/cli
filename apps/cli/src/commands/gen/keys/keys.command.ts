@@ -1,7 +1,10 @@
 import { Command, Flag } from "effect/cli";
-import type * as CliCommand from "effect/cli/Command";
-import { genKeys } from "./keys.handler.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
+import { removedCommand } from "../../../command-internal/removed-command.ts";
+import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 
 const config = {
   projectRef: Flag.String("project-ref").pipe(
@@ -14,13 +17,19 @@ const config = {
   ),
 } as const;
 
-export type GenKeysFlags = CliCommand.Command.Config.Infer<typeof config>;
-
 export const genKeysCommand = Command.make("keys", config).pipe(
-  Command.withDescription(
-    'Generate keys for preview branch. Deprecated: use "gen signing-key" instead.',
+  Command.withDescription("Removed: use `supabase projects api-keys --project-ref <ref>` instead."),
+  Command.withShortDescription("Removed: use `projects api-keys` instead"),
+  // Removed: fails before any Management API call, so no flag changes what it calls.
+  withPermissions({
+    operations: [],
+    noApiEffectFlags: ["override-name", "project-ref"],
+  }),
+  Command.withHandler(() =>
+    removedCommand(
+      "Use `supabase projects api-keys --project-ref <ref>` to read a project's API keys.",
+    ).pipe(withCommandTelemetry(), withJsonErrorHandling),
   ),
-  Command.withShortDescription("Generate keys for preview branch (experimental)"),
-  withPermissions({ status: "unmapped", reason: "go-delegated" }),
-  Command.withHandler((flags) => genKeys(flags)),
+  Command.provide(commandRuntimeLayer(["gen", "keys"])),
+  Command.provide(telemetryStateLayer),
 );

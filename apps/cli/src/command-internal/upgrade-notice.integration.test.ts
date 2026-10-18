@@ -62,7 +62,6 @@ describe("upgrade notice user-level cache", () => {
           ["projects", "list"],
           {
             cleanShowHelp: false,
-            delegatedToGo: false,
             workingDirectory: workdir,
             isValueTakingFlagToken: () => false,
           },

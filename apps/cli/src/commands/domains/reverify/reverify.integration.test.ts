@@ -38,11 +38,11 @@ const HOSTNAME_RESPONSE: typeof V1GetHostnameConfigOutput.Type = {
   },
 };
 
-type GoOutput = "env" | "pretty" | "json" | "toml" | "yaml";
+type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: GoOutput;
+  readonly outputFlag?: OutputFlagValue;
   readonly status?: number;
   readonly network?: "fail";
   readonly response?: unknown;
@@ -69,14 +69,12 @@ function setup(opts: SetupOpts = {}) {
     analytics,
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
 const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: Option.none<boolean>() };
-
-const DeprecationJsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
 
 describe("domains reverify integration", () => {
   it.effect("suggests upgrade from entitlement_required envelope on 400", () => {
@@ -129,48 +127,12 @@ describe("domains reverify integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("emits indented JSON to stdout with no status on stderr for -o json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* domainsReverify(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stderrText).toBe("");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect(
-    "warns on stderr and keeps stdout JSON parseable when --include-raw-output is set",
-    () => {
-      const { layer, out } = setup();
-      return Effect.gen(function* () {
-        yield* domainsReverify({ projectRef: Option.none(), includeRawOutput: Option.some(true) });
-        expect(out.stderrText).toBe(
-          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
-        );
-        const parsed = yield* Schema.decodeEffect(DeprecationJsonObject)(out.stdoutText);
-        expect(parsed.custom_hostname).toBe("shop.acme.dev");
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect("warns but does not force JSON when --include-raw-output=false", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsReverify({ projectRef: Option.none(), includeRawOutput: Option.some(false) });
-      expect(
-        out.stderrText.startsWith(
-          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
-        ),
-      ).toBe(true);
-      expect(out.stdoutText).toBe("");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("does not warn when --include-raw-output is not set", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsReverify(baseFlags);
-      expect(out.stderrText).not.toContain("deprecated");
     }).pipe(Effect.provide(layer));
   });
 

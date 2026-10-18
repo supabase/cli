@@ -70,8 +70,8 @@ class WorkdirProjectMissingError extends Data.TaggedError("WorkdirProjectMissing
  * Fails when an explicit `--workdir`/`SUPABASE_WORKDIR` holds no project; a no-op for a defaulted
  * workdir.
  *
- * Only valid for callers that don't pass `tomlOnly: true` to `loadCliConfig` — that mode can
- * return `null` for a `config.json`-only project even though this probe succeeds.
+ * Valid for any caller that loads config through the resolved config, which probes `config.json` and
+ * `config.toml` alike.
  */
 export const requireExplicitWorkdirProject = Effect.fnUntraced(function* (cliSettings: {
   readonly workdir: string;

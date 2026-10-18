@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, Exit, FileSystem, Layer, Path } from "effect";
 
 import {
   mockCommandSettings,
@@ -11,6 +11,8 @@ import {
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { CliConfigValueError } from "../../../config/cli-config.errors.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import {
   FunctionsNewFileExistsError,
   FunctionsNewInvalidSlugError,
@@ -52,6 +54,7 @@ function setup(options: SetupOptions = {}) {
     out.layer,
     telemetry.layer,
     cliSettings,
+    configValuesLayer(),
     mockTty({
       stdinIsTty: options.stdinIsTty ?? false,
       stdoutIsTty: options.stdoutIsTty ?? false,
@@ -154,7 +157,7 @@ describe("functions new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("appends config even when the existing config.toml is malformed", () => {
+  it.effect("fails before writing anything when the existing config.toml is malformed", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -162,11 +165,31 @@ describe("functions new integration", () => {
       yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
       yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), "not valid toml ][");
 
-      yield* functionsNew({ functionName: "after-bad-config", auth: "none" });
-      const config = yield* fs.readFileString(path.join(workdir, "supabase", "config.toml"));
-      expect(config).toContain("not valid toml ][");
-      expect(config).toContain("[functions.after-bad-config]");
+      const exit = yield* functionsNew({ functionName: "after-bad-config", auth: "none" }).pipe(
+        Effect.exit,
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(yield* fs.exists(path.join(workdir, "supabase", "functions"))).toBe(false);
+      expect(yield* fs.readFileString(path.join(workdir, "supabase", "config.toml"))).toBe(
+        "not valid toml ][",
+      );
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails on an invalid SUPABASE_API_PORT without creating the function directory", () => {
+    const { layer, workdir } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+
+      const error = yield* functionsNew({ functionName: "hello", auth: "apikey" }).pipe(
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(CliConfigValueError);
+      expect(yield* fs.exists(path.join(workdir, "supabase", "functions", "hello"))).toBe(false);
+    }).pipe(Effect.provide(layer), (body) => withConfigEnv({ SUPABASE_API_PORT: "abc" }, body));
   });
 
   it.effect("warns and skips the config append when the function is already declared", () => {
@@ -227,7 +250,7 @@ describe("functions new integration", () => {
     },
   );
 
-  it.effect("piped `n` then `y` declines VS Code and writes IntelliJ settings (Go parity)", () => {
+  it.effect("piped `n` then `y` declines VS Code and writes IntelliJ settings", () => {
     // Scans one piped line per question, so "n\ny\n" answers VS Code=no,
     // IntelliJ=yes.
     const { layer, out, workdir } = setup({ stdinIsTty: false, stdinInput: "n\ny\n" });
@@ -317,8 +340,11 @@ describe("functions new integration", () => {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      // A directory at the config.toml path makes the append write fail (EISDIR).
-      yield* fs.makeDirectory(path.join(workdir, "supabase", "config.toml"), { recursive: true });
+      // A read-only config.toml loads fine but makes the append write fail (EACCES).
+      const configPath = path.join(workdir, "supabase", "config.toml");
+      yield* fs.makeDirectory(path.dirname(configPath), { recursive: true });
+      yield* fs.writeFileString(configPath, 'project_id = "test-project"\n');
+      yield* fs.chmod(configPath, 0o444);
       const error = yield* functionsNew({ functionName: "write-fail", auth: "apikey" }).pipe(
         Effect.flip,
       );

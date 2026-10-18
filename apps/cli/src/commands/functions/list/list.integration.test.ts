@@ -66,7 +66,7 @@ const tempRoot = useTempWorkdir("supabase-functions-list-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   readonly response?: unknown;
   readonly status?: number;
   readonly network?: "fail";
@@ -86,7 +86,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -129,7 +129,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("renders literal `|` characters in table cells (Go parity)", () => {
+  it.effect("renders literal `|` characters in table cells", () => {
     const { layer, out } = setup({ response: [PIPE_FUNCTION] });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
@@ -165,8 +165,8 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("emits Go-byte-exact indented JSON for --output json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("emits byte-exact indented JSON for --output json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
       expect(out.stdoutText.startsWith("[\n  {\n")).toBe(true);
@@ -177,7 +177,7 @@ describe("functions list integration", () => {
   });
 
   it.effect("emits a YAML array for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("createdat: 1687423025152");
@@ -189,10 +189,10 @@ describe("functions list integration", () => {
   });
 
   it.effect("wraps the result as { functions = [...] } for --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
-      // BurntSushi indents array-of-table keys by 2 spaces.
+      // Array-of-table keys are indented by 2 spaces.
       expect(out.stdoutText).toContain(`[[functions]]
   CreatedAt = 1687423025152
   EntrypointPath = "functions/hello-world/index.ts"
@@ -206,7 +206,7 @@ describe("functions list integration", () => {
   });
 
   it.effect("fails with FunctionsEnvNotSupportedError for --output env", () => {
-    const { layer } = setup({ goOutput: "env" });
+    const { layer } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -219,7 +219,7 @@ describe("functions list integration", () => {
   });
 
   it.effect("treats --output pretty as identical to text mode (table render)", () => {
-    const { layer, out } = setup({ goOutput: "pretty" });
+    const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("Hello World");
@@ -228,7 +228,7 @@ describe("functions list integration", () => {
   });
 
   it.effect("lets --output pretty win over --output-format json", () => {
-    const { layer, out } = setup({ format: "json", goOutput: "pretty" });
+    const { layer, out } = setup({ format: "json", outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("Hello World");
@@ -238,7 +238,7 @@ describe("functions list integration", () => {
   });
 
   it.effect("--output flag wins over --output-format", () => {
-    const { layer, out } = setup({ format: "json", goOutput: "yaml" });
+    const { layer, out } = setup({ format: "json", outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* functionsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("name: Hello World");

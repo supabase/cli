@@ -134,7 +134,7 @@ const tempRoot = useTempWorkdir("supabase-branches-get-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table";
   readonly findStatus?: number;
   readonly detailStatus?: number;
   readonly detailBody?: BranchDetail;
@@ -195,7 +195,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -290,7 +290,7 @@ describe("branches get integration", () => {
   });
 
   it.effect("skips api keys and pooler config for --output pretty", () => {
-    const { layer, out, api } = setup({ goOutput: "pretty" });
+    const { layer, out, api } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
       expect(out.stdoutText).toContain("HOST");
@@ -353,7 +353,7 @@ describe("branches get integration", () => {
   it.effect(
     "keeps env-map keys verbatim for --output toml (map payload, exempt from CLI-1975)",
     () => {
-      const { layer, out, api } = setup({ goOutput: "toml" });
+      const { layer, out, api } = setup({ outputFlag: "toml" });
       return Effect.gen(function* () {
         yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
         assertPermissionDrift({
@@ -370,7 +370,7 @@ describe("branches get integration", () => {
   );
 
   it.effect("emits standard-env map for --output env (env-format encoder)", () => {
-    const { layer, out, api } = setup({ goOutput: "env" });
+    const { layer, out, api } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
       expect(out.stdoutText).toContain("SUPABASE_URL=");
@@ -386,7 +386,7 @@ describe("branches get integration", () => {
   });
 
   it.effect("fetches api keys and pooler config and prints JSON for -o table", () => {
-    const { layer, out, api } = setup({ goOutput: "table" });
+    const { layer, out, api } = setup({ outputFlag: "table" });
     return Effect.gen(function* () {
       yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
       expect(requested(api)).toEqual([DETAIL_REQUEST, API_KEYS_REQUEST, POOLER_REQUEST]);
@@ -433,7 +433,7 @@ describe("branches get integration", () => {
         connection_string: "not a url",
       },
     ];
-    const { layer, out } = setup({ goOutput: "yaml", poolerBody: broken });
+    const { layer, out } = setup({ outputFlag: "yaml", poolerBody: broken });
     return Effect.gen(function* () {
       yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
       expect(out.stderrText).toContain("WARNING:");
@@ -442,7 +442,7 @@ describe("branches get integration", () => {
   });
 
   it.effect("fails with BranchesPrimaryNotFoundError when no PRIMARY pooler entry", () => {
-    const { layer } = setup({ goOutput: "json", skipPrimary: true });
+    const { layer } = setup({ outputFlag: "json", skipPrimary: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) }),
@@ -485,7 +485,7 @@ describe("branches get integration", () => {
   });
 
   it.effect("fails with BranchesApiKeysUnexpectedStatusError on api-keys 403", () => {
-    const { layer, api } = setup({ goOutput: "json", apiKeysStatus: 403 });
+    const { layer, api } = setup({ outputFlag: "json", apiKeysStatus: 403 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) }),
