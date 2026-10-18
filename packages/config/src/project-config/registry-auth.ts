@@ -782,8 +782,7 @@ const web3Rows: ReadonlyArray<ProjectConfigMappingRow> = [
 
 const smsBaseRows: ReadonlyArray<ProjectConfigMappingRow> = [
   boolRow(["auth", "sms", "enable_signup"], "external_phone_enabled"),
-  // Not inverted, unlike mailer_autoconfirm: sms_autoconfirm maps to enable_confirmations directly.
-  boolRow(["auth", "sms", "enable_confirmations"], "sms_autoconfirm"),
+  invertedBoolRow(["auth", "sms", "enable_confirmations"], "sms_autoconfirm"),
   stringRow(["auth", "sms", "template"], "sms_template"),
   secondsDurationRow(["auth", "sms", "max_frequency"], "sms_max_frequency"),
   uintRow(["auth", "sms", "otp_length"], "sms_otp_length"),
