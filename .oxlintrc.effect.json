@@ -6,7 +6,7 @@
   },
   "ignorePatterns": [
     "**",
-    "!packages/config/src/**",
+    "!packages/config/**",
     "!packages/stack/**",
     "!apps/cli/src/auth/**",
     "!apps/cli/src/cli/**",
@@ -137,6 +137,7 @@
     "apps/cli/src/command-internal/config-validate.unit.test.ts",
     "apps/cli/src/command-internal/db-bootstrap/local-db-running.integration.test.ts",
     "apps/cli/src/command-internal/db-bootstrap/local-db-running.ts",
+    "packages/config/scripts/json-schema-postprocess.unit.test.ts",
     "packages/config/src/analytics.ts",
     "packages/config/src/api.ts",
     "packages/config/src/auth/email.ts",

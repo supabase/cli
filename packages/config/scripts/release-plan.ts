@@ -13,17 +13,44 @@
  * that no release was found.
  */
 
-import { appendFile } from "node:fs/promises";
-import path from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import {
+  Cause,
+  Config,
+  Console,
+  Data,
+  Effect,
+  FileSystem,
+  Path,
+  PlatformError,
+  Predicate,
+  Schema,
+} from "effect";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { PACKAGE_PATH_PREFIX } from "./semantic-release-path-filter.ts";
 
 // Not `import.meta.dir`: that Bun-ism doesn't survive vitest's module
 // transform, and this module is imported by its unit test.
-const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const packageRoot = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  return path.resolve(path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))), "..");
+});
+
+class ReleasePlanError extends Data.TaggedError("ReleasePlanError")<{
+  readonly message: string;
+}> {}
+
+/* Keeps the platform's own error text in the `[release-plan]` failure report. */
+const hostFailure = Effect.mapError(
+  (error: PlatformError.PlatformError) =>
+    new ReleasePlanError({
+      message: error.cause instanceof Error ? error.cause.message : error.message,
+    }),
+);
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 interface ConfigPackageJson {
   readonly name: string;
@@ -60,29 +87,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-async function readPackageJson(): Promise<ConfigPackageJson> {
-  const packageJsonPath = path.join(packageRoot, "package.json");
-  const parsed: unknown = JSON.parse(await Bun.file(packageJsonPath).text());
+const readPackageJson = Effect.fnUntraced(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const packageJsonPath = path.join(yield* packageRoot, "package.json");
+  const parsed: unknown = yield* decodeJson(
+    yield* fs.readFileString(packageJsonPath).pipe(hostFailure),
+  );
   if (
     !isRecord(parsed) ||
     typeof parsed.name !== "string" ||
     (parsed.private !== undefined && typeof parsed.private !== "boolean")
   ) {
-    throw new Error(
-      `${packageJsonPath} is malformed: expected a string "name" and an optional boolean "private".`,
-    );
+    return yield* new ReleasePlanError({
+      message: `${packageJsonPath} is malformed: expected a string "name" and an optional boolean "private".`,
+    });
   }
-  return { name: parsed.name, private: parsed.private };
-}
+  const packageJson: ConfigPackageJson = { name: parsed.name, private: parsed.private };
+  return packageJson;
+});
 
-async function runGit(
-  args: readonly string[],
-  cwd: string,
-): Promise<{ exitCode: number; stdout: string }> {
+const runGit = Effect.fnUntraced(function* (args: readonly string[], cwd: string) {
   const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-  const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  const [stdout, exitCode] = yield* Effect.promise(() =>
+    Promise.all([new Response(proc.stdout).text(), proc.exited]),
+  );
   return { exitCode, stdout: stdout.trim() };
-}
+});
 
 type HeadDivergence = "current" | "behind-remote" | "diverged" | "unknown";
 
@@ -93,14 +124,16 @@ type HeadDivergence = "current" | "behind-remote" | "diverged" | "unknown";
  * `"unknown"` — never blocking the plan — when the remote ref can't be
  * resolved, e.g. a local-only clone with no `origin` fetched.
  */
-async function resolveHeadDivergence(cwd: string): Promise<HeadDivergence> {
+const resolveHeadDivergence = Effect.fnUntraced(function* (
+  cwd: string,
+): Effect.fn.Return<HeadDivergence> {
   const remoteRef = `origin/${RELEASE_BRANCHES[0]}`;
-  const remote = await runGit(["rev-parse", "--verify", remoteRef], cwd);
+  const remote = yield* runGit(["rev-parse", "--verify", remoteRef], cwd);
   if (remote.exitCode !== 0 || remote.stdout === "") {
     return "unknown";
   }
 
-  const head = await runGit(["rev-parse", "HEAD"], cwd);
+  const head = yield* runGit(["rev-parse", "HEAD"], cwd);
   if (head.exitCode !== 0 || head.stdout === "") {
     return "unknown";
   }
@@ -108,7 +141,7 @@ async function resolveHeadDivergence(cwd: string): Promise<HeadDivergence> {
     return "current";
   }
 
-  const ancestor = await runGit(["merge-base", "--is-ancestor", "HEAD", remoteRef], cwd);
+  const ancestor = yield* runGit(["merge-base", "--is-ancestor", "HEAD", remoteRef], cwd);
   if (ancestor.exitCode === 0) {
     return "behind-remote";
   }
@@ -116,7 +149,7 @@ async function resolveHeadDivergence(cwd: string): Promise<HeadDivergence> {
     return "diverged";
   }
   return "unknown";
-}
+});
 
 /**
  * Runs semantic-release in dry-run mode against this package's own history.
@@ -127,21 +160,24 @@ async function resolveHeadDivergence(cwd: string): Promise<HeadDivergence> {
  * apart via git rather than parsing its log output. Otherwise
  * `result.nextRelease` carries the computed version, bump type, and notes.
  */
-async function computeReleasePlan(isPrivate: boolean): Promise<ReleasePlan> {
-  const { default: semanticRelease } = await import("semantic-release");
-  const result = await semanticRelease(
-    {
-      branches: [...RELEASE_BRANCHES],
-      tagFormat: "config-v${version}",
-      dryRun: true,
-      plugins: ["./scripts/semantic-release-path-filter.ts"],
-    },
-    { cwd: packageRoot, env: process.env },
+const computeReleasePlan = Effect.fnUntraced(function* (isPrivate: boolean) {
+  const { default: semanticRelease } = yield* Effect.promise(() => import("semantic-release"));
+  const cwd = yield* packageRoot;
+  const result = yield* Effect.promise(() =>
+    semanticRelease(
+      {
+        branches: [...RELEASE_BRANCHES],
+        tagFormat: "config-v${version}",
+        dryRun: true,
+        plugins: ["./scripts/semantic-release-path-filter.ts"],
+      },
+      { cwd, env: process.env },
+    ),
   );
 
   if (result === false) {
-    const divergence = await resolveHeadDivergence(packageRoot);
-    return {
+    const divergence = yield* resolveHeadDivergence(cwd);
+    const plan: ReleasePlan = {
       due: false,
       reason:
         divergence === "behind-remote"
@@ -150,6 +186,7 @@ async function computeReleasePlan(isPrivate: boolean): Promise<ReleasePlan> {
             ? "branch-diverged"
             : "no-releasable-commits",
     };
+    return plan;
   }
 
   // With no config-v* tag on the branch, semantic-release would cut 1.0.0
@@ -157,13 +194,14 @@ async function computeReleasePlan(isPrivate: boolean): Promise<ReleasePlan> {
   // changelog of every commit that ever touched packages/config/. Refuse until a
   // baseline tag exists (see AGENTS.md "One-time setup"); the escape hatch is
   // for an intentional first cut.
-  if (!result.lastRelease.gitTag && !process.env.CONFIG_RELEASE_ALLOW_NO_BASELINE) {
-    throw new Error(
-      "no config-v* baseline tag found on this branch: semantic-release would release " +
+  if (!result.lastRelease.gitTag && !(yield* readEnv("CONFIG_RELEASE_ALLOW_NO_BASELINE"))) {
+    return yield* new ReleasePlanError({
+      message:
+        "no config-v* baseline tag found on this branch: semantic-release would release " +
         `${result.nextRelease.version} with notes generated from the entire monorepo history. ` +
         "Push a baseline tag first (e.g. config-v0.1.0 — see packages/config/AGENTS.md), or set " +
         "CONFIG_RELEASE_ALLOW_NO_BASELINE=1 to proceed deliberately.",
-    );
+    });
   }
 
   const version = result.nextRelease.version;
@@ -171,33 +209,45 @@ async function computeReleasePlan(isPrivate: boolean): Promise<ReleasePlan> {
   // title — refuse anything that isn't the plain stable x.y.z this
   // stable-only train can produce.
   if (!/^\d+\.\d+\.\d+$/.test(version)) {
-    throw new Error(`computed version "${version}" is not a plain x.y.z stable version.`);
+    return yield* new ReleasePlanError({
+      message: `computed version "${version}" is not a plain x.y.z stable version.`,
+    });
   }
 
-  return {
+  const plan: ReleasePlan = {
     due: true,
     version,
     bumpType: result.nextRelease.type,
     notes: result.nextRelease.notes ?? "",
     isPrivate,
   };
+  return plan;
+});
+
+function readEnv(name: string) {
+  return Config.String(name).pipe(Config.withDefault(""));
 }
 
-async function appendGithubOutput(lines: readonly string[]): Promise<void> {
-  const outputPath = process.env.GITHUB_OUTPUT;
+const appendFile = Effect.fnUntraced(function* (filePath: string, data: string) {
+  const fs = yield* FileSystem.FileSystem;
+  yield* fs.writeFileString(filePath, data, { flag: "a" }).pipe(hostFailure);
+});
+
+const appendGithubOutput = Effect.fnUntraced(function* (lines: readonly string[]) {
+  const outputPath = yield* readEnv("GITHUB_OUTPUT");
   if (!outputPath) {
     return;
   }
-  await appendFile(outputPath, `${lines.join("\n")}\n`);
-}
+  yield* appendFile(outputPath, `${lines.join("\n")}\n`);
+});
 
-async function appendStepSummary(markdown: string): Promise<void> {
-  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+const appendStepSummary = Effect.fnUntraced(function* (markdown: string) {
+  const summaryPath = yield* readEnv("GITHUB_STEP_SUMMARY");
   if (!summaryPath) {
     return;
   }
-  await appendFile(summaryPath, `${markdown}\n`);
-}
+  yield* appendFile(summaryPath, `${markdown}\n`);
+});
 
 /**
  * A fence long enough that no backtick run inside `content` can close it.
@@ -292,36 +342,56 @@ function renderLocalPlan(plan: ReleasePlan): string {
   return `[release-plan] @supabase/config would release ${plan.version} (${plan.bumpType})${privateNote}.`;
 }
 
-async function main(): Promise<void> {
+const main = Effect.gen(function* () {
   const { values } = parseArgs({ options: { "notes-out": { type: "string" } } });
   const notesOutPath = values["notes-out"];
 
-  const packageJson = await readPackageJson();
+  const packageJson = yield* readPackageJson();
   const isPrivate = packageJson.private === true;
 
-  const plan = await computeReleasePlan(isPrivate);
+  const plan = yield* computeReleasePlan(isPrivate);
 
   if (plan.due && notesOutPath) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     // Guarantee the trailing newline: the notes end up as a GH release
     // body_path file, and a missing final newline is the kind of upstream
     // formatting detail nothing else pins.
-    await Bun.write(notesOutPath, plan.notes.endsWith("\n") ? plan.notes : `${plan.notes}\n`);
+    const notes = plan.notes.endsWith("\n") ? plan.notes : `${plan.notes}\n`;
+    /* `--notes-out` may name a file in a directory that does not exist yet; as with
+       Bun.write, a failed mkdir reports the original open error. */
+    yield* fs.writeFileString(notesOutPath, notes).pipe(
+      Effect.catchIf(
+        (error) => Predicate.isTagged(error.reason, "NotFound"),
+        (error) =>
+          fs.makeDirectory(path.dirname(notesOutPath), { recursive: true }).pipe(
+            Effect.mapError(() => error),
+            Effect.andThen(fs.writeFileString(notesOutPath, notes)),
+          ),
+      ),
+      hostFailure,
+    );
   }
 
-  if (process.env.GITHUB_OUTPUT) {
-    await appendGithubOutput(toGithubOutputLines(plan));
+  if (yield* readEnv("GITHUB_OUTPUT")) {
+    yield* appendGithubOutput(toGithubOutputLines(plan));
   } else {
-    console.log(renderLocalPlan(plan));
+    yield* Console.log(renderLocalPlan(plan));
   }
 
-  await appendStepSummary(renderStepSummary(plan));
-}
+  yield* appendStepSummary(renderStepSummary(plan));
+});
 
 if (import.meta.main) {
-  try {
-    await main();
-  } catch (error) {
-    console.error(`[release-plan] ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
-  }
+  await Effect.runPromise(
+    main.pipe(
+      Effect.catchCause((cause) => {
+        const error = Cause.squash(cause);
+        return Console.error(
+          `[release-plan] ${error instanceof Error ? error.message : String(error)}`,
+        ).pipe(Effect.andThen(Effect.sync(() => process.exit(1))));
+      }),
+      Effect.provide(BunServices.layer),
+    ),
+  );
 }
