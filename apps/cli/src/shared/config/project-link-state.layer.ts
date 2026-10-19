@@ -42,16 +42,15 @@ const makeProjectLinkState = Effect.gen(function* () {
 
   const load = loadFromPath(cliProjectHome.projectLinkPath);
 
-  const save = (state: ProjectLinkStateValue) =>
-    Effect.gen(function* () {
-      yield* cliProjectHome.ensureCliProjectHomeDir;
-      const encoded = yield* encodeProjectLinkStateValue(state).pipe(
-        Effect.mapError(() => invalidProjectLinkStateError(cliProjectHome.projectLinkPath)),
-      );
-      yield* fs.writeFileString(cliProjectHome.projectLinkPath, encodePrettyJson(encoded), {
-        mode: 0o600,
-      });
+  const save = Effect.fn("ProjectLinkState.save")(function* (state: ProjectLinkStateValue) {
+    yield* cliProjectHome.ensureCliProjectHomeDir;
+    const encoded = yield* encodeProjectLinkStateValue(state).pipe(
+      Effect.mapError(() => invalidProjectLinkStateError(cliProjectHome.projectLinkPath)),
+    );
+    yield* fs.writeFileString(cliProjectHome.projectLinkPath, encodePrettyJson(encoded), {
+      mode: 0o600,
     });
+  });
 
   const clear = fs
     .remove(cliProjectHome.projectLinkPath)
@@ -63,17 +62,18 @@ const makeProjectLinkState = Effect.gen(function* () {
 
   const getActiveBranch = load.pipe(Effect.map(Option.map((state) => state.active_branch)));
 
-  const setActiveBranch = (branch: ActiveBranch) =>
-    Effect.gen(function* () {
-      const current = yield* load;
-      if (Option.isNone(current)) {
-        return yield* new ProjectNotLinkedError({
-          detail: "Cannot set active branch: no linked project found.",
-          suggestion: "Run `supabase link` to link this checkout to a Supabase project first.",
-        });
-      }
-      yield* save({ ...current.value, active_branch: branch });
-    });
+  const setActiveBranch = Effect.fn("ProjectLinkState.setActiveBranch")(function* (
+    branch: ActiveBranch,
+  ) {
+    const current = yield* load;
+    if (Option.isNone(current)) {
+      return yield* new ProjectNotLinkedError({
+        detail: "Cannot set active branch: no linked project found.",
+        suggestion: "Run `supabase link` to link this checkout to a Supabase project first.",
+      });
+    }
+    yield* save({ ...current.value, active_branch: branch });
+  });
 
   return ProjectLinkState.of({
     load,

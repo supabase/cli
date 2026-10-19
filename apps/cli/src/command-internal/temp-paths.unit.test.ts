@@ -1,9 +1,6 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
 import { classifyCliErrorActionability } from "../shared/telemetry/error-actionability.ts";
 import { ProjectRefReadError, readProjectRefFile, tempPaths } from "./temp-paths.ts";
@@ -13,7 +10,7 @@ const readRef = (workdir: string) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* readProjectRefFile(fs, path, workdir);
-  }).pipe(Effect.provide(BunServices.layer));
+  });
 
 const REF = "abcdefghijklmnopqrst";
 
@@ -50,68 +47,52 @@ describe("tempPaths", () => {
 });
 
 describe("readProjectRefFile", () => {
-  it.effect("returns None when the project-ref file is absent (not linked)", () => {
-    const dir = mkdtempSync(join(tmpdir(), "ref-"));
-    return readRef(dir).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(Option.isNone(v)).toBe(true);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
+  const workdir = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "ref-" });
+    const tempDir = path.join(dir, "supabase", ".temp");
+    return { fs, dir, tempDir, refPath: path.join(tempDir, "project-ref") };
   });
 
-  it.effect("returns the trimmed ref when the file holds a value", () => {
-    const dir = mkdtempSync(join(tmpdir(), "ref-"));
-    mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(dir, "supabase", ".temp", "project-ref"), `  ${REF}\n`);
-    return readRef(dir).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(Option.getOrNull(v)).toBe(REF);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
+  it.effect("returns None when the project-ref file is absent (not linked)", () =>
+    Effect.gen(function* () {
+      const { dir } = yield* workdir;
+      expect(Option.isNone(yield* readRef(dir))).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.effect("treats a blank project-ref file as None", () => {
-    const dir = mkdtempSync(join(tmpdir(), "ref-"));
-    mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(dir, "supabase", ".temp", "project-ref"), "   \n");
-    return readRef(dir).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(Option.isNone(v)).toBe(true);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
+  it.effect("returns the trimmed ref when the file holds a value", () =>
+    Effect.gen(function* () {
+      const { fs, dir, tempDir, refPath } = yield* workdir;
+      yield* fs.makeDirectory(tempDir, { recursive: true });
+      yield* fs.writeFileString(refPath, `  ${REF}\n`);
+      expect(Option.getOrNull(yield* readRef(dir))).toBe(REF);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.effect("fails with ProjectRefReadError when the ref path is unreadable", () => {
-    // Returns `failed to load project ref` for a non-not-exist
-    // read error. Seeding project-ref as a DIRECTORY makes the
-    // read fail with EISDIR (a non-NotFound PlatformError), so it must surface, not
-    // collapse to "unlinked".
-    const dir = mkdtempSync(join(tmpdir(), "ref-"));
-    mkdirSync(join(dir, "supabase", ".temp", "project-ref"), { recursive: true });
-    return readRef(dir).pipe(
-      Effect.exit,
-      Effect.tap((exit) =>
-        Effect.sync(() => {
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
-            expect(json).toContain("ProjectRefReadError");
-            expect(json).toContain("failed to load project ref");
-          }
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
+  it.effect("treats a blank project-ref file as None", () =>
+    Effect.gen(function* () {
+      const { fs, dir, tempDir, refPath } = yield* workdir;
+      yield* fs.makeDirectory(tempDir, { recursive: true });
+      yield* fs.writeFileString(refPath, "   \n");
+      expect(Option.isNone(yield* readRef(dir))).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("fails with ProjectRefReadError when the ref path is unreadable", () =>
+    Effect.gen(function* () {
+      // Returns `failed to load project ref` for a non-not-exist
+      // read error. Seeding project-ref as a DIRECTORY makes the
+      // read fail with EISDIR (a non-NotFound PlatformError), so it must surface, not
+      // collapse to "unlinked".
+      const { fs, dir, refPath } = yield* workdir;
+      yield* fs.makeDirectory(refPath, { recursive: true });
+      const error = yield* Effect.flip(readRef(dir));
+      expect(error).toBeInstanceOf(ProjectRefReadError);
+      expect(error.message).toMatch(/^failed to load project ref: /);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it("classifies an unreadable ref file as permission without an unrelated command", () => {
     const result = classifyCliErrorActionability(

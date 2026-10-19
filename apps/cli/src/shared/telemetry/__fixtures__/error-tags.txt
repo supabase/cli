@@ -541,6 +541,7 @@ StatusInvalidConfigError
 StatusListError
 StatusOverrideParseError
 StatusWorkdirError
+StdoutClosedError
 StopConfigLoadError
 StopContainerError
 StopContainerPruneError
@@ -584,6 +585,7 @@ UnknownComputeSizeError
 UnlinkRefReadError
 UnlinkTempRemovalError
 UnsafeFunctionDownloadPathError
+UpgradeNoticeFetchError
 VanitySubdomainsActivateNetworkError
 VanitySubdomainsActivateUnexpectedStatusError
 VanitySubdomainsCheckNetworkError

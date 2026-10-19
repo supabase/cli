@@ -1,11 +1,6 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, PlatformError, Sink, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { afterEach, beforeEach } from "vitest";
 
 import {
   ContainerCreateError,
@@ -22,17 +17,10 @@ import {
   createContainer,
   volumeExists,
 } from "./container-lifecycle.ts";
+import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import type { StartContainerSpec } from "./docker-create-args.ts";
 
-let workdir: string;
-
-beforeEach(() => {
-  workdir = mkdtempSync(join(tmpdir(), "supabase-start-container-lifecycle-"));
-});
-
-afterEach(() => {
-  rmSync(workdir, { recursive: true, force: true });
-});
+const workdir = useTempWorkdir("supabase-start-container-lifecycle-");
 
 /** Per-call handler, for multi-step orchestration (volume create -> container create -> start). */
 function mockSpawner(
@@ -142,7 +130,7 @@ describe("createContainer", () => {
       return createContainer(mock.spawner, baseSpec, {
         projectId: "proj",
         isBitbucketPipeline: false,
-        workdir,
+        workdir: workdir.current,
         extraHosts: [],
       }).pipe(
         Effect.map((containerId) => {
@@ -185,12 +173,12 @@ describe("createContainer", () => {
       return createContainer(mock.spawner, baseSpec, {
         projectId: "proj",
         isBitbucketPipeline: false,
-        workdir,
+        workdir: workdir.current,
         extraHosts: [],
       }).pipe(
         Effect.map(() => {
           const create = mock.spawned.find((args) => args[0] === "create");
-          expect(create).toContain(`com.supabase.cli.workdir=${workdir}`);
+          expect(create).toContain(`com.supabase.cli.workdir=${workdir.current}`);
         }),
       );
     },
@@ -207,7 +195,7 @@ describe("createContainer", () => {
       return createContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
-        workdir,
+        workdir: workdir.current,
         extraHosts: [],
       }).pipe(
         Effect.map(() => {
@@ -233,7 +221,7 @@ describe("createContainer", () => {
       return createContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
-        workdir,
+        workdir: workdir.current,
         extraHosts: [],
       }).pipe(
         Effect.map(() => {
@@ -252,7 +240,7 @@ describe("createContainer", () => {
       return createContainer(mock.spawner, baseSpec, {
         projectId: "proj",
         isBitbucketPipeline: true,
-        workdir,
+        workdir: workdir.current,
         extraHosts: [],
       }).pipe(
         Effect.map(() => {
@@ -275,7 +263,7 @@ describe("createContainer", () => {
     return createContainer(mock.spawner, baseSpec, {
       projectId: "proj",
       isBitbucketPipeline: false,
-      workdir,
+      workdir: workdir.current,
       extraHosts: [],
     }).pipe(
       Effect.flip,
@@ -296,7 +284,7 @@ describe("createContainer", () => {
     return createContainer(mock.spawner, spec, {
       projectId: "proj",
       isBitbucketPipeline: false,
-      workdir,
+      workdir: workdir.current,
       extraHosts: [],
     }).pipe(
       Effect.flip,
@@ -318,7 +306,7 @@ describe("createContainer", () => {
     return createContainer(mock.spawner, spec, {
       projectId: "proj",
       isBitbucketPipeline: false,
-      workdir,
+      workdir: workdir.current,
       extraHosts: [],
     }).pipe(
       Effect.flip,
@@ -349,7 +337,7 @@ describe("createContainer", () => {
       return createContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
-        workdir,
+        workdir: workdir.current,
         extraHosts: [],
       }).pipe(
         Effect.flip,
@@ -391,7 +379,7 @@ describe("createContainer secretFiles", () => {
       const containerId = yield* createContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
-        workdir,
+        workdir: workdir.current,
         extraHosts: [],
       });
 
@@ -459,7 +447,7 @@ describe("createContainer secretFiles", () => {
     return createContainer(mock.spawner, spec, {
       projectId: "proj",
       isBitbucketPipeline: false,
-      workdir,
+      workdir: workdir.current,
       extraHosts: [],
     }).pipe(
       Effect.flip,
@@ -493,7 +481,7 @@ describe("createContainer secretFiles", () => {
     return createContainer(mock.spawner, spec, {
       projectId: "proj",
       isBitbucketPipeline: false,
-      workdir,
+      workdir: workdir.current,
       extraHosts: [],
     }).pipe(
       Effect.flip,
@@ -523,7 +511,7 @@ describe("createContainer secretFiles", () => {
     return createContainer(mock.spawner, spec, {
       projectId: "proj",
       isBitbucketPipeline: false,
-      workdir,
+      workdir: workdir.current,
       extraHosts: [],
     }).pipe(
       Effect.flip,
@@ -585,11 +573,7 @@ describe("ensureNetwork", () => {
       stderr:
         "Error response from daemon: network with name supabase_network_proj already exists\n",
     }));
-    return ensureNetwork(mock.spawner, "supabase_network_proj", {}).pipe(
-      Effect.map(() => {
-        // Just needs to not fail — no return value to assert on.
-      }),
-    );
+    return ensureNetwork(mock.spawner, "supabase_network_proj", {});
   });
 
   it.live("fails with NetworkCreateError on any other failure", () => {
@@ -649,11 +633,7 @@ describe("ensureVolume", () => {
       exitCode: 125,
       stderr: "Error: volume with name supabase_db_proj already exists: volume already exists\n",
     }));
-    return ensureVolume(mock.spawner, "supabase_db_proj", {}).pipe(
-      Effect.map(() => {
-        // Just needs to not fail — no return value to assert on.
-      }),
-    );
+    return ensureVolume(mock.spawner, "supabase_db_proj", {});
   });
 
   it.live("treats an already-exists rejection without the trailing sentinel as success", () => {
@@ -661,11 +641,7 @@ describe("ensureVolume", () => {
       exitCode: 125,
       stderr: "volume with name supabase_db_proj already exists\n",
     }));
-    return ensureVolume(mock.spawner, "supabase_db_proj", {}).pipe(
-      Effect.map(() => {
-        // Just needs to not fail — no return value to assert on.
-      }),
-    );
+    return ensureVolume(mock.spawner, "supabase_db_proj", {});
   });
 
   it.live("fails with VolumeCreateError on any other failure", () => {
@@ -852,7 +828,7 @@ describe("createContainer with an empty containerName (the shadow database)", ()
       return createContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
-        workdir,
+        workdir: workdir.current,
         extraHosts: [],
       }).pipe(
         Effect.map((containerId) => {

@@ -49,7 +49,7 @@ function buildLayer(
 }
 
 describe("cliProjectHomeLayer", () => {
-  it.live("resolves a repo-local project home from the nearest discovered config root", () =>
+  it.effect("resolves a repo-local project home from the nearest discovered config root", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -83,7 +83,7 @@ describe("cliProjectHomeLayer", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("falls back to the nearest linked project root when no project config exists", () =>
+  it.effect("falls back to the nearest linked project root when no project config exists", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -108,7 +108,7 @@ describe("cliProjectHomeLayer", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("does not let a bare ancestor .supabase directory capture a nested checkout", () =>
+  it.effect("does not let a bare ancestor .supabase directory capture a nested checkout", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -131,7 +131,7 @@ describe("cliProjectHomeLayer", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("creates the repo-local .supabase directory lazily", () =>
+  it.effect("creates the repo-local .supabase directory lazily", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -150,7 +150,7 @@ describe("cliProjectHomeLayer", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "fails with CliProjectHomeNotDirectoryError when a FILE occupies the .supabase path",
     () =>
       Effect.gen(function* () {
@@ -182,7 +182,7 @@ describe("cliProjectHomeLayer", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "fails with CliProjectHomeNotDirectoryError (BadResource) when a FILE occupies an ancestor of the project home path",
     () =>
       // Distinct from the AlreadyExists case above: here `.supabase` doesn't exist, but a file

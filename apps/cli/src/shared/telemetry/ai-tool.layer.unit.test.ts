@@ -5,7 +5,7 @@ import { aiToolLayer } from "./ai-tool.layer.ts";
 import { AiTool } from "./ai-tool.service.ts";
 
 describe("aiToolLayer", () => {
-  it.live("detects Codex environments via @vercel/detect-agent", () =>
+  it.effect("detects Codex environments via @vercel/detect-agent", () =>
     Effect.gen(function* () {
       const aiTool = yield* AiTool;
       expect(aiTool.name).toEqual(Option.some("codex"));
@@ -14,7 +14,7 @@ describe("aiToolLayer", () => {
     ),
   );
 
-  it.live("normalizes known agent names for analytics properties", () =>
+  it.effect("normalizes known agent names for analytics properties", () =>
     Effect.gen(function* () {
       const aiTool = yield* AiTool;
       expect(aiTool.name).toEqual(Option.some("github_copilot"));
@@ -25,7 +25,7 @@ describe("aiToolLayer", () => {
     ),
   );
 
-  it.live("returns none when no supported agent is detected", () =>
+  it.effect("returns none when no supported agent is detected", () =>
     Effect.gen(function* () {
       const aiTool = yield* AiTool;
       expect(aiTool.name).toEqual(Option.none());

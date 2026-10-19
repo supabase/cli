@@ -18,7 +18,7 @@ const withStdin = (stdin: Stream.Stream<Uint8Array, PlatformError>, stdinIsTty =
   stdinLayerFrom(stdin).pipe(Layer.provide(mockTty({ stdinIsTty, stdoutIsTty: false })));
 
 describe("stdinLayer", () => {
-  it.live("dispenses successive lines across calls, buffering multi-line chunks", () => {
+  it.effect("dispenses successive lines across calls, buffering multi-line chunks", () => {
     // Two chunks; the second carries two lines to prove buffering across calls.
     const layer = withStdin(Stream.fromIterable([enc("a\n"), enc("b\nc\n")]));
     return Effect.gen(function* () {
@@ -30,7 +30,7 @@ describe("stdinLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("accepts CRLF and bare CR line endings and a final line without one", () => {
+  it.effect("accepts CRLF and bare CR line endings and a final line without one", () => {
     // Answers piped from Windows tooling (`\r\n`) or an old Mac convention (`\r`), plus
     // `printf y` with no trailing newline, all read as whole lines before EOF.
     const layer = withStdin(Stream.fromIterable([enc("a\r\nb\rc")]));
@@ -43,7 +43,7 @@ describe("stdinLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("preserves interior blank lines so answers stay aligned", () => {
+  it.effect("preserves interior blank lines so answers stay aligned", () => {
     // A caller piping "\ny\n" must see the blank line first, then "y" — not "y" first.
     const layer = withStdin(Stream.fromIterable([enc("\ny\n")]));
     return Effect.gen(function* () {
@@ -53,15 +53,17 @@ describe("stdinLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("times out to None when no line arrives within the window", () => {
+  it.effect("times out to None when no line arrives within the window", () => {
     const layer = withStdin(Stream.never);
     return Effect.gen(function* () {
       const stdin = yield* Stdin;
-      expect(yield* stdin.readLine(100)).toStrictEqual(Option.none());
+      const reading = yield* Effect.forkChild(stdin.readLine(100));
+      yield* TestClock.adjust(Duration.millis(100));
+      expect(yield* Fiber.join(reading)).toStrictEqual(Option.none());
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("waits for a non-blocking pipe that has nothing to read yet", () =>
+  it.effect("waits for a non-blocking pipe that has nothing to read yet", () =>
     Effect.gen(function* () {
       // A non-blocking fd 0 with nothing to read fails with `WouldBlock` (how
       // the layer reports `EAGAIN`) — "nothing yet", not EOF.
@@ -76,7 +78,10 @@ describe("stdinLayer", () => {
       );
       yield* Effect.gen(function* () {
         const stdin = yield* Stdin;
-        expect(yield* stdin.readLine(10_000)).toStrictEqual(Option.some("y"));
+        const reading = yield* Effect.forkChild(stdin.readLine(10_000));
+        yield* TestClock.adjust(Duration.millis(10));
+        yield* TestClock.adjust(Duration.millis(10));
+        expect(yield* Fiber.join(reading)).toStrictEqual(Option.some("y"));
         expect(attempts).toBe(3);
       }).pipe(Effect.provide(layer));
     }),
@@ -156,7 +161,7 @@ describe("stdinLayer", () => {
     }),
   );
 
-  it.live("lets one prompt at a time pull from the pipe", () =>
+  it.effect("lets one prompt at a time pull from the pipe", () =>
     Effect.gen(function* () {
       // Two prompts wait at once; the second must get the value held back from
       // the first prompt's chunk, not pull (and skip) a chunk of its own.
@@ -180,7 +185,7 @@ describe("stdinLayer", () => {
     }),
   );
 
-  it.live("reads a pipe only while a prompt is waiting", () =>
+  it.effect("reads a pipe only while a prompt is waiting", () =>
     Effect.gen(function* () {
       // Nothing is pulled before the first prompt or between prompts; the
       // producer is counted per chunk to prove that.
@@ -201,7 +206,7 @@ describe("stdinLayer", () => {
     }),
   );
 
-  it.live("answers every prompt in order when a producer floods the pipe", () => {
+  it.effect("answers every prompt in order when a producer floods the pipe", () => {
     // 10,000 lines total well over the 64 KiB pending-line bound, so that
     // bound must reset at each line break, not accumulate across lines.
     const flood = Array.from({ length: 10_000 }, (_, index) => enc(`line-${index}\n`));
@@ -214,7 +219,7 @@ describe("stdinLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("gives up on a line that never ends instead of buffering it", () =>
+  it.effect("gives up on a line that never ends instead of buffering it", () =>
     Effect.gen(function* () {
       // A newline-less producer (`yes | tr -d '\n'`), counted per 16 KiB chunk:
       // the reader stops pulling once the pending line exceeds its 64 KiB
@@ -234,7 +239,7 @@ describe("stdinLayer", () => {
     }),
   );
 
-  it.live("answers the lines ahead of a runaway tail that shares their chunk", () => {
+  it.effect("answers the lines ahead of a runaway tail that shares their chunk", () => {
     // The answer and the start of an unterminated blob can land in one pull;
     // the answer still delivers, then the blob trips the bound so the "n"
     // behind it is never read.
@@ -250,7 +255,7 @@ describe("stdinLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("dispenses successive lines on a TTY, which is read only when prompted", () => {
+  it.effect("dispenses successive lines on a TTY, which is read only when prompted", () => {
     const layer = withStdin(Stream.fromIterable([enc("a\n"), enc("b\nc\n")]), true);
     return Effect.gen(function* () {
       const stdin = yield* Stdin;

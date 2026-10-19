@@ -13,11 +13,22 @@ import {
   spinner,
   text,
 } from "@clack/prompts";
+import { Writable } from "node:stream";
 import { styleText } from "node:util";
-import { DateTime, Effect, Fiber, Layer, Option, Schema, Stdio, Stream } from "effect";
+import {
+  DateTime,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  PlatformError,
+  Schema,
+  Stdio,
+  Stream,
+} from "effect";
 
 import { Tty } from "../runtime/tty.service.ts";
-import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
+import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError, StdoutClosedError } from "./errors.ts";
 import { MachineErrorContext } from "./machine-error-context.service.ts";
 import { Output } from "./output.service.ts";
 import type { OutputFormat, StreamEvent } from "./types.ts";
@@ -48,17 +59,51 @@ function formatTaskMessage(message: string | undefined): string | undefined {
   return [firstLine, ...rest.map((line) => `${guide}${line}`)].join("\n");
 }
 
+// libuv reports a write to a pipe whose reader exited as `EOF` on Windows (`ERROR_BROKEN_PIPE`).
+const brokenPipeCodes: ReadonlySet<unknown> = new Set(["EPIPE", "EOF"]);
+
+const isBrokenPipe = (error: PlatformError.PlatformError): boolean => {
+  const cause = error.reason.cause;
+  return (
+    typeof cause === "object" &&
+    cause !== null &&
+    "code" in cause &&
+    brokenPipeCodes.has(cause.code)
+  );
+};
+
+// Keyed by the Stdio service so every output layer built on the same process streams sees a
+// stream close, including the layer that renders the run's final error.
+const closedStreams = new WeakMap<typeof Stdio.Stdio.Service, Set<"stdout" | "stderr">>();
+
 /**
  * Shared by all three layers. The sink waits for `drain`; `process.stdout.write`
  * does not, so a streamed payload piped to a slow consumer buffers in memory.
+ *
+ * A closed stream never emits `drain` or `error` again, so writes to it are skipped rather than
+ * left to hang. A closed stdout also ends the command with `StdoutClosedError`; a closed stderr
+ * only drops diagnostics.
  */
-const stdioWriter =
-  (stdio: typeof Stdio.Stdio.Service) =>
-  (chunk: string | Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
-    Stream.make(chunk).pipe(
-      Stream.run(stream === "stderr" ? stdio.stderr() : stdio.stdout()),
-      Effect.orDie,
+const stdioWriter = (stdio: typeof Stdio.Stdio.Service) => {
+  const closed = closedStreams.get(stdio) ?? new Set();
+  closedStreams.set(stdio, closed);
+  return (chunk: string | Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
+    Effect.suspend(() =>
+      closed.has(stream)
+        ? Effect.void
+        : Stream.make(chunk).pipe(
+            Stream.run(stream === "stderr" ? stdio.stderr() : stdio.stdout()),
+            Effect.catchIf(isBrokenPipe, () =>
+              Effect.sync(() => closed.add(stream)).pipe(
+                Effect.andThen(
+                  stream === "stdout" ? Effect.die(new StdoutClosedError()) : Effect.void,
+                ),
+              ),
+            ),
+            Effect.orDie,
+          ),
     );
+};
 
 /**
  * Output layers - Concrete output mode implementations for the CLI.
@@ -233,27 +278,19 @@ export const textOutputLayer = Layer.effect(
       paused.settle?.();
     };
 
-    const logAround = (
-      emit: (message: string, opts?: { spacing?: number }) => void,
-      message: string,
-    ) => {
-      const paused = pauseSpinner();
-      if (paused === undefined) emit(message);
-      else emit(message, { spacing: 0 });
-      resumeSpinner(paused);
-    };
-
     // A spinner due to appear during an unpaused write waits until such writes finish.
     let unpausedWrites = 0;
     let showWhenIdle: (() => void) | undefined;
 
-    const withSpinnerPaused = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    const withSpinnerPaused = <A, E, R>(
+      makeEffect: (spinnerPaused: boolean) => Effect.Effect<A, E, R>,
+    ): Effect.Effect<A, E, R> =>
       Effect.suspend(() => {
         const paused = pauseSpinner();
         if (paused !== undefined)
-          return effect.pipe(Effect.ensuring(Effect.sync(() => resumeSpinner(paused))));
+          return makeEffect(true).pipe(Effect.ensuring(Effect.sync(() => resumeSpinner(paused))));
         unpausedWrites += 1;
-        return effect.pipe(
+        return makeEffect(false).pipe(
           Effect.ensuring(
             Effect.sync(() => {
               unpausedWrites -= 1;
@@ -266,19 +303,37 @@ export const textOutputLayer = Layer.effect(
         );
       });
 
+    // clack writes to `process.stdout` itself; rendering into a buffer sends the line through
+    // `write`, which handles a closed stdout.
+    const logAround = (
+      emit: (message: string, opts: { spacing?: number; output: Writable }) => void,
+      message: string,
+    ) =>
+      withSpinnerPaused((spinnerPaused) => {
+        let rendered = "";
+        const output = new Writable({
+          write(chunk, _encoding, done) {
+            rendered += String(chunk);
+            done();
+          },
+        });
+        emit(message, spinnerPaused ? { spacing: 0, output } : { output });
+        return write(rendered);
+      });
+
     return Output.of({
       format: "text" as const,
       interactive: tty.stdoutIsTty,
       intro: (title: string) => Effect.sync(() => intro(title)),
       outro: (message: string) => Effect.sync(() => outro(message)),
-      info: (message: string) => Effect.sync(() => logAround(log.info, message)),
-      warn: (message: string) => Effect.sync(() => logAround(log.warn, message)),
-      error: (message: string) => Effect.sync(() => logAround(log.error, message)),
+      info: (message: string) => logAround(log.info, message),
+      warn: (message: string) => logAround(log.warn, message),
+      error: (message: string) => logAround(log.error, message),
       event: (event: StreamEvent) =>
         (event.type === "log-entry"
           ? Effect.succeed(`[${event.service}] ${event.line}`)
           : encodeJson(event)
-        ).pipe(Effect.flatMap((message) => Effect.sync(() => logAround(log.info, message)))),
+        ).pipe(Effect.flatMap((message) => logAround(log.info, message))),
       task: (message: string) =>
         Effect.gen(function* () {
           let shown = false;
@@ -392,12 +447,11 @@ export const textOutputLayer = Layer.effect(
         opts?: { validate?: (v: string) => string | undefined; defaultValue?: string },
       ) =>
         Effect.gen(function* () {
+          const validate = opts?.validate;
           const value = yield* Effect.promise(() =>
             text({
               message,
-              validate: opts?.validate
-                ? (v: string | undefined) => opts.validate!(v ?? "")
-                : undefined,
+              validate: validate ? (v: string | undefined) => validate(v ?? "") : undefined,
               defaultValue: opts?.defaultValue,
             }),
           );
@@ -443,7 +497,7 @@ export const textOutputLayer = Layer.effect(
           };
         }),
       result: () => Effect.void,
-      success: (message: string) => Effect.sync(() => logAround(log.success, message)),
+      success: (message: string) => logAround(log.success, message),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.sync(() => {
           // A command failure is terminal, so a still-shown task spinner is dropped.
@@ -472,9 +526,9 @@ export const textOutputLayer = Layer.effect(
           }
         }),
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
-        withSpinnerPaused(write(text, stream)),
+        withSpinnerPaused(() => write(text, stream)),
       rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
-        withSpinnerPaused(write(bytes, stream)),
+        withSpinnerPaused(() => write(bytes, stream)),
     });
   }),
 );

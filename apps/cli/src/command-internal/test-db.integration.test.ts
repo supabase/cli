@@ -1,8 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Exit, Layer, Option } from "effect";
+import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { vi } from "vitest";
 
 vi.mock("node:net", (importOriginal) =>
@@ -100,10 +98,10 @@ function mockDbConnection(opts: {
       Effect.gen(function* () {
         execCalls.push(sql);
         if (opts.enableFails === true && sql.includes("create extension")) {
-          return yield* Effect.fail(new DbExecError({ message: "permission denied" }));
+          return yield* new DbExecError({ message: "permission denied" });
         }
         if (opts.dropFails === true && sql.includes("drop extension")) {
-          return yield* Effect.fail(new DbExecError({ message: "cannot drop" }));
+          return yield* new DbExecError({ message: "cannot drop" });
         }
       }),
     // `test db` never runs a migration batch; keep the seam explicit rather than silent.
@@ -214,13 +212,11 @@ function mockBundledPostgresClient(opts: {
       Effect.gen(function* () {
         allOpts.push(runOpts);
         if (opts.runFails === true) {
-          return yield* Effect.fail(
-            new DockerRunError({
-              message: "failed to run docker: not found",
-              reason: "spawn",
-              daemonDown: false,
-            }),
-          );
+          return yield* new DockerRunError({
+            message: "failed to run docker: not found",
+            reason: "spawn",
+            daemonDown: false,
+          });
         }
         const encoder = new TextEncoder();
         for (const chunk of opts.stdout ?? []) {
@@ -313,6 +309,8 @@ const flags = (over: Partial<Parameters<typeof testDb>[0]> = {}) => ({
   local: over.local ?? true,
   projectRef: over.projectRef ?? Option.none<string>(),
 });
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 describe("test db integration", () => {
   it.live("runs pgTAP on the local db: enables then drops pgtap, exits 0", () => {
@@ -505,7 +503,7 @@ describe("test db integration", () => {
       const exit = yield* Effect.exit(testDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to enable pgTAP: permission denied");
+        expect(encodeJson(exit.cause)).toContain("failed to enable pgTAP: permission denied");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -516,7 +514,7 @@ describe("test db integration", () => {
       const exit = yield* Effect.exit(testDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to connect to postgres");
+        expect(encodeJson(exit.cause)).toContain("failed to connect to postgres");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -527,7 +525,7 @@ describe("test db integration", () => {
       const exit = yield* Effect.exit(testDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("error running container: exit 3");
+        expect(encodeJson(exit.cause)).toContain("error running container: exit 3");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -541,9 +539,7 @@ describe("test db integration", () => {
       const exit = yield* Effect.exit(testDb(flags({ paths: ["tests/db"] })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
-          "no pgTAP tests found in /work/project/tests/db",
-        );
+        expect(encodeJson(exit.cause)).toContain("no pgTAP tests found in /work/project/tests/db");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -646,7 +642,7 @@ describe("test db integration", () => {
       const exit = yield* Effect.exit(testDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to run docker");
+        expect(encodeJson(exit.cause)).toContain("failed to run docker");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -673,7 +669,7 @@ describe("test db integration", () => {
       const exit = yield* Effect.exit(testDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(encodeJson(exit.cause)).toContain(
           "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
         );
       }
@@ -686,7 +682,7 @@ describe("test db integration", () => {
       const exit = yield* Effect.exit(testDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(encodeJson(exit.cause)).toContain(
           "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
         );
       }
@@ -695,12 +691,10 @@ describe("test db integration", () => {
 
   it.live("--linked=false routes to the linked branch (Changed, not value)", () => {
     const { layer } = setup({ args: ["--linked=false"] });
-    return Effect.gen(function* () {
-      // No explicit assertion: success means routing reached resolver.resolve
-      // with connType "linked" instead of failing on mutual exclusion or the
-      // local-target guard.
-      yield* testDb(flags());
-    }).pipe(Effect.provide(layer));
+    // No explicit assertion: success means routing reached resolver.resolve
+    // with connType "linked" instead of failing on mutual exclusion or the
+    // local-target guard.
+    return testDb(flags()).pipe(Effect.provide(layer));
   });
 
   it.live("tests the project given via --project-ref --linked", () => {
@@ -722,7 +716,7 @@ describe("test db integration", () => {
       const exit = yield* Effect.exit(testDb(flags({ projectRef: Option.some(FLAG_REF) })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(encodeJson(exit.cause)).toContain(
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
@@ -773,16 +767,23 @@ describe("test db integration", () => {
   const tempWorkdir = useTempWorkdir();
   it.live("sanitizes a configured project_id when naming the local network (Go parity)", () => {
     const workdir = tempWorkdir.current;
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "My Project"\n');
-    const { layer, docker } = setup({ workdir });
     return Effect.gen(function* () {
-      yield* testDb(flags());
-      expect(docker.lastOpts?.network).toEqual({
-        _tag: "named",
-        name: "supabase_network_My_Project",
-      });
-    }).pipe(Effect.provide(layer));
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workdir, "supabase", "config.toml"),
+        'project_id = "My Project"\n',
+      );
+      const { layer, docker } = setup({ workdir });
+      yield* Effect.gen(function* () {
+        yield* testDb(flags());
+        expect(docker.lastOpts?.network).toEqual({
+          _tag: "named",
+          name: "supabase_network_My_Project",
+        });
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect("mints a login role through the real resolver for --linked --project-ref", () => {

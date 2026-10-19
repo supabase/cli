@@ -30,7 +30,14 @@ function branchFromMain(repo: TestRepo, name: string): void {
   git(repo.seed, "push", "origin", name);
 }
 
-function fakeIo(checkout: string, openPullRequest?: number) {
+const repoRef = { full_name: "supabase/cli" };
+const resyncable = {
+  state: "open",
+  head: { ref: "sync/develop-into-next", repo: repoRef as { full_name: string } | null },
+  base: { ref: "next", repo: repoRef },
+};
+
+function fakeIo(checkout: string, openPullRequest?: number, pullRequest = resyncable) {
   const created: PullRequestDraft[] = [];
   const io: SyncIo = {
     git: makeGit(checkout),
@@ -39,6 +46,7 @@ function fakeIo(checkout: string, openPullRequest?: number) {
       created.push(draft);
       return 99;
     },
+    getPullRequest: async () => pullRequest,
   };
   return { io, created };
 }
@@ -201,6 +209,53 @@ describe("syncBranches", () => {
     await syncBranches(io, pair);
 
     expect(repo.remoteTip("sync/main-into-develop")).toBe(mainTip);
+  });
+
+  test("hands an open develop-into-next pull request back to the resolution without touching branches", async () => {
+    const repo = setup();
+    branchFromMain(repo, "next");
+    branchFromMain(repo, "develop");
+    repo.commit(repo.seed, "develop.txt", "develop\n", "feat: develop");
+    git(repo.seed, "push", "origin", "develop");
+    const nextBefore = repo.remoteTip("next");
+    const { io, created } = fakeIo(repo.checkout(), 31);
+
+    const outcome = await syncBranches(io, parsePair("develop-into-next"), 31);
+
+    expect(outcome).toEqual({ status: "resync", pullRequest: 31 });
+    expect(repo.remoteTip("next")).toBe(nextBefore);
+    expect(() => repo.remoteTip("sync/develop-into-next")).toThrow();
+    expect(created).toHaveLength(0);
+  });
+
+  test.each([
+    ["a closed pull request", "develop-into-next", { ...resyncable, state: "closed" }],
+    [
+      "another head",
+      "develop-into-next",
+      { ...resyncable, head: { ref: "feature", repo: repoRef } },
+    ],
+    [
+      "a fork's branch of the same name",
+      "develop-into-next",
+      { ...resyncable, head: { ...resyncable.head, repo: { full_name: "someone/cli" } } },
+    ],
+    [
+      "the main-into-develop pair",
+      "main-into-develop",
+      {
+        state: "open",
+        head: { ref: "sync/main-into-develop", repo: repoRef },
+        base: { ref: "develop", repo: repoRef },
+      },
+    ],
+  ])("refuses to resync %s", async (_name, value, pullRequest) => {
+    const repo = setup();
+    branchFromMain(repo, "next");
+    branchFromMain(repo, "develop");
+    const { io } = fakeIo(repo.checkout(), 31, pullRequest);
+
+    await expect(syncBranches(io, parsePair(value), 31)).rejects.toThrow("is not an open");
   });
 
   test("retries when the target advances between fetch and push", async () => {

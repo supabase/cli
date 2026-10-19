@@ -1,20 +1,17 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option, Result } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Predicate, Result } from "effect";
 
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { ProfileFlag } from "./global-flags.ts";
-import { mockRuntimeInfo } from "../../tests/helpers/mocks.ts";
+import { mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
 import {
   pflagBoolValue,
   pflagEnumValue,
   pflagProfileValue,
   pflagWorkdirValue,
   resolvePflagProfile,
+  validatePflagWorkdir,
 } from "./pflag-reconcile.ts";
 
 // Sample enum values for the generic enum-reconciliation helper under test.
@@ -316,25 +313,11 @@ describe("pflagProfileValue", () => {
 });
 
 describe("resolvePflagProfile", () => {
-  const withEnvProfile = <A, E, R>(value: string, effect: Effect.Effect<A, E, R>) => {
-    const prev = process.env["SUPABASE_PROFILE"];
-    process.env["SUPABASE_PROFILE"] = value;
-    return effect.pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_PROFILE"];
-          else process.env["SUPABASE_PROFILE"] = prev;
-        }),
-      ),
-    );
-  };
-
-  const services = (args: ReadonlyArray<string>, homeDir: string) =>
+  const services = (args: ReadonlyArray<string>, homeDir: string, profileEnvValue: string) =>
     Layer.mergeAll(
-      BunServices.layer,
       Layer.succeed(ProfileFlag, "supabase"),
       Layer.succeed(CliArgs, { args }),
-      mockRuntimeInfo({ homeDir }),
+      mockCommandSettings({ workdir: homeDir, profileEnvValue: Option.some(profileEnvValue) }),
     );
 
   // --domains --profile supabase: the config layer's raw scan shadows the env with the
@@ -342,56 +325,109 @@ describe("resolvePflagProfile", () => {
   // profile instead of returning none.
   it.effect(
     "re-loads the env profile when the layer's scan wrongly shadowed a consumed token",
-    () => {
-      const dir = mkdtempSync(join(tmpdir(), "supabase-pflag-reconcile-"));
-      const profilePath = join(dir, "env.yml");
-      writeFileSync(
-        profilePath,
-        [
-          "name: harness",
-          "api_url: http://127.0.0.1:45555",
-          "dashboard_url: http://127.0.0.1:45555",
-          "project_host: localhost",
-        ].join("\n"),
-      );
-      return withEnvProfile(
-        profilePath,
-        Effect.gen(function* () {
-          const resolved = yield* resolvePflagProfile({
-            occurrences: new Map(),
-            consumedFlagNames: new Set(["profile"]),
-            prePathOccurrences: new Map(),
-          });
-          expect(Option.isSome(resolved)).toBe(true);
-          if (Option.isSome(resolved)) {
-            expect(resolved.value.name).toBe("harness");
-            expect(resolved.value.apiUrl).toBe("http://127.0.0.1:45555");
-          }
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-pflag-reconcile-" });
+        const profilePath = path.join(dir, "env.yml");
+        yield* fs.writeFileString(
+          profilePath,
+          [
+            "name: harness",
+            "api_url: http://127.0.0.1:45555",
+            "dashboard_url: http://127.0.0.1:45555",
+            "project_host: localhost",
+          ].join("\n"),
+        );
+        const resolved = yield* resolvePflagProfile({
+          occurrences: new Map(),
+          consumedFlagNames: new Set(["profile"]),
+          prePathOccurrences: new Map(),
         }).pipe(
           Effect.provide(
-            services(["sso", "add", "--type", "saml", "--domains", "--profile", "supabase"], dir),
+            services(
+              ["sso", "add", "--type", "saml", "--domains", "--profile", "supabase"],
+              dir,
+              profilePath,
+            ),
           ),
-          Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-        ),
-      );
-    },
+        );
+        expect(Option.isSome(resolved)).toBe(true);
+        if (Option.isSome(resolved)) {
+          expect(resolved.value.name).toBe("harness");
+          expect(resolved.value.apiUrl).toBe("http://127.0.0.1:45555");
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("returns none when the scan and the layer agree on an explicit supabase", () => {
-    const dir = mkdtempSync(join(tmpdir(), "supabase-pflag-reconcile-"));
-    return withEnvProfile(
-      "rogue-profile",
-      Effect.gen(function* () {
-        const resolved = yield* resolvePflagProfile({
-          occurrences: new Map([["profile", ["supabase"]]]),
-          consumedFlagNames: new Set<string>(),
-          prePathOccurrences: new Map(),
-        });
-        expect(Option.isNone(resolved)).toBe(true);
+  it.effect("returns none when the scan and the layer agree on an explicit supabase", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-pflag-reconcile-" });
+      const resolved = yield* resolvePflagProfile({
+        occurrences: new Map([["profile", ["supabase"]]]),
+        consumedFlagNames: new Set<string>(),
+        prePathOccurrences: new Map(),
       }).pipe(
-        Effect.provide(services(["sso", "add", "--profile", "supabase"], dir)),
-        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-      ),
-    );
-  });
+        Effect.provide(services(["sso", "add", "--profile", "supabase"], dir, "rogue-profile")),
+      );
+      expect(Option.isNone(resolved)).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("fails to load an untrimmed token persisted in the Supabase home", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-pflag-reconcile-" });
+      yield* fs.writeFileString(path.join(dir, "profile"), "snap\n");
+      const error = yield* resolvePflagProfile({
+        occurrences: new Map(),
+        consumedFlagNames: new Set<string>(),
+        prePathOccurrences: new Map(),
+      }).pipe(
+        Effect.provide(
+          mockCommandSettings({ workdir: path.join(dir, "project"), supabaseHome: dir }),
+        ),
+        Effect.flip,
+      );
+      expect(error.message).toBe(`failed to read profile: Unsupported Config Type ""`);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+});
+
+describe("validatePflagWorkdir", () => {
+  const scan = {
+    occurrences: new Map<string, ReadonlyArray<string>>(),
+    consumedFlagNames: new Set<string>(),
+    prePathOccurrences: new Map<string, ReadonlyArray<string>>(),
+  };
+
+  it.effect("fails with the workdir error when SUPABASE_WORKDIR names a missing directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-pflag-reconcile-" });
+      const missing = path.join(dir, "missing");
+      const error = yield* validatePflagWorkdir(scan).pipe(
+        Effect.provide(mockCommandSettings({ workdir: dir, workdirEnvValue: missing })),
+        Effect.flip,
+      );
+      expect(Predicate.isTagged(error, "PflagWorkdirError")).toBe(true);
+      expect(error.message).toBe(
+        `failed to change workdir: chdir ${missing}: no such file or directory`,
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("treats an empty SUPABASE_WORKDIR as unset", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-pflag-reconcile-" });
+      yield* validatePflagWorkdir(scan).pipe(
+        Effect.provide(mockCommandSettings({ workdir: dir, workdirEnvValue: "" })),
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });
