@@ -33,6 +33,7 @@ import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
 import { DnsResolverFlag, OutputFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
@@ -999,16 +1000,44 @@ describe("gen types", () => {
           Effect.provide(layer),
         );
 
-        expect(out.messages).toContainEqual({
-          type: "warn",
-          message: `--project-id is deprecated and will be removed in v4. Use --remote instead: supabase gen types --remote=${VALID_REF}`,
-        });
+        expect(stripAnsi(out.stderrText)).toContain(
+          `Warning: --project-id is deprecated and will be removed in v4. Use --remote instead: supabase gen types --remote=${VALID_REF}\n`,
+        );
         expect(out.stderrText).toContain(unverifiedTargetBanner());
         expect(api.requests).toContainEqual({
           method: "generateTypescriptTypes",
           input: { ref: VALID_REF, included_schemas: "public" },
         });
       }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect.each(["text", "json"] as const)(
+      "keeps stdout identical to --remote=<ref> and warns on stderr for --project-id in %s mode",
+      (format) =>
+        Effect.gen(function* () {
+          const alias = yield* setup({
+            format,
+            args: ["gen", "types", "--project-id", VALID_REF],
+            projectTypes: "export type Database = {}\n",
+          });
+          yield* genTypes(defaultFlags({ projectId: Option.some(VALID_REF) })).pipe(
+            Effect.provide(alias.layer),
+          );
+          const canonical = yield* setup({
+            format,
+            args: ["gen", "types", `--remote=${VALID_REF}`],
+            projectTypes: "export type Database = {}\n",
+          });
+          yield* genTypes(
+            defaultFlags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
+          ).pipe(Effect.provide(canonical.layer));
+
+          expect(alias.out.stdoutText).toBe("export type Database = {}\n");
+          expect(alias.out.stdoutText).toBe(canonical.out.stdoutText);
+          expect(alias.out.messages.filter((message) => message.type === "warn")).toEqual([]);
+          expect(stripAnsi(alias.out.stderrText)).toContain("Warning: --project-id is deprecated");
+          expect(canonical.out.stderrText).not.toContain("deprecated");
+        }).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.effect("rejects --project-id together with --project-ref", () =>

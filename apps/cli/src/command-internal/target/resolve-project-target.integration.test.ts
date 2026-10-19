@@ -7,6 +7,7 @@ import {
   mockCommandPlatformApi,
   mockCommandSettings,
 } from "../../../tests/helpers/command-mocks.ts";
+import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import { ProjectRefNotLinkedError } from "../../config/project-ref.errors.ts";
 import { ProjectRefResolver } from "../../config/project-ref.service.ts";
@@ -95,7 +96,12 @@ const run = (
     return {
       exit,
       stderr: out.stderrText,
-      warnings: out.messages.filter((m) => m.type === "warn").map((m) => m.message),
+      stdout: out.stdoutText,
+      warnings: stripAnsi(out.stderrText)
+        .split("\n")
+        .filter((line) => line.startsWith("Warning: "))
+        .map((line) => line.slice("Warning: ".length)),
+      outputWarnCalls: out.messages.filter((m) => m.type === "warn"),
       refFlags,
       branchRequests: api.requests.length,
     };
@@ -141,6 +147,8 @@ describe("resolveProjectTarget", () => {
       expect(result.warnings).toEqual([
         `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase functions deploy hello --remote=${FLAG_REF}`,
       ]);
+      expect(result.outputWarnCalls).toEqual([]);
+      expect(result.stdout).toBe("");
     }),
   );
 

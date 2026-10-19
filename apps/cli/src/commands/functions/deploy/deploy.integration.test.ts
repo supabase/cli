@@ -37,6 +37,7 @@ import {
   withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
@@ -494,7 +495,10 @@ describe("functions deploy", () => {
           )
           .map((request) => request.url);
       const warnings = () =>
-        out.messages.filter((message) => message.type === "warn").map((message) => message.message);
+        stripAnsi(out.stderrText)
+          .split("\n")
+          .filter((line) => line.startsWith("Warning: "))
+          .map((line) => line.slice("Warning: ".length));
       return { api, layer, deployedTo, warnings };
     };
 

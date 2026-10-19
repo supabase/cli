@@ -8,6 +8,7 @@ import {
   mockCommandPlatformApi,
   mockCommandSettings,
 } from "../../../tests/helpers/command-mocks.ts";
+import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import { ProjectRefNotLinkedError } from "../../config/project-ref.errors.ts";
 import { ProjectRefResolver } from "../../config/project-ref.service.ts";
@@ -15,6 +16,7 @@ import type { ProjectRefSource } from "../../config/project-ref.service.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 import { announceTarget } from "../../shared/output/command-target.service.ts";
+import type { OutputFormat } from "../../shared/output/types.ts";
 import type { RemoteValue } from "./remote-value.ts";
 import { resolveTarget } from "./resolve-target.ts";
 import { renderLocalTarget } from "./target-identity.ts";
@@ -85,6 +87,7 @@ const run = (
     readonly savedRef?: string;
     readonly cache?: { readonly ref: string; readonly name?: string };
     readonly args?: ReadonlyArray<string>;
+    readonly format?: OutputFormat;
     readonly branches?: ReadonlyArray<ReturnType<typeof branchRow>> | "unavailable";
   } = {},
 ) =>
@@ -106,7 +109,7 @@ const run = (
       );
     }
     const resolver = projectRefResolver({ linked: options.linked ?? true });
-    const out = mockOutput();
+    const out = mockOutput({ format: options.format ?? "text" });
     const api = mockCommandPlatformApi({
       handler: (request) =>
         Effect.succeed(
@@ -146,8 +149,13 @@ const run = (
     const attributes = spans.find((span) => span.name === "Target.resolve")?.attributes;
     return {
       exit,
+      stdout: out.stdoutText,
       stderr: out.stderrText,
-      warnings: out.messages.filter((m) => m.type === "warn").map((m) => m.message),
+      warnings: stripAnsi(out.stderrText)
+        .split("\n")
+        .filter((line) => line.startsWith("Warning: "))
+        .map((line) => line.slice("Warning: ".length)),
+      outputWarnCalls: out.messages.filter((m) => m.type === "warn"),
       refFlags: resolver.flags,
       apiRequests: api.requests.map(
         (request) => `${request.method} ${new URL(request.url).pathname}`,
@@ -372,6 +380,24 @@ describe("resolveTarget", () => {
       }),
     );
 
+    it.effect.each(["text", "json", "stream-json"] satisfies Array<OutputFormat>)(
+      "writes the warning to stderr and nothing to stdout in %s mode",
+      (format) =>
+        Effect.gen(function* () {
+          const result = yield* run(
+            "selectable",
+            { ...none, linked: true },
+            { args: ["db", "push", "--linked"], format },
+          );
+          expect(succeeded(result.exit)).toMatchObject({ kind: "linked" });
+          expect(result.warnings).toEqual([
+            "--linked is deprecated and will be removed in v4. Use --remote instead: supabase db push --remote",
+          ]);
+          expect(result.outputWarnCalls).toEqual([]);
+          expect(result.stdout).toBe("");
+        }),
+    );
+
     it.effect("folds --linked and --project-ref into one warning that ends in --remote=<ref>", () =>
       Effect.gen(function* () {
         const result = yield* run(
@@ -490,7 +516,9 @@ describe("resolveTarget", () => {
     it.effect("adds no hint when --local chose local", () =>
       Effect.gen(function* () {
         const result = yield* run("selectable", { ...none, local: true }, { savedRef: FILE_REF });
-        expect(result.stderr).toBe("Target: local stack (127.0.0.1:54322)\n");
+        expect(stripAnsi(result.stderr)).toBe(
+          "Warning: --local isn't needed (local is the default) and will be removed in v4\nTarget: local stack (127.0.0.1:54322)\n",
+        );
       }),
     );
   });

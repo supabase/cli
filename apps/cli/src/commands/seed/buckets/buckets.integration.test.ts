@@ -81,7 +81,7 @@ interface MockRoute {
 const DEFAULT_FLAGS: BucketsFlags = {
   remote: Option.none(),
   linked: false,
-  local: true,
+  local: false,
   projectRef: Option.none(),
 };
 

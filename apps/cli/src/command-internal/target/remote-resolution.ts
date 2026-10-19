@@ -4,6 +4,7 @@ import { CommandSettings } from "../../config/command-settings.service.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { CommandTarget } from "../../shared/output/command-target.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
+import { yellow } from "../colors.ts";
 import { resolveLinkedParentRef } from "../parent-project-ref.ts";
 import {
   findBranch,
@@ -31,7 +32,7 @@ const bareRemoteOperand = (argv: ReadonlyArray<string>): string | undefined => {
   return couldNameBranch(next) ? next : undefined;
 };
 
-/** Prints one warning per deprecated selector flag the run used, rebuilt from the real command line when it is known. */
+/** Prints one warning per deprecated selector flag the run used on stderr in every output format, rebuilt from the real command line when it is known. */
 export const warnTargetDeprecations = Effect.fnUntraced(function* (
   deprecations: ReadonlyArray<TargetDeprecation>,
 ) {
@@ -42,7 +43,7 @@ export const warnTargetDeprecations = Effect.fnUntraced(function* (
     Option.map(yield* Effect.serviceOption(CliArgs), (cli) => cli.args),
   );
   for (const message of deprecationMessages(deprecations, { argv, projectHost })) {
-    yield* output.warn(message);
+    yield* output.raw(`${yellow(`Warning: ${message}`)}\n`, "stderr");
   }
 });
 
