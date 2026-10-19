@@ -87,9 +87,9 @@ export const DOCS_EXPERIMENTAL: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Leaves gated on `--experimental` OR `[experimental.pgdelta] enabled = true`
- * in config.toml — the flag is documented but not marked required, since the
- * config path also passes the gate.
+ * Leaves gated on `--experimental` OR `[experimental.pgdelta] enabled` (default true)
+ * in config.toml — the flag is documented but not marked required, since the gate
+ * is open unless config sets `enabled = false`.
  */
 export const DOCS_EXPERIMENTAL_OPTIONAL: ReadonlySet<string> = new Set([
   "supabase-db-schema-declarative-generate",
@@ -101,18 +101,14 @@ export const DOCS_EXPERIMENTAL_OPTIONAL: ReadonlySet<string> = new Set([
  * suffix) but excluded from the published reference.
  */
 export const DOCS_EXCLUDED: ReadonlySet<string> = new Set([
-  "supabase-gen-keys",
   "supabase-inspect-db-cache-hit",
   "supabase-inspect-db-index-sizes",
   "supabase-inspect-db-index-usage",
   "supabase-inspect-db-role-configs",
   "supabase-inspect-db-role-connections",
   "supabase-inspect-db-seq-scans",
-  "supabase-inspect-db-table-index-sizes",
   "supabase-inspect-db-table-record-counts",
   "supabase-inspect-db-table-sizes",
-  "supabase-inspect-db-total-index-size",
-  "supabase-inspect-db-total-table-sizes",
   "supabase-inspect-db-unused-indexes",
 ]);
 
@@ -133,12 +129,11 @@ export const DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
   "supabase-db-advisors local": "true",
   "supabase-db-advisors type": "all",
   "supabase-db-diff local": "true",
-  "supabase-db-diff use-migra": "true",
   "supabase-db-dump linked": "true",
   "supabase-db-lint fail-on": "none",
   "supabase-db-lint level": "warning",
   "supabase-db-lint local": "true",
-  "supabase-db-pull diff-engine": "migra",
+  "supabase-db-pull diff-engine": "pg-delta",
   "supabase-db-pull linked": "true",
   "supabase-db-push linked": "true",
   "supabase-db-query local": "true",
@@ -220,18 +215,10 @@ export const DOCS_CHOICE_OVERRIDES: Readonly<Record<string, ReadonlyArray<string
 };
 
 /**
- * Flags excluded from the published reference, keyed `"<doc id> <flag id>"`.
- * `--include-raw-output` stays parse-visible for compatibility (see
- * `commands/domains/SIDE_EFFECTS.md`) but is hidden from docs here. Validated at build time
- * like the other tables.
+ * Flags excluded from the published reference, keyed `"<doc id> <flag id>"`. Validated at build
+ * time like the other tables.
  */
-export const DOCS_EXCLUDED_FLAGS: ReadonlySet<string> = new Set([
-  "supabase-domains-activate include-raw-output",
-  "supabase-domains-create include-raw-output",
-  "supabase-domains-delete include-raw-output",
-  "supabase-domains-get include-raw-output",
-  "supabase-domains-reverify include-raw-output",
-]);
+export const DOCS_EXCLUDED_FLAGS: ReadonlySet<string> = new Set([]);
 
 /**
  * Usage argument overrides, keyed by doc id, for commands whose published argument rendering
