@@ -15,8 +15,8 @@ import { SeedMissingProjectConfigError, SeedWorkdirError } from "./buckets.error
 /**
  * `supabase seed buckets` — seeds Storage buckets from
  * `[storage.buckets]` / `[storage.vector]` in `supabase/config.toml`. The
- * seeding work lives in the hoisted `seedBucketsRun` (shared with `db reset
- * --local`); this handler owns target resolution, hosted consent and telemetry.
+ * seeding work lives in the hoisted `seedBucketsRun` (shared with `db reset`); this
+ * handler owns target resolution, hosted consent and telemetry.
  */
 export const seedBuckets = Effect.fn("seed.buckets")(function* (flags: BucketsFlags) {
   const telemetryState = yield* TelemetryState;

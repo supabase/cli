@@ -107,7 +107,7 @@ export type GenTypesFlags = CliCommand.Command.Config.Infer<typeof flagsConfig> 
 const NON_TYPESCRIPT = GEN_TYPES_LANGUAGES.filter((lang) => lang !== "typescript");
 const nonTypescript = { flag: "lang", oneOf: NON_TYPESCRIPT } as const;
 const notBranch = "the ref names a project, not a preview branch";
-// Without a linked target the run uses a local or `--db-url` database, or fails before calling the API.
+// Without a linked target the run uses a local or `--remote=<url>` database, or fails before calling the API.
 const remoteTarget: ReadonlyArray<EntryCondition> = [
   { dbTarget: ["linked"] },
   { flag: "postgrest-v9-compat", is: false },
@@ -157,7 +157,7 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
                 operationId: "v1-get-pooler-config",
                 kind: "required",
                 when: [nonTypescript],
-                context: `${notBranch}, the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url (--project-ref and --project-id ignore the saved file)`,
+                context: `${notBranch}, the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url (--remote=<ref>, --project-ref and --project-id ignore the saved file)`,
               },
               {
                 operationId: "v1-get-pooler-config",

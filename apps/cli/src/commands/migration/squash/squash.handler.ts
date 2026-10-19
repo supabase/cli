@@ -447,7 +447,7 @@ const runSquash = Effect.fnUntraced(function* (flags: MigrationSquashFlags) {
   const squashFlow = Effect.gen(function* () {
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
 
-    // Reads the remote-merged config before resolving the connection (like db diff --linked);
+    // Reads the remote-merged config before resolving the connection (like `db diff --remote`);
     // read unconditionally since the shadow is provisioned locally either way.
     const toml = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
     if (toml.appliedRemote !== undefined) {
@@ -465,8 +465,8 @@ const runSquash = Effect.fnUntraced(function* (flags: MigrationSquashFlags) {
       linkedRef,
     );
 
-    // The resolver owns --password/DB_PASSWORD/temp-login-role/IPv6 handling for
-    // --linked, so squash needs no bespoke password prompt.
+    // The resolver owns --password/DB_PASSWORD/temp-login-role/IPv6 handling for a
+    // remote target, so squash needs no bespoke password prompt.
     const cfg = yield* resolver.resolveConnection({
       target,
       dnsResolver,
