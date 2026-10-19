@@ -160,6 +160,16 @@ describe("parseTargetSelector", () => {
       });
     });
 
+    it("rejects a keyword connection string given to --project-ref without echoing it", () => {
+      const error = failure({ projectRef: Option.some("host=db.example.com password=hunter2") });
+      expect(error).toMatchObject({
+        _tag: "TargetInvalidValueError",
+        flag: "--project-ref",
+        message: "--project-ref takes a project ref or a branch name, not a connection string.",
+      });
+      expect(JSON.stringify(error)).not.toContain("hunter2");
+    });
+
     it("suggests the ref a project URL already names", () => {
       expect(failure({ projectRef: Option.some(`https://${REF}.supabase.co`) })).toMatchObject({
         _tag: "TargetInvalidValueError",

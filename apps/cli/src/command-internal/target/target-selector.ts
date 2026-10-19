@@ -155,11 +155,11 @@ export const parseTargetSelector = (
     return Result.fail(
       new TargetInvalidValueError({
         flag: aliasFlag,
-        message: `${aliasFlag} takes a project ref or a branch name, not a URL.`,
+        message: `${aliasFlag} takes a project ref or a branch name, not a ${aliasRemote.failure._tag === "ForeignUrl" ? "URL" : "connection string"}.`,
         suggestion:
-          aliasRemote.failure.ref === undefined
-            ? "Pass a project ref or a branch name, for example --remote=abcdefghijklmnopqrst"
-            : `Use --remote=${aliasRemote.failure.ref}.`,
+          aliasRemote.failure._tag === "ForeignUrl" && aliasRemote.failure.ref !== undefined
+            ? `Use --remote=${aliasRemote.failure.ref}.`
+            : "Pass a project ref or a branch name, for example --remote=abcdefghijklmnopqrst",
       }),
     );
   }

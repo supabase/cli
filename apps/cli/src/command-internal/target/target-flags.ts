@@ -70,6 +70,12 @@ const rejectionMessage = (variant: RemoteFlagVariant, rejection: RemoteValueReje
           ? "."
           : `; to target that project, use --remote=${rejection.ref}.`
       }`;
+    case "KeywordDsn":
+      return `--remote takes ${acceptedValuesOf(variant)}${
+        variant.kind === "selectable" && variant.dbUrl
+          ? "; convert a connection string to a postgresql:// URL and pass --remote=<url>."
+          : "."
+      }`;
   }
 };
 

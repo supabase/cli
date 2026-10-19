@@ -166,6 +166,21 @@ describe("targetFlags", () => {
       }),
   );
 
+  it.effect("rejects a keyword connection string without echoing it", () =>
+    Effect.gen(function* () {
+      const message = yield* rejectedMessage(withDbUrl, [
+        "--remote=host=db.example.com user=postgres password=hunter2",
+      ]);
+      expect(message).toBe(
+        "--remote takes a postgres:// URL, a project ref or a branch name; convert a connection string to a postgresql:// URL and pass --remote=<url>.",
+      );
+      const storage = targetFlags({ subject: "Storage API", dbUrl: false });
+      expect(yield* rejectedMessage(storage, ["--remote=host=db.example.com"])).toBe(
+        "--remote takes a project ref or a branch name.",
+      );
+    }),
+  );
+
   it.effect(
     "leaves the postgres:// URL out of the foreign-URL message where none is accepted",
     () =>
