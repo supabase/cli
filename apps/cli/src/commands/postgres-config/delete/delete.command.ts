@@ -4,6 +4,8 @@ import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { postgresConfigRead, postgresConfigWrite } from "../postgres-config.shared.ts";
@@ -29,10 +31,7 @@ export const postgresConfigDeleteConfigFlag = stringSliceFlag(
 );
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   config: postgresConfigDeleteConfigFlag,
   noRestart: Flag.Boolean("no-restart").pipe(
     Flag.withDescription("Do not restart the database after deleting config."),
@@ -52,6 +51,7 @@ export const postgresConfigDeleteCommand = Command.make("delete", config).pipe(
       postgresConfigWrite,
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>

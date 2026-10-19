@@ -4,7 +4,7 @@ import { requireHostedMutationConsent } from "../../../command-internal/hosted-c
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { NotebookNotFoundError } from "../notebooks.errors.ts";
@@ -41,7 +41,6 @@ export const notebooksPush = Effect.fn("notebooks.push")(function* (flags: Noteb
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
@@ -55,7 +54,7 @@ export const notebooksPush = Effect.fn("notebooks.push")(function* (flags: Noteb
     // failing after the project has already changed.
     yield* rejectNotebooksEnvOutput();
 
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
 
     yield* Effect.gen(function* () {
       const local = yield* listLocalNotebooks(workdir);

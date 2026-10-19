@@ -2,7 +2,7 @@ import type { SupabaseApiError } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -62,14 +62,13 @@ export const ssoRemove = Effect.fn("sso.remove")(function* (flags: SsoRemoveFlag
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
     const providerId = yield* Effect.fromResult(validateUuid(flags.providerId));
 
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
 
     yield* Effect.gen(function* () {
       yield* requireHostedMutationConsent({ action: `Remove SSO provider ${providerId}` });

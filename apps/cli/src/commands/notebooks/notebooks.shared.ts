@@ -56,13 +56,6 @@ export const notebooksDir = Effect.fnUntraced(function* (workdir: string) {
 
 const notebookFileExtension = ".json";
 
-/**
- * `--project-ref` is a project identifier, not user content, so its value is
- * logged verbatim — the same call `functions download` / `functions deploy` make
- * for the same flag.
- */
-export const notebooksProjectRefSafeFlags = ["project-ref"] as const;
-
 /** Page size for the list walk — the API's maximum, so the walk is one call in practice. */
 const NOTEBOOK_PAGE_SIZE = 100;
 

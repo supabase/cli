@@ -3,7 +3,7 @@ import { Effect, Option, Predicate, Schema } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
@@ -93,7 +93,6 @@ export const snippetsList = Effect.fn("snippets.list")(function* (flags: Snippet
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
@@ -103,7 +102,7 @@ export const snippetsList = Effect.fn("snippets.list")(function* (flags: Snippet
   //   write linked-project cache (needs `ref`)
   //   flush telemetry (no `ref` required)
   yield* Effect.gen(function* () {
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
 
     yield* Effect.gen(function* () {
       if (Option.getOrUndefined(outputFlag) === "env") {

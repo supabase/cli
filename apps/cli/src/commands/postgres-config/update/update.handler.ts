@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 
 import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -26,7 +26,6 @@ export const postgresConfigUpdate = Effect.fn("postgres-config.update")(function
   flags: PostgresConfigUpdateFlags,
 ) {
   const output = yield* Output;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
@@ -40,7 +39,7 @@ export const postgresConfigUpdate = Effect.fn("postgres-config.update")(function
       nextOverrides[splits[0] ?? ""] = splits[1] ?? "";
     }
 
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
 
     yield* Effect.gen(function* () {
       const startTask = Effect.suspend((): Effect.Effect<OutputTask | undefined> =>

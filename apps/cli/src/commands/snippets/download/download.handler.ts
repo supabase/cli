@@ -3,7 +3,7 @@ import { Effect, Predicate, Result, Schema } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { quoteBytes } from "../../../command-internal/byte-quote.ts";
@@ -121,12 +121,11 @@ export const snippetsDownload = Effect.fn("snippets.download")(function* (
 ) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
 
     yield* Effect.gen(function* () {
       const snippetId = yield* Effect.fromResult(parseSnippetUuid(flags.snippetId)).pipe(

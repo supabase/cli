@@ -4,7 +4,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import {
@@ -149,7 +149,6 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
   const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const stdio = yield* Stdio.Stdio;
@@ -235,7 +234,7 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     const attributeMappingFile = argvStringValue(occurrences, "attribute-mapping-file");
     const domains = argvSliceValue(occurrences, "domains", flags.domains);
 
-    const ref = yield* resolver.resolve(projectRef);
+    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef });
 
     // Use the argv-reconciled profile's host when it disagreed with
     // `--profile`, otherwise the config layer's — applies to the POST and
