@@ -1367,6 +1367,47 @@ const rawUpgrade = (port: number, path: string) =>
     Effect.timeout("5 seconds"),
   );
 
+/** Writes `text`, if any, on a raw client connection and waits for the next response head. */
+const responseHead = (socket: Socket, text?: string) =>
+  Effect.callback<string, HttpProxyTestError>((resume) => {
+    let received = "";
+    const cleanup = () => {
+      socket.off("data", onData);
+      socket.off("close", onClose);
+    };
+    const onData = (chunk: Buffer) => {
+      received += chunk.toString();
+      if (!received.includes("\r\n\r\n")) return;
+      cleanup();
+      resume(Effect.succeed(received));
+    };
+    const onClose = () => {
+      cleanup();
+      resume(Effect.fail(new HttpProxyTestError({ message: "Gateway closed the connection" })));
+    };
+    socket.on("data", onData);
+    socket.once("close", onClose);
+    if (socket.destroyed) onClose();
+    else if (text !== undefined) socket.write(text);
+    return Effect.sync(cleanup);
+  }).pipe(Effect.timeout("5 seconds"));
+
+it.live(
+  "answers a client that reuses its connection after stalling past the advertised keep-alive",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+        const get = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        const socket = yield* rawClient(proxy.port, get);
+        expect(yield* responseHead(socket)).toMatch(/keep-alive: timeout=5\r\n/iu);
+        /* Real time: the idle gap must outlast the runtime's default 6 s close. */
+        yield* Effect.sleep("7 seconds");
+        expect(yield* responseHead(socket, get)).toMatch(/^HTTP\/1\.1 404 /u);
+      }),
+    ),
+);
+
 it.live(
   "records each request once with its sent status, body bytes and redacted credentials",
   () => {

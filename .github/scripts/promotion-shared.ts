@@ -57,7 +57,7 @@ export function requireEnv(name: string): string {
   return value;
 }
 
-/** GET without a body, POST with one. */
+/** GET without a body, POST with one. A 204 response resolves to `undefined`. */
 export async function githubRequest<T>(token: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
@@ -75,6 +75,9 @@ export async function githubRequest<T>(token: string, path: string, body?: unkno
         });
   if (!response.ok) {
     throw new Error(`${path} failed: ${response.status} ${await response.text()}`);
+  }
+  if (response.status === 204) {
+    return undefined as T;
   }
   return (await response.json()) as T;
 }

@@ -21,12 +21,18 @@ on:
         options:
           - main-into-develop
           - develop-into-next
+      resync_pr:
+        description: Open develop-into-next pull request whose approved head conflicts with a moved next; Claude resolves the merge again on it
+        required: false
+        type: string
 
 permissions:
   contents: read
 
+# A resync has its own group, so a push to develop, which skips while the pull request is open, never replaces it while
+# it waits.
 concurrency:
-  group: sync-${{ github.event_name == 'push' && 'develop-into-next' || github.event_name == 'workflow_run' && 'main-into-develop' || inputs.pair }}
+  group: sync-${{ github.event_name == 'push' && 'develop-into-next' || github.event_name == 'workflow_run' && 'main-into-develop' || inputs.pair }}${{ inputs.resync_pr && '-resync' || '' }}
   cancel-in-progress: false
 
 jobs:
@@ -66,6 +72,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPOSITORY: ${{ github.repository }}
+          RESYNC_PR: ${{ inputs.resync_pr }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

@@ -17,6 +17,7 @@ import {
 const HEAD = "a".repeat(40);
 const RESOLVED = "<!-- sync-agent resolve -->\nClaude resolved the merge.";
 const repaired = (head: string) => `<!-- sync-agent repair head=${head} -->`;
+const rereviewed = (head: string) => `<!-- sync-agent re-review head=${head} -->`;
 
 function run(id: number, name: string, conclusion: string | null = "success"): CheckRun {
   return { id, name, status: conclusion === null ? "in_progress" : "completed", conclusion };
@@ -44,7 +45,7 @@ describe("planRepair", () => {
       threads: [],
     });
 
-    expect(plan).toEqual({ action: "repair", failures: [failed], threads: [] });
+    expect(plan).toEqual({ action: "repair", failures: [failed], threads: [], answerOnly: false });
   });
 
   test("repairs a required check that ended without succeeding, such as a cancelled one", () => {
@@ -59,7 +60,12 @@ describe("planRepair", () => {
       threads: [],
     });
 
-    expect(plan).toEqual({ action: "repair", failures: [cancelled], threads: [] });
+    expect(plan).toEqual({
+      action: "repair",
+      failures: [cancelled],
+      threads: [],
+      answerOnly: false,
+    });
   });
 
   test("waits while a check runs or a required check has not started", () => {
@@ -144,7 +150,7 @@ describe("planRepair", () => {
     expect(planRepair({ ...state, threads: [finding] }).action).toBe("repair");
   });
 
-  test("hands the pull request to a maintainer once after the round limit", () => {
+  test("hands the pull request to a maintainer after the round limit of its latest resolution", () => {
     const state = {
       head: HEAD,
       reviewRunning: false,
@@ -156,6 +162,35 @@ describe("planRepair", () => {
     const rounds = [RESOLVED, repaired("b".repeat(40)), repaired("c".repeat(40))];
 
     expect(planRepair({ ...state, botComments: rounds }).action).toBe("exhausted");
+    expect(planRepair({ ...state, botComments: [...rounds, RESOLVED] }).action).toBe("repair");
+  });
+
+  test("only answers findings once the repair commit was re-reviewed", () => {
+    const state = {
+      head: HEAD,
+      reviewRunning: false,
+      aiReview: null,
+      changesRequested: false,
+      botComments: [RESOLVED, repaired("b".repeat(40)), rereviewed(HEAD)],
+    };
+    const failing = [...green, run(99, "Check code quality", "failure")];
+
+    expect(planRepair({ ...state, runs: green, threads: [finding] })).toEqual({
+      action: "repair",
+      failures: [],
+      threads: [finding],
+      answerOnly: true,
+    });
+    expect(planRepair({ ...state, runs: failing, threads: [] }).action).toBe("exhausted");
+    expect(planRepair({ ...state, runs: failing, threads: [finding] }).action).toBe("exhausted");
+    expect(
+      planRepair({
+        ...state,
+        botComments: [...state.botComments, RESOLVED],
+        runs: failing,
+        threads: [finding],
+      }),
+    ).toMatchObject({ action: "repair", answerOnly: false });
   });
 
   test("stops repairing after the handoff, even on a maintainer's new head", () => {
