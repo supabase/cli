@@ -28,6 +28,16 @@ describe("classifyExplicitRef", () => {
     expect(classifyExplicitRef(value)).toEqual(expected);
   });
 
+  it.each([
+    { value: "https://u:p@db.example.com/x", expected: { _tag: "ForeignUrl", ref: undefined } },
+    {
+      value: `https://${REF}.supabase.co`,
+      expected: { _tag: "ForeignUrl", ref: REF },
+    },
+  ])("keeps the non-postgres URL $value apart from a branch name", ({ value, expected }) => {
+    expect(classifyExplicitRef(value)).toEqual(expected);
+  });
+
   it.each(["host=h password=x", "dbname=postgres", "password=x"])(
     "keeps the keyword connection string %s apart from a branch name",
     (value) => {

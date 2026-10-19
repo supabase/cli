@@ -114,6 +114,9 @@ const declarativeBaselineNote = (displayPath: string, nextSteps: string) =>
 const declarativeFilesIgnoredNote = (displayPath: string, nextSteps: string) =>
   `Note: db diff compares supabase/migrations with the target database; declarative schema files in ${displayPath} are not read. ${nextSteps}\n`;
 
+const EXPLICIT_REF_VALUES_MESSAGE = (flag: "--from" | "--to") =>
+  `${flag} takes local, migrations, remote, a project ref, a branch name or a postgresql:// URL`;
+
 const EXPLICIT_SIDE_FOR_SELECTOR = {
   "--remote": "remote",
   "--linked": "remote",
@@ -320,9 +323,17 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
             case "Ref":
             case "Branch":
               return yield* hostedEndpoint(explicit);
+            case "ForeignUrl":
+              return yield* new DbDiffExplicitFlagsError({
+                message: `${EXPLICIT_REF_VALUES_MESSAGE(flag)}${
+                  explicit.ref === undefined
+                    ? "."
+                    : `; to target that project, use ${flag}=${explicit.ref}.`
+                }`,
+              });
             case "KeywordDsn":
               return yield* new DbDiffExplicitFlagsError({
-                message: `${flag} takes local, migrations, remote, a project ref, a branch name or a postgresql:// URL; convert a connection string to a postgresql:// URL and pass ${flag}=<url>.`,
+                message: `${EXPLICIT_REF_VALUES_MESSAGE(flag)}; convert a connection string to a postgresql:// URL and pass ${flag}=<url>.`,
               });
             case "Migrations":
               // Preserve resolution order: the migrations shadow/catalog config must reflect

@@ -1508,6 +1508,46 @@ describe("db diff", () => {
       },
     );
 
+    it.effect.each([
+      {
+        value: "https://u:p@db.example.com/x",
+        message:
+          "--from takes local, migrations, remote, a project ref, a branch name or a postgresql:// URL.",
+      },
+      {
+        value: "https://flagflagflagflagflag.supabase.co",
+        message:
+          "--from takes local, migrations, remote, a project ref, a branch name or a postgresql:// URL; to target that project, use --from=flagflagflagflagflag.",
+      },
+    ])(
+      "--from $value is rejected as a non-postgres URL without echoing it",
+      ({ value, message }) => {
+        const branchApi = branchListApi();
+        const s = setup(tmp.current, {
+          isLocal: false,
+          projectId: Option.some(VALID_REF),
+          diffSql: "create table e ();\n",
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbDiff(
+            flags({ from: Option.some(value), to: Option.some("migrations") }),
+          ).pipe(Effect.provide(Layer.merge(s.layer, branchApi.layer)), Effect.exit);
+
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Cause.squash(exit.cause)).toMatchObject({
+              _tag: "DbDiffExplicitFlagsError",
+              message,
+            });
+            expect(Cause.pretty(exit.cause)).not.toContain("u:p");
+          }
+          expect(`${s.out.stdoutText}${s.out.stderrText}`).not.toContain("u:p");
+          expect(branchApi.requests).toEqual([]);
+          expect(s.resolverCalls).toEqual([]);
+        });
+      },
+    );
+
     it.effect("--from <branch> asks the linked project's branch list", () => {
       const branchApi = branchListApi();
       const s = setup(tmp.current, {

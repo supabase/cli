@@ -76,7 +76,7 @@ export const parseRemoteValue = (raw: string): Result.Result<RemoteValue, Remote
 };
 
 /** {@link parseNamedRemote} for a caller that reads a value the flag's own parser already accepted: a rejected value falls back to a branch name. */
-export const classifyNamedRemote = (raw: string): NamedRemoteValue =>
+const classifyNamedRemote = (raw: string): NamedRemoteValue =>
   Result.getOrElse(parseNamedRemote(raw), (): NamedRemoteValue => ({
     _tag: "Branch",
     name: raw.trim(),

@@ -1,8 +1,8 @@
 import { Result } from "effect";
 
 import {
-  classifyNamedRemote,
   parseNamedRemote,
+  type NamedRemoteRejection,
   type NamedRemoteValue,
 } from "../../../command-internal/target/remote-value.ts";
 
@@ -11,14 +11,15 @@ export type ExplicitRef =
   | { readonly _tag: "Local" }
   | { readonly _tag: "Migrations" }
   | { readonly _tag: "Remote"; readonly viaDeprecatedLinked: boolean }
-  | { readonly _tag: "KeywordDsn" }
+  | NamedRemoteRejection
   | NamedRemoteValue;
 
 /**
  * `local`, `migrations` and `remote` (the linked project) are keywords; `linked` is the
  * deprecated spelling of `remote`. Anything else is classified like a `--remote` value, so a
- * branch that shares a keyword's name is reached by its ref or UUID. A keyword connection string
- * is kept apart so it is never echoed as a branch name.
+ * branch that shares a keyword's name is reached by its ref or UUID. A value `--remote` rejects (a
+ * non-postgres URL, a keyword connection string) is returned as that rejection, never as a branch
+ * name, so it is not echoed.
  */
 export function classifyExplicitRef(ref: string): ExplicitRef {
   switch (ref) {
@@ -32,10 +33,7 @@ export function classifyExplicitRef(ref: string): ExplicitRef {
       return { _tag: "Remote", viaDeprecatedLinked: true };
     default: {
       const parsed = parseNamedRemote(ref);
-      if (Result.isFailure(parsed) && parsed.failure._tag === "KeywordDsn") {
-        return { _tag: "KeywordDsn" };
-      }
-      return classifyNamedRemote(ref);
+      return Result.isFailure(parsed) ? parsed.failure : parsed.success;
     }
   }
 }
