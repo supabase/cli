@@ -1,4 +1,5 @@
 import { Duration, Effect, Option, Predicate } from "effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -77,18 +78,25 @@ function tenantRequest(opts: TenantVersionOptions, pathName: string) {
   return request;
 }
 
-const fetchJson = (request: HttpClientRequest.HttpClientRequest) =>
+/** Fetch keeps the `apikey` header across a cross-origin redirect, so a tenant 3xx is returned, never followed. */
+const executeTenant = (request: HttpClientRequest.HttpClientRequest) =>
   Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
-    const response = yield* httpClient.execute(request);
+    return yield* httpClient
+      .execute(request)
+      .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
+  });
+
+const fetchJson = (request: HttpClientRequest.HttpClientRequest) =>
+  Effect.gen(function* () {
+    const response = yield* executeTenant(request);
     if (response.status !== 200) return Option.none<unknown>();
     return Option.some(yield* response.json);
   }).pipe(Effect.orElseSucceed(() => Option.none<unknown>()));
 
 const fetchText = (request: HttpClientRequest.HttpClientRequest) =>
   Effect.gen(function* () {
-    const httpClient = yield* HttpClient.HttpClient;
-    const response = yield* httpClient.execute(request);
+    const response = yield* executeTenant(request);
     if (response.status !== 200) return Option.none<string>();
     return Option.some(yield* response.text);
   }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
@@ -154,8 +162,7 @@ const fetchBody = <A, E>(
   read: (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<A, E>,
 ): Effect.Effect<Fetched<A>, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {
-    const httpClient = yield* HttpClient.HttpClient;
-    const response = yield* httpClient.execute(request);
+    const response = yield* executeTenant(request);
     if (response.status === 404) return { _tag: "Unreported" } as const;
     if (response.status !== 200)
       return { _tag: "Failed", cause: `HTTP ${response.status}` } as const;

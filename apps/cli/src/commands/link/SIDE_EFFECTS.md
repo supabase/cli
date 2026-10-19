@@ -89,7 +89,8 @@ Management API (base `CommandSettings.apiUrl`, `Authorization: Bearer <access-to
 | `GET`  | `/v1/projects/{parentRef}/branches`         | only when a non-ref-shaped `[ref-or-branch]`/`--project-ref` value is given (CLI-2167, TS-only)                                                                            |
 | `GET`  | `/v1/projects/{cachedRef}/branches`         | 404-path stale-cache correlation only: a RAW ref-shaped branch link whose existing `linked-project.json` names a different project (PR #6168 review, TS-only, best-effort) |
 
-Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` + `Authorization: Bearer <service-key>`):
+Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` + `Authorization: Bearer <service-key>`;
+a redirect is never followed and counts as a failed probe):
 
 | Method | Path                  | When        |
 | ------ | --------------------- | ----------- |
@@ -199,7 +200,8 @@ stays busy fails the link with `LockResolutionError` reason `lease-busy` before 
   (`postgres_version`) when the ref is a branch the project lookup does not return, and the `rest`, `auth` and `storage` versions from the target's
   tenant host (`/rest/v1/`, `/auth/v1/health`, `/storage/v1/version`) with the service-role key.
   The key is sent as `apikey`, and as a bearer token unless it is an `sb_` key; it is never logged
-  or recorded. Services without a version endpoint are not probed.
+  or recorded, and a redirect is never followed (the probe counts it as failed). Services without a
+  version endpoint are not probed.
 - Resolves the entries whose specifier is `linked` (the default) against the observations (the
   `link.lock` span), looking each hosted version up on the slim-services release host
   (`SUPABASE_INTERNAL_SLIM_RELEASES_URL` and `SUPABASE_INTERNAL_SLIM_REGISTRY_URL` redirect it), and
