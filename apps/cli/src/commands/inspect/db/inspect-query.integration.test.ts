@@ -483,6 +483,15 @@ describe("inspect db through the real database-config resolver", () => {
   const INSPECT_DB_LEAVES = [...commandTreeFor(undefined)]
     .filter(([path, node]) => node.isLeaf && path.startsWith("inspect db "))
     .map(([path]) => path);
+  // Removed commands fail before any Management API call, so they never reach the shared runner.
+  const REMOVED_INSPECT_DB_LEAVES = [
+    "inspect db table-index-sizes",
+    "inspect db total-index-size",
+    "inspect db total-table-sizes",
+  ];
+  const RUNNER_INSPECT_DB_LEAVES = INSPECT_DB_LEAVES.filter(
+    (command) => !REMOVED_INSPECT_DB_LEAVES.includes(command),
+  );
 
   it.effect(
     "every inspect db subcommand declares the calls the shared runner makes on the linked project",
@@ -500,11 +509,20 @@ describe("inspect db through the real database-config resolver", () => {
         expect(connection.connectCalls[0]?.cfg.host).toBe("aws-0-us-east-1.pooler.supabase.com");
         expect(out.stdoutText).toContain("8192 kB");
         expect(INSPECT_DB_LEAVES).toHaveLength(25);
-        for (const command of INSPECT_DB_LEAVES) {
+        expect(INSPECT_DB_LEAVES).toEqual(expect.arrayContaining(REMOVED_INSPECT_DB_LEAVES));
+        for (const command of RUNNER_INSPECT_DB_LEAVES) {
           assertPermissionDrift({
             command,
             activeFlags: { "project-ref": VALID_REF },
             requests: asRecordedRequests(requests),
+            exact: true,
+          });
+        }
+        for (const command of REMOVED_INSPECT_DB_LEAVES) {
+          assertPermissionDrift({
+            command,
+            activeFlags: { "project-ref": VALID_REF },
+            requests: [],
             exact: true,
           });
         }

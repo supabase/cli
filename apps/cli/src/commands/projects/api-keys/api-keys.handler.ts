@@ -10,19 +10,19 @@ import { apiKeysToEnv } from "../../../command-internal/api-keys.format.ts";
 import { getProjectApiKeys } from "../../../command-internal/get-api-keys.ts";
 import {
   encodeEnv,
-  encodeGoJson,
+  encodeSortedJson,
   encodeToml,
-} from "../../../command-internal/go-output.encoders.ts";
+} from "../../../command-internal/output.encoders.ts";
 import {
-  encodeGoYaml,
-  goAny,
-  goMap,
-  goNullable,
-  goSlice,
-  goString,
-  goStruct,
-  goTime,
-} from "../../../command-internal/go-struct-output.encoders.ts";
+  encodeStructYaml,
+  shapeAny,
+  shapeMap,
+  shapeNullable,
+  shapeSlice,
+  shapeString,
+  shapeStruct,
+  shapeTime,
+} from "../../../command-internal/struct-output.encoders.ts";
 import { renderProjectApiKeysTable } from "../projects.format.ts";
 import type { ProjectsApiKeysFlags } from "./api-keys.command.ts";
 
@@ -33,18 +33,18 @@ type ApiKeys = typeof V1GetProjectApiKeysOutput.Type;
  * the `SUPABASE_<NAME>_KEY` env map instead. Nullable fields render as a single-key map to keep
  * the yaml output format stable.
  */
-const GO_API_KEYS_LIST = goSlice(
-  goStruct([
-    ["api_key", goNullable(goString)],
-    ["description", goNullable(goString)],
-    ["hash", goNullable(goString)],
-    ["id", goNullable(goString)],
-    ["inserted_at", goNullable(goTime)],
-    ["name", goString],
-    ["prefix", goNullable(goString)],
-    ["secret_jwt_template", goNullable(goMap(goAny))],
-    ["type", goNullable(goString)],
-    ["updated_at", goNullable(goTime)],
+const API_KEYS_LIST_SHAPE = shapeSlice(
+  shapeStruct([
+    ["api_key", shapeNullable(shapeString)],
+    ["description", shapeNullable(shapeString)],
+    ["hash", shapeNullable(shapeString)],
+    ["id", shapeNullable(shapeString)],
+    ["inserted_at", shapeNullable(shapeTime)],
+    ["name", shapeString],
+    ["prefix", shapeNullable(shapeString)],
+    ["secret_jwt_template", shapeNullable(shapeMap(shapeAny))],
+    ["type", shapeNullable(shapeString)],
+    ["updated_at", shapeNullable(shapeTime)],
   ]),
 );
 
@@ -52,7 +52,7 @@ export const projectsApiKeys = Effect.fn("projects.api-keys")(function* (
   flags: ProjectsApiKeysFlags,
 ) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
@@ -68,22 +68,22 @@ export const projectsApiKeys = Effect.fn("projects.api-keys")(function* (
     );
     yield* fetching?.clear ?? Effect.void;
 
-    const goFmt = Option.getOrUndefined(goOutputFlag);
+    const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-    if (goFmt === "toml") {
+    if (outputFlagFormat === "toml") {
       yield* output.raw(encodeToml(apiKeysToEnv(keys)) + "\n");
       return;
     }
-    if (goFmt === "env") {
+    if (outputFlagFormat === "env") {
       yield* output.raw(encodeEnv(apiKeysToEnv(keys)) + "\n");
       return;
     }
-    if (goFmt === "json") {
-      yield* output.raw(encodeGoJson(keys));
+    if (outputFlagFormat === "json") {
+      yield* output.raw(encodeSortedJson(keys));
       return;
     }
-    if (goFmt === "yaml") {
-      yield* output.raw(encodeGoYaml(keys, GO_API_KEYS_LIST));
+    if (outputFlagFormat === "yaml") {
+      yield* output.raw(encodeStructYaml(keys, API_KEYS_LIST_SHAPE));
       return;
     }
 

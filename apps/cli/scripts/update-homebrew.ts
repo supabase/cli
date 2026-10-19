@@ -37,13 +37,7 @@ const distDir = path.join(root, "dist");
 // "SupabaseAT2"), but the installed binary is always `supabase`.
 const className = homebrewClassName(name);
 
-// The Go sidecar is looked up by exact filename next to the running binary, so it must install
-// under its original name; `if File.exist?` keeps the formula working when a build ships only
-// the CLI binary.
-const installBlock = [
-  `    bin.install "supabase"`,
-  `    bin.install "supabase-go" if File.exist?("supabase-go")`,
-].join("\n");
+const installBlock = [`    bin.install "supabase"`].join("\n");
 
 const conflictsBlock = homebrewConflictsLine(name);
 const conflictsSection = conflictsBlock ? `${conflictsBlock}\n\n` : "";

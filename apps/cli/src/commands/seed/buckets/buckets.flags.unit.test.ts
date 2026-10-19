@@ -4,7 +4,7 @@ import { Effect, Exit } from "effect";
 import { assertSeedTargetsExclusive } from "./buckets.flags.ts";
 
 describe("assertSeedTargetsExclusive", () => {
-  it.effect("fails when both --local and --linked are set (cobra mutual exclusivity)", () =>
+  it.effect("fails when both --local and --linked are set (mutual exclusivity)", () =>
     Effect.gen(function* () {
       const error = yield* assertSeedTargetsExclusive([
         "seed",
