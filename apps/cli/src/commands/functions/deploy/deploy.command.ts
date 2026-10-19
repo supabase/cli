@@ -4,7 +4,6 @@ import { withPermissions } from "../../../command-internal/command-permissions/c
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
-import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
@@ -154,7 +153,6 @@ export const functionsDeployCommand = Command.make("deploy", config).pipe(
     functionsDeploy(flags).pipe(
       withCommandTelemetry({
         flags,
-        safeFlags: projectRefSafeFlags(flags),
       }),
       withJsonErrorHandling,
     ),

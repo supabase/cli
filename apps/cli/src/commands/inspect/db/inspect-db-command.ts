@@ -43,7 +43,6 @@ export function inspectDbCommandHandler<E, R>(
           local: flags.local,
           "project-ref": flags.projectRef,
         },
-        // `project-ref` stays redacted; it carries no telemetry-safety allowlist entry.
       }),
       withJsonErrorHandling,
     );

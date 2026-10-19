@@ -48,6 +48,7 @@ import {
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
 import { sanitizeProjectId } from "../../../shared/config/project-id.ts";
 import { containerRuntimeNotFoundMessage } from "../../../command-internal/container-cli.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import {
   downloadFunctions,
   functionsDownload as functionsDownloadCalls,
@@ -1975,6 +1976,7 @@ describe("functions download", () => {
           "abcdefghijklmnopqrst",
         ]),
       }),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: "none" }),
     );
 
     return Effect.gen(function* () {

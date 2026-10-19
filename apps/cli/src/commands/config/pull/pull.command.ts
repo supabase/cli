@@ -4,7 +4,6 @@ import { Command, Flag } from "effect/cli";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
-import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { configPullRun } from "../../../command-internal/config-pull-run.ts";
@@ -48,7 +47,6 @@ const configPullHandler = (flags: ConfigPullFlags) =>
     // and is never safe to log.
     withCommandTelemetry({
       flags,
-      safeFlags: projectRefSafeFlags(flags),
       // The handler rejects every -o/--output value itself, so the full global choice set is
       // declared "allowed" here rather than gated by this wrapper.
       outputFormats: GLOBAL_OUTPUT_FORMATS,

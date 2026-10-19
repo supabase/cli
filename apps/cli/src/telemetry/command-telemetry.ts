@@ -50,6 +50,8 @@ import { unwrapToSingleParam } from "../command-internal/param-introspection.ts"
 import { StackBackendContext } from "../command-internal/stack-backend.ts";
 import { isRemoteValue, type RemoteValue } from "../command-internal/target/remote-value.ts";
 import { REMOTE_FLAG_NAME } from "../command-internal/target/remote-vocabulary.ts";
+import { TargetPolicy } from "../command-internal/target/target-policy.ts";
+import { PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
 import {
   CommandTelemetryAttributes,
   type CommandTelemetryAttributeValues,
@@ -122,6 +124,8 @@ const MACHINE_OUTPUT_FLAG_FORMATS = new Set(["env", "json", "toml", "yaml", "csv
 const OUTPUT_FLAG_FORMATS = new Set([...MACHINE_OUTPUT_FLAG_FORMATS, "pretty"]);
 
 // A project ref is telemetry-safe; a branch name or database URL is user data.
+const TARGET_ALIAS_FLAGS: ReadonlySet<string> = new Set(["project-ref", "project-id"]);
+
 function remoteTelemetryValue(remote: RemoteValue): string | boolean {
   switch (remote._tag) {
     case "Linked":
@@ -308,6 +312,8 @@ function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
   readonly safeFlagSet: ReadonlySet<string>;
   readonly changedFlagNames: ReadonlyArray<string>;
   readonly choiceFlagNames: ReadonlySet<string>;
+  // Whether the command acts on a project, so its `--project-ref`/`--project-id` alias is a target.
+  readonly hasTarget: boolean;
 }): Record<string, unknown> | undefined {
   const {
     flags,
@@ -315,6 +321,7 @@ function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
     safeFlagSet,
     changedFlagNames,
     choiceFlagNames,
+    hasTarget,
   } = options;
   if (changedFlagNames.length === 0) return undefined;
 
@@ -344,8 +351,16 @@ function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
     // consults `GLOBAL_CHOICE_FLAG_NAMES`, the global flag's own choice-ness, so it can't inherit
     // a different command's per-flag safe/choice annotation just because the CLI name matches.
     // Boolean values are always safe, regardless of source.
+    // A target alias can also hold a branch name, so only a ref-shaped value is logged.
+    const isRefShapedTargetAlias =
+      hasTarget &&
+      isFromHandler &&
+      TARGET_ALIAS_FLAGS.has(cliName) &&
+      typeof value === "string" &&
+      PROJECT_REF_PATTERN.test(value);
     const isSafe =
       remote !== undefined ||
+      isRefShapedTargetAlias ||
       typeof value === "boolean" ||
       (isFromHandler
         ? safeFlagSet.has(cliName) || choiceFlagNames.has(cliName)
@@ -409,12 +424,17 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
           ...options?.aliases,
         });
         const globalFlags = yield* globalFlagValues;
+        const targetPolicy = yield* Effect.serviceOption(TargetPolicy);
         const flags = buildFlagsMap({
           flags: options?.flags,
           globalFlagValues: globalFlags,
           safeFlagSet,
           changedFlagNames,
           choiceFlagNames,
+          hasTarget: Option.exists(
+            targetPolicy,
+            ({ group }) => group === "hosted" || group === "selectable",
+          ),
         });
         const analyticsContext = {
           command_run_id: commandRuntime.commandRunId,

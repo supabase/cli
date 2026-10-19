@@ -30,6 +30,7 @@ import { realLinkedProjectCache } from "../../../../tests/helpers/permission-rea
 import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
 import { GLOBAL_OUTPUT_FORMATS } from "../../../command-internal/global-flags.ts";
 import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { configDiffHandler } from "./diff.command.ts";
 import { CONFIG_DIFF_PAYLOAD_VERSION } from "./diff.format.ts";
@@ -1486,8 +1487,7 @@ describe("config diff integration", () => {
 });
 
 describe("config diff telemetry wiring", () => {
-  // Uses configDiffHandler (not the bare handler) since the safeFlags guard lives in the command
-  // wiring, not the handler itself.
+  // Uses configDiffHandler (not the bare handler) since telemetry wraps the handler in the command wiring.
   const wiringLayer = (
     analytics: ReturnType<typeof mockContextualAnalytics>,
     args: ReadonlyArray<string>,
@@ -1496,6 +1496,7 @@ describe("config diff telemetry wiring", () => {
       setup({ toml: 'project_id = "test"\n', analytics }).layer,
       commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunServices.layer)),
       Stdio.layerTest({ args: Effect.succeed(["config", "diff", ...args]) }),
+      Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
     );
 
   const flagsOf = (analytics: ReturnType<typeof mockContextualAnalytics>) =>

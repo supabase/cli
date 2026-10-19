@@ -5,7 +5,6 @@ import { withPermissions } from "../../../command-internal/command-permissions/c
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
-import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { functionsDownload as functionsDownloadCalls } from "../../../shared/functions/download.ts";
@@ -49,10 +48,7 @@ export type FunctionsDownloadFlags = CliCommand.Command.Config.Infer<typeof conf
 // Exported so integration tests can drive the exact wiring `Command.withHandler`
 // uses below, instead of re-asserting the generic instrumentation mechanism.
 export const functionsDownloadHandler = (flags: FunctionsDownloadFlags) =>
-  functionsDownload(flags).pipe(
-    withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
-    withJsonErrorHandling,
-  );
+  functionsDownload(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling);
 
 const COMMAND_PATH = ["functions", "download"];
 const managementApiLayer = managementApiRuntimeLayer(COMMAND_PATH);
@@ -65,11 +61,7 @@ const functionsDownloadLegacyBundleHandler = (flags: FunctionsDownloadFlags) => 
   return removedFlag(
     "--legacy-bundle",
     `Retry with \`supabase functions download --use-api ${slug}\` to unbundle server-side without Docker. If that also fails and the Function was deployed with a CLI older than 1.120.0, redeploy it with the current CLI.`,
-  ).pipe(
-    withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
-    withJsonErrorHandling,
-    Effect.provide(removedFlagLayer),
-  );
+  ).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling, Effect.provide(removedFlagLayer));
 };
 
 export const functionsDownloadCommand = Command.make("download", config).pipe(

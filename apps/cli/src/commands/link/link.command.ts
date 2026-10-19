@@ -2,7 +2,6 @@ import { Effect, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
-import { projectRefSafeFlags } from "../../command-internal/target/project-ref-safe-flags.ts";
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withContext } from "../../command-internal/command-permissions/model.ts";
 import { linkServices } from "../../command-internal/link-services-core.ts";
@@ -47,11 +46,8 @@ export type LinkFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const linkHandler = (flags: LinkFlags) =>
   link(flags).pipe(
-    // `--project-ref` is only safe to log verbatim when it's ref-shaped — it can also be a
-    // branch name, which is user data. `--skip-pooler` is always safe; `--password` stays redacted.
     withCommandTelemetry({
       flags,
-      safeFlags: projectRefSafeFlags(flags),
     }),
     withJsonErrorHandling,
   );

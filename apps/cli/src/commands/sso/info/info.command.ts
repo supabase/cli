@@ -4,7 +4,6 @@ import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
-import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
@@ -34,10 +33,7 @@ export const ssoInfoCommand = Command.make("info", config).pipe(
     compose({ operations: [] }, projectRefPicker, linkedProjectCache, branchResolution),
   ),
   Command.withHandler((flags) =>
-    ssoInfo(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
-      withJsonErrorHandling,
-    ),
+    ssoInfo(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["sso", "info"])),
   withTargetPolicy({ group: "hosted", consent: "none" }),

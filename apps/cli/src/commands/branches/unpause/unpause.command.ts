@@ -13,7 +13,6 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesUnpause } from "./unpause.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
-import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 import { branchesParentTarget } from "../branches.target.ts";
 
 const config = {
@@ -40,10 +39,7 @@ export const branchesUnpauseCommand = Command.make("unpause", config).pipe(
     ),
   ),
   Command.withHandler((flags) =>
-    branchesUnpause(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
-      withJsonErrorHandling,
-    ),
+    branchesUnpause(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["branches", "unpause"])),
   withTargetPolicy({ group: "hosted", consent: "no" }),

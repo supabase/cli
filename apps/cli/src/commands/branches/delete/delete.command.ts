@@ -13,7 +13,6 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesDelete } from "./delete.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
-import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 import { branchesParentTarget } from "../branches.target.ts";
 
 const config = {
@@ -39,10 +38,7 @@ export const branchesDeleteCommand = Command.make("delete", config).pipe(
     ),
   ),
   Command.withHandler((flags) =>
-    branchesDelete(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
-      withJsonErrorHandling,
-    ),
+    branchesDelete(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["branches", "delete"])),
   withTargetPolicy({ group: "hosted", consent: "no" }),

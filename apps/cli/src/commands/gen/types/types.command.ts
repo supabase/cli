@@ -37,7 +37,6 @@ import {
   targetFlags,
 } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
-import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 
 const config = {
   ...targetFlags({ subject: "database", dbUrl: true }),
@@ -117,7 +116,6 @@ export const genTypesHandler = (flags: CliCommand.Command.Config.Infer<typeof co
   genTypes(flags).pipe(
     withCommandTelemetry({
       flags,
-      safeFlags: projectRefSafeFlags(flags),
       config: flagsConfig,
     }),
     withJsonErrorHandling,

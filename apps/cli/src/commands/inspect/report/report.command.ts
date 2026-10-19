@@ -48,7 +48,6 @@ export const inspectReportCommand = Command.make("report", config).pipe(
           "project-ref": flags.projectRef,
           "output-dir": flags.outputDir,
         },
-        // `--project-ref` has no telemetry-safety baseline, so it stays redacted.
       }),
       withJsonErrorHandling,
     ),

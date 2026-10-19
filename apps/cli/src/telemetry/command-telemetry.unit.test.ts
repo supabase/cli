@@ -29,6 +29,7 @@ import { DbDumpRunError } from "../commands/db/dump/dump.errors.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import { RemovedSurfaceError } from "../command-internal/removed-command.ts";
 import type { RemoteValue } from "../command-internal/target/remote-value.ts";
+import { TargetPolicy, type TargetGroup } from "../command-internal/target/target-policy.ts";
 import { withCommandTelemetry } from "./command-telemetry.ts";
 import { recordCommandTelemetry } from "./command-telemetry-attributes.ts";
 import { stackBackendLayer } from "../command-internal/stack-backend.ts";
@@ -657,6 +658,83 @@ describe("withCommandTelemetry", () => {
         const event = yield* recordedFlags("customer-acme", "--remote=customer-acme");
         expect(event?.properties.flags).toEqual({ remote: "<redacted>" });
       }),
+    );
+  });
+
+  describe("target aliases", () => {
+    const REF = "abcdefghijklmnopqrst";
+    const DB_URL = "postgresql://postgres:secret@db.example.com:5432/postgres";
+
+    const recordedFlags = (
+      group: TargetGroup,
+      flags: Record<string, unknown>,
+      args: ReadonlyArray<string>,
+    ) => {
+      const analytics = mockContextualAnalytics();
+      return Effect.void.pipe(
+        withCommandTelemetry({ flags }),
+        Effect.provide(analytics.layer),
+        Effect.provide(mockProcessControl().layer),
+        Effect.provide(mockOutput({ format: "text" }).layer),
+        Effect.provide(Layer.succeed(TargetPolicy, { group, consent: "none" })),
+        Effect.provide(Stdio.layerTest({ args: Effect.succeed(["functions", "list", ...args]) })),
+        Effect.provide(
+          commandRuntimeLayer(["functions", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+        Effect.map(() => analytics.captured[0]?.properties.flags),
+      );
+    };
+
+    it.live.each([
+      {
+        name: "a ref-shaped --project-ref verbatim",
+        flags: { projectRef: Option.some(REF) },
+        args: ["--project-ref", REF],
+        expected: { "project-ref": REF },
+      },
+      {
+        name: "a branch-shaped --project-ref as redacted",
+        flags: { projectRef: Option.some("customer-acme") },
+        args: ["--project-ref", "customer-acme"],
+        expected: { "project-ref": "<redacted>" },
+      },
+      {
+        name: "a ref-shaped --project-id verbatim",
+        flags: { projectId: Option.some(REF) },
+        args: ["--project-id", REF],
+        expected: { "project-id": REF },
+      },
+      {
+        name: "--db-url as redacted",
+        flags: { dbUrl: Option.some(DB_URL) },
+        args: ["--db-url", DB_URL],
+        expected: { "db-url": "<redacted>" },
+      },
+      {
+        name: "--linked and --local as booleans",
+        flags: { linked: true, local: false },
+        args: ["--linked", "--local=false"],
+        expected: { linked: true, local: false },
+      },
+    ] as const)("records $name on a hosted command", ({ flags, args, expected }) =>
+      Effect.gen(function* () {
+        const recorded = yield* recordedFlags("hosted", flags, args);
+        expect(recorded).toEqual(expected);
+        expect(JSON.stringify(recorded)).not.toContain(DB_URL);
+        expect(JSON.stringify(recorded)).not.toContain("customer-acme");
+      }),
+    );
+
+    it.live.each(["account", "local-only"] as const)(
+      "redacts a ref-shaped --project-ref on a %s command, where it is not a target",
+      (group) =>
+        Effect.gen(function* () {
+          const recorded = yield* recordedFlags(group, { projectRef: Option.some(REF) }, [
+            "--project-ref",
+            REF,
+          ]);
+          expect(recorded).toEqual({ "project-ref": "<redacted>" });
+        }),
     );
   });
 

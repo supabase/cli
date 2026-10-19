@@ -4,7 +4,6 @@ import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
-import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
@@ -114,10 +113,7 @@ export const ssoUpdateCommand = Command.make("update", config).pipe(
     ),
   ),
   Command.withHandler((flags) =>
-    ssoUpdate(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags), config }),
-      withJsonErrorHandling,
-    ),
+    ssoUpdate(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["sso", "update"])),
   withTargetPolicy({ group: "hosted", consent: "no" }),

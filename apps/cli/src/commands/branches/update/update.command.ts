@@ -14,7 +14,6 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesUpdate } from "./update.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
-import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 import { branchesParentTarget } from "../branches.target.ts";
 
 const BRANCH_STATUSES = [
@@ -72,10 +71,7 @@ export const branchesUpdateCommand = Command.make("update", config).pipe(
     ),
   ),
   Command.withHandler((flags) =>
-    branchesUpdate(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags), config }),
-      withJsonErrorHandling,
-    ),
+    branchesUpdate(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["branches", "update"])),
   withTargetPolicy({ group: "hosted", consent: "no" }),

@@ -3,7 +3,6 @@ import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
-import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { projectApiKeys } from "../../../command-internal/get-api-keys.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
@@ -59,7 +58,7 @@ export const projectsApiKeysCommand = Command.make("api-keys", config).pipe(
       // `reveal` is intentionally not in `safeFlags`: it is a boolean flag, and
       // boolean values are always logged verbatim by the instrumentation. Only
       // string flags that are telemetry-safe belong in `safeFlags`.
-      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
+      withCommandTelemetry({ flags }),
       withJsonErrorHandling,
     ),
   ),

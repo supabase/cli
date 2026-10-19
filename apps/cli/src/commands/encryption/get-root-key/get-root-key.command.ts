@@ -33,11 +33,7 @@ export const encryptionGetRootKeyCommand = Command.make("get-root-key", config).
     ),
   ),
   Command.withHandler((flags) =>
-    encryptionGetRootKey(flags).pipe(
-      // `--project-ref` is not telemetry-safe for encryption (no `markFlagTelemetrySafe`).
-      withCommandTelemetry({ flags }),
-      withJsonErrorHandling,
-    ),
+    encryptionGetRootKey(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["encryption", "get-root-key"])),
   withTargetPolicy({ group: "hosted", consent: "none" }),

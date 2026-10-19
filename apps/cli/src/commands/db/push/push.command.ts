@@ -96,7 +96,6 @@ export const dbPushCommand = Command.make("push", config).pipe(
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
         },
-        // Not on the established `--project-ref` safeFlags allowlist, so it stays redacted.
         aliases: { p: "password" },
       }),
       withJsonErrorHandling,

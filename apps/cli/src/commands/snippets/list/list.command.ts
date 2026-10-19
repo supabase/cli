@@ -40,13 +40,7 @@ export const snippetsListCommand = Command.make("list", config).pipe(
     ),
   ),
   Command.withHandler((flags) =>
-    snippetsList(flags).pipe(
-      // No `safeFlags` — `--project-ref` is not on the telemetry-safe list,
-      // so the telemetry payload redacts the value (the default behavior for
-      // unmarked flags).
-      withCommandTelemetry({ flags }),
-      withJsonErrorHandling,
-    ),
+    snippetsList(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["snippets", "list"])),
   withTargetPolicy({ group: "hosted", consent: "none" }),

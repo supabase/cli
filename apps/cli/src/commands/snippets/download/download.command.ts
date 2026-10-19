@@ -39,12 +39,7 @@ export const snippetsDownloadCommand = Command.make("download", config).pipe(
     ),
   ),
   Command.withHandler((flags) =>
-    snippetsDownload(flags).pipe(
-      // No `safeFlags` — `--project-ref` is not on the telemetry-safe list,
-      // so the telemetry payload redacts the value.
-      withCommandTelemetry({ flags }),
-      withJsonErrorHandling,
-    ),
+    snippetsDownload(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["snippets", "download"])),
   withTargetPolicy({ group: "hosted", consent: "none" }),

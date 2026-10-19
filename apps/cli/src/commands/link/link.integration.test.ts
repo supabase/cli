@@ -18,6 +18,7 @@ import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequestModule from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import { TargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import {
   mockAnalytics,
@@ -1493,6 +1494,7 @@ describe("link integration", () => {
         Stdio.layerTest({
           args: Effect.succeed(["link", "--project-ref", VALID_REF]),
         }),
+        Layer.succeed(TargetPolicy, { group: "hosted", consent: "none" }),
       );
       return Effect.gen(function* () {
         yield* linkHandler(flags({ projectRef: Option.some(VALID_REF) }));
@@ -1523,6 +1525,7 @@ describe("link integration", () => {
           Stdio.layerTest({
             args: Effect.succeed(["link", "--project-ref", "my-branch"]),
           }),
+          Layer.succeed(TargetPolicy, { group: "hosted", consent: "none" }),
         );
         return Effect.gen(function* () {
           yield* Effect.exit(linkHandler(flags({ projectRef: Option.some("my-branch") })));

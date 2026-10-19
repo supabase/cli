@@ -2,7 +2,6 @@ import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
-import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -28,7 +27,6 @@ export const functionsDeleteHandler = (flags: FunctionsDeleteFlags) =>
   functionsDelete(flags).pipe(
     withCommandTelemetry({
       flags,
-      safeFlags: projectRefSafeFlags(flags),
     }),
     withJsonErrorHandling,
   );

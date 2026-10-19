@@ -146,7 +146,6 @@ export const dbDumpCommand = Command.make("dump", config).pipe(
           password: flags.password,
           schema: flags.schema,
         },
-        // Not on the established `--project-ref` safeFlags allowlist, so it stays redacted.
         aliases: { s: "schema", x: "exclude", f: "file", p: "password" },
       }),
       Effect.catchTag("DbDumpRunError", onRunFailure),

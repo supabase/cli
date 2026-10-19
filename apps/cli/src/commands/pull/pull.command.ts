@@ -10,7 +10,6 @@ import {
 } from "../../command-internal/db-config.layer.ts";
 import { projectRefPicker } from "../../config/project-ref.layer.ts";
 import { branchResolution } from "../../command-internal/target/branch-resolution.ts";
-import { projectRefSafeFlags } from "../../command-internal/target/project-ref-safe-flags.ts";
 import { functionsDownload } from "../../shared/functions/download.ts";
 import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
 import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
@@ -64,7 +63,6 @@ export const pullHandler = (flags: PullFlags) =>
     // `--remote-label` is a free-form, user-chosen string and is never safe to log verbatim.
     withCommandTelemetry({
       flags,
-      safeFlags: projectRefSafeFlags(flags),
       // The handler rejects every `-o`/`--output` value with a message pointing at
       // `--output-format`, so the full global choice set is declared "allowed" here.
       outputFormats: GLOBAL_OUTPUT_FORMATS,

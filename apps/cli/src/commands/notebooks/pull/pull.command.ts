@@ -3,7 +3,6 @@ import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withContext } from "../../../command-internal/command-permissions/model.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
-import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
@@ -29,10 +28,7 @@ export type NotebooksPullFlags = CliCommand.Command.Config.Infer<typeof config>;
 // Exported so integration tests can drive the exact wiring `Command.withHandler`
 // uses below, instead of re-asserting the generic instrumentation mechanism.
 export const notebooksPullHandler = (flags: NotebooksPullFlags) =>
-  notebooksPull(flags).pipe(
-    withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
-    withJsonErrorHandling,
-  );
+  notebooksPull(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling);
 
 export const notebooksPullCommand = Command.make("pull", config).pipe(
   Command.withDescription(

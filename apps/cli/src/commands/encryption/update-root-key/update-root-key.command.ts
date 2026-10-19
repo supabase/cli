@@ -44,11 +44,7 @@ export const encryptionUpdateRootKeyCommand = Command.make("update-root-key", co
     ),
   ),
   Command.withHandler((flags) =>
-    encryptionUpdateRootKey(flags).pipe(
-      // `--project-ref` is not telemetry-safe for encryption (no `markFlagTelemetrySafe`).
-      withCommandTelemetry({ flags }),
-      withJsonErrorHandling,
-    ),
+    encryptionUpdateRootKey(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(updateRuntime),
   withTargetPolicy({ group: "hosted", consent: "no" }),
