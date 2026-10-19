@@ -54,7 +54,7 @@ export class LinkBranchNotReadyError extends Data.TaggedError("LinkBranchNotRead
   }
 }
 
-/** Transport (or response-decode) failure while listing branches for a branch-name lookup. */
+/** Transport (or response-decode) failure while listing branches, or fetching one by UUID, for a branch lookup. */
 export class LinkBranchListNetworkError extends Data.TaggedError("LinkBranchListNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
@@ -66,7 +66,7 @@ export class LinkBranchListNetworkError extends Data.TaggedError("LinkBranchList
   }
 }
 
-/** `GET /v1/projects/{ref}/branches` returned a non-200 status during a branch-name lookup. */
+/** `GET /v1/projects/{ref}/branches` or `GET /v1/branches/{id}` returned a non-200 status during a branch lookup. */
 export class LinkBranchListStatusError extends Data.TaggedError("LinkBranchListStatusError")<{
   readonly status: number;
   readonly body: string;
