@@ -106,6 +106,7 @@ function buildResolver(
     readonly configEnv?: Record<string, string | undefined>;
     readonly stackApi?: Layer.Layer<StackApi>;
     readonly flagPassword?: string;
+    readonly projectId?: string;
     readonly output?: ReturnType<typeof mockOutput>;
   } = {},
 ) {
@@ -123,7 +124,7 @@ function buildResolver(
       workdir,
       projectHost: opts.projectHost ?? "supabase.co",
       poolerHost: opts.poolerHost,
-      projectId: Option.none(),
+      projectId: Option.fromNullishOr(opts.projectId),
     }),
     opts.dbConnection ?? mockDbConnection,
     opts.debugLogger ?? mockDebugLogger,
@@ -314,6 +315,18 @@ describe("dbConfigResolver (local + db-url)", () => {
           "abcdefghijklmnopqrst",
         );
         const r = yield* resolveConnection(dir, inputFor(localTarget));
+        expect(r.conn.suggestionContext).toMatchObject({ linkedCheckout: true });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect(
+    "local mode with SUPABASE_PROJECT_ID set and no project-ref file carries the --linked pointer in its connect hint",
+    () =>
+      Effect.gen(function* () {
+        const dir = yield* withWorkdir();
+        const r = yield* resolveConnection(dir, inputFor(localTarget), {
+          projectId: "abcdefghijklmnopqrst",
+        });
         expect(r.conn.suggestionContext).toMatchObject({ linkedCheckout: true });
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
