@@ -5,7 +5,7 @@ import { runSupabaseEffect, withTempHome } from "../../../../tests/helpers/cli.t
 
 const E2E_TIMEOUT_MS = 30_000;
 
-// A definitely-closed local port: `--db-url` resolves without a config.toml or running
+// A definitely-closed local port: `--remote=<url>` resolves without a config.toml or running
 // stack, then the native handler dials and fails fast — exercising the real subprocess path
 // without depending on a live database in CI.
 const DEAD_DB_URL = "postgres://postgres:postgres@127.0.0.1:1/postgres";
@@ -22,7 +22,7 @@ describe("supabase inspect db", () => {
       withTempHome((home) =>
         Effect.gen(function* () {
           const { exitCode, stderr } = yield* runSupabaseEffect(
-            ["inspect", "db", "locks", TEXT_MODE, TEXT_MODE_VALUE, "--db-url", DEAD_DB_URL],
+            ["inspect", "db", "locks", TEXT_MODE, TEXT_MODE_VALUE, `--remote=${DEAD_DB_URL}`],
             { home: home.dir, env: { HOME: home.dir } },
           );
           expect(exitCode).toBe(1);
@@ -39,7 +39,7 @@ describe("supabase inspect db", () => {
       withTempHome((home) =>
         Effect.gen(function* () {
           const { exitCode, stderr } = yield* runSupabaseEffect(
-            ["inspect", "db", "cache-hit", TEXT_MODE, TEXT_MODE_VALUE, "--db-url", DEAD_DB_URL],
+            ["inspect", "db", "cache-hit", TEXT_MODE, TEXT_MODE_VALUE, `--remote=${DEAD_DB_URL}`],
             { home: home.dir, env: { HOME: home.dir } },
           );
           expect(exitCode).toBe(1);

@@ -19,7 +19,7 @@ class FunctionsDownloadLiveError extends Data.TaggedError("FunctionsDownloadLive
 
 function cleanupFunction(cliEffect: LiveCliEffect, slug: string, ref: string) {
   return Effect.gen(function* () {
-    const deleted = yield* cliEffect(["functions", "delete", slug, "--project-ref", ref, "--yes"]);
+    const deleted = yield* cliEffect(["functions", "delete", slug, "--yes", `--remote=${ref}`]);
     if (
       deleted.exitCode !== 0 &&
       !/not found|does not exist/i.test(`${deleted.stdout}\n${deleted.stderr}`)
@@ -54,9 +54,8 @@ describe("functions download (live)", () => {
           const deployed = yield* cliEffect([
             "functions",
             "deploy",
-            "--project-ref",
-            project.ref,
             "--yes",
+            `--remote=${project.ref}`,
           ]);
           requireLiveSuccess(deployed, "functions deploy setup");
 
@@ -76,8 +75,7 @@ describe("functions download (live)", () => {
             "functions",
             "download",
             slug,
-            "--project-ref",
-            project.ref,
+            `--remote=${project.ref}`,
           ]);
           const downloadOutput = `stdout:\n${downloaded.stdout}\nstderr:\n${downloaded.stderr}`;
           expect(downloaded.exitCode, downloadOutput).toBe(0);

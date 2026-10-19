@@ -52,7 +52,7 @@ describe("db schema declarative sync (e2e)", () => {
           );
 
           const reset = yield* runSupabaseEffect(
-            ["db", "reset", "--local", "--no-seed"],
+            ["db", "reset", "--no-seed"],
             scenarioCommandOptions(projectDir),
           );
           requireCliSuccess(reset, "db reset setup");

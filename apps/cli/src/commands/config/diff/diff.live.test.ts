@@ -25,10 +25,9 @@ test("diffs a freshly-initialized config against the project", ({ cliEffect, pro
       const result = yield* cliEffect([
         "config",
         "diff",
-        "--project-ref",
-        project.ref,
         "--output-format",
         "json",
+        `--remote=${project.ref}`,
       ]);
       requireLiveSuccess(result, "config diff");
       expect(result.stderr).toContain(`Comparing against project ${project.ref} using base config`);

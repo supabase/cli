@@ -29,9 +29,8 @@ test("disables preview branching", ({ cliEffect, project }) =>
           "branches",
           "delete",
           name,
-          "--project-ref",
-          project.ref,
           "--yes",
+          `--remote=${project.ref}`,
         ]);
         deletionAcknowledged = removed.exitCode === 0;
         expect(removed.exitCode, removed.stderr).toBe(0);
@@ -42,9 +41,8 @@ test("disables preview branching", ({ cliEffect, project }) =>
         const disabled = yield* cliEffect([
           "branches",
           "disable",
-          "--project-ref",
-          project.ref,
           "--yes",
+          `--remote=${project.ref}`,
         ]);
         expect(disabled.exitCode, disabled.stderr).toBe(0);
         expect(disabled.stdout).toContain(`Disabled preview branching for project: ${project.ref}`);

@@ -40,8 +40,7 @@ test("amends the migration history status on the remote database", ({
           "--status",
           "applied",
           "--yes",
-          "--db-url",
-          project.dbUrl,
+          `--remote=${project.dbUrl}`,
         ]);
         expect(applied.exitCode, applied.stderr).toBe(0);
         expect(applied.stderr, applied.stdout).toContain("=> applied");
@@ -61,8 +60,7 @@ test("amends the migration history status on the remote database", ({
           "--status",
           "reverted",
           "--yes",
-          "--db-url",
-          project.dbUrl,
+          `--remote=${project.dbUrl}`,
         ]);
         expect(reverted.exitCode, reverted.stderr).toBe(0);
         expect(reverted.stderr, reverted.stdout).toContain("=> reverted");
@@ -92,8 +90,7 @@ test("amends the migration history status on the remote database", ({
                       "--status",
                       "reverted",
                       "--yes",
-                      "--db-url",
-                      project.dbUrl,
+                      `--remote=${project.dbUrl}`,
                     ]);
                     requireLiveSuccess(cleanup, "migration repair cleanup");
                   }),

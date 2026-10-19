@@ -21,11 +21,10 @@ test("pulls config, migration history, db schema, and functions from a fresh pro
     Effect.gen(function* () {
       const result = yield* cliEffect([
         "pull",
-        "--project-ref",
-        project.ref,
         "--output-format",
         "json",
         "--yes",
+        `--remote=${project.ref}`,
       ]);
       yield* Effect.try({
         try: () => requireLiveSuccess(result, "pull"),

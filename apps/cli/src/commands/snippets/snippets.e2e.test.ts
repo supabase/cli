@@ -15,7 +15,7 @@ describe("supabase snippets", () => {
     () =>
       Effect.gen(function* () {
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["snippets", "download", "not-a-uuid", "--project-ref", TEST_PROJECT_REF],
+          ["snippets", "download", "not-a-uuid", `--remote=${TEST_PROJECT_REF}`],
           { env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
         );
         expect(exitCode).toBe(1);

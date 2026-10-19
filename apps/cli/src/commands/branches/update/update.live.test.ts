@@ -24,13 +24,12 @@ test("renames a preview branch", ({ cliEffect, project }) =>
           "branches",
           "update",
           name,
-          "--project-ref",
-          project.ref,
           "--name",
           renamed,
           "--output",
           "json",
           "--yes",
+          `--remote=${project.ref}`,
         ]);
         expect(updated.exitCode, updated.stderr).toBe(0);
         expect(updated.stderr).toContain("Updated preview branch");

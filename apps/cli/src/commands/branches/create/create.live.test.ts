@@ -24,11 +24,10 @@ test("creates a preview branch", ({ cliEffect, project }) =>
           "branches",
           "create",
           name,
-          "--project-ref",
-          project.ref,
           "--output-format",
           "json",
           "--yes",
+          `--remote=${project.ref}`,
         ]);
         requireLiveSuccess(result, "branches create");
         const refBody = yield* Schema.decodeEffect(Schema.fromJsonString(CreatedBranchRef))(

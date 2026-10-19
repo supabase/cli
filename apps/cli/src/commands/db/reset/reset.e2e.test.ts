@@ -21,12 +21,12 @@ describe("supabase db reset", () => {
           "[db]\nport = 54322\n",
         );
         const { exitCode, stderr } = yield* runSupabaseEffect(
-          ["db", "reset", "--db-url", "postgresql://postgres:postgres@127.0.0.1:9999/postgres"],
+          ["db", "reset", "--remote=postgresql://postgres:postgres@127.0.0.1:9999/postgres"],
           { cwd: workdir, stdin: "y\n" },
         );
         expect(exitCode).toBe(1);
         const text = stripAnsi(stderr);
-        expect(text).toContain("needs confirmation");
+        expect(text).toContain("Confirmation required");
         expect(text).toContain("--yes");
         expect(text).not.toContain("Resetting remote database");
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),

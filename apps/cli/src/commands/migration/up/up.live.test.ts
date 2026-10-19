@@ -51,7 +51,7 @@ test("applies a test-written migration to the remote database", ({
       );
 
       const target = Effect.gen(function* () {
-        const applied = yield* cliEffect(["migration", "up", "--yes", "--db-url", project.dbUrl]);
+        const applied = yield* cliEffect(["migration", "up", "--yes", `--remote=${project.dbUrl}`]);
         expect(applied.exitCode, applied.stderr).toBe(0);
         expect(applied.stderr, applied.stdout).toContain("Applying migration");
 
@@ -78,8 +78,7 @@ test("applies a test-written migration to the remote database", ({
           "db",
           "query",
           `drop table if exists e2e_up_${version}`,
-          "--db-url",
-          project.dbUrl,
+          `--remote=${project.dbUrl}`,
         ]);
         requireLiveSuccess(dropped, "db query cleanup after migration up");
       });
@@ -92,8 +91,7 @@ test("applies a test-written migration to the remote database", ({
           "--status",
           "reverted",
           "--yes",
-          "--db-url",
-          project.dbUrl,
+          `--remote=${project.dbUrl}`,
         ]);
         requireLiveSuccess(reverted, "migration repair cleanup after migration up");
       });

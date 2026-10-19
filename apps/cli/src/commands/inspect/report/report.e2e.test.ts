@@ -24,7 +24,14 @@ describe("supabase inspect report", () => {
           const path = yield* Path.Path;
           const outputDir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-report-e2e-" });
           const { exitCode, stderr } = yield* runSupabaseEffect(
-            ["inspect", "report", ...TEXT_MODE, "--db-url", DEAD_DB_URL, "--output-dir", outputDir],
+            [
+              "inspect",
+              "report",
+              ...TEXT_MODE,
+              "--output-dir",
+              outputDir,
+              `--remote=${DEAD_DB_URL}`,
+            ],
             { home: home.dir, env: { HOME: home.dir } },
           );
           expect(exitCode).toBe(1);
