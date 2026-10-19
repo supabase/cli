@@ -14,6 +14,11 @@ vi.mock("node:net", (importOriginal) =>
 
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
+import {
+  BRANCH_PROJECT_REF,
+  branchListApi,
+  warningsOf,
+} from "../../../../tests/helpers/db-remote-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
@@ -83,10 +88,12 @@ const DEFAULT_FLAGS: DbPushFlags = {
   dbUrl: Option.none(),
   remote: Option.none(),
   linked: false,
-  local: true,
+  local: false,
   projectRef: Option.none(),
   password: Option.none(),
 };
+
+const REMOTE_LINKED: DbPushFlags["remote"] = Option.some({ _tag: "Linked" });
 
 function mockResolver(
   opts: { isLocal?: boolean; onResolve?: (input: DbConnectionInput) => void } = {},
@@ -372,7 +379,7 @@ describe("db push", () => {
   it.effect("rejects mutually exclusive target flags before connecting", () => {
     const { layer, conn, resolver } = setup(tmp.current, { toml: 'project_id = "test"\n' });
     return Effect.gen(function* () {
-      const exit = yield* dbPush({ ...DEFAULT_FLAGS, linked: true }).pipe(
+      const exit = yield* dbPush({ ...DEFAULT_FLAGS, local: true, linked: true }).pipe(
         Effect.provide(layer),
         Effect.exit,
       );
@@ -507,8 +514,7 @@ describe("db push", () => {
     return Effect.gen(function* () {
       const exit = yield* dbPush({
         ...DEFAULT_FLAGS,
-        dbUrl: Option.some(dbUrl),
-        local: false,
+        remote: Option.some({ _tag: "DbUrl", url: dbUrl } as const),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(failSuggestion(exit)).toContain(
         "migration repair --status reverted 20240101000000 --remote=<db-url>",
@@ -524,7 +530,7 @@ describe("db push", () => {
       remoteMigrations: ["20240101000000"],
     });
     return Effect.gen(function* () {
-      const exit = yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(
+      const exit = yield* dbPush({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(
         Effect.provide(layer),
         Effect.exit,
       );
@@ -687,7 +693,7 @@ describe("db push", () => {
   });
 
   describe("hosted consent on a linked project", () => {
-    const linked = { ...DEFAULT_FLAGS, local: false, linked: true };
+    const linked = { ...DEFAULT_FLAGS, remote: REMOTE_LINKED };
     const allFlags = { ...linked, includeRoles: true, includeSeed: Option.some(true) };
     const allFiles = {
       ...migrationFile("20240101000000"),
@@ -838,7 +844,7 @@ describe("db push", () => {
       },
     );
 
-    it.effect("asks before pushing to a --db-url that is not local", () => {
+    it.effect("asks before pushing to a --remote=<db-url> that is not local", () => {
       const { layer, out, conn } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         files: migrationFile("20240101000000"),
@@ -848,8 +854,10 @@ describe("db push", () => {
       return Effect.gen(function* () {
         yield* dbPush({
           ...DEFAULT_FLAGS,
-          local: false,
-          dbUrl: Option.some("postgresql://postgres:pw@db.example.com:5432/postgres"),
+          remote: Option.some({
+            _tag: "DbUrl",
+            url: "postgresql://postgres:pw@db.example.com:5432/postgres",
+          }),
         }).pipe(Effect.provide(layer));
         expect(out.promptConfirmCalls).toHaveLength(1);
         expect(conn.execs).toContain("BEGIN");
@@ -1083,17 +1091,114 @@ describe("db push", () => {
       projectRef: VALID_REF,
     });
     return Effect.gen(function* () {
-      yield* dbPush({
-        ...DEFAULT_FLAGS,
-        local: false,
-        remote: Option.some({ _tag: "Linked" } as const),
-      }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
       expect(resolver.calls[0]).toMatchObject({
         target: { kind: "linked", ref: VALID_REF, source: "file", matchesLinkedRef: true },
         hasPasswordFlag: true,
       });
       expect(out.stdoutText).toBe("Remote database is up to date.\n");
     });
+  });
+
+  describe("target selection", () => {
+    const resolvedTarget = (
+      flags: Partial<DbPushFlags>,
+      options: { readonly branchApi?: ReturnType<typeof branchListApi> } = {},
+    ) => {
+      const { layer, out, resolver } = setup(tmp.current, { toml: 'project_id = "test"\n' });
+      const provided =
+        options.branchApi === undefined ? layer : Layer.merge(layer, options.branchApi.layer);
+      return Effect.gen(function* () {
+        yield* dbPush({ ...DEFAULT_FLAGS, ...flags }).pipe(Effect.provide(provided));
+        return { target: resolver.calls[0]?.target, warnings: warningsOf(out) };
+      });
+    };
+
+    it.effect("targets the local database, with no warning, when nothing selects one", () =>
+      Effect.gen(function* () {
+        const { target, warnings } = yield* resolvedTarget({});
+        expect(target).toEqual({ kind: "local" });
+        expect(warnings).toEqual([]);
+      }),
+    );
+
+    it.effect("targets the project --remote=<ref> names, with no warning", () =>
+      Effect.gen(function* () {
+        const { target, warnings } = yield* resolvedTarget({
+          remote: Option.some({ _tag: "Ref", ref: FLAG_PROJECT_REF } as const),
+        });
+        expect(target).toMatchObject({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" });
+        expect(warnings).toEqual([]);
+      }),
+    );
+
+    it.effect("targets the database --remote=<db-url> names, with no warning", () =>
+      Effect.gen(function* () {
+        const { target, warnings } = yield* resolvedTarget({
+          remote: Option.some({
+            _tag: "DbUrl",
+            url: "postgresql://postgres:pw@db.example.com/db",
+          } as const),
+        });
+        expect(target?.kind).toBe("db-url");
+        expect(warnings).toEqual([]);
+      }),
+    );
+
+    it.effect("targets the project of the branch --remote=<branch> names", () => {
+      const branchApi = branchListApi();
+      return Effect.gen(function* () {
+        const { target, warnings } = yield* resolvedTarget(
+          { remote: Option.some({ _tag: "Branch", name: "feature-x" }) },
+          { branchApi },
+        );
+        expect(target).toMatchObject({ kind: "linked", ref: BRANCH_PROJECT_REF, source: "flag" });
+        expect(warnings).toEqual([]);
+        assertPermissionDrift({
+          command: "db push",
+          activeFlags: { remote: "feature-x" },
+          requests: branchApi.requests,
+        });
+      });
+    });
+
+    it.effect.each([
+      {
+        alias: "--linked",
+        flags: { linked: true },
+        kind: "linked",
+        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
+      },
+      {
+        alias: "--project-ref",
+        flags: { projectRef: Option.some(FLAG_PROJECT_REF) },
+        kind: "linked",
+        warning: "--project-ref is deprecated and will be removed in v4. Use --remote instead",
+      },
+      {
+        alias: "--db-url",
+        flags: { dbUrl: Option.some("postgresql://postgres:pw@db.example.com/db") },
+        kind: "db-url",
+        warning: "--db-url is deprecated and will be removed in v4. Use --remote instead",
+      },
+      {
+        alias: "--local",
+        flags: { local: true },
+        kind: "local",
+        warning: "--local isn't needed (local is the default) and will be removed in v4",
+      },
+    ] satisfies ReadonlyArray<{
+      alias: string;
+      flags: Partial<DbPushFlags>;
+      kind: string;
+      warning: string;
+    }>)("keeps $alias working and warns that it is deprecated", ({ flags, kind, warning }) =>
+      Effect.gen(function* () {
+        const { target, warnings } = yield* resolvedTarget(flags);
+        expect(target?.kind).toBe(kind);
+        expect(warnings).toEqual([expect.stringContaining(warning)]);
+      }),
+    );
   });
 
   it.effect("mints a login role and fills the cache through the real resolver and cache", () => {
@@ -1107,8 +1212,7 @@ describe("db push", () => {
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
       yield* dbPush({
         ...DEFAULT_FLAGS,
-        local: false,
-        projectRef: Option.some(VALID_REF),
+        remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
       }).pipe(Effect.provide(layer));
       expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
         `GET /v1/projects/${VALID_REF}/config/database/pooler`,
@@ -1120,7 +1224,7 @@ describe("db push", () => {
       expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
       assertPermissionDrift({
         command: "db push",
-        activeFlags: { "project-ref": VALID_REF },
+        activeFlags: { remote: VALID_REF },
         requests: [...asRecordedRequests(requests), ...projectHttp.calls],
         exact: true,
       });
@@ -1141,9 +1245,7 @@ describe("db push", () => {
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
       yield* dbPush({
         ...DEFAULT_FLAGS,
-        local: false,
-        linked: true,
-        projectRef: Option.some(VALID_REF),
+        remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
         password: Option.some("secret"),
       }).pipe(Effect.provide(layer));
       expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
@@ -1151,7 +1253,7 @@ describe("db push", () => {
       ]);
       assertPermissionDrift({
         command: "db push",
-        activeFlags: { linked: true, "project-ref": VALID_REF, password: true },
+        activeFlags: { remote: VALID_REF, password: true },
         requests: [...asRecordedRequests(requests), ...projectHttp.calls],
         exact: true,
       });
@@ -1163,7 +1265,7 @@ describe("db push", () => {
   });
 
   it.effect(
-    "makes no Management API request for --local through the real resolver and cache",
+    "makes no Management API request for the default local target through the real resolver and cache",
     () => {
       const { layer, projectHttp } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
@@ -1179,7 +1281,7 @@ describe("db push", () => {
         expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(false);
         assertPermissionDrift({
           command: "db push",
-          activeFlags: { local: true },
+          activeFlags: {},
           requests: [],
           exact: true,
         });
@@ -1330,7 +1432,7 @@ describe("db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
       expect(out.stderrText).not.toContain("Skipping migrations because it is disabled");
       expect(out.stderrText).toContain("Applying migration 20240101000000");
     }).pipe((body) => withEnvVar("SUPABASE_DB_MIGRATIONS_ENABLED", "true", body));
@@ -1342,7 +1444,7 @@ describe("db push", () => {
       projectRef: VALID_REF,
     });
     return Effect.gen(function* () {
-      yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Loading config override: [remotes.preview]");
     });
   });
@@ -1356,7 +1458,7 @@ describe("db push", () => {
         env: { SUPABASE_REMOTES_PREVIEW_PROJECT_ID: VALID_REF },
       });
       return Effect.gen(function* () {
-        yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(Effect.provide(layer));
+        yield* dbPush({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Loading config override: [remotes.preview]");
       });
     },
@@ -1368,7 +1470,7 @@ describe("db push", () => {
       projectRef: VALID_REF,
     });
     return Effect.gen(function* () {
-      yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
       expect(out.stderrText).not.toContain("Loading config override");
     });
   });
@@ -1382,7 +1484,7 @@ describe("db push", () => {
       yes: true,
     });
     return Effect.gen(function* () {
-      yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Confirmed by --yes: Apply 1 migration");
       expect(linkedCache.cached).toBe(true);
       expect(linkedCache.cachedRef).toBe(VALID_REF);
@@ -1391,7 +1493,7 @@ describe("db push", () => {
     });
   });
 
-  it.effect("pushes to the project given via --project-ref without a linked workdir", () => {
+  it.effect("pushes to the project --remote=<ref> names without a linked workdir", () => {
     // `linkedFails: true` simulates an unlinked workdir; only the flag can resolve a ref.
     const { layer, out, linkedCache, resolver } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -1403,9 +1505,7 @@ describe("db push", () => {
     return Effect.gen(function* () {
       yield* dbPush({
         ...DEFAULT_FLAGS,
-        local: false,
-        linked: true,
-        projectRef: Option.some(FLAG_PROJECT_REF),
+        remote: Option.some({ _tag: "Ref", ref: FLAG_PROJECT_REF } as const),
       }).pipe(Effect.provide(layer));
       expect(linkedCache.cached).toBe(true);
       expect(linkedCache.cachedRef).toBe(FLAG_PROJECT_REF);
@@ -1420,7 +1520,7 @@ describe("db push", () => {
     });
   });
 
-  it.effect("--project-ref drives which [remotes.<ref>] block merges into config", () => {
+  it.effect("--remote=<ref> drives which [remotes.<ref>] block merges into config", () => {
     // `[remotes.staging]`'s `project_id` matches the flag ref, not the resolver's own
     // `VALID_REF` fallback, so the override only announces if the flag resolved it.
     const { layer, out } = setup(tmp.current, {
@@ -1429,15 +1529,13 @@ describe("db push", () => {
     return Effect.gen(function* () {
       yield* dbPush({
         ...DEFAULT_FLAGS,
-        local: false,
-        linked: true,
-        projectRef: Option.some(FLAG_PROJECT_REF),
+        remote: Option.some({ _tag: "Ref", ref: FLAG_PROJECT_REF } as const),
       }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Loading config override: [remotes.staging]");
     });
   });
 
-  it.effect("--project-ref overrides an already-linked workdir's project ref", () => {
+  it.effect("--remote=<ref> overrides an already-linked workdir's project ref", () => {
     const { layer, linkedCache } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
@@ -1448,9 +1546,7 @@ describe("db push", () => {
     return Effect.gen(function* () {
       yield* dbPush({
         ...DEFAULT_FLAGS,
-        local: false,
-        linked: true,
-        projectRef: Option.some(FLAG_PROJECT_REF),
+        remote: Option.some({ _tag: "Ref", ref: FLAG_PROJECT_REF } as const),
       }).pipe(Effect.provide(layer));
       expect(linkedCache.cached).toBe(true);
       expect(linkedCache.cachedRef).toBe(FLAG_PROJECT_REF);
@@ -1466,6 +1562,7 @@ describe("db push", () => {
     return Effect.gen(function* () {
       const exit = yield* dbPush({
         ...DEFAULT_FLAGS,
+        local: true,
         projectRef: Option.some(FLAG_PROJECT_REF),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(failError(exit)._tag).toBe("TargetProjectRefConflictError");
@@ -1492,11 +1589,7 @@ describeHostedConsent("db push", {
   invoke: ({ out }) => {
     const conn = mockConnection({});
     return {
-      run: dbPush({
-        ...DEFAULT_FLAGS,
-        local: false,
-        remote: Option.some({ _tag: "Linked" } as const),
-      }).pipe(
+      run: dbPush({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(
         Effect.provide(
           Layer.mergeAll(
             conn.layer,

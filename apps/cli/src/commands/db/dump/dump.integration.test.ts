@@ -27,6 +27,11 @@ vi.mock("node:net", (importOriginal) =>
 
 const reachableDirectHost = withReachableDirectHost(fixtureNet);
 
+import {
+  BRANCH_PROJECT_REF,
+  branchListApi,
+  warningsOf,
+} from "../../../../tests/helpers/db-remote-selection.ts";
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import { withReachableDirectHost } from "../../../../tests/helpers/refuse-invalid-db-hosts.ts";
@@ -281,7 +286,7 @@ function mockResolver(opts: {
 }
 
 /**
- * Mocks `ProjectRefResolver`'s `resolveRef`: an explicit `--project-ref` flag wins, a malformed
+ * Mocks `ProjectRefResolver`'s `resolveRef`: an explicit `--remote=<ref>` wins, a malformed
  * value fails with `InvalidProjectRefError`, and `opts.projectId` stands in for the project id
  * consulted before falling back to `opts.ref`.
  */
@@ -529,6 +534,8 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, telemetry, resolver, docker, bundled, cache, projectHttp };
 }
 
+const REMOTE_LINKED: DbDumpFlags["remote"] = Option.some({ _tag: "Linked" });
+
 const flags = (over: Partial<DbDumpFlags> = {}): DbDumpFlags => ({
   dryRun: over.dryRun ?? false,
   dataOnly: over.dataOnly ?? Option.none(),
@@ -567,7 +574,7 @@ describe("db dump integration", () => {
   it.effect("errors when --use-copy is used without --data-only", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ useCopy: true, local: true })).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ useCopy: true })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe(`required flag(s) "data-only" not set`);
     }).pipe(Effect.provide(layer));
@@ -578,9 +585,9 @@ describe("db dump integration", () => {
     () => {
       const { layer } = setup({ isLocal: true, stdout: "SELECT 1;\n" });
       return Effect.gen(function* () {
-        const exit = yield* dbDump(
-          flags({ useCopy: true, dataOnly: Option.some(false), local: true }),
-        ).pipe(Effect.exit);
+        const exit = yield* dbDump(flags({ useCopy: true, dataOnly: Option.some(false) })).pipe(
+          Effect.exit,
+        );
         expect(Exit.isSuccess(exit)).toBe(true);
       }).pipe(Effect.provide(layer));
     },
@@ -589,9 +596,7 @@ describe("db dump integration", () => {
   it.effect("errors when --exclude is used without --data-only", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ exclude: ["public.users"], local: true })).pipe(
-        Effect.exit,
-      );
+      const exit = yield* dbDump(flags({ exclude: ["public.users"] })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe(`required flag(s) "data-only" not set`);
     }).pipe(Effect.provide(layer));
@@ -649,7 +654,11 @@ describe("db dump integration", () => {
     const { layer, resolver } = setup();
     return Effect.gen(function* () {
       yield* dbDump(
-        flags({ dbUrl: Option.some("postgresql://x"), password: Option.some("pw"), dryRun: true }),
+        flags({
+          remote: Option.some({ _tag: "DbUrl", url: "postgresql://x" } as const),
+          password: Option.some("pw"),
+          dryRun: true,
+        }),
       );
       expect(resolver.calls[0]).toMatchObject({
         target: { kind: "db-url" },
@@ -683,7 +692,7 @@ describe("db dump integration", () => {
   it.effect("prints the expanded pg_dump script on --dry-run without running a container", () => {
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ dryRun: true, local: true }));
+      yield* dbDump(flags({ dryRun: true }));
       expect(out.stderrText).toContain("DRY RUN: *only* printing the pg_dump script to console.");
       expect(out.stderrText).toContain("Dumping schemas from local database...");
       expect(out.stdoutText).toContain('export PGHOST="127.0.0.1"');
@@ -697,7 +706,7 @@ describe("db dump integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const filePath = path.join(tmp.current, "dry.sql");
-      yield* dbDump(flags({ dryRun: true, local: true, file: Option.some(filePath) }));
+      yield* dbDump(flags({ dryRun: true, file: Option.some(filePath) }));
       expect(out.stderrText).toContain("DRY RUN: *only* printing the pg_dump script to console.");
       expect(out.stderrText).toContain(`Dumped schema to`);
       expect(out.stderrText).toContain(filePath);
@@ -709,7 +718,7 @@ describe("db dump integration", () => {
   it.effect("treats an explicit --file '' as stdout on --dry-run", () => {
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ dryRun: true, local: true, file: Option.some("") }));
+      yield* dbDump(flags({ dryRun: true, file: Option.some("") }));
       expect(out.stderrText).toContain("DRY RUN: *only* printing the pg_dump script to console.");
       expect(out.stderrText).not.toContain("Dumped schema to");
       expect(docker.lastOpts).toBeUndefined();
@@ -726,7 +735,7 @@ describe("db dump integration", () => {
         path.join(tmp.current, "supabase", "config.toml"),
         ["[remotes.staging]", 'project_id = "staging"', ""].join("\n"),
       );
-      const exit = yield* dbDump(flags({ dryRun: true, local: true })).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ dryRun: true })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain(
         "Invalid config for remotes.staging.project_id. Must be like: abcdefghijklmnopqrst",
@@ -738,7 +747,7 @@ describe("db dump integration", () => {
   it.effect("dumps schema from the local database to stdout", () => {
     const { layer, out, docker } = setup({ isLocal: true, stdout: "CREATE SCHEMA public;\n" });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ local: true }));
+      yield* dbDump(flags());
       expect(out.stderrText).toContain("Dumping schemas from local database...");
       expect(out.stdoutText).toBe("CREATE SCHEMA public;\n");
       expect(docker.lastOpts?.cmd).toEqual([
@@ -756,7 +765,7 @@ describe("db dump integration", () => {
   it.effect("dumps only data with column inserts", () => {
     const { layer, out, docker } = setup({ isLocal: true, stdout: "INSERT INTO ...;\n" });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ dataOnly: Option.some(true), local: true }));
+      yield* dbDump(flags({ dataOnly: Option.some(true) }));
       expect(out.stderrText).toContain("Dumping data from local database...");
       expect(docker.lastOpts?.env["EXTRA_FLAGS"]).toBe("--column-inserts --rows-per-insert 100000");
     }).pipe(Effect.provide(layer));
@@ -765,7 +774,7 @@ describe("db dump integration", () => {
   it.effect("dumps only data without column inserts when --use-copy is set", () => {
     const { layer, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ dataOnly: Option.some(true), useCopy: true, local: true }));
+      yield* dbDump(flags({ dataOnly: Option.some(true), useCopy: true }));
       expect(docker.lastOpts?.env["EXTRA_FLAGS"]).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
@@ -773,7 +782,7 @@ describe("db dump integration", () => {
   it.effect("dumps only roles", () => {
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ roleOnly: Option.some(true), local: true }));
+      yield* dbDump(flags({ roleOnly: Option.some(true) }));
       expect(out.stderrText).toContain("Dumping roles from local database...");
       expect(docker.lastOpts?.env["RESERVED_ROLES"]).toBeDefined();
     }).pipe(Effect.provide(layer));
@@ -782,7 +791,7 @@ describe("db dump integration", () => {
   it.effect("limits the dump to selected schemas", () => {
     const { layer, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ schema: ["public", "auth"], local: true }));
+      yield* dbDump(flags({ schema: ["public", "auth"] }));
       expect(docker.lastOpts?.env["EXTRA_FLAGS"]).toBe("--schema=public|auth");
     }).pipe(Effect.provide(layer));
   });
@@ -792,7 +801,7 @@ describe("db dump integration", () => {
     // `parseSchemaFlags`) and the env builder pipe-joins it.
     const { layer, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ schema: ["public", "auth"], local: true }));
+      yield* dbDump(flags({ schema: ["public", "auth"] }));
       expect(docker.lastOpts?.env["EXTRA_FLAGS"]).toBe("--schema=public|auth");
     }).pipe(Effect.provide(layer));
   });
@@ -804,7 +813,7 @@ describe("db dump integration", () => {
       workdir: tmp.current,
     });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ local: true, file: Option.some("out.sql") }));
+      yield* dbDump(flags({ file: Option.some("out.sql") }));
       const path = yield* Path.Path;
       expect(yield* readUtf8(path.join(tmp.current, "out.sql"))).toBe("CREATE SCHEMA public;\n");
     }).pipe(Effect.provide(layer));
@@ -813,7 +822,7 @@ describe("db dump integration", () => {
   it.effect("honors --network-id over host networking", () => {
     const { layer, docker } = setup({ isLocal: true, networkId: "custom_net" });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ local: true }));
+      yield* dbDump(flags());
       expect(docker.lastOpts?.network).toEqual({ _tag: "named", name: "custom_net" });
     }).pipe(Effect.provide(layer));
   });
@@ -832,7 +841,7 @@ describe("db dump integration", () => {
           path.join(tmp.current, "supabase", ".env"),
           "SUPABASE_NETWORK_ID=dotenv-net\n",
         );
-        yield* dbDump(flags({ local: true }));
+        yield* dbDump(flags());
         expect(docker.lastOpts?.network).toEqual({ _tag: "named", name: "dotenv-net" });
       }).pipe((body) => withEnvVar("SUPABASE_NETWORK_ID", undefined, body), Effect.provide(layer));
     },
@@ -869,7 +878,10 @@ describe("db dump integration", () => {
     return Effect.gen(function* () {
       yield* dbDump(
         flags({
-          dbUrl: Option.some("postgresql://custom:secret@127.0.0.1:54322/custom"),
+          remote: Option.some({
+            _tag: "DbUrl",
+            url: "postgresql://custom:secret@127.0.0.1:54322/custom",
+          }),
         }),
       );
       expect(bundled.lastOpts?.env).toMatchObject({
@@ -893,7 +905,12 @@ describe("db dump integration", () => {
     const { layer, bundled } = setup({ conn, isLocal: false, platform: "win32", stdout: "" });
     return Effect.gen(function* () {
       yield* dbDump(
-        flags({ dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:55432/postgres") }),
+        flags({
+          remote: Option.some({
+            _tag: "DbUrl",
+            url: "postgresql://postgres:postgres@127.0.0.1:55432/postgres",
+          }),
+        }),
       );
       expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
       expect(bundled.lastOpts?.network).toBe("host");
@@ -914,7 +931,12 @@ describe("db dump integration", () => {
       });
       return Effect.gen(function* () {
         yield* dbDump(
-          flags({ dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:55432/postgres") }),
+          flags({
+            remote: Option.some({
+              _tag: "DbUrl",
+              url: "postgresql://postgres:postgres@127.0.0.1:55432/postgres",
+            }),
+          }),
         );
         expect(docker.lastOpts?.network).toEqual({ _tag: "named", name: "custom_net" });
         expect(docker.lastOpts?.env).toMatchObject({
@@ -933,7 +955,7 @@ describe("db dump integration", () => {
       resolveFails: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ linked: true })).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(resolver.calls[0]?.target.kind).toBe("linked");
       expect(cache.cached).toBe(true);
@@ -950,9 +972,9 @@ describe("db dump integration", () => {
         resolveFails: true,
       });
       return Effect.gen(function* () {
-        const exit = yield* dbDump(flags({ linked: true, projectRef: Option.some(FLAG_REF) })).pipe(
-          Effect.exit,
-        );
+        const exit = yield* dbDump(
+          flags({ remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const) }),
+        ).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         expect(cache.cached).toBe(true);
         expect(cache.cachedRef).toBe(FLAG_REF);
@@ -966,7 +988,7 @@ describe("db dump integration", () => {
     // before the connection is resolved; nothing is cached.
     const { layer, cache } = setup({ resolveFails: true, linkedFails: true });
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ linked: true })).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -980,12 +1002,12 @@ describe("db dump integration", () => {
       stdout: "CREATE SCHEMA public;\n",
     });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ linked: true }));
+      yield* dbDump(flags({ remote: REMOTE_LINKED }));
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("dumps the project given via --project-ref without a linked workdir", () => {
+  it.effect("dumps the project given via --remote=<ref> without a linked workdir", () => {
     // No fixed `opts.ref`; only the flag can resolve a ref here.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, cache, resolver } = setup({
@@ -994,14 +1016,14 @@ describe("db dump integration", () => {
       stdout: "CREATE SCHEMA public;\n",
     });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ linked: true, projectRef: Option.some(FLAG_REF) }));
+      yield* dbDump(flags({ remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const) }));
       expect(resolver.calls[0]?.target).toMatchObject({ kind: "linked", ref: FLAG_REF });
       expect(cache.cached).toBe(true);
       expect(cache.cachedRef).toBe(FLAG_REF);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("--project-ref overrides an already-linked workdir's project ref", () => {
+  it.effect("--remote=<ref> overrides an already-linked workdir's project ref", () => {
     const FLAG_REF = "flagflagflagflagflag";
     // A distinct fixed ref proves the flag, not the workdir's own ref, wins.
     const { layer, cache } = setup({
@@ -1011,28 +1033,25 @@ describe("db dump integration", () => {
       stdout: "CREATE SCHEMA public;\n",
     });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ linked: true, projectRef: Option.some(FLAG_REF) }));
+      yield* dbDump(flags({ remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const) }));
       expect(cache.cached).toBe(true);
       expect(cache.cachedRef).toBe(FLAG_REF);
       expect(cache.cachedRef).not.toBe("abcdefghijklmnopqrst");
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "reads a --project-ref that is not a ref as a branch name and fails before resolving or caching",
-    () => {
-      const { layer, cache, resolver } = setup();
-      return Effect.gen(function* () {
-        const exit = yield* dbDump(flags({ linked: true, projectRef: Option.some("BADREF") })).pipe(
-          Effect.exit,
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(failMessage(exit)).toContain('Cannot resolve "BADREF"');
-        expect(resolver.calls).toEqual([]);
-        expect(cache.cached).toBe(false);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("fails before resolving or caching when --remote=<branch> names no branch", () => {
+    const { layer, cache, resolver } = setup({ projectId: Option.some(VALID_REF) });
+    return Effect.gen(function* () {
+      const exit = yield* dbDump(
+        flags({ remote: Option.some({ _tag: "Branch", name: "BADREF" }) }),
+      ).pipe(Effect.exit, Effect.provide(Layer.merge(layer, branchListApi().layer)));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toContain('Branch "BADREF" not found');
+      expect(resolver.calls).toEqual([]);
+      expect(cache.cached).toBe(false);
+    });
+  });
 
   it.effect("rejects --project-ref combined with an explicit --local target", () => {
     const FLAG_REF = "flagflagflagflagflag";
@@ -1047,12 +1066,126 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  describe("target selection", () => {
+    const FLAG_PROJECT_REF = "flagflagflagflagflag";
+
+    const resolvedTarget = (
+      selector: Partial<DbDumpFlags>,
+      options: { readonly branchApi?: ReturnType<typeof branchListApi> } = {},
+    ) => {
+      const { layer, out, resolver } = setup({
+        isLocal: true,
+        projectId: Option.some(VALID_REF),
+      });
+      const provided =
+        options.branchApi === undefined ? layer : Layer.merge(layer, options.branchApi.layer);
+      return Effect.gen(function* () {
+        yield* dbDump(flags({ dryRun: true, ...selector })).pipe(Effect.provide(provided));
+        return { target: resolver.calls[0]?.target, warnings: warningsOf(out) };
+      });
+    };
+
+    it.effect("targets the local database, with no warning, when nothing selects one", () =>
+      Effect.gen(function* () {
+        const { target, warnings } = yield* resolvedTarget({});
+        expect(target).toEqual({ kind: "local" });
+        expect(warnings).toEqual([]);
+      }),
+    );
+
+    it.effect("targets the linked project for a bare --remote, with no warning", () =>
+      Effect.gen(function* () {
+        const { target, warnings } = yield* resolvedTarget({ remote: REMOTE_LINKED });
+        expect(target).toMatchObject({ kind: "linked" });
+        expect(warnings).toEqual([]);
+      }),
+    );
+
+    it.effect("targets the project --remote=<ref> names, with no warning", () =>
+      Effect.gen(function* () {
+        const { target, warnings } = yield* resolvedTarget({
+          remote: Option.some({ _tag: "Ref", ref: FLAG_PROJECT_REF } as const),
+        });
+        expect(target).toMatchObject({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" });
+        expect(warnings).toEqual([]);
+      }),
+    );
+
+    it.effect("targets the database --remote=<db-url> names, with no warning", () =>
+      Effect.gen(function* () {
+        const { target, warnings } = yield* resolvedTarget({
+          remote: Option.some({
+            _tag: "DbUrl",
+            url: "postgresql://postgres:pw@db.example.com/db",
+          } as const),
+        });
+        expect(target?.kind).toBe("db-url");
+        expect(warnings).toEqual([]);
+      }),
+    );
+
+    it.effect("targets the project of the branch --remote=<branch> names", () => {
+      const branchApi = branchListApi();
+      return Effect.gen(function* () {
+        const { target, warnings } = yield* resolvedTarget(
+          { remote: Option.some({ _tag: "Branch", name: "feature-x" }) },
+          { branchApi },
+        );
+        expect(target).toMatchObject({ kind: "linked", ref: BRANCH_PROJECT_REF, source: "flag" });
+        expect(warnings).toEqual([]);
+        assertPermissionDrift({
+          command: "db dump",
+          activeFlags: { "dry-run": true, remote: "feature-x" },
+          requests: branchApi.requests,
+        });
+      });
+    });
+
+    it.effect.each([
+      {
+        alias: "--linked",
+        flags: { linked: true },
+        kind: "linked",
+        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
+      },
+      {
+        alias: "--project-ref",
+        flags: { projectRef: Option.some(FLAG_PROJECT_REF) },
+        kind: "linked",
+        warning: "--project-ref is deprecated and will be removed in v4. Use --remote instead",
+      },
+      {
+        alias: "--db-url",
+        flags: { dbUrl: Option.some("postgresql://postgres:pw@db.example.com/db") },
+        kind: "db-url",
+        warning: "--db-url is deprecated and will be removed in v4. Use --remote instead",
+      },
+      {
+        alias: "--local",
+        flags: { local: true },
+        kind: "local",
+        warning: "--local isn't needed (local is the default) and will be removed in v4",
+      },
+    ] satisfies ReadonlyArray<{
+      alias: string;
+      flags: Partial<DbDumpFlags>;
+      kind: string;
+      warning: string;
+    }>)("keeps $alias working and warns that it is deprecated", ({ flags, kind, warning }) =>
+      Effect.gen(function* () {
+        const { target, warnings } = yield* resolvedTarget(flags);
+        expect(target?.kind).toBe(kind);
+        expect(warnings).toEqual([expect.stringContaining(warning)]);
+      }),
+    );
+  });
+
   it.effect("writes the dump to --file and reports the absolute path on stderr", () => {
     const { layer, out } = setup({ isLocal: true, stdout: "CREATE SCHEMA public;\n" });
     return Effect.gen(function* () {
       const path = yield* Path.Path;
       const filePath = path.join(tmp.current, "out.sql");
-      yield* dbDump(flags({ local: true, file: Option.some(filePath) }));
+      yield* dbDump(flags({ file: Option.some(filePath) }));
       expect(yield* readUtf8(filePath)).toBe("CREATE SCHEMA public;\n");
       expect(out.stderrText).toContain(`Dumped schema to`);
       expect(out.stderrText).toContain(filePath);
@@ -1064,7 +1197,7 @@ describe("db dump integration", () => {
   it.effect("fails with exit 1 when the container exits non-zero", () => {
     const { layer } = setup({ isLocal: true, exitCode: 1, stdout: "partial\n" });
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ local: true })).pipe(Effect.exit);
+      const exit = yield* dbDump(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe("error running container: exit 1");
     }).pipe(Effect.provide(layer));
@@ -1091,7 +1224,7 @@ describe("db dump integration", () => {
       ],
     });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ linked: true }));
+      yield* dbDump(flags({ remote: REMOTE_LINKED }));
       expect(docker.allOpts).toHaveLength(2);
       expect(resolver.fallbackCalls).toHaveLength(1);
       expect(resolver.fallbackCalls[0]?.target).toMatchObject({ kind: "linked", ref: VALID_REF });
@@ -1110,7 +1243,7 @@ describe("db dump integration", () => {
       results: [{ exitCode: 1, stderr: IPV6_STDERR }],
     });
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ linked: true })).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe("error running container: exit 1");
       expect(resolver.fallbackCalls).toHaveLength(1); // attempted
@@ -1126,7 +1259,7 @@ describe("db dump integration", () => {
       results: [{ exitCode: 1, stderr: "permission denied for schema public" }],
     });
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ linked: true })).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe("error running container: exit 1");
       expect(docker.allOpts).toHaveLength(1);
@@ -1142,7 +1275,7 @@ describe("db dump integration", () => {
       results: [{ exitCode: 1, stderr: IPV6_STDERR }],
     });
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ linked: true })).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe("error running container: exit 1");
       expect(resolver.fallbackCalls).toHaveLength(1);
@@ -1165,7 +1298,7 @@ describe("db dump integration", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ linked: true })).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe("error running container: exit 1");
       expect(docker.allOpts).toHaveLength(2); // original + failed retry
@@ -1181,7 +1314,7 @@ describe("db dump integration", () => {
       results: [{ exitCode: 1, stderr: "permission denied for schema public" }],
     });
     return Effect.gen(function* () {
-      const exit = yield* dbDump(flags({ linked: true })).pipe(Effect.exit);
+      const exit = yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failSuggestion(exit)).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -1190,7 +1323,7 @@ describe("db dump integration", () => {
   it.effect("json mode: emits the SQL to stdout with no machine envelope", () => {
     const { layer, out } = setup({ format: "json", isLocal: true, stdout: "CREATE SCHEMA x;\n" });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ local: true }));
+      yield* dbDump(flags());
       expect(out.stdoutText).toBe("CREATE SCHEMA x;\n");
       expect(out.messages.find((m) => m.type === "success")).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -1203,7 +1336,7 @@ describe("db dump integration", () => {
       stdout: "CREATE SCHEMA x;\n",
     });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ local: true }));
+      yield* dbDump(flags());
       expect(out.stdoutText).toBe("CREATE SCHEMA x;\n");
     }).pipe(Effect.provide(layer));
   });
@@ -1278,7 +1411,7 @@ describe("db dump integration", () => {
       env: { MSYSTEM: "" },
     });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ local: true }));
+      yield* dbDump(flags());
       expect(out.stdoutText).toBe(UNICODE_SQL);
       expect(out.stderrText).toContain("WARNING:");
       expect(out.stderrText).toContain(NON_ASCII_WARNING);
@@ -1294,7 +1427,7 @@ describe("db dump integration", () => {
       workdir: tmp.current,
     });
     return Effect.gen(function* () {
-      yield* dbDump(flags({ local: true, file: Option.some("out.sql") }));
+      yield* dbDump(flags({ file: Option.some("out.sql") }));
       const path = yield* Path.Path;
       expect(yield* readUtf8(path.join(tmp.current, "out.sql"))).toBe(UNICODE_SQL);
       expect(out.stderrText).not.toContain(NON_ASCII_WARNING);
@@ -1318,7 +1451,7 @@ describe("db dump integration", () => {
     it.effect(`stays silent ${scenario}`, () => {
       const { layer, out } = setup({ isLocal: true, stdout: UNICODE_SQL, ...over });
       return Effect.gen(function* () {
-        yield* dbDump(flags({ local: true }));
+        yield* dbDump(flags());
         expect(out.stdoutText).toBe(over.stdout ?? UNICODE_SQL);
         expect(out.stderrText).not.toContain(NON_ASCII_WARNING);
       }).pipe(Effect.provide(layer));
@@ -1330,7 +1463,7 @@ describe("db dump integration", () => {
       it.effect(`streams schema output through the ${runtime} stack tool`, () => {
         const { layer, out } = setup({ isLocal: true, stdout: "" });
         return Effect.gen(function* () {
-          yield* dbDump(flags({ local: true }));
+          yield* dbDump(flags());
           expect(out.stdoutText).toContain('CREATE TABLE IF NOT EXISTS "public"');
         }).pipe(
           Effect.provide(
@@ -1351,7 +1484,7 @@ describe("db dump permissions through the real resolver and cache", () => {
   const poolerRequest = `GET /v1/projects/${VALID_REF}/config/database/pooler`;
   const loginRoleRequest = `POST /v1/projects/${VALID_REF}/cli/login-role`;
 
-  it.effect("mints a login role and fills the cache for a --project-ref target", () => {
+  it.effect("mints a login role and fills the cache for a --remote=<ref> target", () => {
     const { layer, out, projectHttp } = setup({
       workdir: tmp.current,
       realLayers: true,
@@ -1361,7 +1494,9 @@ describe("db dump permissions through the real resolver and cache", () => {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-      yield* dbDump(flags({ projectRef: Option.some(VALID_REF) })).pipe(Effect.provide(layer));
+      yield* dbDump(flags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) })).pipe(
+        Effect.provide(layer),
+      );
       expect(out.stdoutText).toBe("CREATE SCHEMA x;\n");
       expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
       expect(projectHttp.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
@@ -1370,14 +1505,14 @@ describe("db dump permissions through the real resolver and cache", () => {
       expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
       assertPermissionDrift({
         command: "db dump",
-        activeFlags: { "project-ref": VALID_REF },
+        activeFlags: { remote: VALID_REF },
         requests: [...asRecordedRequests(requests), ...projectHttp.calls],
         exact: true,
       });
       // The resolve-phase calls belong to the database config block itself, not to the
       // fallback block, which declares the same operations.
       assertBlockDrift(dbConfig, {
-        activeFlags: { linked: true, "project-ref": VALID_REF },
+        activeFlags: { remote: VALID_REF },
         requests: asRecordedRequests(requests),
         exact: true,
       });
@@ -1395,49 +1530,52 @@ describe("db dump permissions through the real resolver and cache", () => {
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
       yield* dbDump(
         flags({
-          projectRef: Option.some(VALID_REF),
+          remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
           password: Option.some("secret"),
         }),
       ).pipe(Effect.provide(layer));
       expect(asLines(requests)).toEqual([poolerRequest]);
       assertPermissionDrift({
         command: "db dump",
-        activeFlags: { linked: true, "project-ref": VALID_REF, password: true },
+        activeFlags: { remote: VALID_REF, password: true },
         requests: [...asRecordedRequests(requests), ...projectHttp.calls],
         exact: true,
       });
       // The resolve-phase calls belong to the database config block itself, not to the
       // fallback block, which declares the same operations.
       assertBlockDrift(dbConfig, {
-        activeFlags: { linked: true, "project-ref": VALID_REF, password: true },
+        activeFlags: { remote: VALID_REF, password: true },
         requests: asRecordedRequests(requests),
         exact: true,
       });
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
 
-  it.effect("makes no Management API request for --local and caches nothing", () => {
-    const { layer, projectHttp } = setup({
-      workdir: tmp.current,
-      realLayers: true,
-      stdout: "CREATE SCHEMA x;\n",
-    });
-    const requests: Array<StubbedRequest> = [];
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      yield* stubManagementApi(requests, () => undefined);
-      yield* dbDump(flags({ local: true })).pipe(Effect.provide(layer));
-      expect(requests).toEqual([]);
-      expect(projectHttp.calls).toEqual([]);
-      expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(false);
-      assertPermissionDrift({
-        command: "db dump",
-        activeFlags: { local: true },
-        requests: [],
-        exact: true,
+  it.effect(
+    "makes no Management API request for the default local target and caches nothing",
+    () => {
+      const { layer, projectHttp } = setup({
+        workdir: tmp.current,
+        realLayers: true,
+        stdout: "CREATE SCHEMA x;\n",
       });
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
-  });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* stubManagementApi(requests, () => undefined);
+        yield* dbDump(flags()).pipe(Effect.provide(layer));
+        expect(requests).toEqual([]);
+        expect(projectHttp.calls).toEqual([]);
+        expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(false);
+        assertPermissionDrift({
+          command: "db dump",
+          activeFlags: {},
+          requests: [],
+          exact: true,
+        });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    },
+  );
 
   it.effect("retries through the pooler after a container IPv6 failure", () => {
     const { layer, docker, projectHttp } = setup({
@@ -1452,18 +1590,18 @@ describe("db dump permissions through the real resolver and cache", () => {
     return Effect.gen(function* () {
       yield* reachableDirectHost;
       const fs = yield* FileSystem.FileSystem;
-      // No --project-ref: the linked ref comes from the saved file, so only the fallback block
+      // No --remote=<ref>: the linked ref comes from the saved file, so only the fallback block
       // accounts for the pooler config request.
       yield* fs.makeDirectory(`${tmp.current}/supabase/.temp`, { recursive: true });
       yield* fs.writeFileString(`${tmp.current}/supabase/.temp/project-ref`, VALID_REF);
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-      yield* dbDump(flags({ linked: true })).pipe(Effect.provide(layer));
+      yield* dbDump(flags({ remote: REMOTE_LINKED })).pipe(Effect.provide(layer));
       expect(docker.allOpts).toHaveLength(2);
       expect(docker.allOpts[1]?.env["PGHOST"]).toBe("aws-0-us-east-1.pooler.supabase.com");
       expect(asLines(requests)).toEqual([loginRoleRequest, poolerRequest, loginRoleRequest]);
       assertPermissionDrift({
         command: "db dump",
-        activeFlags: { linked: true },
+        activeFlags: { remote: true },
         requests: [...asRecordedRequests(requests), ...projectHttp.calls],
         exact: true,
       });
