@@ -23,7 +23,7 @@ function buildLayer(path: Path.Path, opts: { cwd: string; env?: Record<string, s
 }
 
 describe("cliProjectContextLayer", () => {
-  it.live("loads when supabase/config.toml uses env() on numeric fields (CLI-1489)", () =>
+  it.effect("loads when supabase/config.toml uses env() on numeric fields (CLI-1489)", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -69,7 +69,7 @@ describe("cliProjectContextLayer", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("exposes project .env values except names the shell sets", () =>
+  it.effect("exposes project .env values except names the shell sets", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -92,7 +92,7 @@ describe("cliProjectContextLayer", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("returns empty context when no supabase project is found", () =>
+  it.effect("returns empty context when no supabase project is found", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const tempDir = yield* makeTempDir;

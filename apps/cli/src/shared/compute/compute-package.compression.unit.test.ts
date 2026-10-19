@@ -13,7 +13,7 @@ vi.mock("node:zlib", () => ({
 }));
 
 describe("packageComputeDirectory compression", () => {
-  it.live("reports compression failures as typed errors with their cause", () =>
+  it.effect("reports compression failures as typed errors with their cause", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;

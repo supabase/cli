@@ -98,7 +98,9 @@ describe("testDbRuntimeLayer — IdentityStitch exposure", () => {
       return Effect.gen(function* () {
         const stitch = yield* Effect.serviceOption(IdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(testDbRuntimeLayer(["test", "db"])), Effect.provide(ambientStubs()));
+      }).pipe(
+        Effect.provide(testDbRuntimeLayer(["test", "db"]).pipe(Layer.provideMerge(ambientStubs()))),
+      );
     },
   );
 });

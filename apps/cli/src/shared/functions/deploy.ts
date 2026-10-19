@@ -12,7 +12,6 @@ import {
 } from "@supabase/config/effect";
 import {
   Cause,
-  Clock,
   Config,
   Duration,
   Effect,
@@ -21,6 +20,8 @@ import {
   Option,
   Path,
   type PlatformError,
+  Ref,
+  Schedule,
   Schema,
 } from "effect";
 import * as HttpBody from "effect/http/HttpBody";
@@ -1687,54 +1688,37 @@ const listRemoteFunctions = Effect.fn("functions.deploy.listRemoteFunctions")(fu
   api: ApiClient,
   projectRef: string,
 ) {
-  let lastError: Error | FunctionsApiStatusError | undefined;
-  for (let attempt = 0; attempt <= 3; attempt += 1) {
-    const result = yield* api
+  return yield* Effect.gen(function* () {
+    const response = yield* api
       .executeRaw(operationDefinitions.v1ListAllFunctions, { ref: projectRef })
-      .pipe(
-        Effect.map((response) => ({ success: true as const, response })),
-        Effect.catch((error) =>
-          Effect.succeed({
-            success: false as const,
-            error: mapTransportError("failed to list functions", error),
-          }),
+      .pipe(Effect.mapError((error) => mapTransportError("failed to list functions", error)));
+    const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+    if (response.status === 200) {
+      // A 200 whose body is not the expected JSON is an API-response problem,
+      // not a transport failure — surface it via FunctionsApiStatusError so it
+      // classifies as api_status rather than network.
+      return yield* decodeFunctionListResponse(body).pipe(
+        Effect.mapError(
+          (error) =>
+            new FunctionsApiStatusError({
+              status: response.status,
+              message: `failed to read functions list: ${error.message}`,
+              decode: true,
+            }),
         ),
       );
-
-    if (result.success) {
-      const body = yield* result.response.text.pipe(Effect.orElseSucceed(() => ""));
-      if (result.response.status === 200) {
-        // A 200 whose body is not the expected JSON is an API-response problem,
-        // not a transport failure — surface it via FunctionsApiStatusError so it
-        // classifies as api_status rather than network.
-        return yield* decodeFunctionListResponse(body).pipe(
-          Effect.mapError(
-            (error) =>
-              new FunctionsApiStatusError({
-                status: result.response.status,
-                message: `failed to read functions list: ${error.message}`,
-                decode: true,
-              }),
-          ),
-        );
-      }
-      lastError = new FunctionsApiStatusError({
-        status: result.response.status,
-        message: `unexpected list functions status ${result.response.status}: ${body}`,
-      });
-      if (result.response.status < 500 && result.response.status !== 429) {
-        return yield* Effect.fail(lastError);
-      }
-    } else {
-      lastError = result.error;
     }
-
-    if (attempt < 3) {
-      yield* Effect.sleep(Duration.millis(1_000 * 2 ** attempt));
-    }
-  }
-  return yield* Effect.fail(
-    lastError ?? new FunctionDeployError({ message: "failed to list functions" }),
+    return yield* new FunctionsApiStatusError({
+      status: response.status,
+      message: `unexpected list functions status ${response.status}: ${body}`,
+    });
+  }).pipe(
+    Effect.retry({
+      schedule: Schedule.exponential(Duration.seconds(1)),
+      times: 3,
+      while: (error) =>
+        !(error instanceof FunctionsApiStatusError) || error.status >= 500 || error.status === 429,
+    }),
   );
 });
 
@@ -1788,18 +1772,23 @@ const rateLimitedRequest = Effect.fnUntraced(function* <A>(
   >,
 ) {
   const output = yield* Output;
-  for (let attempt = 0; ; attempt += 1) {
-    const response = yield* request();
-    if (response.status !== 429 || attempt >= DEPLOY_RATE_LIMIT_MAX_RETRIES) {
-      return response;
-    }
-    const delayMs = rateLimitDelayMillis(response.headers, attempt, yield* Clock.currentTimeMillis);
-    yield* output.raw(
-      `Rate limit exceeded while ${action}. Retrying in ${rateLimitDelayText(delayMs)}.\n`,
-      "stderr",
-    );
-    yield* Effect.sleep(Duration.millis(delayMs));
-  }
+  return yield* Effect.repeat(Effect.suspend(request), ($) =>
+    $(Schedule.forever).pipe(
+      Schedule.passthrough,
+      Schedule.while(
+        ({ input, attempt }) => input.status === 429 && attempt <= DEPLOY_RATE_LIMIT_MAX_RETRIES,
+      ),
+      Schedule.modifyDelay(({ input, attempt, now }) =>
+        Effect.succeed(Duration.millis(rateLimitDelayMillis(input.headers, attempt - 1, now))),
+      ),
+      Schedule.tap(({ duration }) =>
+        output.raw(
+          `Rate limit exceeded while ${action}. Retrying in ${rateLimitDelayText(Duration.toMillis(duration))}.\n`,
+          "stderr",
+        ),
+      ),
+    ),
+  );
 });
 
 const uploadFunctionSource = Effect.fn("functions.deploy.uploadFunctionSource")(function* (
@@ -1917,9 +1906,8 @@ const bulkUpdateRemoteFunctions = Effect.fn("functions.deploy.bulkUpdateFunction
   projectRef: string,
   functions: ReadonlyArray<BulkUpdateFunction>,
 ) {
-  let lastError: Error | FunctionsApiStatusError | undefined;
-  for (let attempt = 0; attempt <= 3; attempt += 1) {
-    const result = yield* rateLimitedRequest("bulk updating functions", () =>
+  return yield* Effect.gen(function* () {
+    const response = yield* rateLimitedRequest("bulk updating functions", () =>
       api
         .executeRaw(
           operationDefinitions.v1BulkUpdateFunctions,
@@ -1939,38 +1927,21 @@ const bulkUpdateRemoteFunctions = Effect.fn("functions.deploy.bulkUpdateFunction
           })),
           Effect.mapError((error) => mapTransportError("failed to bulk update", error)),
         ),
-    ).pipe(
-      Effect.map((response) => ({ success: true as const, response })),
-      Effect.catch((error) =>
-        Effect.succeed({
-          success: false as const,
-          error,
-        }),
-      ),
     );
-
-    if (result.success) {
-      const body = yield* result.response.body;
-      if (result.response.status === 200) {
-        return;
-      }
-      lastError = new FunctionsApiStatusError({
-        status: result.response.status,
-        message: `unexpected bulk update status ${result.response.status}: ${body}`,
-      });
-      if (result.response.status < 500) {
-        return yield* Effect.fail(lastError);
-      }
-    } else {
-      lastError = result.error;
+    const body = yield* response.body;
+    if (response.status === 200) {
+      return;
     }
-
-    if (attempt < 3) {
-      yield* Effect.sleep(Duration.millis(1_000 * 2 ** attempt));
-    }
-  }
-  return yield* Effect.fail(
-    lastError ?? new FunctionDeployError({ message: "failed to bulk update" }),
+    return yield* new FunctionsApiStatusError({
+      status: response.status,
+      message: `unexpected bulk update status ${response.status}: ${body}`,
+    });
+  }).pipe(
+    Effect.retry({
+      schedule: Schedule.exponential(Duration.seconds(1)),
+      times: 3,
+      while: (error) => !(error instanceof FunctionsApiStatusError) || error.status >= 500,
+    }),
   );
 });
 
@@ -1980,10 +1951,10 @@ const upsertBundledFunction = Effect.fn("functions.deploy.upsertFunction")(funct
   bundled: BundledFunction,
   exists: boolean,
 ) {
-  let shouldUpdate = exists;
-  let lastError: Error | FunctionsApiStatusError | undefined;
+  const shouldUpdateRef = yield* Ref.make(exists);
 
-  for (let attempt = 0; attempt <= 3; attempt += 1) {
+  const upsert = Effect.gen(function* () {
+    const shouldUpdate = yield* Ref.get(shouldUpdateRef);
     const action = shouldUpdate ? "update" : "create";
     const updateInput = {
       ref: projectRef,
@@ -2009,54 +1980,44 @@ const upsertBundledFunction = Effect.fn("functions.deploy.upsertFunction")(funct
         })
       : api.executeRaw(operationDefinitions.v1CreateAFunction, createInput);
     const response = yield* request.pipe(
-      Effect.map((value) => ({ success: true as const, value })),
-      Effect.catch((error) =>
-        Effect.succeed({
-          success: false as const,
-          error: mapTransportError(`failed to ${action} function`, error),
-        }),
-      ),
+      Effect.mapError((error) => mapTransportError(`failed to ${action} function`, error)),
     );
 
-    if (response.success) {
-      const expectedStatus = shouldUpdate ? 200 : 201;
-      if (response.value.status === expectedStatus) {
-        // A success status with a malformed / unexpected JSON body is an
-        // API-response problem, not a transport failure — surface it via
-        // FunctionsApiStatusError so it classifies as api_status not network.
-        const body = yield* response.value.text.pipe(Effect.orElseSucceed(() => ""));
-        return yield* decodeDeployFunctionResponse(body).pipe(
-          Effect.mapError(
-            (error) =>
-              new FunctionsApiStatusError({
-                status: response.value.status,
-                message: `failed to read function response: ${error.message}`,
-                decode: true,
-              }),
-          ),
-        );
-      }
-
-      const body = yield* response.value.text.pipe(Effect.orElseSucceed(() => ""));
-      if (!shouldUpdate && body.includes("Duplicated function slug")) {
-        shouldUpdate = true;
-      }
-      lastError = new FunctionsApiStatusError({
-        status: response.value.status,
-        message: `unexpected ${action} function status ${response.value.status}: ${body}`,
-        notFoundIsInvalidInput: shouldUpdate,
-      });
-    } else {
-      lastError = response.error;
+    const expectedStatus = shouldUpdate ? 200 : 201;
+    if (response.status === expectedStatus) {
+      // A success status with a malformed / unexpected JSON body is an
+      // API-response problem, not a transport failure — surface it via
+      // FunctionsApiStatusError so it classifies as api_status not network.
+      const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+      return yield* decodeDeployFunctionResponse(body).pipe(
+        Effect.mapError(
+          (error) =>
+            new FunctionsApiStatusError({
+              status: response.status,
+              message: `failed to read function response: ${error.message}`,
+              decode: true,
+            }),
+        ),
+      );
     }
 
-    if (attempt < 3) {
-      yield* Effect.sleep(Duration.millis(500 * 2 ** attempt));
+    const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+    if (!shouldUpdate && body.includes("Duplicated function slug")) {
+      yield* Ref.set(shouldUpdateRef, true);
     }
-  }
+    return yield* new FunctionsApiStatusError({
+      status: response.status,
+      message: `unexpected ${action} function status ${response.status}: ${body}`,
+      notFoundIsInvalidInput: yield* Ref.get(shouldUpdateRef),
+    });
+  });
 
-  return yield* Effect.fail(
-    lastError ?? new FunctionDeployError({ message: "failed to upsert function" }),
+  return yield* upsert.pipe(
+    Effect.retry({
+      schedule: Schedule.exponential(Duration.millis(500)),
+      times: 3,
+      while: (error) => !(error instanceof FunctionsApiStatusError && error.decode === true),
+    }),
   );
 });
 
@@ -2302,15 +2263,15 @@ const deployViaApi = Effect.fn("functions.deploy.viaApi")(function* (
     ? new Map((yield* listRemoteFunctions(api, projectRef)).map((fn) => [fn.slug, fn]))
     : new Map<string, RemoteFunction>();
 
-  if (enabled.length === 1) {
-    const config = enabled[0]!;
+  const [singleConfig] = enabled;
+  if (enabled.length === 1 && singleConfig !== undefined) {
     yield* uploadFunctionSource(
       api,
       projectRef,
       sourceRoot,
       projectRoot,
-      config,
-      createSourceMetadata(path, projectRoot, config, remoteBySlug.get(config.slug)),
+      singleConfig,
+      createSourceMetadata(path, projectRoot, singleConfig, remoteBySlug.get(singleConfig.slug)),
       false,
     );
     return;

@@ -95,7 +95,7 @@ describe("readProjectRefFile", () => {
       Effect.tap((error) =>
         Effect.sync(() => {
           expect(error).toBeInstanceOf(ProjectRefReadError);
-          expect(error.message).toContain("failed to load project ref");
+          expect(error.message).toMatch(/^failed to load project ref: /);
         }),
       ),
     ),

@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import type { ContainerIdName } from "../docker-lifecycle.ts";
@@ -30,7 +30,7 @@ export const rollbackStart = (
   deleteVolumes: boolean,
   workdir: string,
   debug: boolean,
-): Effect.Effect<void, never> =>
+): Effect.Effect<void, never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     // `dockerRemoveAll` doesn't print this; each caller owns its own status writer.
     yield* Effect.sync(() => {

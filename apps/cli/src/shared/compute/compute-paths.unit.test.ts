@@ -27,7 +27,7 @@ const runPath = <A>(fn: (path: Path.Path) => A): Effect.Effect<A> =>
   }).pipe(Effect.provide(BunServices.layer));
 
 describe("compute directories", () => {
-  it.live("resolve under supabase/compute/", () =>
+  it.effect("resolve under supabase/compute/", () =>
     Effect.gen(function* () {
       expect(yield* runPath((path) => computeRootDir(path, PROJECT))).toBe(
         yield* runPath((path) => path.join(PROJECT, "supabase", "compute")),
@@ -38,7 +38,7 @@ describe("compute directories", () => {
     }),
   );
 
-  it.live("a recorded source wins and is anchored to the project root", () =>
+  it.effect("a recorded source wins and is anchored to the project root", () =>
     Effect.gen(function* () {
       const defaultDir = yield* runPath((path) => computeDir(path, PROJECT, "api"));
       const sourceDir = (configuredSource: string | undefined) =>
@@ -56,7 +56,7 @@ describe("compute directories", () => {
 
   // `source` arrives from a committed `config.toml`, so it is as much an input
   // as `--source` is — and `push` packages and uploads whatever it resolves to.
-  it.live.each([
+  it.effect.each([
     { configuredSource: "../../elsewhere" },
     { configuredSource: "/etc" },
     { configuredSource: "supabase/functions/hello" },
@@ -79,7 +79,7 @@ describe("compute directories", () => {
 });
 
 describe("displayPath", () => {
-  it.live("prefers the relative form, and falls back to absolute when it would climb out", () =>
+  it.effect("prefers the relative form, and falls back to absolute when it would climb out", () =>
     Effect.gen(function* () {
       expect(
         yield* runPath((path) =>
@@ -99,7 +99,7 @@ describe("displayPath", () => {
 describe("resolveComputeSource", () => {
   const cwd = `${PROJECT}/apps/web`;
 
-  it.live("resolves a directory inside the project against the directory it was typed in", () =>
+  it.effect("resolves a directory inside the project against the directory it was typed in", () =>
     Effect.gen(function* () {
       expect(
         yield* runFs(
@@ -116,7 +116,7 @@ describe("resolveComputeSource", () => {
 
   // The starter files land in whatever this resolves to, so each of these would
   // write into work belonging to the project or to the machine.
-  it.live.each([
+  it.effect.each([
     { raw: ".", reason: "the project root itself" },
     { raw: "", reason: "empty" },
     { raw: "..", reason: "outside the project" },
@@ -173,7 +173,7 @@ describe("resolveComputeSource containment on a real filesystem", () => {
       }),
     ).pipe(Effect.provide(BunServices.layer));
 
-  it.live("resolves a genuine directory inside the project", () =>
+  it.effect("resolves a genuine directory inside the project", () =>
     withFixture((project, _outside, _fs, path) =>
       Effect.gen(function* () {
         expect(
@@ -185,7 +185,7 @@ describe("resolveComputeSource containment on a real filesystem", () => {
     ),
   );
 
-  it.live("refuses a path that reaches outside the project through a symlink", () =>
+  it.effect("refuses a path that reaches outside the project through a symlink", () =>
     withFixture((project, outside, fs, path) =>
       Effect.gen(function* () {
         yield* fs.symlink(outside, path.join(project, "packages", "external"));
@@ -206,7 +206,7 @@ describe("resolveComputeSource containment on a real filesystem", () => {
     ),
   );
 
-  it.live("refuses a reserved directory reached through a symlink", () =>
+  it.effect("refuses a reserved directory reached through a symlink", () =>
     withFixture((project, _outside, fs, path) =>
       Effect.gen(function* () {
         yield* fs.symlink(path.join(project, "supabase", "functions"), path.join(project, "fns"));
@@ -233,7 +233,7 @@ describe("resolveComputeSource containment on a real filesystem", () => {
   // A name that ends in a space is legal on Unix, and only reaches argv as one
   // entry if the user quoted it. Trimming it pointed the scaffold at a different
   // directory than the one asked for.
-  it.live("keeps whitespace that is part of the directory name", () =>
+  it.effect("keeps whitespace that is part of the directory name", () =>
     withFixture((project, _outside, _fs, path) =>
       Effect.gen(function* () {
         expect(
@@ -245,7 +245,7 @@ describe("resolveComputeSource containment on a real filesystem", () => {
     ),
   );
 
-  it.live.each([{ raw: "" }, { raw: "   " }, { raw: "\t" }])(
+  it.effect.each([{ raw: "" }, { raw: "   " }, { raw: "\t" }])(
     "refuses an all-whitespace --source of $raw",
     ({ raw }) =>
       withFixture((project, _outside, _fs, _path) =>
@@ -259,7 +259,7 @@ describe("resolveComputeSource containment on a real filesystem", () => {
       ),
   );
 
-  it.live("accepts a destination that does not exist yet", () =>
+  it.effect("accepts a destination that does not exist yet", () =>
     withFixture((project, _outside, _fs, path) =>
       Effect.gen(function* () {
         expect(

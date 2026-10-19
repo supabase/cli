@@ -1,5 +1,6 @@
 import { createHmac, generateKeyPairSync } from "node:crypto";
 import { importJWK, jwtVerify } from "jose";
+import { DateTime } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -85,32 +86,38 @@ describe("generateLocalJwt", () => {
 });
 
 describe("generateAsymmetricLocalJwt", () => {
-  it("signs and verifies an RS256 token from an RSA JWK", async () => {
+  it("signs and verifies an RS256 token from an RSA JWK", () => {
     const jwk = generateRsaJwk("rsa-kid");
     const token = generateAsymmetricLocalJwt(jwk, "anon");
-    const publicKey = await importJWK(publicJwkOf(jwk), "RS256");
-    const { payload, protectedHeader } = await jwtVerify(token, publicKey);
-    expect(payload).toMatchObject({ iss: "supabase-demo", role: "anon" });
-    expect(protectedHeader).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
+    return importJWK(publicJwkOf(jwk), "RS256")
+      .then((publicKey) => jwtVerify(token, publicKey))
+      .then(({ payload, protectedHeader }) => {
+        expect(payload).toMatchObject({ iss: "supabase-demo", role: "anon" });
+        expect(protectedHeader).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
+      });
   });
 
-  it("signs an RS256 token from an RSA JWK missing CRT exponents (dp/dq/qi)", async () => {
+  it("signs an RS256 token from an RSA JWK missing CRT exponents (dp/dq/qi)", () => {
     const jwk = generateRsaJwk("rsa-kid");
     const { dp: _dp, dq: _dq, qi: _qi, ...jwkWithoutCrtParams } = jwk;
     const token = generateAsymmetricLocalJwt(jwkWithoutCrtParams, "anon");
-    const publicKey = await importJWK(publicJwkOf(jwk), "RS256");
-    const { payload, protectedHeader } = await jwtVerify(token, publicKey);
-    expect(payload).toMatchObject({ iss: "supabase-demo", role: "anon" });
-    expect(protectedHeader).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
+    return importJWK(publicJwkOf(jwk), "RS256")
+      .then((publicKey) => jwtVerify(token, publicKey))
+      .then(({ payload, protectedHeader }) => {
+        expect(payload).toMatchObject({ iss: "supabase-demo", role: "anon" });
+        expect(protectedHeader).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
+      });
   });
 
-  it("signs and verifies an ES256 token from an EC JWK", async () => {
+  it("signs and verifies an ES256 token from an EC JWK", () => {
     const jwk = generateEcJwk("ec-kid");
     const token = generateAsymmetricLocalJwt(jwk, "service_role");
-    const publicKey = await importJWK(publicJwkOf(jwk), "ES256");
-    const { payload, protectedHeader } = await jwtVerify(token, publicKey);
-    expect(payload).toMatchObject({ iss: "supabase-demo", role: "service_role" });
-    expect(protectedHeader).toEqual({ alg: "ES256", kid: "ec-kid", typ: "JWT" });
+    return importJWK(publicJwkOf(jwk), "ES256")
+      .then((publicKey) => jwtVerify(token, publicKey))
+      .then(({ payload, protectedHeader }) => {
+        expect(payload).toMatchObject({ iss: "supabase-demo", role: "service_role" });
+        expect(protectedHeader).toEqual({ alg: "ES256", kid: "ec-kid", typ: "JWT" });
+      });
   });
 
   it("omits the kid header entirely when the JWK has no kid", () => {
@@ -123,7 +130,7 @@ describe("generateAsymmetricLocalJwt", () => {
 
   it("sets a ~10-year expiry computed from the current time, not a fixed timestamp", () => {
     const jwk = generateRsaJwk();
-    const before = Math.floor(Date.now() / 1000);
+    const before = Math.floor(DateTime.toEpochMillis(DateTime.nowUnsafe()) / 1000);
     const token = generateAsymmetricLocalJwt(jwk, "anon");
     const [, payload] = token.split(".");
     const decoded = JSON.parse(Buffer.from(payload ?? "", "base64url").toString());
@@ -204,7 +211,7 @@ describe("generateAsymmetricLocalJwt", () => {
 });
 
 describe("signJwtWithJwk", () => {
-  it("signs the caller's exact pre-encoded payload string verbatim (no re-serialization)", async () => {
+  it("signs the caller's exact pre-encoded payload string verbatim (no re-serialization)", () => {
     const jwk = generateEcJwk("ec-kid");
     // Unsorted and containing `&`, which the encoder would normally HTML-escape: this function
     // must sign exactly the bytes it's given.
@@ -213,9 +220,11 @@ describe("signJwtWithJwk", () => {
     const [, payload] = token.split(".");
     expect(decodeSegment(payload ?? "")).toBe(payloadJson);
 
-    const publicKey = await importJWK(publicJwkOf(jwk), "ES256");
-    const { payload: verified } = await jwtVerify(token, publicKey);
-    expect(verified).toEqual({ role: "postgres", "sb-role": "mgmt-api & co" });
+    return importJWK(publicJwkOf(jwk), "ES256")
+      .then((publicKey) => jwtVerify(token, publicKey))
+      .then(({ payload: verified }) => {
+        expect(verified).toEqual({ role: "postgres", "sb-role": "mgmt-api & co" });
+      });
   });
 
   it("HTML-escapes the kid in the header, unlike JSON.stringify", () => {

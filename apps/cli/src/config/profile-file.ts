@@ -1,5 +1,4 @@
 import { Data, Effect, FileSystem, Path } from "effect";
-import { readSupabaseHome } from "../shared/config/supabase-home.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -23,9 +22,6 @@ export class ProfileSaveError extends Data.TaggedError("ProfileSaveError")<{
     return actionability.permission;
   }
 }
-
-export const profileFilePath = (path: Path.Path, homeDir: string) =>
-  Effect.map(readSupabaseHome(path, homeDir), (home) => path.join(home, "profile"));
 
 /** Writes the profile name to the resolved profile path. Fatal on failure. */
 export const saveProfileName = (

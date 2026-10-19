@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
+import { Crypto, Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import { FetchHttpClient } from "effect/http";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
@@ -80,7 +80,6 @@ const makeLayers = (root: string) => {
   const telemetry = mockTelemetryStateTracked();
   const tty = mockTty({ stdinIsTty: false, stdoutIsTty: false });
   return Layer.mergeAll(
-    BunServices.layer,
     cliConfigValuesTestLayer,
     FetchHttpClient.layer,
     runtimeInfoLayer,
@@ -97,7 +96,7 @@ const makeLayers = (root: string) => {
     Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
     stdinLayer.pipe(Layer.provide(tty)),
     tty,
-  );
+  ).pipe(Layer.provideMerge(BunServices.layer));
 };
 
 describe("native stack Storage gateway", () => {
@@ -134,7 +133,8 @@ describe("native stack Storage gateway", () => {
               apiKey: credentials.apiKey,
               userAgent: "stack-storage-native-integration",
             });
-            const bucket = `native-${crypto.randomUUID().slice(0, 8)}`;
+            const crypto = yield* Crypto.Crypto;
+            const bucket = `native-${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
             const local = path.join(root, "payload.txt");
             yield* fs.writeFileString(local, "native storage payload");
 

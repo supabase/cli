@@ -1,7 +1,4 @@
-import { rm } from "node:fs/promises";
-import { resolve, sep } from "node:path";
-
-import { Effect } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 
 import type { ContainerIdName } from "./docker-lifecycle.ts";
 
@@ -15,27 +12,24 @@ import type { ContainerIdName } from "./docker-lifecycle.ts";
  * untrusted `docker ps` metadata. `containers` must be exactly what Docker reported for the
  * completed teardown: a container that survived removal keeps its secrets.
  */
-export function cleanupStartSecrets(
+export const cleanupStartSecrets = Effect.fnUntraced(function* (
   containers: ReadonlyArray<ContainerIdName>,
   fallbackWorkdir: string,
-): Effect.Effect<void> {
-  return Effect.tryPromise(() =>
-    Promise.all(
-      containers.map((container) => {
-        const workdir = container.workdir.length > 0 ? container.workdir : fallbackWorkdir;
-        const stagingRoot = resolve(workdir, "supabase", ".temp", "start-secrets");
-        const target = resolve(stagingRoot, container.name);
-        if (target === stagingRoot || !target.startsWith(stagingRoot + sep)) {
-          return Promise.resolve();
-        }
-        return rm(target, {
-          recursive: true,
-          force: true,
-        });
-      }),
-    ),
-  ).pipe(
-    Effect.asVoid,
-    Effect.orElseSucceed(() => undefined),
-  );
-}
+): Effect.fn.Return<void, never, FileSystem.FileSystem | Path.Path> {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* Effect.forEach(
+    containers,
+    (container) => {
+      const workdir = container.workdir.length > 0 ? container.workdir : fallbackWorkdir;
+      const stagingRoot = path.resolve(workdir, "supabase", ".temp", "start-secrets");
+      const target = path.resolve(stagingRoot, container.name);
+      if (target === stagingRoot || !target.startsWith(stagingRoot + path.sep)) {
+        return Effect.void;
+      }
+      /* Interruptible even in the start and stop finalizers, so the first failure ends cleanup. */
+      return Effect.interruptible(fs.remove(target, { recursive: true, force: true }));
+    },
+    { concurrency: "unbounded", discard: true },
+  ).pipe(Effect.ignore);
+});

@@ -20,6 +20,7 @@ import {
 import { styleText } from "node:util";
 import {
   Clock,
+  Data,
   FileSystem,
   Path,
   Deferred,
@@ -611,16 +612,17 @@ const resolveLocalAuthArtifacts = Effect.fn("functions.serve.resolveLocalAuthArt
     );
   }
 
+  const [firstSigningKey] = signingKeys;
   const anonKey =
     auth.anon_key === undefined || auth.anon_key.length === 0
-      ? signingKeys.length > 0
-        ? generateAsymmetricJwt(signingKeys[0]!, "anon", yield* Clock.currentTimeMillis)
+      ? firstSigningKey !== undefined
+        ? generateAsymmetricJwt(firstSigningKey, "anon", yield* Clock.currentTimeMillis)
         : generateSymmetricJwt(jwtSecret, "anon")
       : auth.anon_key;
   const serviceRoleKey =
     auth.service_role_key === undefined || auth.service_role_key.length === 0
-      ? signingKeys.length > 0
-        ? generateAsymmetricJwt(signingKeys[0]!, "service_role", yield* Clock.currentTimeMillis)
+      ? firstSigningKey !== undefined
+        ? generateAsymmetricJwt(firstSigningKey, "service_role", yield* Clock.currentTimeMillis)
         : generateSymmetricJwt(jwtSecret, "service_role")
       : auth.service_role_key;
   const shouldUseJwtSecretFallback = signingKeysPath.length === 0;
@@ -1182,10 +1184,25 @@ function consumeCompleteLines(buffer: string): {
 }
 
 /** Why `streamContainerLogs` stopped following the container without failing. */
-type ContainerLogsEndReason =
-  | { readonly _tag: "containerExited" }
-  | { readonly _tag: "supervisorTerminated"; readonly exitCode: number }
-  | { readonly _tag: "containerGone" };
+type ContainerLogsEndReason = Data.TaggedEnum<{
+  ContainerExited: {};
+  SupervisorTerminated: { readonly exitCode: number };
+  ContainerGone: {};
+}>;
+const ContainerLogsEndReason = Data.taggedEnum<ContainerLogsEndReason>();
+
+type ServeSessionOutcome = Data.TaggedEnum<{
+  Shutdown: {};
+  Restart: {};
+  Exited: { readonly reason: ContainerLogsEndReason };
+}>;
+const ServeSessionOutcome = Data.taggedEnum<ServeSessionOutcome>();
+
+type ServeStartOutcome = Data.TaggedEnum<{
+  Shutdown: {};
+  Started: { readonly started: StartedRuntime };
+}>;
+const ServeStartOutcome = Data.taggedEnum<ServeStartOutcome>();
 
 type Spawner = ChildProcessSpawner.ChildProcessSpawner["Service"];
 
@@ -1285,7 +1302,7 @@ const streamContainerLogs = Effect.fn("functions.serve.streamContainerLogs")(fun
       const inspected = yield* inspectContainerState(spawner, containerId).pipe(Effect.result);
       if (Result.isFailure(inspected)) {
         if (isContainerNotFoundMessage(inspected.failure.message)) {
-          return { _tag: "containerGone" } satisfies ContainerLogsEndReason;
+          return ContainerLogsEndReason.ContainerGone();
         }
         return yield* inspected.failure;
       }
@@ -1295,13 +1312,10 @@ const streamContainerLogs = Effect.fn("functions.serve.streamContainerLogs")(fun
         continue;
       }
       if (externalTerminationExitCodes.has(state.exitCode)) {
-        return {
-          _tag: "supervisorTerminated",
-          exitCode: state.exitCode,
-        } satisfies ContainerLogsEndReason;
+        return ContainerLogsEndReason.SupervisorTerminated({ exitCode: state.exitCode });
       }
       if (state.exitCode === 0) {
-        return { _tag: "containerExited" } satisfies ContainerLogsEndReason;
+        return ContainerLogsEndReason.ContainerExited();
       }
       // `supabase stop` force-kills a runtime that ignored SIGTERM and prunes it immediately
       // after, so a second inspect separates that teardown from a kill that leaves the
@@ -1310,7 +1324,7 @@ const streamContainerLogs = Effect.fn("functions.serve.streamContainerLogs")(fun
         yield* Effect.sleep(retryDelay);
         const recheck = yield* inspectContainerState(spawner, containerId).pipe(Effect.result);
         if (Result.isFailure(recheck) && isContainerNotFoundMessage(recheck.failure.message)) {
-          return { _tag: "containerGone" } satisfies ContainerLogsEndReason;
+          return ContainerLogsEndReason.ContainerGone();
         }
       }
       return yield* new EdgeRuntimeContainerCrashedError({
@@ -1329,7 +1343,7 @@ const streamContainerLogs = Effect.fn("functions.serve.streamContainerLogs")(fun
     const inspected = yield* inspectContainerState(spawner, containerId).pipe(Effect.result);
     if (Result.isFailure(inspected)) {
       if (isContainerNotFoundMessage(inspected.failure.message)) {
-        return { _tag: "containerGone" } satisfies ContainerLogsEndReason;
+        return ContainerLogsEndReason.ContainerGone();
       }
       return yield* new DockerLogsStreamError({
         message:
@@ -1458,12 +1472,11 @@ const writeStoppedServingMessage = Effect.fnUntraced(function* () {
 const writeContainerEndedMessage = Effect.fnUntraced(function* (reason: ContainerLogsEndReason) {
   const path = yield* Path.Path;
   const output = yield* Output;
-  const prefix =
-    reason._tag === "containerExited"
-      ? "Edge Runtime exited (code 0)."
-      : reason._tag === "supervisorTerminated"
-        ? `Edge Runtime container stopped (exit ${reason.exitCode}).`
-        : "Edge Runtime container is no longer available.";
+  const prefix = ContainerLogsEndReason.$match(reason, {
+    ContainerExited: () => "Edge Runtime exited (code 0).",
+    SupervisorTerminated: ({ exitCode }) => `Edge Runtime container stopped (exit ${exitCode}).`,
+    ContainerGone: () => "Edge Runtime container is no longer available.",
+  });
   yield* output.raw(
     `${prefix} Stopped serving ${styleText("bold", path.join("supabase", "functions"))}\n`,
     "stdout",
@@ -1984,9 +1997,9 @@ const withShutdownGrace = <A, E, R>(
 ): Effect.Effect<A, E, R> =>
   self.pipe(
     Effect.catch((error) =>
-      Effect.raceFirst(
-        Deferred.await(shutdownRequested).pipe(Effect.as(onShutdown())),
-        Effect.sleep(gracePeriod).pipe(Effect.andThen(Effect.fail(error))),
+      Deferred.await(shutdownRequested).pipe(
+        Effect.as(onShutdown()),
+        Effect.timeoutOrElse({ duration: gracePeriod, orElse: () => Effect.fail(error) }),
       ),
     ),
   );
@@ -2021,54 +2034,57 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
     for (;;) {
       const startOutcome = yield* withShutdownGrace(
         Effect.raceFirst(
-          Deferred.await(shutdownRequested).pipe(Effect.as("shutdown" as const)),
+          Deferred.await(shutdownRequested).pipe(Effect.as(ServeStartOutcome.Shutdown())),
           startEdgeRuntime({
             flags,
             dependencies,
             debug: dependencies.debug,
             networkId: dependencies.networkId,
             inspectMode,
-          }).pipe(Effect.map((started) => ({ _tag: "started" as const, started }))),
+          }).pipe(Effect.map((started) => ServeStartOutcome.Started({ started }))),
         ),
         shutdownRequested,
         gracePeriod,
-        () => "shutdown" as const,
+        () => ServeStartOutcome.Shutdown(),
       );
 
-      if (startOutcome === "shutdown") {
-        yield* writeStoppedServingMessage();
-        return;
-      }
+      const keepServing = yield* ServeStartOutcome.$match(startOutcome, {
+        Shutdown: () => writeStoppedServingMessage().pipe(Effect.as(false)),
+        Started: ({ started }) =>
+          Effect.gen(function* () {
+            const outcome = yield* withShutdownGrace(
+              Effect.raceFirst(
+                Effect.raceFirst(
+                  Deferred.await(shutdownRequested).pipe(Effect.as(ServeSessionOutcome.Shutdown())),
+                  waitForRestartSignal(started.watchSpecs).pipe(
+                    Effect.as(ServeSessionOutcome.Restart()),
+                  ),
+                ),
+                streamContainerLogs(started.containerId, retryDelay).pipe(
+                  Effect.map((reason) => ServeSessionOutcome.Exited({ reason })),
+                ),
+              ),
+              // raceFirst above already interrupted the restart listener, so only a shutdown
+              // signal — not a restart — can still downgrade this failure here.
+              shutdownRequested,
+              gracePeriod,
+              () => ServeSessionOutcome.Shutdown(),
+            ).pipe(
+              Effect.ensuring(
+                bestEffortRemoveContainer(started.containerId).pipe(
+                  Effect.ensuring(started.cleanup),
+                ),
+              ),
+            );
 
-      const started = startOutcome.started;
-
-      const outcome = yield* withShutdownGrace(
-        Effect.raceFirst(
-          Effect.raceFirst(
-            Deferred.await(shutdownRequested).pipe(Effect.as({ _tag: "shutdown" as const })),
-            waitForRestartSignal(started.watchSpecs).pipe(Effect.as({ _tag: "restart" as const })),
-          ),
-          streamContainerLogs(started.containerId, retryDelay).pipe(
-            Effect.map((reason) => ({ _tag: "exited" as const, reason })),
-          ),
-        ),
-        // raceFirst above already interrupted the restart listener, so only a shutdown
-        // signal — not a restart — can still downgrade this failure here.
-        shutdownRequested,
-        gracePeriod,
-        () => ({ _tag: "shutdown" as const }),
-      ).pipe(
-        Effect.ensuring(
-          bestEffortRemoveContainer(started.containerId).pipe(Effect.ensuring(started.cleanup)),
-        ),
-      );
-
-      if (outcome._tag === "shutdown") {
-        yield* writeStoppedServingMessage();
-        return;
-      }
-      if (outcome._tag === "exited") {
-        yield* writeContainerEndedMessage(outcome.reason);
+            return yield* ServeSessionOutcome.$match(outcome, {
+              Restart: () => Effect.succeed(true),
+              Shutdown: () => writeStoppedServingMessage().pipe(Effect.as(false)),
+              Exited: ({ reason }) => writeContainerEndedMessage(reason).pipe(Effect.as(false)),
+            });
+          }),
+      });
+      if (!keepServing) {
         return;
       }
     }

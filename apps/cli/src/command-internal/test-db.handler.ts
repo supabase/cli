@@ -1,4 +1,3 @@
-import * as nodePath from "node:path";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { type DatabaseInstance, type Stack } from "@supabase/stack/effect";
 import { postgres } from "@supabase/stack/commands";
@@ -259,8 +258,8 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
           const hostWorkingDir =
             hostPath === undefined
               ? undefined
-              : nodePath.extname(hostPath) !== ""
-                ? nodePath.dirname(hostPath)
+              : path.extname(hostPath) !== ""
+                ? path.dirname(hostPath)
                 : hostPath;
           return yield* managedStack.stack.commands
             .run(postgres.pgProve({ major: managedStack.major }), {
@@ -289,8 +288,8 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
           const hostWorkingDir =
             hostPath === undefined
               ? undefined
-              : nodePath.extname(hostPath) !== ""
-                ? nodePath.dirname(hostPath)
+              : path.extname(hostPath) !== ""
+                ? path.dirname(hostPath)
                 : hostPath;
           const nativeArgs = ["pg_prove", "--ext", ".pg", "--ext", ".sql", "-r", ...args.hostPaths];
           if (debug) nativeArgs.push("--verbose");
@@ -336,22 +335,18 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
     // Non-zero pg_prove exit fails the command; the TAP failure detail has
     // already streamed to stdout.
     if (exitCode !== 0) {
-      return yield* Effect.fail(
-        new TestDbRunError({
-          message: `error running ${managedStack !== undefined || useNativeProve ? "pg_prove" : "container"}: exit ${exitCode}`,
-        }),
-      );
+      return yield* new TestDbRunError({
+        message: `error running ${managedStack !== undefined || useNativeProve ? "pg_prove" : "container"}: exit ${exitCode}`,
+      });
     }
 
     // A stream that ends without a trailing newline leaves the verdict unterminated.
     const finalVerdict = pendingLine.startsWith(VERDICT_PREFIX) ? pendingLine : lastVerdict;
     const aggregatedFiles = FILES_SUMMARY.exec(lastSummary)?.[1];
     if (finalVerdict.trimEnd() === NO_TESTS_VERDICT && aggregatedFiles === "0") {
-      return yield* Effect.fail(
-        new TestDbNoTestsError({
-          message: `no pgTAP tests found in ${args.hostPaths.join(", ")}`,
-        }),
-      );
+      return yield* new TestDbNoTestsError({
+        message: `no pgTAP tests found in ${args.hostPaths.join(", ")}`,
+      });
     }
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

@@ -1,6 +1,6 @@
+import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
-import { Schema } from "effect";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { Effect, Schema } from "effect";
 
 import {
   shortContainerImageName,
@@ -535,31 +535,33 @@ describe("--exclude image short names under SUPABASE_USE_SLIM_IMAGES", () => {
     vi.resetModules();
   });
 
-  it("keeps matching the docker.io short names", async () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-    vi.resetModules();
-    const slimModule = await import("./status-values.ts");
+  it.effect("keeps matching the docker.io short names", () =>
+    Effect.gen(function* () {
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+      vi.resetModules();
+      const slimModule = yield* Effect.promise(() => import("./status-values.ts"));
 
-    for (const [excluded, omitted] of [
-      ["gotrue", "ANON_KEY"],
-      ["storage-api", "STORAGE_S3_URL"],
-      ["kong", "API_URL"],
-      ["mailpit", "MAILPIT_URL"],
-      ["postgrest", "REST_URL"],
-      ["studio", "STUDIO_URL"],
-      ["edge-runtime", "FUNCTIONS_URL"],
-    ] as const) {
-      const { values } = slimModule.statusValues(
-        baseConfig(),
-        CONTAINER_IDS,
-        HOSTNAME,
-        [excluded],
-        NO_OVERRIDES,
-        WORKDIR,
-      );
-      expect(values[omitted], `--exclude ${excluded}`).toBeUndefined();
-    }
-  });
+      for (const [excluded, omitted] of [
+        ["gotrue", "ANON_KEY"],
+        ["storage-api", "STORAGE_S3_URL"],
+        ["kong", "API_URL"],
+        ["mailpit", "MAILPIT_URL"],
+        ["postgrest", "REST_URL"],
+        ["studio", "STUDIO_URL"],
+        ["edge-runtime", "FUNCTIONS_URL"],
+      ] as const) {
+        const { values } = slimModule.statusValues(
+          baseConfig(),
+          CONTAINER_IDS,
+          HOSTNAME,
+          [excluded],
+          NO_OVERRIDES,
+          WORKDIR,
+        );
+        expect(values[omitted], `--exclude ${excluded}`).toBeUndefined();
+      }
+    }),
+  );
 });
 
 describe("shortContainerImageName", () => {

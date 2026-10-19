@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect } from "effect";
 
+import { withEnvVar } from "../../tests/helpers/command-mocks.ts";
 import { formatTimestamp } from "./timestamp.format.ts";
 
 describe("formatTimestamp", () => {
@@ -18,7 +20,18 @@ describe("formatTimestamp", () => {
 
   it("falls back for malformed input", () => {
     expect(formatTimestamp("not-a-timestamp")).toBe("not-a-timestamp");
+    expect(formatTimestamp("2024-13-01T00:00:00Z")).toBe("2024-13-01T00:00:00Z");
   });
+
+  it.effect("reads a zone-less value as local time", () =>
+    withEnvVar(
+      "TZ",
+      "Asia/Kolkata",
+      Effect.sync(() => {
+        expect(formatTimestamp("2026-02-08T16:44:07")).toBe("2026-02-08 11:14:07");
+      }),
+    ),
+  );
 
   it("returns empty string unchanged", () => {
     expect(formatTimestamp("")).toBe("");

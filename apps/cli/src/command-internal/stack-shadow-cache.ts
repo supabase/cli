@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { resolveArtifact, postgresVersion } from "@supabase/stack/internal/artifacts";
 import type { ShadowSetupInput } from "./db-bootstrap/shadow-database.ts";
 import {
@@ -8,6 +8,10 @@ import {
 } from "./db-bootstrap/shadow-cache.ts";
 import { resolveSetupWebhooksEnabled, type SetupDatabaseOptions } from "./db-bootstrap/db-setup.ts";
 import { supabaseEnvBoolWithProjectFallback } from "./supabase-env.ts";
+
+const encodePostgresImageKey = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Array(Schema.String)),
+);
 
 interface StackShadowCacheEntry {
   readonly key: string;
@@ -54,7 +58,13 @@ export const stackShadowCacheEntry = Effect.fn("StackShadowCache.entry")(functio
     image("realtime", input.setup.realtimeEnabledForSetup),
   ]);
   const keyInputs: ShadowCacheKeyInputs = {
-    postgresImage: JSON.stringify(["stack-v2", runtime, platform, arch, postgres.image]),
+    postgresImage: yield* encodePostgresImageKey([
+      "stack-v2",
+      runtime,
+      platform,
+      arch,
+      postgres.image,
+    ]),
     majorVersion: input.setup.majorVersion,
     jwtSecret: input.jwtSecret,
     jwtExpiry: input.jwtExpiry,

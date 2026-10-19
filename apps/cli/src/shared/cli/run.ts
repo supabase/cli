@@ -12,6 +12,7 @@ import {
   Layer,
   Path,
   PlatformError,
+  Predicate,
   Runtime,
   Scope,
   Stdio,
@@ -118,7 +119,8 @@ const selfManagedSignalCommands: ReadonlyArray<ReadonlyArray<string>> = [["funct
 export function extractCommandPath(args: ReadonlyArray<string>): ReadonlyArray<string> {
   const commandArgs: Array<string> = [];
   for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]!;
+    const arg = args[index];
+    if (arg === undefined) continue;
     if (arg === "--") return commandArgs;
     if (arg.startsWith("-")) {
       const [flag] = arg.split("=", 1);
@@ -152,7 +154,8 @@ export function* rootFlagTokens(
   isValueTakingToken: (token: string) => boolean = isGlobalValueFlagToken,
 ): Generator<{ readonly token: string; readonly index: number }> {
   for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]!;
+    const arg = args[index];
+    if (arg === undefined) continue;
     if (arg === "--") return;
     if (!arg.startsWith("-")) continue;
     yield { token: arg, index };
@@ -206,7 +209,7 @@ function* shortClusterFlagNames(
 ): Generator<string> {
   if (!token.startsWith("-") || token.startsWith("--")) return;
   for (let rest = token.slice(1); rest.length > 0; rest = rest.slice(1)) {
-    const short = `-${rest[0]!}`;
+    const short = `-${rest.charAt(0)}`;
     if (isValueTakingToken(short)) return;
     if (rest[1] === "=") {
       yield short;
@@ -223,7 +226,7 @@ function shortClusterConsumesNextToken(
 ): boolean {
   if (!token.startsWith("-") || token.startsWith("--")) return false;
   for (let rest = token.slice(1); rest.length > 0; rest = rest.slice(1)) {
-    if (isValueTakingToken(`-${rest[0]!}`)) return rest.length === 1;
+    if (isValueTakingToken(`-${rest.charAt(0)}`)) return rest.length === 1;
     if (rest[1] === "=") return false;
   }
   return false;
@@ -239,7 +242,8 @@ function firstPositionalIndex(
   isValueTakingToken: (token: string) => boolean,
 ): number {
   for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]!;
+    const arg = args[index];
+    if (arg === undefined) continue;
     if (arg === "--") return index + 1;
     if (!arg.startsWith("-")) return index;
     const [flag] = arg.split("=", 1);
@@ -442,7 +446,11 @@ export function classifyParseErrorConsoleOutput(
   context: CliErrorSuggestionContext,
 ): ParseErrorConsoleDisposition {
   const error = Cause.squash(cause);
-  if (!CliError.isCliError(error) || error._tag !== "ShowHelp" || error.errors.length === 0) {
+  if (
+    !CliError.isCliError(error) ||
+    !Predicate.isTagged(error, "ShowHelp") ||
+    error.errors.length === 0
+  ) {
     return "flush-unchanged";
   }
   // `isValueTakingFlagTokenFor` only inspects the resolved leaf command's own flags, so
@@ -453,7 +461,7 @@ export function classifyParseErrorConsoleOutput(
   const isValueTakingToken = (token: string) =>
     globalFlagsWithValues.has(token) || isLeafValueTakingToken(token);
   const isSuppressedMissingFlag = (inner: (typeof error.errors)[number]) =>
-    inner._tag === "MissingOption" &&
+    Predicate.isTagged(inner, "MissingOption") &&
     !isMissingFlagTokenPresent(
       inner.option,
       context.args,
@@ -547,7 +555,7 @@ export interface RunCliOptions<BeforeParseError = never> {
       /** Value-taking-token predicate for this argv (global + resolved leaf flags) — see `valueTakingFlagTokenPredicateForArgv`. */
       readonly isValueTakingFlagToken: (token: string) => boolean;
     },
-  ) => Effect.Effect<void>;
+  ) => Effect.Effect<void, never, FileSystem.FileSystem | Path.Path | RuntimeInfo>;
 }
 
 function cliProgramFor<
@@ -659,7 +667,7 @@ export const runCli = Effect.fnUntraced(function* <
           .pipe(Effect.map((signal) => ({ _tag: "signal" as const, signal }))),
       );
 
-      if (outcome._tag === "signal") {
+      if (Predicate.isTagged(outcome, "signal")) {
         // SIGHUP must also stay held once cleanup begins.
         yield* Effect.scoped(
           processControl.holdSignals(["SIGHUP"]).pipe(Effect.andThen(Fiber.interrupt(cliFiber))),

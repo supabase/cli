@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import * as BunPath from "@effect/platform-bun/BunPath";
+import { Effect, Path } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
 /**
@@ -25,22 +26,22 @@ vi.mock("node:fs", () => ({
 }));
 
 const FAKE_EXISTING_BASE = "/fake/project-root";
+const path = Effect.runSync(Effect.provide(Path.Path, BunPath.layer));
 
 describe("canonicalPathForContainment (via resolveEmailTemplateContentPath)", () => {
-  it("resolves a 5,000-component-deep missing content_path without blowing the call stack", async () => {
-    const { resolveEmailTemplateContentPath } = await import("./config-validate.ts");
+  it("resolves a 5,000-component-deep missing content_path without blowing the call stack", () =>
+    import("./config-validate.ts").then(({ resolveEmailTemplateContentPath }) => {
+      const missingSegments = Array.from({ length: 5000 }, (_, i) => `missing-${i}`);
+      const contentPath = `${missingSegments.join("/")}/invite.html`;
 
-    const missingSegments = Array.from({ length: 5000 }, (_, i) => `missing-${i}`);
-    const contentPath = `${missingSegments.join("/")}/invite.html`;
+      const resolved = resolveEmailTemplateContentPath({
+        section: "template",
+        name: "invite",
+        contentPath,
+        contentPresent: false,
+        base: FAKE_EXISTING_BASE,
+      });
 
-    const resolved = resolveEmailTemplateContentPath({
-      section: "template",
-      name: "invite",
-      contentPath,
-      contentPresent: false,
-      base: FAKE_EXISTING_BASE,
-    });
-
-    expect(resolved).toBe(join(FAKE_EXISTING_BASE, contentPath));
-  });
+      expect(resolved).toBe(path.join(FAKE_EXISTING_BASE, contentPath));
+    }));
 });

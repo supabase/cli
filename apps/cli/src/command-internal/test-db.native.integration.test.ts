@@ -208,9 +208,10 @@ describe("managed test db pgTAP", { timeout: 180_000 }, () => {
               const stdout = options.stdout;
               return Effect.gen(function* () {
                 yield* stdout(new TextEncoder().encode(partialTap));
-                return yield* Effect.fail(
-                  new StackError({ operation: "command", message: "pg_prove unavailable" }),
-                );
+                return yield* new StackError({
+                  operation: "command",
+                  message: "pg_prove unavailable",
+                });
               });
             }
             return run;

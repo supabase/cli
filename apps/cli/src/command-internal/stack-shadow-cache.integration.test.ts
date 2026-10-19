@@ -7,7 +7,7 @@ import { Effect, FileSystem, Option, Path, Schema } from "effect";
 import type { ShadowSetupInput } from "./db-bootstrap/shadow-database.ts";
 import { stackShadowCacheEntry } from "./stack-shadow-cache.ts";
 
-const defaultConfig = Schema.decodeUnknownSync(CliConfigSchema)({});
+const defaultConfig = Schema.decodeSync(CliConfigSchema)({});
 
 const input = (
   fs: FileSystem.FileSystem,

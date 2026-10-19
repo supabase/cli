@@ -152,12 +152,10 @@ export const startDatabase = <E>(
     if (!isFreshVolume && fromBackup !== undefined) {
       // Refused before any container or network is created, and before freshness is published,
       // so rollback cannot prune it.
-      return yield* Effect.fail(
-        new StartBackupVolumeExistsError({
-          message: "backup volume already exists",
-          suggestion: `Run ${aqua("supabase stop --no-backup")} to remove existing docker volumes.`,
-        }),
-      );
+      return yield* new StartBackupVolumeExistsError({
+        message: "backup volume already exists",
+        suggestion: `Run ${aqua("supabase stop --no-backup")} to remove existing docker volumes.`,
+      });
     }
 
     // Print this before image resolve so a flag-off cold/failed pull still
@@ -197,7 +195,7 @@ export const startDatabase = <E>(
       // inside `waitForHealthyServices` regardless. Any other failure propagates bare; see this
       // module's header for why `--ignore-health-check` is entirely the caller's concern.
       if (fromBackup === undefined) {
-        return yield* Effect.fail(postgresHealthResult.failure);
+        return yield* postgresHealthResult.failure;
       }
     }
 

@@ -208,15 +208,7 @@ export const createShadowDatabase = (
       [CLI_PROJECT_LABEL]: input.projectId,
       [COMPOSE_PROJECT_LABEL]: input.projectId,
     };
-    yield* ensureNetwork(spawner, input.networkId, labels).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ShadowDbError({
-            message: cause.message,
-            reason: shadowContainerReason(cause.reason),
-          }),
-      ),
-    );
+    yield* ensureNetwork(spawner, input.networkId, labels);
     // Both overrides are the shadow baseline cache's and nobody else's — see each field's doc
     // comment on {@link CreateShadowDatabaseInput}.
     const baseSpec = buildShadowPostgresContainerSpec(input);
@@ -234,17 +226,16 @@ export const createShadowDatabase = (
       workdir: input.workdir,
       extraHosts: input.extraHosts,
     };
-    const containerId = yield* createContainer(spawner, spec, containerOpts).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ShadowDbError({
-            message: cause.message,
-            reason: shadowContainerReason(cause.reason),
-          }),
-      ),
-    );
+    const containerId = yield* createContainer(spawner, spec, containerOpts);
     return { containerId };
   }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ShadowDbError({
+          message: cause.message,
+          reason: shadowContainerReason(cause.reason),
+        }),
+    ),
     Effect.withSpan("ShadowDatabase.create", {
       attributes: { "shadow.restore_archive": input.restoreArchive !== undefined },
     }),

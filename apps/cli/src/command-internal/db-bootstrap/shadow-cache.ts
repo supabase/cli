@@ -10,6 +10,7 @@ import { createHash, scryptSync } from "node:crypto";
 import type { CliConfig } from "@supabase/config";
 import {
   Clock,
+  DateTime,
   Effect,
   Match,
   Option,
@@ -270,9 +271,7 @@ const resolveShadowCacheKeyInputs = <E>(
       .readFileString(rolesPath)
       .pipe(
         Effect.catchTag("PlatformError", (error) =>
-          Predicate.isTagged(error.reason, "NotFound")
-            ? Effect.succeed("")
-            : Effect.succeed(undefined),
+          Predicate.isTagged(error.reason, "NotFound") ? Effect.succeed("") : Effect.undefined,
         ),
       );
     if (rolesSql === undefined) return Option.none();
@@ -496,7 +495,7 @@ const sweepShadowBaselineRetention = <E>(
 /** Refresh mtime on a warm hit so frequently used keys survive LRU/TTL. Best-effort. */
 const touchShadowBaselineTar = (fs: FileSystem.FileSystem, tarPath: string): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const now = new Date(yield* Clock.currentTimeMillis);
+    const now = yield* DateTime.nowAsDate;
     yield* fs.utimes(tarPath, now, now);
   }).pipe(Effect.orElseSucceed(() => undefined));
 
@@ -610,9 +609,7 @@ const exportShadowBaseline = <E>(
           .readFileString(input.path.join(input.workdir, "supabase", "roles.sql"))
           .pipe(
             Effect.catchTag("PlatformError", (error) =>
-              Predicate.isTagged(error.reason, "NotFound")
-                ? Effect.succeed("")
-                : Effect.succeed(undefined),
+              Predicate.isTagged(error.reason, "NotFound") ? Effect.succeed("") : Effect.undefined,
             ),
           );
         if (rolesSqlNow !== keyedRolesSql) {
