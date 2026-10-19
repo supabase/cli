@@ -11,6 +11,11 @@ vi.mock("node:net", (importOriginal) =>
 );
 
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import {
+  BRANCH_PROJECT_REF,
+  branchListApi,
+  warningsOf,
+} from "../../../../tests/helpers/db-remote-selection.ts";
 import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -171,7 +176,7 @@ function mockProjectRef() {
   const layer = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
-    // An explicit `--project-ref` wins over the workdir's own ref, so a test can prove the flag
+    // An explicit `--remote=<ref>` wins over the workdir's own ref, so a test can prove the flag
     // (not just the fallback) drives the linked ref.
     resolveRef: (flagValue: Option.Option<string>) =>
       Effect.sync(() => {
@@ -193,7 +198,7 @@ function mockProjectRef() {
   };
 }
 
-/** Validating credentials mock — the advisors `--linked` token gate calls
+/** Validating credentials mock — the advisors hosted token gate calls
  *  `CommandCredentials.getAccessToken`, which fails hard on a malformed token
  *  and returns None when no token is present. */
 function mockCredentials(opts: { token?: "valid" | "none" | "invalid" } = {}) {
@@ -327,6 +332,8 @@ function setup(opts: SetupOpts = {}) {
     resolver,
   };
 }
+
+const REMOTE_LINKED: DbAdvisorsFlags["remote"] = Option.some({ _tag: "Linked" });
 
 const flags = (over: Partial<DbAdvisorsFlags> = {}): DbAdvisorsFlags => ({
   dbUrl: over.dbUrl ?? Option.none<string>(),
@@ -488,7 +495,8 @@ describe("db advisors — local", () => {
   });
 });
 
-const linkedFlags = (over: Partial<DbAdvisorsFlags> = {}) => flags({ linked: true, ...over });
+const linkedFlags = (over: Partial<DbAdvisorsFlags> = {}) =>
+  flags({ remote: REMOTE_LINKED, ...over });
 
 describe("db advisors — linked", () => {
   const securityLint = {
@@ -526,7 +534,9 @@ describe("db advisors — linked", () => {
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         yield* stubManagementApi(resolverRequests, serveLinkedDatabase(VALID_REF));
-        yield* dbAdvisors(linkedFlags({ projectRef: Option.some(VALID_REF) }));
+        yield* dbAdvisors(
+          linkedFlags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
+        );
         expect(resolverRequests.map(({ method, path }) => `${method} ${path}`)).toEqual([
           `GET /v1/projects/${VALID_REF}/config/database/pooler`,
           `POST /v1/projects/${VALID_REF}/cli/login-role`,
@@ -541,7 +551,7 @@ describe("db advisors — linked", () => {
         );
         assertPermissionDrift({
           command: "db advisors",
-          activeFlags: { linked: true, "project-ref": VALID_REF },
+          activeFlags: { remote: VALID_REF },
           requests: [...asRecordedRequests(resolverRequests), ...api.requests],
           exact: true,
         });
@@ -553,33 +563,36 @@ describe("db advisors — linked", () => {
     },
   );
 
-  it.effect("makes no Management API request for --local through the real layers", () => {
-    const { layer, api } = setup({
-      rows: [],
-      realLayers: true,
-    });
-    const resolverRequests: Array<StubbedRequest> = [];
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      yield* stubManagementApi(resolverRequests, () => undefined);
-      yield* dbAdvisors(flags({ local: true }));
-      expect(resolverRequests).toEqual([]);
-      expect(api.requests).toEqual([]);
-      expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(
-        false,
-      );
-      assertPermissionDrift({
-        command: "db advisors",
-        activeFlags: { local: true },
-        requests: [],
-        exact: true,
+  it.effect(
+    "makes no Management API request for the default local target through the real layers",
+    () => {
+      const { layer, api } = setup({
+        rows: [],
+        realLayers: true,
       });
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
-      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
-    );
-  });
+      const resolverRequests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* stubManagementApi(resolverRequests, () => undefined);
+        yield* dbAdvisors(flags());
+        expect(resolverRequests).toEqual([]);
+        expect(api.requests).toEqual([]);
+        expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(
+          false,
+        );
+        assertPermissionDrift({
+          command: "db advisors",
+          activeFlags: {},
+          requests: [],
+          exact: true,
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    },
+  );
 
   it.effect(
     "fails on a 403 from the security advisors without asking for the performance ones",
@@ -596,7 +609,7 @@ describe("db advisors — linked", () => {
         ]);
         assertPermissionDrift({
           command: "db advisors",
-          activeFlags: { linked: true, type: "all" },
+          activeFlags: { remote: true, type: "all" },
           requests: api.requests,
         });
       }).pipe(Effect.provide(layer));
@@ -615,7 +628,7 @@ describe("db advisors — linked", () => {
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(true);
       assertPermissionDrift({
         command: "db advisors",
-        activeFlags: { linked: true, type: "all", level: true },
+        activeFlags: { remote: true, type: "all", level: true },
         requests: api.requests,
         exact: true,
       });
@@ -626,7 +639,7 @@ describe("db advisors — linked", () => {
   });
 
   it.effect(
-    "fetches advisors for the project given via --project-ref, overriding the workdir's own ref",
+    "fetches advisors for the project given via --remote=<ref>, overriding the workdir's own ref",
     () => {
       // The fake resolver's own fallback (VALID_REF) represents whatever the workdir would
       // resolve to absent the flag; the flag must win over it and drive both API and cache.
@@ -636,7 +649,10 @@ describe("db advisors — linked", () => {
       });
       return Effect.gen(function* () {
         yield* dbAdvisors(
-          flags({ type: Option.some("security"), projectRef: Option.some(FLAG_REF) }),
+          flags({
+            type: Option.some("security"),
+            remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const),
+          }),
         );
         expect(
           api.requests.some((r) => r.url.includes(`/v1/projects/${FLAG_REF}/advisors/security`)),
@@ -708,7 +724,7 @@ describe("db advisors — linked", () => {
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(false);
       assertPermissionDrift({
         command: "db advisors",
-        activeFlags: { linked: true, type: "security" },
+        activeFlags: { remote: true, type: "security" },
         requests: api.requests,
         exact: true,
       });
@@ -724,7 +740,7 @@ describe("db advisors — linked", () => {
       expect(urls.some((u) => u.includes("/advisors/security"))).toBe(false);
       assertPermissionDrift({
         command: "db advisors",
-        activeFlags: { linked: true, type: "performance" },
+        activeFlags: { remote: true, type: "performance" },
         requests: api.requests,
         exact: true,
       });
@@ -840,4 +856,111 @@ describe("db advisors — linked", () => {
       );
     }).pipe(Effect.provide(layer));
   });
+});
+
+describe("db advisors — target selection", () => {
+  const FLAG_PROJECT_REF = "flagflagflagflagflag";
+
+  const resolvedTarget = (
+    selector: Partial<DbAdvisorsFlags>,
+    options: { readonly branchApi?: ReturnType<typeof branchListApi> } = {},
+  ) => {
+    const { layer, out, resolver } = setup({
+      rows: [],
+      securityLints: [],
+      performanceLints: [],
+    });
+    const provided =
+      options.branchApi === undefined ? layer : Layer.merge(layer, options.branchApi.layer);
+    return Effect.gen(function* () {
+      yield* dbAdvisors(flags(selector)).pipe(Effect.provide(provided));
+      return { target: resolver.resolveInputs[0]?.target, warnings: warningsOf(out) };
+    });
+  };
+
+  it.effect("targets the local database, with no warning, when nothing selects one", () =>
+    Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget({});
+      expect(target).toEqual({ kind: "local" });
+      expect(warnings).toEqual([]);
+    }),
+  );
+
+  it.effect("targets the project --remote=<ref> names, with no warning", () =>
+    Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget({
+        remote: Option.some({ _tag: "Ref", ref: FLAG_PROJECT_REF } as const),
+      });
+      expect(target).toMatchObject({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" });
+      expect(warnings).toEqual([]);
+    }),
+  );
+
+  it.effect("targets the database --remote=<db-url> names, with no warning", () =>
+    Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget({
+        remote: Option.some({
+          _tag: "DbUrl",
+          url: "postgresql://postgres:pw@db.example.com/db",
+        } as const),
+      });
+      expect(target?.kind).toBe("db-url");
+      expect(warnings).toEqual([]);
+    }),
+  );
+
+  it.effect("targets the project of the branch --remote=<branch> names", () => {
+    const branchApi = branchListApi();
+    return Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget(
+        { remote: Option.some({ _tag: "Branch", name: "feature-x" }) },
+        { branchApi },
+      );
+      expect(target).toMatchObject({ kind: "linked", ref: BRANCH_PROJECT_REF, source: "flag" });
+      expect(warnings).toEqual([]);
+      assertPermissionDrift({
+        command: "db advisors",
+        activeFlags: { remote: "feature-x" },
+        requests: branchApi.requests,
+      });
+    });
+  });
+
+  it.effect.each([
+    {
+      alias: "--linked",
+      flags: { linked: true },
+      kind: "linked",
+      warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
+    },
+    {
+      alias: "--project-ref",
+      flags: { projectRef: Option.some(FLAG_PROJECT_REF) },
+      kind: "linked",
+      warning: "--project-ref is deprecated and will be removed in v4. Use --remote instead",
+    },
+    {
+      alias: "--db-url",
+      flags: { dbUrl: Option.some("postgresql://postgres:pw@db.example.com/db") },
+      kind: "db-url",
+      warning: "--db-url is deprecated and will be removed in v4. Use --remote instead",
+    },
+    {
+      alias: "--local",
+      flags: { local: true },
+      kind: "local",
+      warning: "--local isn't needed (local is the default) and will be removed in v4",
+    },
+  ] satisfies ReadonlyArray<{
+    alias: string;
+    flags: Partial<DbAdvisorsFlags>;
+    kind: string;
+    warning: string;
+  }>)("keeps $alias working and warns that it is deprecated", ({ flags, kind, warning }) =>
+    Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget(flags);
+      expect(target?.kind).toBe(kind);
+      expect(warnings).toEqual([expect.stringContaining(warning)]);
+    }),
+  );
 });

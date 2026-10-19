@@ -21,6 +21,7 @@ import { dbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
 import { dbSchemaDeclarativeGenerate } from "./generate.handler.ts";
 import { dbSchemaDeclarativeGenerateRuntimeLayer } from "./generate.layers.ts";
 import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
+import { branchResolution } from "../../../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
 
@@ -90,6 +91,7 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
         },
         dbConfig,
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+        branchResolution,
       ),
       { default: "local" },
     ),

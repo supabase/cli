@@ -15,6 +15,7 @@ import { dbQuery } from "./query.handler.ts";
 import { dbQueryRuntimeLayer } from "./query.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
@@ -55,9 +56,10 @@ export const dbQueryCommand = Command.make("query", config).pipe(
           operations: [
             { operationId: "v1-run-a-query", kind: "required", when: [{ dbTarget: ["linked"] }] },
           ],
-          noApiEffectFlags: ["file", "project-ref", "read-only"],
+          noApiEffectFlags: ["file", "read-only"],
         },
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+        branchResolution,
       ),
       { default: "local" },
     ),

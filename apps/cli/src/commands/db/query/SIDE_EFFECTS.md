@@ -1,69 +1,73 @@
 # `supabase db query`
 
 Implemented in `query.handler.ts`. Executes SQL against the local
-database (direct connection), a `--db-url` database (direct connection) or the linked project
-(Management API), then renders the result as a table or JSON.
+database (direct connection), a `--remote=<url>` database (direct connection) or a remote project
+or branch (Management API), then renders the result as a table or JSON.
 
-With no target flag the command follows the workspace target (`SUPABASE_TARGET`, then `target`
-in `config.toml`, default `local`; see
+With no selector the command runs against the local stack, and in a linked checkout the `Target:`
+line adds `default; pass --remote for <project>`. `--remote` selects the linked project,
+`--remote=<ref>` another project, `--remote=<branch>` a branch of the linked project (by name or
+UUID) and `--remote=<url>` a custom database (see
 [ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md)).
-`--local` selects the local stack, `--linked` or `--project-ref` the linked project.
 
-Any statement sent to a hosted target (linked project or remote `--db-url`) asks for one
+Any statement sent to a hosted target (remote project, branch or remote `--remote=<url>`) asks for one
 confirmation first, because the command cannot tell a read from a write. `--read-only` skips that
 confirmation and accepts only read statements in a read-only transaction (see Notes). The local
 stack never prompts.
 
 ## Files Read
 
-| Path                                 | Format     | When                                                                                   |
-| ------------------------------------ | ---------- | -------------------------------------------------------------------------------------- |
-| `<path>` (from `--file`)             | SQL        | when `--file` / `-f` is set (takes precedence over arg/stdin)                          |
-| stdin                                | SQL        | when piped (not a TTY) and no `--file`/positional SQL                                  |
-| `supabase/config.toml`               | TOML       | local / `--db-url` connection resolution                                               |
-| `~/.supabase/access-token`           | plain text | a linked target when `SUPABASE_ACCESS_TOKEN` unset                                     |
-| `supabase/.temp/project-ref`         | plain text | linked ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set |
-| `supabase/.temp/linked-project.json` | JSON       | a linked target, existence check before the cache write (see below)                    |
+| Path                                 | Format     | When                                                                                                                                          |
+| ------------------------------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<path>` (from `--file`)             | SQL        | when `--file` / `-f` is set (takes precedence over arg/stdin)                                                                                 |
+| stdin                                | SQL        | when piped (not a TTY) and no `--file`/positional SQL                                                                                         |
+| `supabase/config.toml`               | TOML       | local / `--remote=<url>` connection resolution                                                                                                |
+| `~/.supabase/access-token`           | plain text | a remote project or branch when `SUPABASE_ACCESS_TOKEN` unset                                                                                 |
+| `supabase/.temp/project-ref`         | plain text | bare `--remote`, ref resolution — skipped when `SUPABASE_PROJECT_ID` is set; with no selector, only to name the project in the `Target:` hint |
+| `supabase/.temp/linked-project.json` | JSON       | a remote project or branch, existence check before the cache write (see below)                                                                |
 
 ## Files Written
 
-| Path                                 | Format | When                                                                                                               |
-| ------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------ |
-| `supabase/.temp/linked-project.json` | JSON   | linked target, after the query runs, when the file does not already exist and `GET /v1/projects/{ref}` returns 200 |
+| Path                                 | Format | When                                                                                                                          |
+| ------------------------------------ | ------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `supabase/.temp/linked-project.json` | JSON   | remote project or branch, after the query runs, when the file does not already exist and `GET /v1/projects/{ref}` returns 200 |
 
 ## API Routes
 
-| Method | Path                                | Auth   | Request body                                                    | Response                                                                                                 |
-| ------ | ----------------------------------- | ------ | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| POST   | `/v1/projects/{ref}/database/query` | Bearer | `{"query":"<sql>"}`, plus `"read_only":true` with `--read-only` | 201, JSON array of row objects (read via `executeRaw`, since the typed operation voids the body).        |
-| GET    | `/v1/projects/{ref}`                | Bearer | —                                                               | 200 → linked-project cache write; any other status → no write. Fired after the query on the linked path. |
+| Method | Path                                | Auth   | Request body                                                    | Response                                                                                                                                                                                                              |
+| ------ | ----------------------------------- | ------ | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/v1/projects/{ref}/database/query` | Bearer | `{"query":"<sql>"}`, plus `"read_only":true` with `--read-only` | 201, JSON array of row objects (read via `executeRaw`, since the typed operation voids the body).                                                                                                                     |
+| GET    | `/v1/projects/{ref}`                | Bearer | —                                                               | 200 → linked-project cache write; any other status → no write. Fired after the query on a remote project or branch.                                                                                                   |
+| GET    | `/v1/projects/{parent}/branches`    | Bearer | —                                                               | 200 → `[{id, name, project_ref}]`. Branch lookup — only for `--remote=<branch>`, and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project. |
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                        |
-| ----------------------- | ------------------------------------------------------------------------------ |
-| `SUPABASE_ACCESS_TOKEN` | linked-target auth                                                             |
-| `SUPABASE_TARGET`       | workspace target when no `--local`/`--linked`/`--db-url` is given              |
-| `SUPABASE_YES`          | grants the hosted-target confirmation (shell only; `supabase/.env` is ignored) |
-| agent-detection signals | `--agent=auto` (e.g. `CURSOR_*`, `CLAUDECODE`, …) via `@vercel/detect-agent`   |
+| Variable                | Purpose                                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `SUPABASE_ACCESS_TOKEN` | auth for a remote project or branch                                                                                      |
+| `SUPABASE_PROJECT_ID`   | linked project ref override and the parent that `--remote=<branch>` is resolved against (superseded by `--remote=<ref>`) |
+| `SUPABASE_YES`          | grants the hosted-target confirmation (shell only; `supabase/.env` is ignored)                                           |
+| agent-detection signals | `--agent=auto` (e.g. `CURSOR_*`, `CLAUDECODE`, …) via `@vercel/detect-agent`                                             |
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                                 |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                                                   |
-| `1`  | more than one of `--db-url`/`--linked`/`--local` (`TargetSelectorConflictError`); no SQL provided; empty stdin; unreadable `--file`; linked target without login; query exec failure; non-201 linked status                               |
-| `1`  | `--project-ref` with `--local` or `--db-url` (`TargetProjectRefConflictError`)                                                                                                                                                            |
-| `1`  | hosted target without `--read-only` in a JSON, piped, agent or non-TTY run without `--yes` or a shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`); nothing is sent                                                              |
-| `1`  | `--read-only` with a statement that does not start with `SELECT`, `WITH`, `VALUES`, `TABLE`, `SHOW`, `EXPLAIN` or `(`, or with input that ends inside a comment, quote or dollar quote (`DbQueryReadOnlyStatementError`); nothing is sent |
-| `1`  | hosted target confirmation declined (`HostedMutationDeclinedError`, `context canceled`); nothing is sent                                                                                                                                  |
+| Code | Condition                                                                                                                                                                                                                                                                                     |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                                                                                       |
+| `1`  | more than one of `--remote`/`--linked`/`--db-url`/`--local` (`TargetSelectorConflictError`); no SQL provided; empty stdin; unreadable `--file`; remote project or branch without login; `--remote=<branch>` naming no branch of the parent project; query exec failure; non-201 remote status |
+| `1`  | `--project-ref` with `--local`, `--db-url` or `--remote=<value>` (`TargetProjectRefConflictError`)                                                                                                                                                                                            |
+| `1`  | hosted target without `--read-only` in a JSON, piped, agent or non-TTY run without `--yes` or a shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`); nothing is sent                                                                                                                  |
+| `1`  | `--read-only` with a statement that does not start with `SELECT`, `WITH`, `VALUES`, `TABLE`, `SHOW`, `EXPLAIN` or `(`, or with input that ends inside a comment, quote or dollar quote (`DbQueryReadOnlyStatementError`); nothing is sent                                                     |
+| `1`  | hosted target confirmation declined (`HostedMutationDeclinedError`, `context canceled`); nothing is sent                                                                                                                                                                                      |
 
 ## Output
 
 The query payload goes to **stdout** in every `--output-format` mode (there is no
 `--output-format` for `db query`; there is no machine envelope around the
-payload). Diagnostics go to **stderr**: the `Target: …` line (linked project
-`Target: <name> (<ref>)`, `Target: local stack (<host>:<port>)`, `Target: custom Postgres (<host>:<port>)`)
+payload). Diagnostics go to **stderr**: alias deprecation warnings, the `Target: …` line (remote
+project `Target: <name> (<ref>)`, branch `Target: project <parent> · branch <name> (<ref>)`,
+`Target: local stack (<host>:<port>)` with ` · default; pass --remote for <project>` appended in a
+linked checkout when no selector was given, `Target: custom Postgres (<host>:<port>)`)
 and the confirmation question. DDL/DML with no result columns prints the command tag.
 
 - **table** (default for humans): `olekukonko/tablewriter` v1 box layout, NULL for nil.
@@ -98,11 +102,17 @@ from the environment. Agent mode defaults the format to JSON (table for humans).
     See `output-formats.ts`.
 - **Local DDL command tags** use the raw `commandComplete` protocol tag (so
   `CREATE TABLE` etc. survive node-postgres' first-word-only parse of the tag).
-- **Target selection.** `--db-url`, `--linked` and `--local` are mutually exclusive and a `false`
-  switch counts as absent. `--project-ref` selects the linked project and supplies only the ref
-  (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`) for the connection and the linked-project
-  cache; combining it with `--local` or `--db-url` is a hard error.
-- **Hosted consent.** A linked project or remote `--db-url` asks once, after the SQL is known and
+- **Target selection.** `--remote` is read as the linked project (bare), a project ref (20
+  lowercase letters), a Postgres URL, or else a branch of the linked project by name or UUID;
+  `--remote=false` and `--remote=` fail with `Leave out --remote to target the local database.` A
+  bare `--remote` followed by a word that is a branch of the linked project fails with a
+  `Did you mean --remote=<word>?` hint, since the word may have been meant as the flag's value.
+- **Deprecated aliases.** `--linked`, `--project-ref=<ref>`, `--db-url=<url>` and `--local` still
+  work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
+  warns that local is the default). They are mutually exclusive with each other and with
+  `--remote`; a `false` switch counts as absent. `--project-ref` with `--local`, `--db-url` or
+  `--remote=<value>` is a hard error.
+- **Hosted consent.** A remote project, branch or remote `--remote=<url>` asks once, after the SQL is known and
   before it is sent: `Run a SQL statement`, with the statement (collapsed to one line, at most 120
   characters) as the detail and default No. A shell `SUPABASE_YES` or `--yes` grants it
   (`Confirmed by --yes: …`); a `SUPABASE_YES` in `supabase/.env` and a piped answer do not. Stdin
@@ -116,17 +126,17 @@ from the environment. Agent mode defaults the format to JSON (table for humans).
   `BEGIN ATOMIC` (the splitter reads such a body as one statement) fails with
   `DbQueryReadOnlyStatementError`, naming only the leading keyword or a fixed label. Keywords
   inside strings, dollar quotes and comments, and reads such as `SELECT set_config(...)`, pass the
-  keyword check. A linked target sends `"read_only": true` in the Management API request, and the
-  API enforces it. The local stack and a `--db-url` database run the statement inside
+  keyword check. A remote project or branch sends `"read_only": true` in the Management API request, and the
+  API enforces it. The local stack and a `--remote=<url>` database run the statement inside
   `BEGIN READ ONLY`, `SET LOCAL lock_timeout = '5s'`, the statement, then `ROLLBACK`, so Postgres
   rejects writes and the read cannot queue behind heavy locks (there is no `statement_timeout`).
   What it does not cover: a function with side effects called from a read statement, such as
   `pg_terminate_backend` or `dblink_exec`, still runs.
-- **Linked-project cache.** On the `--linked` path,
+- **Linked-project cache.** On a remote project or branch,
   after the query runs — whether it succeeds or fails — the handler issues
   `GET /v1/projects/{ref}` and writes `supabase/.temp/linked-project.json`. The
   write is skipped when the file already exists (`supabase link` is authoritative),
   the access token is missing, or the GET is non-200 — so an auth-failing query
-  still fires the GET but writes nothing. `--local` / `--db-url` never resolve a
+  still fires the GET but writes nothing. The local default and `--remote=<url>` never resolve a
   project ref and so never trigger this request or write. Shared with `backups`
   via `LinkedProjectCache`.

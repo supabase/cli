@@ -1,29 +1,31 @@
 # `supabase db push`
 
 Applies pending local migrations (and optionally seed data and custom roles) to
-the linked project's Postgres database, or to the database `--local` or `--db-url`
-selects, updating configured Vault secrets before migrations unless `--skip-vault`
-is set. A hosted target asks one combined confirmation before the first write.
+the local database by default, or to the database `--remote` selects (the linked project,
+`--remote=<ref>`, a branch via `--remote=<branch>`, or a database via `--remote=<url>`),
+updating configured Vault secrets before migrations unless `--skip-vault`
+is set. A hosted target asks one combined confirmation before the first write. With no
+selector in a linked checkout, the `Target:` line adds `default; pass --remote for <project>`.
 
 ## Files Read
 
-| Path                                              | Format      | When                                                                                                                                 |
-| ------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `<workdir>/supabase/config.json` or `config.toml` | JSON / TOML | always; `config.json` is preferred when both exist (embedded defaults used when neither exists)                                      |
-| `<workdir>/.env*`, `<workdir>/supabase/.env*`     | dotenv      | project env files, resolved with `SUPABASE_ENV` (default `development`); a variable the shell sets is never taken from a file        |
-| `~/.supabase/<hash>/project-ref`                  | plain text  | on the `--linked` path (and the default target), to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set |
-| `~/.supabase/access-token`                        | plain text  | when `SUPABASE_ACCESS_TOKEN` unset and a linked temp-role is minted                                                                  |
-| `<workdir>/supabase/migrations/`                  | directory   | when `[db.migrations].enabled` (default true), to list local files                                                                   |
-| `<workdir>/supabase/migrations/*.sql`             | SQL         | for each pending migration, when applied (and not `--dry-run`)                                                                       |
-| seed files from `[db.seed].sql_paths`             | SQL         | when `--include-seed` and `[db.seed].enabled` (paths under `supabase/`)                                                              |
-| `<workdir>/supabase/roles.sql`                    | SQL         | when `--include-roles` (existence check + apply)                                                                                     |
+| Path                                              | Format      | When                                                                                                                                              |
+| ------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.json` or `config.toml` | JSON / TOML | always; `config.json` is preferred when both exist (embedded defaults used when neither exists)                                                   |
+| `<workdir>/.env*`, `<workdir>/supabase/.env*`     | dotenv      | project env files, resolved with `SUPABASE_ENV` (default `development`); a variable the shell sets is never taken from a file                     |
+| `~/.supabase/<hash>/project-ref`                  | plain text  | bare `--remote`, to resolve the ref — skipped when `SUPABASE_PROJECT_ID` is set; with no selector, only to name the project in the `Target:` hint |
+| `~/.supabase/access-token`                        | plain text  | when `SUPABASE_ACCESS_TOKEN` unset and a remote temp-role is minted                                                                               |
+| `<workdir>/supabase/migrations/`                  | directory   | when `[db.migrations].enabled` (default true), to list local files                                                                                |
+| `<workdir>/supabase/migrations/*.sql`             | SQL         | for each pending migration, when applied (and not `--dry-run`)                                                                                    |
+| seed files from `[db.seed].sql_paths`             | SQL         | when `--include-seed` and `[db.seed].enabled` (paths under `supabase/`)                                                                           |
+| `<workdir>/supabase/roles.sql`                    | SQL         | when `--include-roles` (existence check + apply)                                                                                                  |
 
 ## Files Written
 
-| Path                                             | Format | When                                    |
-| ------------------------------------------------ | ------ | --------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | on the `--linked` path (post-run cache) |
-| `~/.supabase/telemetry.json`                     | JSON   | always (post-run telemetry flush)       |
+| Path                                             | Format | When                                           |
+| ------------------------------------------------ | ------ | ---------------------------------------------- |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | on a remote project or branch (post-run cache) |
+| `~/.supabase/telemetry.json`                     | JSON   | always (post-run telemetry flush)              |
 
 ## Database Mutations
 
@@ -38,40 +40,41 @@ is set. A hosted target asks one combined confirmation before the first write.
 
 ## API Routes
 
-| Method | Path | Auth | Request body | Response (used fields)                                                                                                                                                                           |
-| ------ | ---- | ---- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| —      | —    | —    | —            | The native handler connects to Postgres directly. On the `--linked` path the db-config resolver may call the Management API to mint a temporary login role (inherited from the shared resolver). |
+| Method | Path | Auth | Request body | Response (used fields)                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------ | ---- | ---- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| —      | —    | —    | —            | The native handler connects to Postgres directly. On a remote project or branch the db-config resolver may call the Management API to mint a temporary login role (inherited from the shared resolver), and `--remote=<branch>` (or a bare `--remote` followed by a word that could name a branch) calls `GET /v1/projects/{parent}/branches` to find the branch's project (`{parent}` is `SUPABASE_PROJECT_ID`, else the linked project). |
 
 ## Environment Variables
 
-| Variable                      | Purpose                                                                                                                                      | Required?                                               |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN`       | auth token for the `--linked` resolver path                                                                                                  | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_DB_PASSWORD`        | password for the linked/remote connection; ignored for a target other than the linked project (see Notes)                                    | no (`--password`/`-p` takes precedence)                 |
-| `SUPABASE_DB_SEED_ENABLED`    | overrides `[db.seed].enabled`, including a matched `[remotes.*]` block; lifts a `false` but does not make push seed without `--include-seed` | no                                                      |
-| `SUPABASE_*` config overrides | any `config.toml` key an env name exists for (e.g. `SUPABASE_DB_MIGRATIONS_ENABLED`); see Notes                                              | no                                                      |
-| `SUPABASE_YES`                | shell value confirms the hosted-mutation consent and lets the connection clear a network ban; a `SUPABASE_YES` in `supabase/.env` does not   | no (also `--yes`)                                       |
-| `SUPABASE_PROJECT_ID`         | linked-ref resolution override, superseded by `--project-ref` when set (same precedence position) — see Notes                                | no                                                      |
-| `DOTENV_PRIVATE_KEY*`         | decrypts `encrypted:` config secrets; `[db.vault]` values are not decrypted with `--skip-vault`                                              | no                                                      |
+| Variable                      | Purpose                                                                                                                                               | Required?                                               |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`       | auth token for a remote project or branch                                                                                                             | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_DB_PASSWORD`        | password for the remote connection; ignored for a target other than the linked project (see Notes)                                                    | no (`--password`/`-p` takes precedence)                 |
+| `SUPABASE_DB_SEED_ENABLED`    | overrides `[db.seed].enabled`, including a matched `[remotes.*]` block; lifts a `false` but does not make push seed without `--include-seed`          | no                                                      |
+| `SUPABASE_*` config overrides | any `config.toml` key an env name exists for (e.g. `SUPABASE_DB_MIGRATIONS_ENABLED`); see Notes                                                       | no                                                      |
+| `SUPABASE_YES`                | shell value confirms the hosted-mutation consent and lets the connection clear a network ban; a `SUPABASE_YES` in `supabase/.env` does not            | no (also `--yes`)                                       |
+| `SUPABASE_PROJECT_ID`         | linked-ref resolution override, superseded by `--remote=<ref>` when set, and the parent project that `--remote=<branch>` resolves against — see Notes | no                                                      |
+| `DOTENV_PRIVATE_KEY*`         | decrypts `encrypted:` config secrets; `[db.vault]` values are not decrypted with `--skip-vault`                                                       | no                                                      |
 
 ## Exit Codes
 
 | Code | Condition                                                                                                                                                                                                               |
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success (including "up to date")                                                                                                                                                                                        |
-| `1`  | more than one of `--local`, `--linked`, `--db-url`, or `--project-ref` with `--local`/`--db-url` (target selector conflict)                                                                                             |
+| `1`  | more than one of `--remote`, `--linked`, `--db-url` and `--local`, or `--project-ref` with `--local`/`--db-url`/`--remote=<value>` (target selector conflict)                                                           |
+| `1`  | `--remote=<branch>` naming no branch of the parent project                                                                                                                                                              |
 | `1`  | `ErrMissingLocal` — remote versions absent locally (suggests repair/pull)                                                                                                                                               |
 | `1`  | `ErrMissingRemote` without `--include-all` (suggests `--include-all`)                                                                                                                                                   |
 | `1`  | the combined confirmation declined at the prompt (`HostedMutationDeclinedError`); nothing is written                                                                                                                    |
 | `1`  | the combined confirmation needed but the run can't prompt (JSON or machine output, piped stdin, agent) and neither `--yes` nor a shell `SUPABASE_YES` is set (`HostedMutationConsentRequiredError`); nothing is written |
-| `1`  | `--password` with `--db-url` or `--local` (`--password can't be used with --db-url. …` / `--password only applies to a linked project. …`)                                                                              |
+| `1`  | `--password` with `--remote=<url>` or the local default (`--password can't be used with --remote=<db-url>. …` / `--password only applies to a linked project. …`)                                                       |
 | `1`  | an invalid config value, including an unparsable `SUPABASE_*` override                                                                                                                                                  |
 | `1`  | `config.toml` parse failure                                                                                                                                                                                             |
 | `1`  | database connection / migration / seed / roles / vault apply failure                                                                                                                                                    |
 
 ## Output
 
-Diagnostics (the `Target: …` banner, "Applying migration…", "Seeding…", "Updating vault
+Diagnostics (alias deprecation warnings, the `Target: …` banner, "Applying migration…", "Seeding…", "Updating vault
 secrets…", skip/up-to-date notices, dry-run plan, the confirmation) go to **stderr**. The
 two summary lines — `<Target> is up to date.` and `Finished supabase db push.`
 (the command name in Aqua) — go to stdout in text mode; in machine modes they
@@ -97,17 +100,23 @@ stdout is payload-only. A single `result` object is emitted:
 }
 ```
 
-`target` is the announced target (linked, local, or `db-url`); the linked shape carries the
+`target` is the announced target (a remote project or branch as `linked`, `local`, or `db-url`); the linked shape carries the
 project ref and its environment.
 
 ## Notes
 
-- **Targets**: `--db-url`, `--linked`, and `--local` are mutually exclusive; with no
-  flag the target is the linked project. The target is announced as a `Target:` banner on
-  stderr before anything is connected.
-- **`--project-ref`** selects the linked project (flag > `SUPABASE_PROJECT_ID` >
-  `~/.supabase/<hash>/project-ref`) and implies `--linked`; combining it with `--local` or
-  `--db-url` is a hard error rather than a silently discarded flag.
+- **Targets**: with no selector the target is the local database. The target is announced as a
+  `Target:` banner on stderr before anything is connected.
+- **Target selection.** `--remote` is read as the linked project (bare), a project ref (20
+  lowercase letters), a Postgres URL, or else a branch of the linked project by name or UUID;
+  `--remote=false` and `--remote=` fail with `Leave out --remote to target the local database.` A
+  bare `--remote` followed by a word that is a branch of the linked project fails with a
+  `Did you mean --remote=<word>?` hint, since the word may have been meant as the flag's value.
+- **Deprecated aliases.** `--linked`, `--project-ref=<ref>`, `--db-url=<url>` and `--local` still
+  work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
+  warns that local is the default). They are mutually exclusive with each other and with
+  `--remote`; a `false` switch counts as absent. `--project-ref` with `--local`, `--db-url` or
+  `--remote=<value>` is a hard error.
 - **Config value precedence** (ADR 0032): explicit flag > shell env > project
   `.env*` > config (`config.json` over `config.toml`; a matched `[remotes.*]`
   block over the base document) > default. The whole config is decoded up
@@ -116,12 +125,12 @@ project ref and its environment.
   is withheld when the target project differs from the one in
   `.temp/project-ref`. The command prints `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.` to stderr and mints a
   temporary login role instead. Unlinked workdirs use the env value.
-- **`--password`** is rejected with `--db-url` or `--local`, because those
+- **`--password`** is rejected with `--remote=<url>` and for the local default, because those
   targets carry their own credentials.
 - **One combined confirmation**: after the plan is known and before the first write, a hosted
   target asks once, for everything the run will do — custom roles, migrations, vault secrets,
   seed files — e.g. `Create custom roles, apply 1 migration and seed 1 file?`, listing each
-  item. The default is No; declining exits 1 with nothing written. A `--local` target and
+  item. The default is No; declining exits 1 with nothing written. The local default and
   `--dry-run` ask nothing, and neither does a run that finds nothing to apply. JSON or machine
   output, piped stdin and agent runs never prompt; they need `--yes` or a shell
   `SUPABASE_YES`, which echoes `Confirmed by --yes: <action>` to stderr. A `SUPABASE_YES` in

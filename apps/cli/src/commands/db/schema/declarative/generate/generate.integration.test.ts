@@ -16,6 +16,11 @@ vi.mock("node:net", (importOriginal) =>
 const reachableDirectHost = withReachableDirectHost(fixtureNet);
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
 import { withReachableDirectHost } from "../../../../../../tests/helpers/refuse-invalid-db-hosts.ts";
+import {
+  BRANCH_PROJECT_REF,
+  branchListApi,
+  warningsOf,
+} from "../../../../../../tests/helpers/db-remote-selection.ts";
 import { assertPermissionDrift } from "../../../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
@@ -437,6 +442,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   };
 }
 
+const REMOTE_LINKED: DbSchemaDeclarativeGenerateFlags["remote"] = Option.some({ _tag: "Linked" });
+
 const flags = (
   over: Partial<DbSchemaDeclarativeGenerateFlags> = {},
 ): DbSchemaDeclarativeGenerateFlags => ({
@@ -473,7 +480,7 @@ describe("db schema declarative generate integration", () => {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      yield* dbSchemaDeclarativeGenerate(flags({ local: true }));
+      yield* dbSchemaDeclarativeGenerate(flags());
       expect(
         yield* fs.exists(
           path.join(tmp.current, "supabase", "schemas", "public", "tables", "players.sql"),
@@ -486,7 +493,7 @@ describe("db schema declarative generate integration", () => {
     const { layer } = setup(tmp.current, { experimental: false });
     return Effect.gen(function* () {
       yield* disablePgDelta(tmp.current);
-      const error = yield* Effect.flip(dbSchemaDeclarativeGenerate(flags({ local: true })));
+      const error = yield* Effect.flip(dbSchemaDeclarativeGenerate(flags()));
       expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
     }).pipe(Effect.provide(layer));
   });
@@ -550,7 +557,7 @@ describe("db schema declarative generate integration", () => {
         yield* disablePgDelta(tmp.current);
         const error = yield* withConfigEnv(
           { [ENV]: "1" },
-          Effect.flip(dbSchemaDeclarativeGenerate(flags({ local: true }))),
+          Effect.flip(dbSchemaDeclarativeGenerate(flags())),
         );
         expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
       }).pipe(Effect.provide(layer));
@@ -596,7 +603,7 @@ describe("db schema declarative generate integration", () => {
         path.join(tmp.current, "supabase", "database", "public.sql"),
         "create table a();",
       );
-      yield* dbSchemaDeclarativeGenerate(flags({ local: true }));
+      yield* dbSchemaDeclarativeGenerate(flags());
       expect(stripAnsi(s.out.stderrText)).toContain(
         "WARNING: found declarative schema files in supabase/database, but the default declarative directory is now supabase/schemas.",
       );
@@ -604,12 +611,12 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("explicit --local: exports from the local database and writes files", () => {
+  it.effect("exports from the default local database and writes files", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      yield* dbSchemaDeclarativeGenerate(flags({ local: true }));
+      yield* dbSchemaDeclarativeGenerate(flags());
       expect(s.engineExportCalls[0]?.targetRef).toContain(
         "postgresql://postgres:postgres@127.0.0.1:54322",
       );
@@ -629,11 +636,11 @@ describe("db schema declarative generate integration", () => {
   });
 
   it.effect(
-    "explicit --local on the stack backend exports from stack credentials, not toml [db].port",
+    "the default local target on the stack backend exports from stack credentials, not toml [db].port",
     () => {
       const s = setup(tmp.current, { experimental: true, stackBackend: true });
       return Effect.gen(function* () {
-        yield* dbSchemaDeclarativeGenerate(flags({ local: true }));
+        yield* dbSchemaDeclarativeGenerate(flags());
         expect(s.engineExportCalls[0]?.targetRef).toContain(
           "postgresql://postgres:stack-secret@127.0.0.1:54329",
         );
@@ -666,10 +673,12 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("--project-ref selects that project without a linked workdir", () => {
+  it.effect("--remote=<ref> selects that project without a linked workdir", () => {
     const s = setup(tmp.current, { experimental: true, projectId: Option.none() });
     return Effect.gen(function* () {
-      yield* dbSchemaDeclarativeGenerate(flags({ projectRef: Option.some(VALID_REF) }));
+      yield* dbSchemaDeclarativeGenerate(
+        flags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
+      );
       expect(s.resolverCalls.map((call) => call.target)).toEqual([
         expect.objectContaining({ kind: "linked", ref: VALID_REF, source: "flag" }),
       ]);
@@ -749,9 +758,7 @@ describe("db schema declarative generate integration", () => {
         const configPath = path.join(tmp.current, "supabase", "config.toml");
         yield* fs.writeFileString(configPath, config);
         const destination = path.join("supabase", "database-next");
-        yield* dbSchemaDeclarativeGenerate(
-          flags({ local: true, outputDir: Option.some(destination) }),
-        );
+        yield* dbSchemaDeclarativeGenerate(flags({ outputDir: Option.some(destination) }));
 
         expect(
           yield* fs.readFileString(
@@ -784,8 +791,11 @@ describe("db schema declarative generate integration", () => {
   );
 
   for (const [label, target] of [
-    ["--local", { local: true }],
-    ["--db-url", { dbUrl: Option.some("postgresql://x") }],
+    ["the default local target", {}],
+    [
+      "--remote=<db-url>",
+      { remote: Option.some({ _tag: "DbUrl", url: "postgresql://x" } as const) },
+    ],
   ] as const) {
     it.effect(`rejects --password combined with ${label}`, () => {
       const s = setup(tmp.current, { experimental: true, realLayers: true });
@@ -810,9 +820,7 @@ describe("db schema declarative generate integration", () => {
       const destination = path.join(tmp.current, "staged-schema");
       yield* fs.makeDirectory(destination, { recursive: true });
       yield* fs.writeFileString(path.join(destination, "keep.sql"), "select 'keep';");
-      yield* dbSchemaDeclarativeGenerate(
-        flags({ local: true, outputDir: Option.some(destination) }),
-      );
+      yield* dbSchemaDeclarativeGenerate(flags({ outputDir: Option.some(destination) }));
       expect(yield* fs.readFileString(path.join(destination, "keep.sql"))).toBe("select 'keep';");
       expect(yield* fs.exists(path.join(destination, ".pgdelta-export.json"))).toBe(false);
       expect(s.out.rawChunks.some((chunk) => chunk.text.includes("Skipped writing"))).toBe(true);
@@ -831,7 +839,7 @@ describe("db schema declarative generate integration", () => {
       yield* Effect.gen(function* () {
         for (const output of ["", ".", "..", path.dirname(projectDir)]) {
           const error = yield* dbSchemaDeclarativeGenerate(
-            flags({ local: true, outputDir: Option.some(output), overwrite: true }),
+            flags({ outputDir: Option.some(output), overwrite: true }),
           ).pipe(Effect.flip);
           expect(error).toMatchObject({
             _tag: "DeclarativeWriteError",
@@ -850,9 +858,7 @@ describe("db schema declarative generate integration", () => {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      yield* dbSchemaDeclarativeGenerate(
-        flags({ local: true, outputDir: Option.some("staged-schema") }),
-      );
+      yield* dbSchemaDeclarativeGenerate(flags({ outputDir: Option.some("staged-schema") }));
       expect(
         yield* fs.exists(
           path.join(tmp.current, "staged-schema", "public", "tables", "players.sql"),
@@ -862,10 +868,10 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("explicit --local checks the local Postgres image before generating", () => {
+  it.effect("the default local target checks the local Postgres image before generating", () => {
     const s = setup(tmp.current, { experimental: true, staleLocalImage: true });
     return Effect.gen(function* () {
-      const error = yield* Effect.flip(dbSchemaDeclarativeGenerate(flags({ local: true })));
+      const error = yield* Effect.flip(dbSchemaDeclarativeGenerate(flags()));
       expect(error).toMatchObject({
         _tag: "DeclarativeShadowDbError",
         message: "local Postgres container image is stale",
@@ -889,7 +895,7 @@ describe("db schema declarative generate integration", () => {
         path.join(tmp.current, "supabase", "schemas", "existing.sql"),
         "create table x ();",
       );
-      yield* dbSchemaDeclarativeGenerate(flags({ local: true }));
+      yield* dbSchemaDeclarativeGenerate(flags());
       const written = yield* fs.readFileString(
         path.join(tmp.current, "supabase", "schemas", "public", "tables", "players.sql"),
       );
@@ -905,7 +911,7 @@ describe("db schema declarative generate integration", () => {
       const path = yield* Path.Path;
       yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
       yield* fs.writeFileString(path.join(tmp.current, "supabase", "schemas"), "not a directory");
-      const exit = yield* Effect.exit(dbSchemaDeclarativeGenerate(flags({ local: true })));
+      const exit = yield* Effect.exit(dbSchemaDeclarativeGenerate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(yield* fs.readFileString(path.join(tmp.current, "supabase", "schemas"))).toBe(
         "not a directory",
@@ -916,10 +922,12 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("explicit --db-url: resolves the remote URL via the resolver", () => {
+  it.effect("--remote=<db-url> resolves the URL via the resolver", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
-      yield* dbSchemaDeclarativeGenerate(flags({ dbUrl: Option.some("postgres://remote/db") }));
+      yield* dbSchemaDeclarativeGenerate(
+        flags({ remote: Option.some({ _tag: "DbUrl", url: "postgres://remote/db" } as const) }),
+      );
       expect(s.resolverCalls.length).toBe(1);
       expect(s.engineExportCalls[0]?.targetRef).toContain("@db.remote:5432");
       expect(s.ensureStartedCalls).toBe(0);
@@ -942,7 +950,7 @@ describe("db schema declarative generate integration", () => {
           "",
         ].join("\n"),
       );
-      yield* dbSchemaDeclarativeGenerate(flags({ local: true }));
+      yield* dbSchemaDeclarativeGenerate(flags());
       expect(yield* fs.exists(path.join(absSchema, "public", "tables", "players.sql"))).toBe(true);
       expect(
         yield* fs.readFileString(path.join(absSchema, "public", "tables", "players.sql")),
@@ -956,7 +964,7 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.scoped, Effect.provide(s.layer));
   });
 
-  it.effect("explicit --linked applies a matching [remotes.<ref>] schema-path override", () => {
+  it.effect("--remote applies a matching [remotes.<ref>] schema-path override", () => {
     const ref = "abcdefghijklmnopqrst";
     const s = setup(tmp.current, { experimental: true, projectId: Option.some(ref) });
     return Effect.gen(function* () {
@@ -976,7 +984,7 @@ describe("db schema declarative generate integration", () => {
           "",
         ].join("\n"),
       );
-      yield* dbSchemaDeclarativeGenerate(flags({ linked: true }));
+      yield* dbSchemaDeclarativeGenerate(flags({ remote: REMOTE_LINKED }));
       const written = yield* fs.readFileString(
         path.join(tmp.current, "supabase", "remote_schema", "public", "tables", "players.sql"),
       );
@@ -985,11 +993,11 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("caches the linked project after generate --linked", () => {
+  it.effect("caches the linked project after generate --remote", () => {
     const ref = "abcdefghijklmnopqrst";
     const s = setup(tmp.current, { experimental: true, projectId: Option.some(ref) });
     return Effect.gen(function* () {
-      yield* dbSchemaDeclarativeGenerate(flags({ linked: true }));
+      yield* dbSchemaDeclarativeGenerate(flags({ remote: REMOTE_LINKED }));
       expect(s.cache.cached).toBe(true);
       expect(s.cache.cacheCount).toBe(1);
       expect(s.telemetry.flushCount).toBe(1);
@@ -1005,33 +1013,32 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect(
-    "explicit --linked gates pg-delta on base config, not a remote enabled override",
-    () => {
-      const ref = "abcdefghijklmnopqrst";
-      const s = setup(tmp.current, { experimental: false, projectId: Option.some(ref) });
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
-        yield* fs.writeFileString(
-          path.join(tmp.current, "supabase", "config.toml"),
-          [
-            'project_id = "base"',
-            "[experimental.pgdelta]",
-            "enabled = false",
-            "[remotes.prod]",
-            `project_id = "${ref}"`,
-            "[remotes.prod.experimental.pgdelta]",
-            "enabled = true",
-            "",
-          ].join("\n"),
-        );
-        const error = yield* Effect.flip(dbSchemaDeclarativeGenerate(flags({ linked: true })));
-        expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
+  it.effect("--remote gates pg-delta on base config, not a remote enabled override", () => {
+    const ref = "abcdefghijklmnopqrst";
+    const s = setup(tmp.current, { experimental: false, projectId: Option.some(ref) });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        [
+          'project_id = "base"',
+          "[experimental.pgdelta]",
+          "enabled = false",
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "[remotes.prod.experimental.pgdelta]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      );
+      const error = yield* Effect.flip(
+        dbSchemaDeclarativeGenerate(flags({ remote: REMOTE_LINKED })),
+      );
+      expect(error).toBeInstanceOf(DeclarativeNotEnabledError);
+    }).pipe(Effect.provide(s.layer));
+  });
 
   it.effect(
     "existing declarative files without --overwrite are skipped when the prompt is declined",
@@ -1080,9 +1087,7 @@ describe("db schema declarative generate integration", () => {
   it.effect("passes --strict-coverage through to the engine export", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
-      yield* dbSchemaDeclarativeGenerate(
-        flags({ local: true, noCache: true, strictCoverage: true }),
-      );
+      yield* dbSchemaDeclarativeGenerate(flags({ noCache: true, strictCoverage: true }));
       expect(s.engineExportCalls).toEqual([expect.objectContaining({ strictCoverage: true })]);
     }).pipe(Effect.provide(s.layer));
   });
@@ -1093,7 +1098,7 @@ describe("db schema declarative generate integration", () => {
   ])('passes PGDELTA_DEBUG="$value" through to the engine export', ({ value, debug }) => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
-      yield* dbSchemaDeclarativeGenerate(flags({ local: true }));
+      yield* dbSchemaDeclarativeGenerate(flags());
       expect(s.engineExportCalls.map((call) => call.debug)).toEqual([debug]);
     }).pipe(Effect.provide(s.layer), (body) => withConfigEnv({ PGDELTA_DEBUG: value }, body));
   });
@@ -1101,7 +1106,7 @@ describe("db schema declarative generate integration", () => {
   it.effect("fails generate when the engine export fails", () => {
     const s = setup(tmp.current, { experimental: true, exportFails: true });
     return Effect.gen(function* () {
-      const error = yield* dbSchemaDeclarativeGenerate(flags({ local: true })).pipe(Effect.flip);
+      const error = yield* dbSchemaDeclarativeGenerate(flags()).pipe(Effect.flip);
       expect(error).toMatchObject({
         _tag: "PgDeltaEngineError",
         message: "declarative export failed",
@@ -1117,7 +1122,7 @@ describe("db schema declarative generate integration", () => {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      yield* dbSchemaDeclarativeGenerate(flags({ local: true }));
+      yield* dbSchemaDeclarativeGenerate(flags());
       const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
         yield* fs.readFileString(
           path.join(tmp.current, "supabase", "schemas", ".pgdelta-export.json"),
@@ -1148,7 +1153,7 @@ describe("db schema declarative generate permissions through the real resolver a
     yield* fs.writeFileString(`${tmp.current}/supabase/.temp/project-ref`, VALID_REF);
   });
 
-  it.effect("mints a login role and fills the cache for --linked", () => {
+  it.effect("mints a login role and fills the cache for a bare --remote", () => {
     const s = setup(tmp.current, { realLayers: true, projectId: Option.some(VALID_REF) });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
@@ -1156,14 +1161,16 @@ describe("db schema declarative generate permissions through the real resolver a
       yield* reachableDirectHost;
       yield* saveLinkedRef;
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-      yield* dbSchemaDeclarativeGenerate(flags({ linked: true })).pipe(Effect.provide(s.layer));
+      yield* dbSchemaDeclarativeGenerate(flags({ remote: REMOTE_LINKED })).pipe(
+        Effect.provide(s.layer),
+      );
       expect(s.engineExportCalls).toHaveLength(1);
       expect(asLines(requests)).toEqual([loginRoleRequest]);
       expect(cacheCalls(s.projectHttp.calls)).toEqual([cacheRequest]);
       expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
       assertPermissionDrift({
         command: "db schema declarative generate",
-        activeFlags: { linked: true },
+        activeFlags: { remote: true },
         requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
         exact: true,
       });
@@ -1174,7 +1181,7 @@ describe("db schema declarative generate permissions through the real resolver a
     );
   });
 
-  it.effect("does not mint a login role for --linked with --password", () => {
+  it.effect("does not mint a login role for --remote with --password", () => {
     const s = setup(tmp.current, { realLayers: true, projectId: Option.some(VALID_REF) });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
@@ -1182,13 +1189,13 @@ describe("db schema declarative generate permissions through the real resolver a
       yield* saveLinkedRef;
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
       yield* dbSchemaDeclarativeGenerate(
-        flags({ linked: true, password: Option.some("secret") }),
+        flags({ remote: REMOTE_LINKED, password: Option.some("secret") }),
       ).pipe(Effect.provide(s.layer));
       expect(requests).toEqual([]);
       expect(cacheCalls(s.projectHttp.calls)).toEqual([cacheRequest]);
       assertPermissionDrift({
         command: "db schema declarative generate",
-        activeFlags: { linked: true, password: true },
+        activeFlags: { remote: true, password: true },
         requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
         exact: true,
       });
@@ -1199,19 +1206,19 @@ describe("db schema declarative generate permissions through the real resolver a
     );
   });
 
-  it.effect("makes no Management API request for --local", () => {
+  it.effect("makes no Management API request for the default local target", () => {
     const s = setup(tmp.current, { realLayers: true, projectId: Option.some(VALID_REF) });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
       yield* saveLinkedRef;
       yield* stubManagementApi(requests, () => undefined);
-      yield* dbSchemaDeclarativeGenerate(flags({ local: true })).pipe(Effect.provide(s.layer));
+      yield* dbSchemaDeclarativeGenerate(flags()).pipe(Effect.provide(s.layer));
       expect(s.engineExportCalls).toHaveLength(1);
       expect(requests).toEqual([]);
       expect(s.projectHttp.calls).toEqual([]);
       assertPermissionDrift({
         command: "db schema declarative generate",
-        activeFlags: { local: true },
+        activeFlags: {},
         requests: [],
         exact: true,
       });
@@ -1222,21 +1229,26 @@ describe("db schema declarative generate permissions through the real resolver a
     );
   });
 
-  it.effect("makes no Management API request for --db-url", () => {
+  it.effect("makes no Management API request for --remote=<db-url>", () => {
     const s = setup(tmp.current, { realLayers: true, projectId: Option.some(VALID_REF) });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
       yield* saveLinkedRef;
       yield* stubManagementApi(requests, () => undefined);
       yield* dbSchemaDeclarativeGenerate(
-        flags({ dbUrl: Option.some("postgres://alice:secret@example.com:6543/appdb") }),
+        flags({
+          remote: Option.some({
+            _tag: "DbUrl",
+            url: "postgres://alice:secret@example.com:6543/appdb",
+          }),
+        }),
       ).pipe(Effect.provide(s.layer));
       expect(s.engineExportCalls).toHaveLength(1);
       expect(requests).toEqual([]);
       expect(s.projectHttp.calls).toEqual([]);
       assertPermissionDrift({
         command: "db schema declarative generate",
-        activeFlags: { "db-url": true },
+        activeFlags: { remote: true },
         requests: [],
         exact: true,
       });
@@ -1247,19 +1259,19 @@ describe("db schema declarative generate permissions through the real resolver a
     );
   });
 
-  it.effect("fetches the pooler and mints a login role for --project-ref", () => {
+  it.effect("fetches the pooler and mints a login role for --remote=<ref>", () => {
     const s = setup(tmp.current, { realLayers: true, projectId: Option.none() });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-      yield* dbSchemaDeclarativeGenerate(flags({ projectRef: Option.some(VALID_REF) })).pipe(
-        Effect.provide(s.layer),
-      );
+      yield* dbSchemaDeclarativeGenerate(
+        flags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
+      ).pipe(Effect.provide(s.layer));
       expect(s.engineExportCalls).toHaveLength(1);
       expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
       assertPermissionDrift({
         command: "db schema declarative generate",
-        activeFlags: { "project-ref": VALID_REF },
+        activeFlags: { remote: VALID_REF },
         requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
         exact: true,
       });
@@ -1269,4 +1281,108 @@ describe("db schema declarative generate permissions through the real resolver a
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
+});
+
+describe("db schema declarative generate target selection", () => {
+  const tmp = useTempWorkdir();
+  const FLAG_PROJECT_REF = "flagflagflagflagflag";
+
+  const resolvedTarget = (
+    selector: Partial<DbSchemaDeclarativeGenerateFlags>,
+    options: { readonly branchApi?: ReturnType<typeof branchListApi> } = {},
+  ) => {
+    const s = setup(tmp.current, { experimental: true, projectId: Option.some(VALID_REF) });
+    const provided =
+      options.branchApi === undefined ? s.layer : Layer.merge(s.layer, options.branchApi.layer);
+    return Effect.gen(function* () {
+      yield* dbSchemaDeclarativeGenerate(flags(selector)).pipe(Effect.provide(provided));
+      return { target: s.resolverCalls[0]?.target, warnings: warningsOf(s.out) };
+    });
+  };
+
+  it.effect("targets the local database, with no warning, when nothing selects one", () =>
+    Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget({});
+      expect(target).toEqual({ kind: "local" });
+      expect(warnings).toEqual([]);
+    }),
+  );
+
+  it.effect("targets the project --remote=<ref> names, with no warning", () =>
+    Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget({
+        remote: Option.some({ _tag: "Ref", ref: FLAG_PROJECT_REF } as const),
+      });
+      expect(target).toMatchObject({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" });
+      expect(warnings).toEqual([]);
+    }),
+  );
+
+  it.effect("targets the database --remote=<db-url> names, with no warning", () =>
+    Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget({
+        remote: Option.some({
+          _tag: "DbUrl",
+          url: "postgresql://postgres:pw@db.example.com/db",
+        } as const),
+      });
+      expect(target?.kind).toBe("db-url");
+      expect(warnings).toEqual([]);
+    }),
+  );
+
+  it.effect("targets the project of the branch --remote=<branch> names", () => {
+    const branchApi = branchListApi();
+    return Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget(
+        { remote: Option.some({ _tag: "Branch", name: "feature-x" }) },
+        { branchApi },
+      );
+      expect(target).toMatchObject({ kind: "linked", ref: BRANCH_PROJECT_REF, source: "flag" });
+      expect(warnings).toEqual([]);
+      assertPermissionDrift({
+        command: "db schema declarative generate",
+        activeFlags: { remote: "feature-x" },
+        requests: branchApi.requests,
+      });
+    });
+  });
+
+  it.effect.each([
+    {
+      alias: "--linked",
+      flags: { linked: true },
+      kind: "linked",
+      warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
+    },
+    {
+      alias: "--project-ref",
+      flags: { projectRef: Option.some(FLAG_PROJECT_REF) },
+      kind: "linked",
+      warning: "--project-ref is deprecated and will be removed in v4. Use --remote instead",
+    },
+    {
+      alias: "--db-url",
+      flags: { dbUrl: Option.some("postgresql://postgres:pw@db.example.com/db") },
+      kind: "db-url",
+      warning: "--db-url is deprecated and will be removed in v4. Use --remote instead",
+    },
+    {
+      alias: "--local",
+      flags: { local: true },
+      kind: "local",
+      warning: "--local isn't needed (local is the default) and will be removed in v4",
+    },
+  ] satisfies ReadonlyArray<{
+    alias: string;
+    flags: Partial<DbSchemaDeclarativeGenerateFlags>;
+    kind: string;
+    warning: string;
+  }>)("keeps $alias working and warns that it is deprecated", ({ flags, kind, warning }) =>
+    Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget(flags);
+      expect(target?.kind).toBe(kind);
+      expect(warnings).toEqual([expect.stringContaining(warning)]);
+    }),
+  );
 });

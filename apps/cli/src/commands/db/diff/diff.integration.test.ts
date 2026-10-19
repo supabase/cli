@@ -28,6 +28,11 @@ vi.mock("node:net", (importOriginal) =>
 );
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
+import {
+  BRANCH_PROJECT_REF,
+  branchListApi,
+  warningsOf,
+} from "../../../../tests/helpers/db-remote-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
@@ -146,7 +151,7 @@ interface SetupOpts {
   // `Option.none()` to exercise the config.toml/workdir-basename fallback.
   readonly projectId?: Option.Option<string>;
   // Simulates an unlinked workdir: the project-ref resolver fails with
-  // `ProjectRefNotLinkedError` absent an explicit `--project-ref` flag.
+  // `ProjectRefNotLinkedError` absent an explicit `--remote=<ref>`.
   readonly linkedFails?: boolean;
   // Per-differ-run `--json-diff` stdout, indexed by run order; falls back to `""`
   // once exhausted, so a single-run test only needs one element.
@@ -552,6 +557,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   };
 }
 
+const REMOTE_LINKED: DbDiffFlags["remote"] = Option.some({ _tag: "Linked" });
+
 const flags = (over: Partial<DbDiffFlags> = {}): DbDiffFlags => ({
   useMigra: over.useMigra ?? Option.none(),
   usePgAdmin: over.usePgAdmin ?? Option.none(),
@@ -943,7 +950,7 @@ describe("db diff", () => {
       diffSql: "alter table x;\n",
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags({ linked: true }));
+      yield* dbDiff(flags({ remote: REMOTE_LINKED }));
       expect(s.databaseDiffCalls).toHaveLength(1);
       expect(stderr(s.out)).not.toContain("are not read");
     }).pipe(Effect.provide(s.layer));
@@ -1158,7 +1165,7 @@ describe("db diff", () => {
       diffSql: "alter table x;\n",
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags({ linked: true }));
+      yield* dbDiff(flags({ remote: REMOTE_LINKED }));
       expect(s.databaseDiffCalls[0]?.target.connectOptions.isLocal).toBe(false);
       expect(s.databaseDiffCalls[0]?.source.connectOptions.isLocal).toBe(true);
     }).pipe(Effect.provide(s.layer));
@@ -1189,7 +1196,7 @@ describe("db diff", () => {
         diffSql: "alter table x;\n",
       });
       return Effect.gen(function* () {
-        yield* dbDiff(flags({ linked: true }));
+        yield* dbDiff(flags({ remote: REMOTE_LINKED }));
         const createArgs = s.shadowSpawned.find((c) => c.args[0] === "create")?.args ?? [];
         expect(createArgs).toContain("--tmpfs");
         expect(s.dockerCalls).toEqual([]);
@@ -1218,7 +1225,7 @@ describe("db diff", () => {
       diffSql: "",
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags({ linked: true, file: Option.some("declared") }));
+      yield* dbDiff(flags({ remote: REMOTE_LINKED, file: Option.some("declared") }));
       expect(stderr(s.out)).toContain(
         "Run supabase db schema declarative sync --experimental to generate",
       );
@@ -1255,12 +1262,237 @@ describe("db diff", () => {
       diffSql: "alter table x;\n",
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags({ linked: true }));
+      yield* dbDiff(flags({ remote: REMOTE_LINKED }));
       expect(s.cache.cached).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("diffs the project given via --project-ref without a linked workdir", () => {
+  describe("target selection", () => {
+    const FLAG_PROJECT_REF = "flagflagflagflagflag";
+
+    const resolvedTarget = (
+      selector: Partial<DbDiffFlags>,
+      options: { readonly branchApi?: ReturnType<typeof branchListApi> } = {},
+    ) => {
+      const s = setup(tmp.current, {
+        projectId: Option.some(VALID_REF),
+        diffSql: "alter table x;\n",
+      });
+      const provided =
+        options.branchApi === undefined ? s.layer : Layer.merge(s.layer, options.branchApi.layer);
+      return Effect.gen(function* () {
+        yield* dbDiff(flags(selector)).pipe(Effect.provide(provided));
+        return { target: s.resolverCalls[0]?.target, warnings: warningsOf(s.out) };
+      });
+    };
+
+    it.effect("targets the local database, with no warning, when nothing selects one", () =>
+      Effect.gen(function* () {
+        const { target, warnings } = yield* resolvedTarget({});
+        expect(target).toEqual({ kind: "local" });
+        expect(warnings).toEqual([]);
+      }),
+    );
+
+    it.effect("targets the linked project for a bare --remote, with no warning", () =>
+      Effect.gen(function* () {
+        const { target, warnings } = yield* resolvedTarget({ remote: REMOTE_LINKED });
+        expect(target).toMatchObject({ kind: "linked", source: "file" });
+        expect(warnings).toEqual([]);
+      }),
+    );
+
+    it.effect("targets the project --remote=<ref> names, with no warning", () =>
+      Effect.gen(function* () {
+        const { target, warnings } = yield* resolvedTarget({
+          remote: Option.some({ _tag: "Ref", ref: FLAG_PROJECT_REF } as const),
+        });
+        expect(target).toMatchObject({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" });
+        expect(warnings).toEqual([]);
+      }),
+    );
+
+    it.effect("targets the database --remote=<db-url> names, with no warning", () =>
+      Effect.gen(function* () {
+        const { target, warnings } = yield* resolvedTarget({
+          remote: Option.some({
+            _tag: "DbUrl",
+            url: "postgresql://postgres:pw@db.example.com/db",
+          } as const),
+        });
+        expect(target?.kind).toBe("db-url");
+        expect(warnings).toEqual([]);
+      }),
+    );
+
+    it.effect("targets the project of the branch --remote=<branch> names", () => {
+      const branchApi = branchListApi();
+      return Effect.gen(function* () {
+        const { target, warnings } = yield* resolvedTarget(
+          { remote: Option.some({ _tag: "Branch", name: "feature-x" }) },
+          { branchApi },
+        );
+        expect(target).toMatchObject({ kind: "linked", ref: BRANCH_PROJECT_REF, source: "flag" });
+        expect(warnings).toEqual([]);
+        assertPermissionDrift({
+          command: "db diff",
+          activeFlags: { remote: "feature-x" },
+          requests: branchApi.requests,
+        });
+      });
+    });
+
+    it.effect.each([
+      {
+        alias: "--linked",
+        flags: { linked: true },
+        kind: "linked",
+        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
+      },
+      {
+        alias: "--project-ref",
+        flags: { projectRef: Option.some(FLAG_PROJECT_REF) },
+        kind: "linked",
+        warning: "--project-ref is deprecated and will be removed in v4. Use --remote instead",
+      },
+      {
+        alias: "--db-url",
+        flags: { dbUrl: Option.some("postgresql://postgres:pw@db.example.com/db") },
+        kind: "db-url",
+        warning: "--db-url is deprecated and will be removed in v4. Use --remote instead",
+      },
+      {
+        alias: "--local",
+        flags: { local: true },
+        kind: "local",
+        warning: "--local isn't needed (local is the default) and will be removed in v4",
+      },
+    ] satisfies ReadonlyArray<{
+      alias: string;
+      flags: Partial<DbDiffFlags>;
+      kind: string;
+      warning: string;
+    }>)("keeps $alias working and warns that it is deprecated", ({ flags, kind, warning }) =>
+      Effect.gen(function* () {
+        const { target, warnings } = yield* resolvedTarget(flags);
+        expect(target?.kind).toBe(kind);
+        expect(warnings).toEqual([expect.stringContaining(warning)]);
+      }),
+    );
+  });
+
+  describe("explicit --from and --to values", () => {
+    const FLAG_PROJECT_REF = "flagflagflagflagflag";
+    const DB_URL = "postgresql://postgres:pw@db.example.com/db";
+
+    const sides = (["from", "to"] as const).flatMap((side) =>
+      [
+        {
+          value: "remote",
+          expected: { kind: "linked", source: "file" },
+          warning: undefined,
+        },
+        {
+          value: FLAG_PROJECT_REF,
+          expected: { kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" },
+          warning: undefined,
+        },
+        {
+          value: "feature-x",
+          expected: { kind: "linked", ref: BRANCH_PROJECT_REF, source: "flag" },
+          warning: undefined,
+        },
+        {
+          value: "linked",
+          expected: { kind: "linked", source: "file" },
+          warning: `--${side} linked is deprecated and will be removed in v4. Use --${side} remote instead.`,
+        },
+      ].map((row) => ({ side, ...row })),
+    );
+
+    it.effect.each(sides)(
+      "--$side $value resolves the hosted project it names",
+      ({ side, value, expected, warning }) => {
+        const s = setup(tmp.current, {
+          isLocal: false,
+          projectId: Option.some(VALID_REF),
+          diffSql: "create table e ();\n",
+        });
+        const other = side === "from" ? "to" : "from";
+        return Effect.gen(function* () {
+          yield* dbDiff(
+            flags({
+              [side]: Option.some(value),
+              [other]: Option.some("migrations"),
+            }),
+          ).pipe(Effect.provide(Layer.merge(s.layer, branchListApi().layer)));
+          expect(s.resolverCalls.map((call) => call.target)).toEqual([
+            expect.objectContaining(expected),
+          ]);
+          expect(warningsOf(s.out)).toEqual(warning === undefined ? [] : [warning]);
+        });
+      },
+    );
+
+    it.effect.each(
+      (["from", "to"] as const).map((side) => ({
+        side,
+        other: side === "from" ? "to" : "from",
+      })),
+    )(
+      "--$side <db-url> diffs the database it names without minting a connection",
+      ({ side, other }) => {
+        const s = setup(tmp.current, { diffSql: "create table u ();\n" });
+        return Effect.gen(function* () {
+          yield* dbDiff(
+            flags({ [side]: Option.some(DB_URL), [other]: Option.some("migrations") }),
+          ).pipe(Effect.provide(s.layer));
+          const endpoint =
+            side === "from" ? s.explicitDiffCalls[0]?.source : s.explicitDiffCalls[0]?.desired;
+          expect(endpoint).toEqual({
+            kind: "database",
+            ref: DB_URL,
+            connectOptions: { isLocal: false, dnsResolver: "native" },
+          });
+          expect(s.resolverCalls).toEqual([]);
+        });
+      },
+    );
+
+    it.effect("--from local --to migrations reaches no hosted project", () => {
+      const s = setup(tmp.current, { diffSql: "create table l ();\n" });
+      return Effect.gen(function* () {
+        yield* dbDiff(flags({ from: Option.some("local"), to: Option.some("migrations") })).pipe(
+          Effect.provide(s.layer),
+        );
+        expect(s.explicitDiffCalls[0]?.source).toMatchObject({ kind: "database" });
+        expect(s.explicitDiffCalls[0]?.desired).toEqual({ kind: "migrations" });
+        expect(s.resolverCalls).toEqual([]);
+        expect(warningsOf(s.out)).toEqual([]);
+      });
+    });
+
+    it.effect("--from <branch> asks the linked project's branch list", () => {
+      const branchApi = branchListApi();
+      const s = setup(tmp.current, {
+        isLocal: false,
+        projectId: Option.some(VALID_REF),
+        diffSql: "create table e ();\n",
+      });
+      return Effect.gen(function* () {
+        yield* dbDiff(
+          flags({ from: Option.some("feature-x"), to: Option.some("migrations") }),
+        ).pipe(Effect.provide(Layer.merge(s.layer, branchApi.layer)));
+        assertPermissionDrift({
+          command: "db diff",
+          activeFlags: { from: "feature-x", to: "migrations" },
+          requests: branchApi.requests,
+        });
+      });
+    });
+  });
+
+  it.effect("diffs the project given via --remote=<ref> without a linked workdir", () => {
     // `linkedFails: true` simulates an unlinked workdir; only the flag can resolve a ref.
     const FLAG_REF = "flagflagflagflagflag";
     const s = setup(tmp.current, {
@@ -1269,13 +1501,13 @@ describe("db diff", () => {
       linkedFails: true,
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags({ linked: true, projectRef: Option.some(FLAG_REF) }));
+      yield* dbDiff(flags({ remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const) }));
       expect(s.cache.cached).toBe(true);
       expect(s.cache.cachedRef).toBe(FLAG_REF);
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("--project-ref overrides an already-linked workdir's project ref", () => {
+  it.effect("--remote=<ref> overrides an already-linked workdir's project ref", () => {
     const FLAG_REF = "flagflagflagflagflag";
     // A distinct `linkedRef` proves the flag, not the workdir's own linked ref, wins.
     const s = setup(tmp.current, {
@@ -1284,14 +1516,14 @@ describe("db diff", () => {
       diffSql: "alter table x;\n",
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags({ linked: true, projectRef: Option.some(FLAG_REF) }));
+      yield* dbDiff(flags({ remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const) }));
       expect(s.cache.cached).toBe(true);
       expect(s.cache.cachedRef).toBe(FLAG_REF);
       expect(s.cache.cachedRef).not.toBe("abcdefghijklmnopqrst");
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("rejects --project-ref combined with an explicit --local target", () => {
+  it.effect("rejects the deprecated --project-ref combined with --local", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const s = setup(tmp.current);
     return Effect.gen(function* () {
@@ -1308,7 +1540,7 @@ describe("db diff", () => {
   });
 
   it.effect(
-    "explicit --from linked --to migrations --project-ref proceeds and uses the flag ref",
+    "explicit --from remote --to migrations --remote=<ref> proceeds and uses the flag ref",
     () => {
       // `[remotes.staging]`'s `project_id` matches the flag ref, not `opts.linkedRef`
       // (left unset), so the override only applies if the flag resolved it.
@@ -1332,9 +1564,9 @@ describe("db diff", () => {
       return Effect.gen(function* () {
         yield* dbDiff(
           flags({
-            from: Option.some("linked"),
+            from: Option.some("remote"),
             to: Option.some("migrations"),
-            projectRef: Option.some("flagflagflagflagflag"),
+            remote: Option.some({ _tag: "Ref", ref: "flagflagflagflagflag" } as const),
           }),
         );
         expect(s.explicitDiffCalls[0]?.toml?.majorVersion).toBe(14);
@@ -1348,10 +1580,10 @@ describe("db diff", () => {
   );
 
   it.effect(
-    "explicit --from local --to migrations --project-ref proceeds and applies the flag ref's remote override",
+    "explicit --from local --to migrations --remote=<ref> proceeds and applies the flag ref's remote override",
     () => {
-      // Same `[remotes.staging]` fixture as the `--from linked` case above, but here
-      // `--project-ref` alone selects the linked target instead of a literal "linked" ref.
+      // Same `[remotes.staging]` fixture as the `--from remote` case above, but here
+      // `--remote=<ref>` alone selects the linked target instead of a literal `remote` side.
       const s = setup(tmp.current, {
         files: {
           "supabase/config.toml": [
@@ -1374,7 +1606,7 @@ describe("db diff", () => {
           flags({
             from: Option.some("local"),
             to: Option.some("migrations"),
-            projectRef: Option.some("flagflagflagflagflag"),
+            remote: Option.some({ _tag: "Ref", ref: "flagflagflagflagflag" } as const),
           }),
         );
         expect(s.explicitDiffCalls[0]?.toml?.majorVersion).toBe(14);
@@ -1401,7 +1633,7 @@ describe("db diff", () => {
         diffSql: "alter table x;\n",
       });
       return Effect.gen(function* () {
-        const exit = yield* dbDiff(flags({ linked: true })).pipe(Effect.exit);
+        const exit = yield* dbDiff(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         expect(s.cache.cached).toBe(true);
         expect(s.cache.cachedRef).toBe("abcdefghijklmnopqrst");
@@ -1485,7 +1717,7 @@ describe("db diff", () => {
     },
   );
 
-  it.effect("--use-pgadmin --linked honors --project-ref like the other native engines", () => {
+  it.effect("--use-pgadmin --remote honors --remote=<ref> like the other native engines", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const s = setup(tmp.current, {
       isLocal: false,
@@ -1496,8 +1728,7 @@ describe("db diff", () => {
       yield* dbDiff(
         flags({
           usePgAdmin: Option.some(true),
-          linked: true,
-          projectRef: Option.some(FLAG_REF),
+          remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const),
         }),
       );
       expect(s.differCalls).toHaveLength(1);
@@ -1507,7 +1738,7 @@ describe("db diff", () => {
   });
 
   it.effect(
-    "--use-pgadmin --linked succeeds when only the [remotes.<ref>] override fixes an invalid base config",
+    "--use-pgadmin --remote succeeds when only the [remotes.<ref>] override fixes an invalid base config",
     () => {
       // pgadmin shares the same target resolve as migra/pg-delta, so it validates the
       // remote-merged config and succeeds.
@@ -1530,7 +1761,7 @@ describe("db diff", () => {
         pgadminStdout: [JSON.stringify([pgadminEntry()])],
       });
       return Effect.gen(function* () {
-        yield* dbDiff(flags({ usePgAdmin: Option.some(true), linked: true }));
+        yield* dbDiff(flags({ usePgAdmin: Option.some(true), remote: REMOTE_LINKED }));
         expect(stderr(s.out)).toContain("Loading config override: [remotes.staging]");
         expect(s.differCalls).toHaveLength(1);
       }).pipe(Effect.provide(s.layer));
@@ -1538,7 +1769,7 @@ describe("db diff", () => {
   );
 
   it.effect(
-    "--use-pgadmin --linked's preflight probe targets the resolved LINKED project id, not the base config's",
+    "--use-pgadmin --remote's preflight probe targets the resolved LINKED project id, not the base config's",
     () => {
       // The preflight probe's project id comes from the config after the linked
       // remote merge, not the base config's own `project_id`.
@@ -1557,7 +1788,7 @@ describe("db diff", () => {
         pgadminStdout: [JSON.stringify([pgadminEntry()])],
       });
       return Effect.gen(function* () {
-        yield* dbDiff(flags({ usePgAdmin: Option.some(true), linked: true }));
+        yield* dbDiff(flags({ usePgAdmin: Option.some(true), remote: REMOTE_LINKED }));
         // `mockShadowContainerCliSpawner` distinguishes this preflight probe from the
         // shadow's own health-check inspect by the `supabase_db_` container-name prefix.
         const inspectTargets = s.shadowSpawned
@@ -1838,10 +2069,10 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("explicit --from local --to linked prints the diff to stdout", () => {
+  it.effect("explicit --from local --to remote prints the diff to stdout", () => {
     const s = setup(tmp.current, { isLocal: false, diffSql: "create table e ();\n" });
     return Effect.gen(function* () {
-      yield* dbDiff(flags({ from: Option.some("local"), to: Option.some("linked") }));
+      yield* dbDiff(flags({ from: Option.some("local"), to: Option.some("remote") }));
       expect(s.explicitDiffCalls[0]).toMatchObject({
         source: {
           kind: "database",
@@ -1968,7 +2199,7 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("explicit --from linked --to migrations passes the linked ref to the strategy", () => {
+  it.effect("explicit --from remote --to migrations passes the linked ref to the strategy", () => {
     // Linked resolves first, so the later migrations catalog uses the remote-merged config.
     const s = setup(tmp.current, {
       files: {
@@ -1989,7 +2220,7 @@ describe("db diff", () => {
       diffSql: "create table m ();\n",
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags({ from: Option.some("linked"), to: Option.some("migrations") }));
+      yield* dbDiff(flags({ from: Option.some("remote"), to: Option.some("migrations") }));
       expect(s.explicitDiffCalls[0]?.desired).toEqual({
         kind: "migrations",
         projectRef: "abcdefghijklmnopqrst",
@@ -2000,7 +2231,7 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("explicit --from migrations --to linked passes base config to the strategy", () => {
+  it.effect("explicit --from migrations --to remote passes base config to the strategy", () => {
     // Migrations resolves before linked here, so the catalog must use base config
     // (no ref forwarded yet).
     const s = setup(tmp.current, {
@@ -2027,16 +2258,16 @@ describe("db diff", () => {
       diffSql: "create table m ();\n",
     });
     return Effect.gen(function* () {
-      yield* dbDiff(flags({ from: Option.some("migrations"), to: Option.some("linked") }));
+      yield* dbDiff(flags({ from: Option.some("migrations"), to: Option.some("remote") }));
       expect(s.explicitDiffCalls[0]?.source).toEqual({ kind: "migrations" });
       expect(s.explicitDiffCalls[0]?.toml?.majorVersion).toBe(17);
       expect(s.explicitDiffCalls[0]?.toml?.webhooksEnabled).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("explicit --from local --to migrations --linked seeds the merged config", () => {
-    // A changed --linked remote-merges the config before the explicit refs resolve,
-    // even though neither explicit ref is itself `linked`.
+  it.effect("explicit --from local --to migrations --remote seeds the merged config", () => {
+    // A changed --remote merges the matching [remotes.*] block before the explicit refs resolve,
+    // even though neither explicit ref is itself `remote`.
     const s = setup(tmp.current, {
       files: {
         "supabase/config.toml": [
@@ -2060,7 +2291,7 @@ describe("db diff", () => {
         flags({
           from: Option.some("local"),
           to: Option.some("migrations"),
-          linked: true,
+          remote: REMOTE_LINKED,
         }),
       );
       expect(s.explicitDiffCalls[0]?.desired).toEqual({
@@ -2070,7 +2301,7 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("explicit --from local --to migrations --linked validates the merged config", () => {
+  it.effect("explicit --from local --to migrations --remote validates the merged config", () => {
     // The base config read is deferred until after the linked preflight, so a base
     // config only valid after the remote merge doesn't fail early.
     const s = setup(tmp.current, {
@@ -2096,7 +2327,7 @@ describe("db diff", () => {
         flags({
           from: Option.some("local"),
           to: Option.some("migrations"),
-          linked: true,
+          remote: REMOTE_LINKED,
         }),
       ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -2124,14 +2355,14 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("explicit mode accepts --db-url without minting a connection", () => {
+  it.effect("explicit mode accepts --remote=<db-url> without minting a connection", () => {
     const s = setup(tmp.current, { diffSql: "create table p ();\n" });
     return Effect.gen(function* () {
       yield* dbDiff(
         flags({
           from: Option.some("local"),
           to: Option.some("local"),
-          dbUrl: Option.some("postgresql://x"),
+          remote: Option.some({ _tag: "DbUrl", url: "postgresql://x" } as const),
         }),
       );
       expect(s.resolverCalls).toEqual([]);
@@ -2844,7 +3075,7 @@ describe("db diff", () => {
             flags({
               usePgAdmin: Option.some(true),
               from: Option.some("local"),
-              to: Option.some("linked"),
+              to: Option.some("remote"),
             }),
           );
           expect(s.differCalls).toEqual([]);
@@ -2950,13 +3181,13 @@ describe("db diff permissions through the real resolver and cache", () => {
   const cacheCalls = (calls: ReadonlyArray<{ readonly method: string; readonly url: string }>) =>
     calls.map(({ method, url }) => `${method} ${url}`);
 
-  it.effect("mints a login role and fills the cache for --linked", () => {
+  it.effect("mints a login role and fills the cache for --remote=<ref>", () => {
     const s = setup(tmp.current, { realLayers: true, diffSql: "alter table x;\n" });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-      yield* dbDiff(flags({ linked: true, projectRef: Option.some(VALID_REF) })).pipe(
+      yield* dbDiff(flags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) })).pipe(
         Effect.provide(s.layer),
       );
       expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
@@ -2964,7 +3195,7 @@ describe("db diff permissions through the real resolver and cache", () => {
       expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
       assertPermissionDrift({
         command: "db diff",
-        activeFlags: { linked: true, "project-ref": VALID_REF },
+        activeFlags: { remote: VALID_REF },
         requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
         exact: true,
       });
@@ -2998,13 +3229,13 @@ describe("db diff permissions through the real resolver and cache", () => {
   });
 
   for (const side of ["from", "to"] as const) {
-    it.effect(`resolves the linked project for --${side} linked without --linked`, () => {
+    it.effect(`resolves the project --remote=<ref> names for --${side} remote`, () => {
       const s = setup(tmp.current, { realLayers: true, diffSql: "create table e ();\n" });
       const requests: Array<StubbedRequest> = [];
       const refs =
         side === "from"
-          ? { from: "linked", to: "migrations" }
-          : { from: "migrations", to: "linked" };
+          ? { from: "remote", to: "migrations" }
+          : { from: "migrations", to: "remote" };
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
@@ -3012,7 +3243,7 @@ describe("db diff permissions through the real resolver and cache", () => {
           flags({
             from: Option.some(refs.from),
             to: Option.some(refs.to),
-            projectRef: Option.some(VALID_REF),
+            remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
           }),
         ).pipe(Effect.provide(s.layer));
         expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
@@ -3020,7 +3251,7 @@ describe("db diff permissions through the real resolver and cache", () => {
         expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
         assertPermissionDrift({
           command: "db diff",
-          activeFlags: { from: refs.from, to: refs.to, "project-ref": VALID_REF },
+          activeFlags: { from: refs.from, to: refs.to, remote: VALID_REF },
           requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
           exact: true,
         });
@@ -3055,22 +3286,22 @@ describe("db diff permissions through the real resolver and cache", () => {
     );
   });
 
-  it.effect("mints one login role shared by both sides when --from and --to are linked", () => {
+  it.effect("mints one login role shared by both sides when --from and --to are remote", () => {
     const s = setup(tmp.current, { realLayers: true, diffSql: "create table e ();\n" });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
       yield* dbDiff(
         flags({
-          from: Option.some("linked"),
-          to: Option.some("linked"),
-          projectRef: Option.some(VALID_REF),
+          from: Option.some("remote"),
+          to: Option.some("remote"),
+          remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
         }),
       ).pipe(Effect.provide(s.layer));
       expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
       assertPermissionDrift({
         command: "db diff",
-        activeFlags: { from: "linked", to: "linked", "project-ref": VALID_REF },
+        activeFlags: { from: "remote", to: "remote", remote: VALID_REF },
         requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
         exact: true,
       });
@@ -3081,23 +3312,22 @@ describe("db diff permissions through the real resolver and cache", () => {
     );
   });
 
-  it.effect("mints one login role shared by the --linked preflight and both linked sides", () => {
+  it.effect("mints one login role shared by the --remote preflight and both remote sides", () => {
     const s = setup(tmp.current, { realLayers: true, diffSql: "create table e ();\n" });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
       yield* dbDiff(
         flags({
-          from: Option.some("linked"),
-          to: Option.some("linked"),
-          linked: true,
-          projectRef: Option.some(VALID_REF),
+          from: Option.some("remote"),
+          to: Option.some("remote"),
+          remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
         }),
       ).pipe(Effect.provide(s.layer));
       expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
       assertPermissionDrift({
         command: "db diff",
-        activeFlags: { linked: true, from: "linked", to: "linked", "project-ref": VALID_REF },
+        activeFlags: { remote: VALID_REF, from: "remote", to: "remote" },
         requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
         exact: true,
       });

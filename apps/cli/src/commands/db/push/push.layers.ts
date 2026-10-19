@@ -67,6 +67,7 @@ export const dbPushRuntimeLayer = Layer.mergeAll(
   credentials,
   projectRef,
   linkedProjectCache,
+  platformApiFactory,
   identityStitchLayer,
   telemetryStateLayer,
   commandRuntimeLayer(["db", "push"]),

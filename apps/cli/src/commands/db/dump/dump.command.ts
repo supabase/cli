@@ -21,6 +21,7 @@ import { DbDumpRunError } from "./dump.errors.ts";
 import { dbDump } from "./dump.handler.ts";
 import { dbDumpRuntimeLayer } from "./dump.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
@@ -120,6 +121,7 @@ export const dbDumpCommand = Command.make("dump", config).pipe(
         dbConfig,
         dbConfigPoolerFallback,
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+        branchResolution,
       ),
       { default: "local" },
     ),

@@ -74,6 +74,7 @@ export const dbDumpRuntimeLayer = Layer.mergeAll(
   cliSettings,
   projectRef,
   linkedProjectCache,
+  platformApiFactory,
   identityStitchLayer,
   telemetryStateLayer,
   stackApiLayer,

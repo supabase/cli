@@ -11,6 +11,11 @@ vi.mock("node:net", (importOriginal) =>
 );
 
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import {
+  BRANCH_PROJECT_REF,
+  branchListApi,
+  warningsOf,
+} from "../../../../tests/helpers/db-remote-selection.ts";
 import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -173,7 +178,7 @@ function mockConnection(opts: {
   };
 }
 
-/** Project-ref resolver mock; an explicit `--project-ref` wins over the workdir's own ref. */
+/** Project-ref resolver mock; an explicit `--remote=<ref>` wins over the workdir's own ref. */
 function mockProjectRef() {
   const calls: Array<string> = [];
   const layer = Layer.succeed(ProjectRefResolver, {
@@ -257,6 +262,8 @@ function setup(opts: SetupOpts = {}) {
   );
   return { layer, out, resolver, connection, telemetry, processControl, projectRef, cache, http };
 }
+
+const REMOTE_LINKED: DbLintFlags["remote"] = Option.some({ _tag: "Linked" });
 
 const flags = (over: Partial<DbLintFlags> = {}): DbLintFlags => ({
   dbUrl: over.dbUrl ?? Option.none<string>(),
@@ -494,10 +501,15 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("connects to the --db-url target", () => {
+  it.effect("connects to the --remote=<db-url> target", () => {
     const { layer, resolver } = setup({ isLocal: false, checkRows: { public: [] } });
     return Effect.gen(function* () {
-      yield* dbLint(flags({ schema: ["public"], dbUrl: Option.some("postgres://x") }));
+      yield* dbLint(
+        flags({
+          schema: ["public"],
+          remote: Option.some({ _tag: "DbUrl", url: "postgres://x" } as const),
+        }),
+      );
       expect(resolver.resolveInput?.target.kind).toBe("db-url");
     }).pipe(Effect.provide(layer));
   });
@@ -514,22 +526,24 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("writes the linked-project cache for --linked", () => {
+  it.effect("writes the linked-project cache for a bare --remote", () => {
     const { layer, projectRef, cache } = setup({ isLocal: false, checkRows: { public: [] } });
     return Effect.gen(function* () {
-      yield* dbLint(flags({ schema: ["public"], linked: true }));
+      yield* dbLint(flags({ schema: ["public"], remote: REMOTE_LINKED }));
       expect(projectRef.calls).toContain("resolveRef");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("lints the project given via --project-ref, overriding the workdir's own ref", () => {
+  it.effect("lints the project given via --remote=<ref>, overriding the workdir's own ref", () => {
     // `VALID_REF` stands in for whatever the workdir would resolve to absent the
     // flag; the flag must win.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, cache } = setup({ isLocal: false, checkRows: { public: [] } });
     return Effect.gen(function* () {
-      yield* dbLint(flags({ schema: ["public"], projectRef: Option.some(FLAG_REF) }));
+      yield* dbLint(
+        flags({ schema: ["public"], remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const) }),
+      );
       expect(cache.cached).toBe(true);
       expect(cache.cachedRef).toBe(FLAG_REF);
       expect(cache.cachedRef).not.toBe(VALID_REF);
@@ -547,7 +561,10 @@ describe("db lint", () => {
       const fs = yield* FileSystem.FileSystem;
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
       yield* dbLint(
-        flags({ schema: ["public"], linked: true, projectRef: Option.some(VALID_REF) }),
+        flags({
+          schema: ["public"],
+          remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+        }),
       );
       expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
         `GET /v1/projects/${VALID_REF}/config/database/pooler`,
@@ -559,7 +576,7 @@ describe("db lint", () => {
       expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(true);
       assertPermissionDrift({
         command: "db lint",
-        activeFlags: { linked: true, "project-ref": VALID_REF, schema: true },
+        activeFlags: { remote: VALID_REF, schema: true },
         requests: [...asRecordedRequests(requests), ...http.calls],
         exact: true,
       });
@@ -571,14 +588,14 @@ describe("db lint", () => {
   });
 
   it.effect(
-    "makes no Management API request for --local through the real resolver and cache",
+    "makes no Management API request for the default local target through the real resolver and cache",
     () => {
       const { layer, http } = setup({ checkRows: { public: [] }, realLayers: true });
       const requests: Array<StubbedRequest> = [];
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         yield* stubManagementApi(requests, () => undefined);
-        yield* dbLint(flags({ schema: ["public"], local: true }));
+        yield* dbLint(flags({ schema: ["public"] }));
         expect(requests).toEqual([]);
         expect(http.calls).toEqual([]);
         expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(
@@ -586,7 +603,7 @@ describe("db lint", () => {
         );
         assertPermissionDrift({
           command: "db lint",
-          activeFlags: { local: true, schema: true },
+          activeFlags: { schema: true },
           requests: [],
           exact: true,
         });
@@ -619,7 +636,7 @@ describe("db lint", () => {
     );
   });
 
-  it.effect("--project-ref alone reaches the linked database through the real resolver", () => {
+  it.effect("--remote=<ref> alone reaches the linked database through the real resolver", () => {
     const { layer, http } = setup({
       isLocal: false,
       checkRows: { public: [] },
@@ -629,7 +646,12 @@ describe("db lint", () => {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-      yield* dbLint(flags({ schema: ["public"], projectRef: Option.some(VALID_REF) }));
+      yield* dbLint(
+        flags({
+          schema: ["public"],
+          remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+        }),
+      );
       expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
         `GET /v1/projects/${VALID_REF}/config/database/pooler`,
         `POST /v1/projects/${VALID_REF}/cli/login-role`,
@@ -637,7 +659,7 @@ describe("db lint", () => {
       expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(true);
       assertPermissionDrift({
         command: "db lint",
-        activeFlags: { "project-ref": VALID_REF, schema: true },
+        activeFlags: { remote: VALID_REF, schema: true },
         requests: [...asRecordedRequests(requests), ...http.calls],
         exact: true,
       });
@@ -697,4 +719,107 @@ describe("db lint", () => {
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describe("db lint target selection", () => {
+  const FLAG_PROJECT_REF = "flagflagflagflagflag";
+
+  const resolvedTarget = (
+    selector: Partial<DbLintFlags>,
+    options: { readonly branchApi?: ReturnType<typeof branchListApi> } = {},
+  ) => {
+    const { layer, out, resolver } = setup({ checkRows: { public: [] } });
+    const provided =
+      options.branchApi === undefined ? layer : Layer.merge(layer, options.branchApi.layer);
+    return Effect.gen(function* () {
+      yield* dbLint(flags({ schema: ["public"], ...selector })).pipe(Effect.provide(provided));
+      return { target: resolver.resolveInput?.target, warnings: warningsOf(out) };
+    });
+  };
+
+  it.effect("targets the local database, with no warning, when nothing selects one", () =>
+    Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget({});
+      expect(target).toEqual({ kind: "local" });
+      expect(warnings).toEqual([]);
+    }),
+  );
+
+  it.effect("targets the project --remote=<ref> names, with no warning", () =>
+    Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget({
+        remote: Option.some({ _tag: "Ref", ref: FLAG_PROJECT_REF } as const),
+      });
+      expect(target).toMatchObject({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" });
+      expect(warnings).toEqual([]);
+    }),
+  );
+
+  it.effect("targets the database --remote=<db-url> names, with no warning", () =>
+    Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget({
+        remote: Option.some({
+          _tag: "DbUrl",
+          url: "postgresql://postgres:pw@db.example.com/db",
+        } as const),
+      });
+      expect(target?.kind).toBe("db-url");
+      expect(warnings).toEqual([]);
+    }),
+  );
+
+  it.effect("targets the project of the branch --remote=<branch> names", () => {
+    const branchApi = branchListApi();
+    return Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget(
+        { remote: Option.some({ _tag: "Branch", name: "feature-x" }) },
+        { branchApi },
+      );
+      expect(target).toMatchObject({ kind: "linked", ref: BRANCH_PROJECT_REF, source: "flag" });
+      expect(warnings).toEqual([]);
+      assertPermissionDrift({
+        command: "db lint",
+        activeFlags: { schema: true, remote: "feature-x" },
+        requests: branchApi.requests,
+      });
+    });
+  });
+
+  it.effect.each([
+    {
+      alias: "--linked",
+      flags: { linked: true },
+      kind: "linked",
+      warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
+    },
+    {
+      alias: "--project-ref",
+      flags: { projectRef: Option.some(FLAG_PROJECT_REF) },
+      kind: "linked",
+      warning: "--project-ref is deprecated and will be removed in v4. Use --remote instead",
+    },
+    {
+      alias: "--db-url",
+      flags: { dbUrl: Option.some("postgresql://postgres:pw@db.example.com/db") },
+      kind: "db-url",
+      warning: "--db-url is deprecated and will be removed in v4. Use --remote instead",
+    },
+    {
+      alias: "--local",
+      flags: { local: true },
+      kind: "local",
+      warning: "--local isn't needed (local is the default) and will be removed in v4",
+    },
+  ] satisfies ReadonlyArray<{
+    alias: string;
+    flags: Partial<DbLintFlags>;
+    kind: string;
+    warning: string;
+  }>)("keeps $alias working and warns that it is deprecated", ({ flags, kind, warning }) =>
+    Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget(flags);
+      expect(target?.kind).toBe(kind);
+      expect(warnings).toEqual([expect.stringContaining(warning)]);
+    }),
+  );
 });

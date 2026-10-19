@@ -16,6 +16,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbReset } from "./reset.handler.ts";
 import { dbResetRuntimeLayer } from "./reset.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
@@ -53,6 +54,7 @@ export const dbResetCommand = Command.make("reset", config).pipe(
         { operations: [], noApiEffectFlags: ["no-seed", "sql-paths", "version", "last"] },
         dbConfig,
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+        branchResolution,
       ),
       { default: "local" },
     ),

@@ -36,10 +36,10 @@ Identical to `test db`. See
 Identical to `test db`. See
 [`../../test/db/SIDE_EFFECTS.md`](../../test/db/SIDE_EFFECTS.md#docker).
 
-## API Routes (linked target only)
+## API Routes (remote project or branch only)
 
 Identical to `test db`. See
-[`../../test/db/SIDE_EFFECTS.md`](../../test/db/SIDE_EFFECTS.md#api-routes-linked-target-only).
+[`../../test/db/SIDE_EFFECTS.md`](../../test/db/SIDE_EFFECTS.md#api-routes-remote-project-or-branch-only).
 
 ## Environment Variables
 
@@ -74,8 +74,11 @@ Identical to `test db`. See
 
 - Hidden command —
   registered with `.pipe(Command.unlisted)` in `../db.command.ts`.
-- Target selection and the hosted-target confirmation are identical to `test db`: with no target
-  flag, bare `supabase db test` follows the workspace target (default `local`), and a linked or
-  remote `--db-url` run asks for confirmation (or needs `--yes`) before pgTAP is enabled.
+- Target selection and the hosted-target confirmation are identical to `test db`: with no selector,
+  bare `supabase db test` runs against the local stack (a linked checkout adds
+  `default; pass --remote for <project>` to the `Target:` line), `--remote` and its forms select a
+  remote project, branch or database, and a remote project, branch or remote `--remote=<url>` run
+  asks for confirmation (or needs `--yes`) before pgTAP is enabled. The deprecated `--linked`,
+  `--project-ref`, `--db-url` and `--local` aliases warn on stderr.
 - Shares every behavior documented on `test db` (pg_prove image pin,
   `pg_extension`-based "already exists" detection, global `--network-id` handling, etc.).

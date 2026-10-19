@@ -28,6 +28,11 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../tests/helpers/command-mocks.ts";
+import {
+  BRANCH_PROJECT_REF,
+  branchListApi,
+  warningsOf,
+} from "../../tests/helpers/db-remote-selection.ts";
 import { assertPermissionDrift } from "../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
@@ -346,6 +351,8 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, telemetry, connection, docker, bundled, resolver };
 }
 
+const REMOTE_LINKED = Option.some({ _tag: "Linked" } as const);
+
 const flags = (over: Partial<Parameters<typeof testDb>[0]> = {}) => ({
   paths: over.paths ?? [],
   remote: over.remote ?? Option.none(),
@@ -461,7 +468,9 @@ describe("test db integration", () => {
       isLocal: false,
     });
     return Effect.gen(function* () {
-      yield* testDb(flags({ dbUrl: Option.some("postgres://x") }));
+      yield* testDb(
+        flags({ remote: Option.some({ _tag: "DbUrl", url: "postgres://x" } as const) }),
+      );
       const run = docker.lastOpts;
       expect(run?.network).toEqual({ _tag: "host" });
       expect(run?.env["PGHOST"]).toBe(REMOTE_CONN.host);
@@ -479,8 +488,10 @@ describe("test db integration", () => {
     return Effect.gen(function* () {
       yield* testDb(
         flags({
-          local: false,
-          dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:54322/postgres"),
+          remote: Option.some({
+            _tag: "DbUrl",
+            url: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+          }),
         }),
       );
       expect(docker.lastOpts).toBeUndefined();
@@ -492,7 +503,7 @@ describe("test db integration", () => {
     }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
   });
 
-  it.live("stack --db-url native keeps PGHOST when isLocal is true", () => {
+  it.live("stack --remote=<db-url> native keeps PGHOST when isLocal is true", () => {
     const { layer, docker, bundled } = setup({
       conn: { ...LOCAL_CONN, host: "db.internal" },
       isLocal: true,
@@ -501,8 +512,10 @@ describe("test db integration", () => {
     return Effect.gen(function* () {
       yield* testDb(
         flags({
-          dbUrl: Option.some("postgresql://postgres:postgres@db.internal:54322/postgres"),
-          local: false,
+          remote: Option.some({
+            _tag: "DbUrl",
+            url: "postgresql://postgres:postgres@db.internal:54322/postgres",
+          }),
         }),
       );
       expect(docker.lastOpts).toBeUndefined();
@@ -511,14 +524,14 @@ describe("test db integration", () => {
     }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
   });
 
-  it.live("stack --linked native keeps the remote PGHOST", () => {
+  it.live("stack --remote native keeps the remote PGHOST", () => {
     const { layer, docker, bundled } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
       dockerInstalled: false,
     });
     return Effect.gen(function* () {
-      yield* testDb(flags({ local: false, linked: true }));
+      yield* testDb(flags({ remote: REMOTE_LINKED }));
       expect(docker.lastOpts).toBeUndefined();
       expect(bundled.lastOpts?.runtime).toEqual({ kind: "native" });
       expect(bundled.lastOpts?.env?.["PGHOST"]).toBe(REMOTE_CONN.host);
@@ -532,7 +545,9 @@ describe("test db integration", () => {
       dnsResolver: "https",
     });
     return Effect.gen(function* () {
-      yield* testDb(flags({ dbUrl: Option.some("postgres://x") }));
+      yield* testDb(
+        flags({ remote: Option.some({ _tag: "DbUrl", url: "postgres://x" } as const) }),
+      );
       expect(connection.connectCalls[0]?.dnsResolver).toBe("https");
     }).pipe(Effect.provide(layer));
   });
@@ -732,11 +747,11 @@ describe("test db integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("selects the project given via --project-ref alone", () => {
+  it.live("selects the project given via --remote=<ref> alone", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, resolver } = setup({ conn: REMOTE_CONN, isLocal: false });
     return Effect.gen(function* () {
-      yield* testDb(flags({ projectRef: Option.some(FLAG_REF) }));
+      yield* testDb(flags({ remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const) }));
       expect(resolver.inputs[0]?.target).toMatchObject({ kind: "linked", ref: FLAG_REF });
     }).pipe(Effect.provide(layer));
   });
@@ -793,7 +808,12 @@ describe("test db integration", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        testDb(flags({ dbUrl: Option.some("postgres://x"), paths: ["/abs/a_test.sql"] })),
+        testDb(
+          flags({
+            remote: Option.some({ _tag: "DbUrl", url: "postgres://x" } as const),
+            paths: ["/abs/a_test.sql"],
+          }),
+        ),
       );
       expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(
         HostedMutationDeclinedError,
@@ -835,7 +855,7 @@ describe("test db integration", () => {
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.effect("mints a login role through the real resolver for --linked --project-ref", () => {
+  it.effect("mints a login role through the real resolver for --remote=<ref>", () => {
     const { layer, connection } = setup({
       realLayers: true,
       workdir: tempWorkdir.current,
@@ -843,7 +863,7 @@ describe("test db integration", () => {
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-      yield* testDb(flags({ linked: true, local: false, projectRef: Option.some(VALID_REF) }));
+      yield* testDb(flags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }));
       expect(connection.connectCalls[0]?.isLocal).toBe(false);
       expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
         `GET /v1/projects/${VALID_REF}/config/database/pooler`,
@@ -851,7 +871,7 @@ describe("test db integration", () => {
       ]);
       assertPermissionDrift({
         command: "test db",
-        activeFlags: { linked: true, "project-ref": VALID_REF },
+        activeFlags: { remote: VALID_REF },
         requests: asRecordedRequests(requests),
         exact: true,
       });
@@ -896,12 +916,124 @@ describe("test db integration", () => {
   });
 });
 
+describe("test db target selection", () => {
+  const FLAG_PROJECT_REF = "flagflagflagflagflag";
+
+  const resolvedTarget = (
+    selector: Partial<Parameters<typeof testDb>[0]>,
+    options: { readonly branchApi?: ReturnType<typeof branchListApi> } = {},
+  ) => {
+    const { layer, out, resolver } = setup({ conn: REMOTE_CONN });
+    const provided =
+      options.branchApi === undefined
+        ? layer
+        : Layer.mergeAll(
+            layer,
+            mockCommandSettings({ workdir: "/work/project", projectId: Option.some(VALID_REF) }),
+            options.branchApi.layer,
+          );
+    return Effect.gen(function* () {
+      yield* testDb(flags(selector)).pipe(Effect.provide(provided));
+      return { target: resolver.inputs[0]?.target, warnings: warningsOf(out) };
+    });
+  };
+
+  it.live("targets the local database, with no warning, when nothing selects one", () =>
+    Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget({});
+      expect(target).toEqual({ kind: "local" });
+      expect(warnings).toEqual([]);
+    }),
+  );
+
+  it.live("targets the project --remote=<ref> names, with no warning", () =>
+    Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget({
+        remote: Option.some({ _tag: "Ref", ref: FLAG_PROJECT_REF } as const),
+      });
+      expect(target).toMatchObject({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" });
+      expect(warnings).toEqual([]);
+    }),
+  );
+
+  it.live("targets the database --remote=<db-url> names, with no warning", () =>
+    Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget({
+        remote: Option.some({
+          _tag: "DbUrl",
+          url: "postgresql://postgres:pw@db.example.com/db",
+        } as const),
+      });
+      expect(target?.kind).toBe("db-url");
+      expect(warnings).toEqual([]);
+    }),
+  );
+
+  it.live("targets the project of the branch --remote=<branch> names", () => {
+    const branchApi = branchListApi();
+    return Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget(
+        { remote: Option.some({ _tag: "Branch", name: "feature-x" }) },
+        { branchApi },
+      );
+      expect(target).toMatchObject({ kind: "linked", ref: BRANCH_PROJECT_REF, source: "flag" });
+      expect(warnings).toEqual([]);
+      assertPermissionDrift({
+        command: "test db",
+        activeFlags: { remote: "feature-x" },
+        requests: branchApi.requests,
+      });
+    });
+  });
+
+  it.live.each([
+    {
+      alias: "--linked",
+      flags: { linked: true },
+      kind: "linked",
+      warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
+    },
+    {
+      alias: "--project-ref",
+      flags: { projectRef: Option.some(FLAG_PROJECT_REF) },
+      kind: "linked",
+      warning: "--project-ref is deprecated and will be removed in v4. Use --remote instead",
+    },
+    {
+      alias: "--db-url",
+      flags: { dbUrl: Option.some("postgresql://postgres:pw@db.example.com/db") },
+      kind: "db-url",
+      warning: "--db-url is deprecated and will be removed in v4. Use --remote instead",
+    },
+    {
+      alias: "--local",
+      flags: { local: true },
+      kind: "local",
+      warning: "--local isn't needed (local is the default) and will be removed in v4",
+    },
+  ] satisfies ReadonlyArray<{
+    alias: string;
+    flags: Partial<Parameters<typeof testDb>[0]>;
+    kind: string;
+    warning: string;
+  }>)("keeps $alias working and warns that it is deprecated", ({ flags, kind, warning }) =>
+    Effect.gen(function* () {
+      const { target, warnings } = yield* resolvedTarget(flags);
+      expect(target?.kind).toBe(kind);
+      expect(warnings).toEqual([expect.stringContaining(warning)]);
+    }),
+  );
+});
+
 describeHostedConsent("test db", {
   invoke: () => {
     const connection = mockDbConnection({});
     return {
       run: testDb(
-        flags({ linked: true, projectRef: Option.some(VALID_REF), paths: ["supabase/tests"] }),
+        flags({
+          remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+          paths: ["supabase/tests"],
+        }),
       ).pipe(
         Effect.provide(
           Layer.mergeAll(

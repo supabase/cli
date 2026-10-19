@@ -286,12 +286,12 @@ describe("db test (alias) integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("mints a login role through the real DB config resolver for --linked", () => {
+  it.effect("mints a login role through the real DB config resolver for --remote=<ref>", () => {
     const { layer, docker } = setup({ realDbConfig: true, workdir: tempRoot.current });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
       yield* stubManagementApi(requests, serveLinkedDatabase(REF));
-      yield* runTestDbCommand(flags({ linked: true, projectRef: Option.some(REF) }));
+      yield* runTestDbCommand(flags({ remote: Option.some({ _tag: "Ref", ref: REF } as const) }));
       expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
         `GET /v1/projects/${REF}/config/database/pooler`,
         `POST /v1/projects/${REF}/cli/login-role`,
@@ -299,7 +299,7 @@ describe("db test (alias) integration", () => {
       expect(docker.lastOpts?.cmd[0]).toBe("pg_prove");
       assertPermissionDrift({
         command: "db test",
-        activeFlags: { linked: true, "project-ref": REF },
+        activeFlags: { remote: REF },
         requests: asRecordedRequests(requests),
         exact: true,
       });
@@ -326,33 +326,12 @@ describe("db test (alias) integration", () => {
     );
   });
 
-  it.effect("makes no Management API request for --local through the real resolver", () => {
-    const { layer, docker } = setup({ realDbConfig: true, workdir: tempRoot.current });
-    const requests: Array<StubbedRequest> = [];
-    return Effect.gen(function* () {
-      yield* stubManagementApi(requests, () => undefined);
-      yield* runTestDbCommand(flags({ local: true }));
-      expect(docker.lastOpts?.cmd[0]).toBe("pg_prove");
-      expect(requests).toEqual([]);
-      assertPermissionDrift({
-        command: "db test",
-        activeFlags: { local: true },
-        requests: [],
-        exact: true,
-      });
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(layer),
-      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
-    );
-  });
-
   it.effect(
     "dispatches through the real `dbTestCommand` and records `db test`, not `test db`, as the telemetry command",
     () => {
-      // `--local --linked` fail inside `testDb` (mutual exclusivity) before any DB/docker IO,
+      // `--remote --local` fail inside `testDb` (mutual exclusivity) before any DB/docker IO,
       // so this can dispatch through the real command tree without a real Postgres or Docker.
-      const args = ["db", "test", "--local", "--linked"];
+      const args = ["db", "test", "--remote", "--local"];
       const analytics = mockContextualAnalytics();
       const out = mockOutput({ format: "text" });
       const layer = Layer.mergeAll(
@@ -460,7 +439,7 @@ describeHostedConsent("db test", {
   invoke: () => {
     const connection = mockDbConnection();
     return {
-      run: testDb(flags({ linked: true, projectRef: Option.some(REF) })).pipe(
+      run: testDb(flags({ remote: Option.some({ _tag: "Ref", ref: REF } as const) })).pipe(
         Effect.provide(
           Layer.mergeAll(
             mockResolver({ ...LOCAL_CONN, host: `db.${REF}.supabase.co` }),

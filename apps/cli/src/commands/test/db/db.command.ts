@@ -1,7 +1,7 @@
 import { Command } from "effect/cli";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
-import { withDbTarget } from "../../../command-internal/command-permissions/model.ts";
+import { compose, withDbTarget } from "../../../command-internal/command-permissions/model.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import {
   TEST_DB_DESCRIPTION,
@@ -12,6 +12,7 @@ import {
 import { testDbRuntimeLayer } from "../../../command-internal/test-db.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 /**
@@ -21,7 +22,7 @@ import { withTargetPolicy } from "../../../command-internal/target/target-policy
 export const testDbCommand = Command.make("db", testDbConfig).pipe(
   Command.withDescription(TEST_DB_DESCRIPTION),
   Command.withShortDescription(TEST_DB_SHORT),
-  withPermissions(withDbTarget(dbConfig, { default: "local" })),
+  withPermissions(withDbTarget(compose(dbConfig, branchResolution), { default: "local" })),
   Command.withHandler(runTestDbCommand),
   Command.provide(testDbRuntimeLayer(["test", "db"])),
   Command.provide(cliConfigValuesLayer),

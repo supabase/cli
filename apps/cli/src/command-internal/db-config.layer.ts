@@ -66,6 +66,13 @@ const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
       "the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
   },
   {
+    operationId: "v1-get-pooler-config",
+    kind: "required",
+    when: [{ flag: "remote" }],
+    context:
+      "--remote names a project or branch other than the linked one, the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
+  },
+  {
     operationId: "v1-list-all-network-bans",
     kind: "best-effort",
     when: [{ flag: "password", present: false }],

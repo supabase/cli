@@ -17,6 +17,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbDiff } from "./diff.handler.ts";
 import { dbDiffRuntimeLayer } from "./diff.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
@@ -94,6 +95,14 @@ export type DbDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
 const explicitLinkedSide = (flag: "from" | "to") =>
   withCondition(compose(dbConfigLinked, linkedProjectCache), { flag, oneOf: ["linked", "remote"] });
 
+const explicitBranchSide = (flag: "from" | "to") =>
+  ({
+    operationId: "v1-list-all-branches",
+    kind: "required",
+    when: [{ flag, present: true }],
+    context: `--${flag} is a branch name or UUID, not local, migrations, remote, a project ref or a URL`,
+  }) as const;
+
 export const dbDiffCommand = Command.make("diff", config).pipe(
   Command.withDescription(
     "Compares a shadow built from supabase/migrations with a live database (the local database by default, or the one --remote selects). Declarative files under supabase/schemas are not part of this baseline. Output is printed by default; in normal mode, -f names and saves the complete diff as a migration and does not filter objects. Explicit --from/--to output is flattened review SQL, not a portable apply script.",
@@ -103,7 +112,7 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
     withDbTarget(
       compose(
         {
-          operations: [],
+          operations: [explicitBranchSide("from"), explicitBranchSide("to")],
           noApiEffectFlags: [
             "use-migra",
             "use-pgadmin",
@@ -119,6 +128,7 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
         explicitLinkedSide("from"),
         explicitLinkedSide("to"),
+        branchResolution,
       ),
       { default: "local" },
     ),

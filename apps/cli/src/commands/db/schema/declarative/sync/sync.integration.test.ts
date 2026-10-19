@@ -1001,9 +1001,7 @@ describe("db schema declarative sync integration", () => {
       });
       expect(error).toMatchObject({
         message: expect.stringContaining("uuid-ossp"),
-        suggestion: expect.stringContaining(
-          "supabase db schema declarative generate --local --overwrite",
-        ),
+        suggestion: expect.stringContaining("supabase db schema declarative generate --overwrite"),
       });
       expect(
         yield* Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(error),
