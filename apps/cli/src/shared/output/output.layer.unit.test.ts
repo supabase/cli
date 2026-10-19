@@ -1,8 +1,21 @@
 import { describe, expect, it } from "@effect/vitest";
+import { Writable } from "node:stream";
 import { beforeEach, vi } from "vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schema, Sink, Stdio, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  PlatformError,
+  Schema,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
 import { TestClock } from "effect/testing";
-import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
+import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError, StdoutClosedError } from "./errors.ts";
 import { mockTty } from "../../../tests/helpers/mocks.ts";
 import { machineErrorContextLayer } from "./machine-error-context.layer.ts";
 import { MachineErrorContext } from "./machine-error-context.service.ts";
@@ -96,6 +109,47 @@ function mockStdio() {
   );
   return { layer, stdout, stderr };
 }
+
+function brokenStdio(failing: "stdout" | "stderr", code: string) {
+  const attempts = { stdout: 0, stderr: 0 };
+  const sink = (stream: "stdout" | "stderr") =>
+    Sink.forEach((_item: string | Uint8Array) =>
+      Effect.suspend(() => {
+        attempts[stream]++;
+        return stream === failing
+          ? Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "Stdio",
+                method: stream,
+                cause: Object.assign(new Error(code), { code }),
+              }),
+            )
+          : Effect.void;
+      }),
+    );
+  const layer = Layer.succeed(
+    Stdio.Stdio,
+    Stdio.make({
+      args: Effect.succeed([]),
+      stdin: Stream.empty,
+      stdout: () => sink("stdout"),
+      stderr: () => sink("stderr"),
+    }),
+  );
+  return { layer, attempts };
+}
+
+const outputLayersOver = (stdio: Layer.Layer<Stdio.Stdio>) => [
+  {
+    name: "text",
+    layer: textOutputLayer.pipe(
+      Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: false }), stdio)),
+    ),
+  },
+  { name: "json", layer: jsonOutputLayer.pipe(Layer.provide(stdio)) },
+  { name: "stream-json", layer: streamJsonOutputLayer.pipe(Layer.provide(stdio)) },
+];
 
 function getFailError(exit: Exit.Exit<unknown, unknown>): unknown {
   if (!Exit.isFailure(exit)) throw new Error("Expected failure");
@@ -355,9 +409,10 @@ describe("Output", () => {
         yield* out.warn("no files matched pattern: missing.sql");
 
         expect(mockClack.spinnerFactory).toHaveBeenNthCalledWith(2, { withGuide: false });
-        expect(mockClack.log.warn).toHaveBeenCalledWith("no files matched pattern: missing.sql", {
-          spacing: 0,
-        });
+        expect(mockClack.log.warn).toHaveBeenCalledWith(
+          "no files matched pattern: missing.sql",
+          expect.objectContaining({ spacing: 0 }),
+        );
         const [clear] = mockClack.spinnerHandle.clear.mock.invocationCallOrder;
         const [warn] = mockClack.log.warn.mock.invocationCallOrder;
         const [, resume] = mockClack.spinnerHandle.start.mock.invocationCallOrder;
@@ -759,6 +814,71 @@ describe("Output", () => {
         expect(mockClack.log.success).toHaveBeenCalledWith("Loaded organizations.");
       }).pipe(Effect.provide(layer)),
     );
+  });
+
+  describe.each(["text", "json", "stream-json"])("%s layer on a broken pipe", (format) => {
+    const provideLayer = (stdio: Layer.Layer<Stdio.Stdio>) =>
+      Effect.provide(outputLayersOver(stdio).find(({ name }) => name === format)!.layer);
+
+    it.effect.each(["EPIPE", "EOF"])(
+      "ends the command once the stdout reader has closed (%s), then skips stdout",
+      (code) => {
+        const stdio = brokenStdio("stdout", code);
+        return Effect.gen(function* () {
+          const out = yield* Output;
+          const exit = yield* Effect.exit(out.raw("first\n"));
+          yield* out.raw("second\n");
+          yield* out.raw("diagnostic\n", "stderr");
+
+          expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(
+            StdoutClosedError,
+          );
+          expect(stdio.attempts).toEqual({ stdout: 1, stderr: 1 });
+        }).pipe(provideLayer(stdio.layer));
+      },
+    );
+
+    it.effect("keeps writing stdout once the stderr reader has closed", () => {
+      const stdio = brokenStdio("stderr", "EPIPE");
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.raw("diagnostic\n", "stderr");
+        yield* out.raw("again\n", "stderr");
+        yield* out.raw("payload\n");
+
+        expect(stdio.attempts).toEqual({ stdout: 1, stderr: 1 });
+      }).pipe(provideLayer(stdio.layer));
+    });
+
+    it.effect("dies on any other stdout write failure", () => {
+      const stdio = brokenStdio("stdout", "EIO");
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const exit = yield* Effect.exit(out.raw("first\n"));
+
+        expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(
+          PlatformError.PlatformError,
+        );
+      }).pipe(provideLayer(stdio.layer));
+    });
+  });
+
+  it.effect("ends a text command when a log line meets a closed stdout", () => {
+    mockClack.log.info.mockImplementation((message: string, opts: { output: Writable }) =>
+      opts.output.write(`${message}\n`),
+    );
+    const stdio = brokenStdio("stdout", "EPIPE");
+    const layer = textOutputLayer.pipe(
+      Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: false }), stdio.layer)),
+    );
+    return Effect.gen(function* () {
+      const out = yield* Output;
+      const exit = yield* Effect.exit(out.info("first"));
+      yield* out.info("second");
+
+      expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBeInstanceOf(StdoutClosedError);
+      expect(stdio.attempts).toEqual({ stdout: 1, stderr: 0 });
+    }).pipe(Effect.provide(layer));
   });
 
   describe("json layer", () => {

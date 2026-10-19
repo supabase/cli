@@ -395,6 +395,8 @@ export function spawnSupabase(
     cleanupProcessGroupOnClose?: boolean;
     /** Maximum time to wait for the process to exit before force-killing it. */
     exitTimeoutMs?: number;
+    /** Close the read end of stdout at spawn, like a `| head` reader that has already exited. */
+    closeStdout?: boolean;
   },
 ): SpawnedSupabase {
   const ownHome = options?.home ? null : makeTempHome();
@@ -443,6 +445,7 @@ export function spawnSupabase(
   if (stdoutStream == null || stderrStream == null) {
     throw new Error("Expected spawned Supabase process to expose stdout/stderr pipes");
   }
+  if (options?.closeStdout) stdoutStream.destroy();
 
   let stdout = "";
   let stderr = "";
