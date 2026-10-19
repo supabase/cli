@@ -1,9 +1,11 @@
 import { Effect } from "effect";
-import { Command, Flag } from "effect/cli";
+import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -29,10 +31,7 @@ export const networkBansRemoveDbUnbanIpFlag = stringSliceFlag(
 );
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   dbUnbanIp: networkBansRemoveDbUnbanIpFlag,
 } as const;
 
@@ -49,6 +48,7 @@ export const networkBansRemoveCommand = Command.make("remove", config).pipe(
       },
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>

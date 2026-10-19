@@ -4,11 +4,12 @@ import { CliError, Command } from "effect/cli";
 import { CliConfigParseError, CliProjectEnvParseError } from "@supabase/config";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { networkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
+import { ssoCommand } from "../../commands/sso/sso.command.ts";
 import { CliProjectHomeNotDirectoryError } from "../config/cli-project-home.service.ts";
 import { formatCliError, normalizeCause, normalizeCliError } from "./normalize-error.ts";
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([branchesCommand, networkRestrictionsCommand]),
+  Command.withSubcommands([branchesCommand, networkRestrictionsCommand, ssoCommand]),
 );
 
 describe("normalizeCliError", () => {
@@ -277,16 +278,16 @@ describe("normalizeCliError", () => {
   test("ShowHelp envelope unwraps multiple simultaneous errors and preserves the subcommand-flag hint (child flag with a value, before its subcommand)", () => {
     const error = {
       _tag: "ShowHelp",
-      commandPath: ["network-restrictions"],
+      commandPath: ["sso"],
       errors: [
         new CliError.UnrecognizedOption({
-          option: "--project-ref",
-          command: ["supabase", "network-restrictions"],
+          option: "--attribute-mapping-file",
+          command: ["supabase", "sso"],
           suggestions: [],
         }),
         new CliError.UnknownSubcommand({
-          subcommand: "jacraenyzrorgjhsdvvf",
-          parent: ["supabase", "network-restrictions"],
+          subcommand: "mapping.json",
+          parent: ["supabase", "sso"],
           suggestions: [],
         }),
       ],
@@ -294,15 +295,15 @@ describe("normalizeCliError", () => {
 
     const result = normalizeCliError(error, {
       rootCommand: testRoot,
-      args: ["network-restrictions", "--project-ref", "jacraenyzrorgjhsdvvf", "get"],
+      args: ["sso", "--attribute-mapping-file", "mapping.json", "add"],
     });
 
     expect(result.code).toBe("UnrecognizedOption");
     expect(result.message).toContain(
-      "Unrecognized flag: --project-ref in command supabase network-restrictions",
+      "Unrecognized flag: --attribute-mapping-file in command supabase sso",
     );
     expect(result.message).toContain(
-      "Hint: --project-ref is available on `supabase network-restrictions get` and `supabase network-restrictions update`.",
+      "Hint: --attribute-mapping-file is available on `supabase sso add` and `supabase sso update`.",
     );
     expect(result.message).not.toContain("Help requested");
   });

@@ -4,6 +4,8 @@ import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { postgresConfigRead, postgresConfigWrite } from "../postgres-config.shared.ts";
@@ -29,10 +31,7 @@ export const postgresConfigUpdateConfigFlag = stringSliceFlag(
 );
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   config: postgresConfigUpdateConfigFlag,
   replaceExistingOverrides: Flag.Boolean("replace-existing-overrides").pipe(
     Flag.withDescription(
@@ -58,6 +57,7 @@ export const postgresConfigUpdateCommand = Command.make("update", config).pipe(
       postgresConfigWrite,
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>

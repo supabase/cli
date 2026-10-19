@@ -3,6 +3,9 @@ import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { upgradeSuggestion } from "../../../command-internal/upgrade-suggest.ts";
@@ -32,10 +35,7 @@ export const ssoUpdateRemoveDomainsFlag = stringSliceFlag(
 );
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   domains: ssoUpdateDomainsFlag,
   addDomains: ssoUpdateAddDomainsFlag,
   removeDomains: ssoUpdateRemoveDomainsFlag,
@@ -110,11 +110,12 @@ export const ssoUpdateCommand = Command.make("update", config).pipe(
       upgradeSuggestion,
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
     ssoUpdate(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: ["project-ref"], config }),
+      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags.projectRef), config }),
       withJsonErrorHandling,
     ),
   ),

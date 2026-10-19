@@ -1,8 +1,11 @@
-import { Command, Flag } from "effect/cli";
+import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { upgradeSuggestion } from "../../../command-internal/upgrade-suggest.ts";
@@ -13,10 +16,7 @@ import { ssoList } from "./list.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
 };
 export type SsoListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
@@ -35,11 +35,12 @@ export const ssoListCommand = Command.make("list", config).pipe(
       upgradeSuggestion,
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
     ssoList(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: ["project-ref"] }),
+      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags.projectRef) }),
       withJsonErrorHandling,
     ),
   ),

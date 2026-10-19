@@ -13,6 +13,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -92,7 +93,11 @@ describe("snippets download integration", () => {
   it.effect("prints raw SQL with a trailing newline in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      yield* snippetsDownload({
+        snippetId: VALID_ID,
+        remote: Option.none(),
+        projectRef: Option.none(),
+      });
       expect(out.stdoutText).toBe(`${SQL}\n`);
     }).pipe(Effect.provide(layer));
   });
@@ -100,7 +105,11 @@ describe("snippets download integration", () => {
   it.effect("prints only a newline in text mode when the snippet has no content", () => {
     const { layer, out } = setup({ response: { ...SNIPPET_RESPONSE, content: null } });
     return Effect.gen(function* () {
-      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      yield* snippetsDownload({
+        snippetId: VALID_ID,
+        remote: Option.none(),
+        projectRef: Option.none(),
+      });
       expect(out.stdoutText).toBe("\n");
     }).pipe(Effect.provide(layer));
   });
@@ -109,7 +118,11 @@ describe("snippets download integration", () => {
     const body = { ...SNIPPET_RESPONSE, owner: null, updated_by: null, content: null };
     const { layer, out } = setup({ format: "json", response: body });
     return Effect.gen(function* () {
-      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      yield* snippetsDownload({
+        snippetId: VALID_ID,
+        remote: Option.none(),
+        projectRef: Option.none(),
+      });
       const success = out.messages.find((m) => m.type === "success");
       expect(toJson(success?.data)).toBe(toJson(body));
     }).pipe(Effect.provide(layer));
@@ -119,7 +132,7 @@ describe("snippets download integration", () => {
     const { layer } = setup({ response: { id: VALID_ID } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() }),
+        snippetsDownload({ snippetId: VALID_ID, remote: Option.none(), projectRef: Option.none() }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -149,7 +162,11 @@ describe("snippets download integration", () => {
       outputFlag: Option.some("json"),
     });
     return Effect.gen(function* () {
-      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      yield* snippetsDownload({
+        snippetId: VALID_ID,
+        remote: Option.none(),
+        projectRef: Option.none(),
+      });
       expect(out.stdoutText).toBe(`${SQL}\n`);
     }).pipe(Effect.provide(layer));
   });
@@ -157,7 +174,11 @@ describe("snippets download integration", () => {
   it.effect("emits a success event with the full response under --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      yield* snippetsDownload({
+        snippetId: VALID_ID,
+        remote: Option.none(),
+        projectRef: Option.none(),
+      });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toEqual(SNIPPET_RESPONSE);
@@ -167,7 +188,11 @@ describe("snippets download integration", () => {
   it.effect("emits a result event with the full response under --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
-      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      yield* snippetsDownload({
+        snippetId: VALID_ID,
+        remote: Option.none(),
+        projectRef: Option.none(),
+      });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toEqual(SNIPPET_RESPONSE);
@@ -180,7 +205,11 @@ describe("snippets download integration", () => {
       const { layer, api, telemetry, cache } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          snippetsDownload({ snippetId: INVALID_ID, projectRef: Option.none() }),
+          snippetsDownload({
+            snippetId: INVALID_ID,
+            remote: Option.none(),
+            projectRef: Option.none(),
+          }),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -199,7 +228,11 @@ describe("snippets download integration", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        snippetsDownload({ snippetId: TOO_LONG_ID, projectRef: Option.none() }),
+        snippetsDownload({
+          snippetId: TOO_LONG_ID,
+          remote: Option.none(),
+          projectRef: Option.none(),
+        }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -213,7 +246,11 @@ describe("snippets download integration", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        snippetsDownload({ snippetId: WRONG_FORMAT_ID, projectRef: Option.none() }),
+        snippetsDownload({
+          snippetId: WRONG_FORMAT_ID,
+          remote: Option.none(),
+          projectRef: Option.none(),
+        }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -235,7 +272,11 @@ describe("snippets download integration", () => {
   it.effect("calls GET /v1/snippets/{id} with the validated UUID and no project_ref query", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      yield* snippetsDownload({
+        snippetId: VALID_ID,
+        remote: Option.none(),
+        projectRef: Option.none(),
+      });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.method).toBe("GET");
       expect(api.requests[0]?.url).toContain(`/v1/snippets/${VALID_ID}`);
@@ -249,25 +290,33 @@ describe("snippets download integration", () => {
     () => {
       const { layer, api } = setup();
       return Effect.gen(function* () {
-        yield* snippetsDownload({ snippetId: UPPER_HEX32_ID, projectRef: Option.none() });
+        yield* snippetsDownload({
+          snippetId: UPPER_HEX32_ID,
+          remote: Option.none(),
+          projectRef: Option.none(),
+        });
         expect(api.requests).toHaveLength(1);
         expect(api.requests[0]?.url).toContain(`/v1/snippets/${VALID_ID}`);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.effect("uses --project-ref flag value when resolving the linked-project cache", () => {
+  it.effect("uses the --remote=<ref> value when resolving the linked-project cache", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, cache, api } = setup();
     return Effect.gen(function* () {
-      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.some(flagRef) });
+      yield* snippetsDownload({
+        snippetId: VALID_ID,
+        remote: Option.some({ _tag: "Ref", ref: flagRef }),
+        projectRef: Option.none(),
+      });
       // The download endpoint itself takes only the snippet ID, but the
       // resolved project ref still flows into the linked-project cache write.
       expect(cache.cached).toBe(true);
       expect(api.requests).toHaveLength(1);
       assertPermissionDrift({
         command: "snippets download",
-        activeFlags: { "project-ref": true },
+        activeFlags: { remote: flagRef },
         requests: api.requests,
         exact: true,
       });
@@ -303,7 +352,11 @@ describe("snippets download integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
       expect(yield* fs.exists(cachePath)).toBe(false);
-      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      yield* snippetsDownload({
+        snippetId: VALID_ID,
+        remote: Option.none(),
+        projectRef: Option.none(),
+      });
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         "GET https://api.supabase.com/v1/projects",
         `GET https://api.supabase.com/v1/snippets/${VALID_ID}`,
@@ -322,7 +375,7 @@ describe("snippets download integration", () => {
     const { layer } = setup({ status: 503 });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() }),
+        snippetsDownload({ snippetId: VALID_ID, remote: Option.none(), projectRef: Option.none() }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -337,7 +390,7 @@ describe("snippets download integration", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() }),
+        snippetsDownload({ snippetId: VALID_ID, remote: Option.none(), projectRef: Option.none() }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -351,7 +404,11 @@ describe("snippets download integration", () => {
   it.effect("flushes telemetry and writes linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
-      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() });
+      yield* snippetsDownload({
+        snippetId: VALID_ID,
+        remote: Option.none(),
+        projectRef: Option.none(),
+      });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -360,7 +417,9 @@ describe("snippets download integration", () => {
   it.effect("flushes telemetry and writes linked-project cache even on API failure", () => {
     const { layer, telemetry, cache } = setup({ status: 500 });
     return Effect.gen(function* () {
-      yield* Effect.exit(snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() }));
+      yield* Effect.exit(
+        snippetsDownload({ snippetId: VALID_ID, remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -369,10 +428,21 @@ describe("snippets download integration", () => {
   it.effect("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
-      yield* snippetsDownload({ snippetId: VALID_ID, projectRef: Option.none() }).pipe(
-        withJsonErrorHandling,
-      );
+      yield* snippetsDownload({
+        snippetId: VALID_ID,
+        remote: Option.none(),
+        projectRef: Option.none(),
+      }).pipe(withJsonErrorHandling);
       expect(out.messages.some((m) => m.type === "fail")).toBe(true);
     }).pipe(Effect.provide(layer));
+  });
+
+  describeHostedRemoteSelection({
+    command: ["snippets", "download"],
+    args: [VALID_ID],
+    workdir: () => tempRoot.current,
+    respond: (request) => jsonResponse(request, 200, SNIPPET_RESPONSE),
+    run: (selector, layer) =>
+      snippetsDownload({ ...selector, snippetId: VALID_ID }).pipe(Effect.provide(layer)),
   });
 });

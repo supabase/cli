@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -96,6 +97,7 @@ describe("network-bans remove integration", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* networkBansRemove({
+        remote: Option.none(),
         projectRef: Option.none(),
         dbUnbanIp: [],
       });
@@ -146,7 +148,7 @@ describe("network-bans remove integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
       expect(yield* fs.exists(cachePath)).toBe(false);
-      yield* networkBansRemove({ projectRef: Option.none(), dbUnbanIp: [] });
+      yield* networkBansRemove({ remote: Option.none(), projectRef: Option.none(), dbUnbanIp: [] });
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         "GET https://api.supabase.com/v1/projects",
         `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/network-bans`,
@@ -168,6 +170,7 @@ describe("network-bans remove integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* networkBansRemove({
+        remote: Option.none(),
         projectRef: Option.none(),
         dbUnbanIp: ["12.3.4.5", "2001:db8:abcd:0012::0"],
       });
@@ -187,7 +190,7 @@ describe("network-bans remove integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5,5.6.7.8"]);
-      yield* networkBansRemove({ projectRef: Option.none(), dbUnbanIp });
+      yield* networkBansRemove({ remote: Option.none(), projectRef: Option.none(), dbUnbanIp });
       expect(api.requests[0]?.body).toEqual({
         ipv4_addresses: ["12.3.4.5", "5.6.7.8"],
         requester_ip: false,
@@ -199,7 +202,7 @@ describe("network-bans remove integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5", "5.6.7.8"]);
-      yield* networkBansRemove({ projectRef: Option.none(), dbUnbanIp });
+      yield* networkBansRemove({ remote: Option.none(), projectRef: Option.none(), dbUnbanIp });
       expect(api.requests[0]?.body).toEqual({
         ipv4_addresses: ["12.3.4.5", "5.6.7.8"],
         requester_ip: false,
@@ -211,7 +214,7 @@ describe("network-bans remove integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5,5.6.7.8", "9.9.9.9"]);
-      yield* networkBansRemove({ projectRef: Option.none(), dbUnbanIp });
+      yield* networkBansRemove({ remote: Option.none(), projectRef: Option.none(), dbUnbanIp });
       expect(api.requests[0]?.body).toEqual({
         ipv4_addresses: ["12.3.4.5", "5.6.7.8", "9.9.9.9"],
         requester_ip: false,
@@ -223,7 +226,7 @@ describe("network-bans remove integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5"]);
-      yield* networkBansRemove({ projectRef: Option.none(), dbUnbanIp });
+      yield* networkBansRemove({ remote: Option.none(), projectRef: Option.none(), dbUnbanIp });
       expect(api.requests[0]?.body).toEqual({
         ipv4_addresses: ["12.3.4.5"],
         requester_ip: false,
@@ -235,7 +238,9 @@ describe("network-bans remove integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       const dbUnbanIp = yield* parseDbUnbanIp(["12.3.4.5,notanip"]);
-      const exit = yield* Effect.exit(networkBansRemove({ projectRef: Option.none(), dbUnbanIp }));
+      const exit = yield* Effect.exit(
+        networkBansRemove({ remote: Option.none(), projectRef: Option.none(), dbUnbanIp }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(0);
       if (Exit.isFailure(exit)) {
@@ -248,6 +253,7 @@ describe("network-bans remove integration", () => {
     const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* networkBansRemove({
+        remote: Option.none(),
         projectRef: Option.none(),
         dbUnbanIp: [],
       });
@@ -259,6 +265,7 @@ describe("network-bans remove integration", () => {
     const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* networkBansRemove({
+        remote: Option.none(),
         projectRef: Option.none(),
         dbUnbanIp: [],
       });
@@ -270,6 +277,7 @@ describe("network-bans remove integration", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* networkBansRemove({
+        remote: Option.none(),
         projectRef: Option.none(),
         dbUnbanIp: [],
       });
@@ -282,6 +290,7 @@ describe("network-bans remove integration", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
       yield* networkBansRemove({
+        remote: Option.none(),
         projectRef: Option.none(),
         dbUnbanIp: [],
       });
@@ -294,6 +303,7 @@ describe("network-bans remove integration", () => {
     const { layer, out } = setup({ format: "json", outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* networkBansRemove({
+        remote: Option.none(),
         projectRef: Option.none(),
         dbUnbanIp: [],
       });
@@ -307,6 +317,7 @@ describe("network-bans remove integration", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         networkBansRemove({
+          remote: Option.none(),
           projectRef: Option.none(),
           dbUnbanIp: ["12.3.4"],
         }),
@@ -335,6 +346,7 @@ describe("network-bans remove integration", () => {
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
           networkBansRemove({
+            remote: Option.none(),
             projectRef: Option.none(),
             dbUnbanIp: ["12.3.4"],
           }),
@@ -353,11 +365,24 @@ describe("network-bans remove integration", () => {
   it.effect(
     "surfaces the invalid-project-ref error, not the invalid-IP error, when both are wrong",
     () => {
-      const { layer, api } = setup();
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({
+            workdir: tempRoot.current,
+            projectId: Option.some("BADREF"),
+          }),
+        }),
+        consentApproved,
+      );
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
           networkBansRemove({
-            projectRef: Option.some("BADREF"),
+            remote: Option.none(),
+            projectRef: Option.none(),
             dbUnbanIp: ["12.3.4"],
           }),
         );
@@ -387,7 +412,11 @@ describe("network-bans remove integration", () => {
     );
     return Effect.gen(function* () {
       const error = yield* withEmptyConfigEnv(
-        networkBansRemove({ projectRef: Option.none(), dbUnbanIp: ["1.2.3.4", "5.6.7.8"] }),
+        networkBansRemove({
+          remote: Option.none(),
+          projectRef: Option.none(),
+          dbUnbanIp: ["1.2.3.4", "5.6.7.8"],
+        }),
       ).pipe(Effect.flip);
       expect(error).toBeInstanceOf(HostedMutationDeclinedError);
       expect(out.stderrText).toContain("Unban: 1.2.3.4, 5.6.7.8");
@@ -401,6 +430,7 @@ describe("network-bans remove integration", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         networkBansRemove({
+          remote: Option.none(),
           projectRef: Option.none(),
           dbUnbanIp: [],
         }),
@@ -419,6 +449,7 @@ describe("network-bans remove integration", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         networkBansRemove({
+          remote: Option.none(),
           projectRef: Option.none(),
           dbUnbanIp: [],
         }),
@@ -436,6 +467,7 @@ describe("network-bans remove integration", () => {
     const { layer, out } = setup({ format: "json", status: 503 });
     return Effect.gen(function* () {
       yield* networkBansRemove({
+        remote: Option.none(),
         projectRef: Option.none(),
         dbUnbanIp: [],
       }).pipe(withJsonErrorHandling);
@@ -447,6 +479,7 @@ describe("network-bans remove integration", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
       yield* networkBansRemove({
+        remote: Option.none(),
         projectRef: Option.none(),
         dbUnbanIp: [],
       });
@@ -460,6 +493,7 @@ describe("network-bans remove integration", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         networkBansRemove({
+          remote: Option.none(),
           projectRef: Option.none(),
           dbUnbanIp: [],
         }).pipe(Effect.provide(layer)),
@@ -469,10 +503,23 @@ describe("network-bans remove integration", () => {
       expect(cache.cached).toBe(true);
     });
   });
+
+  describeHostedRemoteSelection({
+    command: ["network-bans", "remove"],
+    args: ["--db-unban-ip", "1.2.3.4"],
+    workdir: () => tempRoot.current,
+    respond: (request) => jsonResponse(request, 200, null),
+    run: (selector, layer) =>
+      networkBansRemove({ ...selector, dbUnbanIp: ["1.2.3.4"] }).pipe(Effect.provide(layer)),
+  });
 });
 
 describeHostedConsent("network-bans remove", {
   invoke: () => ({
-    run: networkBansRemove({ projectRef: Option.some(VALID_REF), dbUnbanIp: ["1.2.3.4"] }),
+    run: networkBansRemove({
+      remote: Option.some({ _tag: "Ref", ref: VALID_REF }),
+      projectRef: Option.none(),
+      dbUnbanIp: ["1.2.3.4"],
+    }),
   }),
 });

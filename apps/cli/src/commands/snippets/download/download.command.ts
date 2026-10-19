@@ -1,8 +1,10 @@
-import { Argument, Command, Flag } from "effect/cli";
+import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -15,10 +17,7 @@ const config = {
   snippetId: Argument.String("snippet-id").pipe(
     Argument.withDescription("ID of the SQL snippet to download."),
   ),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
 };
 export type SnippetsDownloadFlags = CliCommand.Command.Config.Infer<typeof config>;
 
@@ -36,6 +35,7 @@ export const snippetsDownloadCommand = Command.make("download", config).pipe(
       { operations: [{ operationId: "v1-get-a-snippet", kind: "required" }] },
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>

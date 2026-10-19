@@ -3,6 +3,8 @@ import { Argument, Command, Flag } from "effect/cli";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
@@ -14,10 +16,7 @@ import { secretsSet } from "./set.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   envFile: Flag.String("env-file").pipe(
     Flag.withDescription("Read secrets from a .env file."),
     Flag.optional,
@@ -51,6 +50,7 @@ export const secretsSetCommand = Command.make("set", config).pipe(
       },
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>

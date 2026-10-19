@@ -25,6 +25,7 @@ import {
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
 import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
@@ -191,6 +192,7 @@ function setup(opts: SetupOpts = {}) {
 }
 
 const defaultFlags: SsoAddFlags = {
+  remote: Option.none(),
   projectRef: Option.none(),
   type: "saml",
   domains: [],
@@ -384,7 +386,7 @@ describe("sso add integration", () => {
   );
 
   it.effect(
-    "reconciles project-ref consuming --metadata-file: fails ref validation, never reads metadata",
+    "reconciles project-ref consuming --metadata-file: looks the value up as a branch, never reads metadata",
     () => {
       const { layer, api } = setup({
         cliArgs: [
@@ -410,10 +412,12 @@ describe("sso add integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = Cause.pretty(exit.cause);
-          expect(dump).toContain("InvalidProjectRefError");
-          expect(dump).toContain("Invalid project ref format. Must be like");
+          expect(dump).toContain("LinkBranchListStatusError");
+          expect(dump).not.toContain("SsoAddMetadataFileError");
         }
-        expect(api.requests.some((r) => r.method === "POST")).toBe(false);
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          `GET ${DEFAULT_API_URL}/v1/projects/${VALID_REF}/branches`,
+        ]);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1333,8 +1337,16 @@ describe("sso add integration", () => {
 describeHostedConsent("sso add", {
   api: { response: { status: 201, body: RESPONSE_PROVIDER } },
   invoke: () => ({
-    run: ssoAdd({ ...defaultFlags, projectRef: Option.some(VALID_REF) }).pipe(
+    run: ssoAdd({ ...defaultFlags, remote: Option.some({ _tag: "Ref", ref: VALID_REF }) }).pipe(
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["sso", "add", "--type", "saml"]) })),
     ),
   }),
+});
+
+describeHostedRemoteSelection({
+  command: ["sso", "add"],
+  args: ["--type", "saml"],
+  workdir: () => tempRoot.current,
+  respond: (request) => jsonResponse(request, 201, RESPONSE_PROVIDER),
+  run: (selector, layer) => ssoAdd({ ...defaultFlags, ...selector }).pipe(Effect.provide(layer)),
 });

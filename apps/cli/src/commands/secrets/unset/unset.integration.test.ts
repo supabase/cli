@@ -10,6 +10,7 @@ import {
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -104,7 +105,14 @@ function setup(opts: SetupOpts = {}) {
 }
 
 const unset = (flags: Partial<SecretsUnsetFlags> = {}) =>
-  secretsUnset({ projectRef: Option.none(), names: [], all: false, dryRun: false, ...flags });
+  secretsUnset({
+    remote: Option.none(),
+    projectRef: Option.none(),
+    names: [],
+    all: false,
+    dryRun: false,
+    ...flags,
+  });
 
 const methods = (api: { requests: ReadonlyArray<{ method: string }> }) =>
   api.requests.map((r) => r.method);
@@ -524,9 +532,28 @@ describe("secrets unset integration", () => {
   });
 });
 
+describeHostedRemoteSelection({
+  command: ["secrets", "unset"],
+  args: ["FOO"],
+  workdir: () => tempRoot.current,
+  activeFlags: { all: false, "dry-run": false },
+  respond: (request) =>
+    jsonResponse(request, 200, request.method === "GET" ? [{ name: "FOO", value: "d1" }] : null),
+  run: (selector, layer) =>
+    secretsUnset({ ...selector, names: ["FOO"], all: false, dryRun: false }).pipe(
+      Effect.provide(layer),
+    ),
+});
+
 describeHostedConsent("secrets unset", {
   api: { response: { status: 200, body: null } },
   invoke: () => ({
-    run: secretsUnset({ projectRef: Option.none(), names: ["FOO"], all: false, dryRun: false }),
+    run: secretsUnset({
+      remote: Option.none(),
+      projectRef: Option.none(),
+      names: ["FOO"],
+      all: false,
+      dryRun: false,
+    }),
   }),
 });

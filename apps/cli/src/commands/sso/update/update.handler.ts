@@ -4,7 +4,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import {
@@ -215,7 +215,6 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
   const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const stdio = yield* Stdio.Stdio;
@@ -306,7 +305,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
 
     const providerId = yield* Effect.fromResult(validateUuid(flags.providerId));
 
-    const ref = yield* resolver.resolve(projectRefFlag);
+    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: projectRefFlag });
 
     // Use the argv-reconciled profile's host when it disagreed with
     // `--profile`, otherwise the config layer's.

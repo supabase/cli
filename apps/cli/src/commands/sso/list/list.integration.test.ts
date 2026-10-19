@@ -12,6 +12,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -153,7 +154,7 @@ describe("sso list integration", () => {
   it.effect("renders an ASCII table in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* ssoList({ projectRef: Option.none() });
+      yield* ssoList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("TYPE");
       expect(out.stdoutText).toContain("IDENTITY PROVIDER ID");
       expect(out.stdoutText).toContain("0b0d48f6-878b-4190-88d7-2ca33ed800bc");
@@ -179,7 +180,7 @@ describe("sso list integration", () => {
     };
     const { layer, out } = setup({ outputFlag: "json", body: { items: [item] } });
     return Effect.gen(function* () {
-      yield* ssoList({ projectRef: Option.none() });
+      yield* ssoList({ remote: Option.none(), projectRef: Option.none() });
       const emitted = yield* Schema.decodeEffect(
         Schema.fromJsonString(
           Schema.Struct({
@@ -211,7 +212,7 @@ describe("sso list integration", () => {
   it.effect("emits a success payload via --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* ssoList({ projectRef: Option.none() });
+      yield* ssoList({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toHaveProperty("providers.length", 1);
@@ -221,7 +222,7 @@ describe("sso list integration", () => {
   it.effect("emits a result event via --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
-      yield* ssoList({ projectRef: Option.none() });
+      yield* ssoList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.messages.some((m) => m.type === "success")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -229,7 +230,7 @@ describe("sso list integration", () => {
   it.effect("--output=json wraps response in `{providers: …}`", () => {
     const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
-      yield* ssoList({ projectRef: Option.none() });
+      yield* ssoList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stdoutText).toContain('"providers"');
       expect(out.stdoutText).toContain("0b0d48f6-878b-4190-88d7-2ca33ed800bc");
@@ -239,7 +240,7 @@ describe("sso list integration", () => {
   it.effect("--output=yaml emits providers key", () => {
     const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
-      yield* ssoList({ projectRef: Option.none() });
+      yield* ssoList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("providers:");
     }).pipe(Effect.provide(layer));
   });
@@ -247,7 +248,7 @@ describe("sso list integration", () => {
   it.effect("--output=toml emits provider data", () => {
     const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
-      yield* ssoList({ projectRef: Option.none() });
+      yield* ssoList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText.length).toBeGreaterThan(0);
     }).pipe(Effect.provide(layer));
   });
@@ -262,7 +263,9 @@ describe("sso list integration", () => {
     };
     const { layer, out } = setup({ outputFlag: "toml", body: { items: [item] } });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        ssoList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = Cause.pretty(exit.cause);
@@ -276,7 +279,7 @@ describe("sso list integration", () => {
   it.effect("--output=env emits a flat PROVIDERS= entry", () => {
     const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
-      yield* ssoList({ projectRef: Option.none() });
+      yield* ssoList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("PROVIDERS=");
     }).pipe(Effect.provide(layer));
   });
@@ -284,7 +287,7 @@ describe("sso list integration", () => {
   it.effect("--output=pretty falls through to text rendering", () => {
     const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
-      yield* ssoList({ projectRef: Option.none() });
+      yield* ssoList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("IDENTITY PROVIDER ID");
     }).pipe(Effect.provide(layer));
   });
@@ -292,7 +295,9 @@ describe("sso list integration", () => {
   it.effect("rejects a 200 response containing a null provider item", () => {
     const { layer } = setup({ body: { items: [null] } });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        ssoList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = Cause.pretty(exit.cause);
@@ -309,7 +314,7 @@ describe("sso list integration", () => {
   it.effect("--output wins over --output-format when both set", () => {
     const { layer, out } = setup({ format: "json", outputFlag: "yaml" });
     return Effect.gen(function* () {
-      yield* ssoList({ projectRef: Option.none() });
+      yield* ssoList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText.startsWith("{")).toBe(false);
       expect(out.stdoutText).toContain("providers:");
     }).pipe(Effect.provide(layer));
@@ -318,7 +323,9 @@ describe("sso list integration", () => {
   it.effect("reports SAML-disabled error on 404", () => {
     const { layer } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        ssoList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = Cause.pretty(exit.cause);
@@ -331,7 +338,7 @@ describe("sso list integration", () => {
   it.effect("fires cli_upgrade_suggested on 404 when entitlement is gated", () => {
     const { layer, analytics } = setup({ status: 404, body: {}, upgradeGate: "gated" });
     return Effect.gen(function* () {
-      yield* Effect.exit(ssoList({ projectRef: Option.none() }));
+      yield* Effect.exit(ssoList({ remote: Option.none(), projectRef: Option.none() }));
       expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -339,7 +346,7 @@ describe("sso list integration", () => {
   it.effect("does NOT fire cli_upgrade_suggested when entitlement is not gated", () => {
     const { layer, analytics, api } = setup({ status: 404, body: {}, upgradeGate: "notGated" });
     return Effect.gen(function* () {
-      yield* Effect.exit(ssoList({ projectRef: Option.none() }));
+      yield* Effect.exit(ssoList({ remote: Option.none(), projectRef: Option.none() }));
       expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(false);
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `GET https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers`,
@@ -353,7 +360,9 @@ describe("sso list integration", () => {
   it.effect("reports unexpected-status error on 500", () => {
     const { layer } = setup({ status: 500, body: { error: "boom" } });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        ssoList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = Cause.pretty(exit.cause);
@@ -366,7 +375,9 @@ describe("sso list integration", () => {
   it.effect("reports network error on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        ssoList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const dump = Cause.pretty(exit.cause);
@@ -376,11 +387,14 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("uses --project-ref flag value over resolver default", () => {
+  it.effect("uses the --remote=<ref> value over resolver default", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* ssoList({ projectRef: Option.some(flagRef) });
+      yield* ssoList({
+        remote: Option.some({ _tag: "Ref", ref: flagRef }),
+        projectRef: Option.none(),
+      });
       const ssoRequest = api.requests.find((r) =>
         r.url.includes(`/v1/projects/${flagRef}/config/auth/sso/providers`),
       );
@@ -391,29 +405,21 @@ describe("sso list integration", () => {
   it.effect("hits GET /v1/projects/{ref}/config/auth/sso/providers", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* ssoList({ projectRef: Option.none() });
+      yield* ssoList({ remote: Option.none(), projectRef: Option.none() });
       const ssoRequest = api.requests.find((r) => r.url.endsWith(`/config/auth/sso/providers`));
       expect(ssoRequest?.method).toBe("GET");
       assertPermissionDrift({ command: "sso list", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("ignores an empty --project-ref and resolves the saved ref without the picker", () => {
+  it.effect("rejects an empty --project-ref before the picker or any request", () => {
     const { layer, api } = setup({ projectId: Option.none() });
     return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      yield* fs.makeDirectory(`${tempRoot.current}/supabase/.temp`, { recursive: true });
-      yield* fs.writeFileString(`${tempRoot.current}/supabase/.temp/project-ref`, VALID_REF);
-      yield* ssoList({ projectRef: Option.some("") });
-      expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
-        `GET https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers`,
-      ]);
-      assertPermissionDrift({
-        command: "sso list",
-        activeFlags: { "project-ref": "" },
-        requests: api.requests,
-        exact: true,
-      });
+      const error = yield* ssoList({ remote: Option.none(), projectRef: Option.some("") }).pipe(
+        Effect.flip,
+      );
+      expect(error).toMatchObject({ _tag: "TargetEmptyValueError", flag: "--project-ref" });
+      expect(api.requests).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -450,7 +456,7 @@ describe("sso list integration", () => {
         const fs = yield* FileSystem.FileSystem;
         const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
         expect(yield* fs.exists(cachePath)).toBe(false);
-        yield* ssoList({ projectRef: Option.none() });
+        yield* ssoList({ remote: Option.none(), projectRef: Option.none() });
         expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
           "GET https://api.supabase.com/v1/projects",
           `GET https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers`,
@@ -468,7 +474,7 @@ describe("sso list integration", () => {
   it.effect("flushes telemetry + linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
-      yield* ssoList({ projectRef: Option.none() });
+      yield* ssoList({ remote: Option.none(), projectRef: Option.none() });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -477,7 +483,7 @@ describe("sso list integration", () => {
   it.effect("flushes telemetry even on API failure", () => {
     const { layer, telemetry } = setup({ status: 500, body: {} });
     return Effect.gen(function* () {
-      yield* Effect.exit(ssoList({ projectRef: Option.none() }));
+      yield* Effect.exit(ssoList({ remote: Option.none(), projectRef: Option.none() }));
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -485,8 +491,17 @@ describe("sso list integration", () => {
   it.effect("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 500, body: {} });
     return Effect.gen(function* () {
-      yield* ssoList({ projectRef: Option.none() }).pipe(withJsonErrorHandling);
+      yield* ssoList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        withJsonErrorHandling,
+      );
       expect(out.messages.some((m) => m.type === "fail")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedRemoteSelection({
+  command: ["sso", "list"],
+  workdir: () => tempRoot.current,
+  respond: (request) => jsonResponse(request, 200, { items: [PROVIDER_ITEM] }),
+  run: (selector, layer) => ssoList(selector).pipe(Effect.provide(layer)),
 });

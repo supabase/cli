@@ -2,6 +2,9 @@ import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { projectApiKeys } from "../../../command-internal/get-api-keys.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
@@ -12,10 +15,7 @@ import { projectsApiKeys } from "./api-keys.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   reveal: Flag.Boolean("reveal").pipe(
     Flag.withDescription("Reveal the secret API keys in full (e.g. sb_secret_...)."),
     Flag.withDefault(false),
@@ -51,6 +51,7 @@ export const projectsApiKeysCommand = Command.make("api-keys", config).pipe(
       withCondition(projectApiKeys, { flag: "reveal", is: false }),
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
@@ -58,7 +59,7 @@ export const projectsApiKeysCommand = Command.make("api-keys", config).pipe(
       // `reveal` is intentionally not in `safeFlags`: it is a boolean flag, and
       // boolean values are always logged verbatim by the instrumentation. Only
       // string flags that are telemetry-safe belong in `safeFlags`.
-      withCommandTelemetry({ flags, safeFlags: ["project-ref"] }),
+      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags.projectRef) }),
       withJsonErrorHandling,
     ),
   ),

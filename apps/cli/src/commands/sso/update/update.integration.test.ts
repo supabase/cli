@@ -17,6 +17,7 @@ import {
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
 import {
   mockAnalytics,
   mockOutput,
@@ -206,6 +207,7 @@ const decodePutDomains = Schema.decodeUnknownEffect(
 );
 
 const defaultFlags: SsoUpdateFlags = {
+  remote: Option.none(),
   projectRef: Option.none(),
   domains: [],
   addDomains: [],
@@ -1684,10 +1686,22 @@ describeHostedConsent("sso update", {
     },
   },
   invoke: () => ({
-    run: ssoUpdate({ ...defaultFlags, projectRef: Option.some(VALID_REF) }).pipe(
+    run: ssoUpdate({
+      ...defaultFlags,
+      remote: Option.some({ _tag: "Ref", ref: VALID_REF }),
+    }).pipe(
       Effect.provide(
         Stdio.layerTest({ args: Effect.succeed(["sso", "update", VALID_PROVIDER_ID]) }),
       ),
     ),
   }),
+});
+
+describeHostedRemoteSelection({
+  command: ["sso", "update"],
+  args: [VALID_PROVIDER_ID],
+  workdir: () => tempRoot.current,
+  respond: (request) =>
+    jsonResponse(request, 200, request.method === "GET" ? EXISTING_PROVIDER : RESPONSE_PROVIDER),
+  run: (selector, layer) => ssoUpdate({ ...defaultFlags, ...selector }).pipe(Effect.provide(layer)),
 });

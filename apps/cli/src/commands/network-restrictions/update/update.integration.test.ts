@@ -7,6 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -140,6 +141,7 @@ function setupTracked(opts: SetupOpts = {}) {
 }
 
 const baseFlags: NetworkRestrictionsUpdateFlags = {
+  remote: Option.none(),
   projectRef: Option.none(),
   dbAllowCidr: [],
   bypassCidrChecks: false,
@@ -739,31 +741,36 @@ describe("network-restrictions update integration", () => {
 
   // Project ref resolution
 
-  it.effect("uses --project-ref flag value over CommandSettings.projectId", () => {
+  it.effect("uses the --remote=<ref> value over CommandSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({
         ...baseFlags,
-        projectRef: Option.some(flagRef),
+        remote: Option.some({ _tag: "Ref", ref: flagRef }),
       });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${flagRef}/`);
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("rejects a malformed resolved project ref before issuing any HTTP call", () => {
-    const { layer } = setup({ postResponse: POST_EMPTY_APPLIED });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        networkRestrictionsUpdate({
-          ...baseFlags,
-          projectRef: Option.some("BADREF"),
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi(apiOpts({ postResponse: POST_EMPTY_APPLIED }));
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({
+          workdir: tempRoot.current,
+          projectId: Option.some("BADREF"),
         }),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("InvalidProjectRefError");
-      }
+      }),
+      consentApproved,
+    );
+    return Effect.gen(function* () {
+      const error = yield* networkRestrictionsUpdate(baseFlags).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "InvalidProjectRefError" });
+      expect(api.requests).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -819,12 +826,24 @@ describe("network-restrictions update integration", () => {
   });
 });
 
+describeHostedRemoteSelection({
+  command: ["network-restrictions", "update"],
+  args: ["--db-allow-cidr", "12.3.4.5/32"],
+  workdir: () => tempRoot.current,
+  respond: (request) => jsonResponse(request, 201, POST_APPLIED),
+  activeFlags: { append: false },
+  run: (selector, layer) =>
+    networkRestrictionsUpdate({ ...baseFlags, ...selector, dbAllowCidr: ["12.3.4.5/32"] }).pipe(
+      Effect.provide(layer),
+    ),
+});
+
 describeHostedConsent("network-restrictions update", {
   api: { byMethod: { POST: { status: 201, body: POST_APPLIED } } },
   invoke: () => ({
     run: networkRestrictionsUpdate({
       ...baseFlags,
-      projectRef: Option.some(VALID_REF),
+      remote: Option.some({ _tag: "Ref", ref: VALID_REF }),
       dbAllowCidr: ["12.3.4.5/32"],
     }),
   }),

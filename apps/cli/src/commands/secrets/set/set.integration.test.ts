@@ -17,6 +17,7 @@ import { HostedMutationDeclinedError } from "../../../command-internal/hosted-co
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
 import {
   mockOutput,
   mockRuntimeInfo,
@@ -149,6 +150,7 @@ describe("secrets set integration", () => {
       const { layer, out, api } = setup({ confirm: true });
       return Effect.gen(function* () {
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=hunter2", "BAR=swordfish"],
@@ -165,6 +167,7 @@ describe("secrets set integration", () => {
       const { layer, api } = setup({ confirm: false });
       return Effect.gen(function* () {
         const error = yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -179,6 +182,7 @@ describe("secrets set integration", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* secretsSet({
+        remote: Option.none(),
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: ["FOO=bar"],
@@ -194,6 +198,7 @@ describe("secrets set integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* secretsSet({
+        remote: Option.none(),
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: ["FOO=bar", "BAZ=qux"],
@@ -212,6 +217,7 @@ describe("secrets set integration", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* secretsSet({
+        remote: Option.none(),
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: Array.from({ length: 150 }, (_, i) => `KEY${i}=value${i}`),
@@ -234,6 +240,7 @@ describe("secrets set integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* secretsSet({
+        remote: Option.none(),
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: Array.from({ length: 250 }, (_, i) => `KEY${i}=value${i}`),
@@ -284,6 +291,7 @@ describe("secrets set integration", () => {
       const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
       expect(yield* fs.exists(cachePath)).toBe(false);
       yield* secretsSet({
+        remote: Option.none(),
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: ["FOO=bar"],
@@ -315,6 +323,7 @@ describe("secrets set integration", () => {
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
           secretsSet({
+            remote: Option.none(),
             projectRef: Option.none(),
             envFile: Option.none(),
             secrets,
@@ -337,6 +346,7 @@ describe("secrets set integration", () => {
     return Effect.gen(function* () {
       yield* writeTempFile("myfile.env", "FROM_FILE=fromvalue\n");
       yield* secretsSet({
+        remote: Option.none(),
         projectRef: Option.none(),
         envFile: Option.some("myfile.env"),
         secrets: [],
@@ -357,6 +367,7 @@ describe("secrets set integration", () => {
       yield* writeTempFile("absolute.env", "ABS=value\n");
       const abs = yield* tempPath("absolute.env");
       yield* secretsSet({
+        remote: Option.none(),
         projectRef: Option.none(),
         envFile: Option.some(abs),
         secrets: [],
@@ -370,6 +381,7 @@ describe("secrets set integration", () => {
     return Effect.gen(function* () {
       yield* writeTempFile("override.env", "FOO=from-file\n");
       yield* secretsSet({
+        remote: Option.none(),
         projectRef: Option.none(),
         envFile: Option.some("override.env"),
         secrets: ["FOO=from-arg"],
@@ -391,6 +403,7 @@ SHARED = "config-shared"
         );
         yield* writeTempFile(".env-file", "SHARED=envfile-shared\n");
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.some(".env-file"),
           secrets: ["SHARED=cli-shared"],
@@ -415,6 +428,7 @@ DB_URL = "env(MY_DB_URL)"
 `,
       );
       yield* secretsSet({
+        remote: Option.none(),
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: [],
@@ -434,6 +448,7 @@ LITERAL = "plain-value"
 `,
       );
       yield* secretsSet({
+        remote: Option.none(),
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: [],
@@ -463,6 +478,7 @@ NON_EMPTY = "config-value"
 `,
         );
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -486,6 +502,7 @@ FOO = "literal-foo"
 `,
         );
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -499,6 +516,7 @@ FOO = "literal-foo"
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* secretsSet({
+        remote: Option.none(),
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: ["FOO=bar", "SUPABASE_BAD=x"],
@@ -517,6 +535,7 @@ FOO = "literal-foo"
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
           secretsSet({
+            remote: Option.none(),
             projectRef: Option.none(),
             envFile: Option.none(),
             secrets: ["SUPABASE_ONLY=x"],
@@ -536,6 +555,7 @@ FOO = "literal-foo"
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["NOTAPAIR"],
@@ -556,6 +576,7 @@ FOO = "literal-foo"
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.some("does-not-exist.env"),
           secrets: [],
@@ -582,6 +603,7 @@ FOO = "literal-foo"
       const envPath = yield* tempPath("private.env");
       const exit = yield* Effect.exit(
         secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.some(envPath),
           secrets: [],
@@ -607,6 +629,7 @@ FOO = "literal-foo"
       return Effect.gen(function* () {
         yield* writeConfig("this is not valid = = toml [[[\n");
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -635,6 +658,7 @@ port = "not-a-number"
 `,
       );
       yield* secretsSet({
+        remote: Option.none(),
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: [],
@@ -663,6 +687,7 @@ FROM_CONFIG = "config-value"
 `,
         );
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -690,6 +715,7 @@ FROM_CONFIG = "config-value"
         );
         yield* writeSupabaseDotEnv("THIS IS NOT A VALID DOTENV LINE\n");
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -718,6 +744,7 @@ BAD = 123
 `,
         );
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -747,6 +774,7 @@ port = "not-a-number"
 `,
         );
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -773,6 +801,7 @@ secrets = ["actual-secret"]
 `,
       );
       yield* secretsSet({
+        remote: Option.none(),
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: ["FOO=bar"],
@@ -807,6 +836,7 @@ FROM_CONFIG = "remote-value"
 `,
         );
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -841,6 +871,7 @@ FROM_CONFIG = "remote-value"
 `,
         );
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -870,6 +901,7 @@ FROM_CONFIG = "remote-value"
 `,
         );
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -891,6 +923,7 @@ FROM_CONFIG = "config-value"
 `,
         );
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: [],
@@ -921,6 +954,7 @@ project_id = "dupe-project-id"
 `,
         );
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -949,6 +983,7 @@ project_id = "not-a-valid-ref"
 `,
         );
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -976,6 +1011,7 @@ project_id = "not-a-valid-ref"
           ].join("\n"),
         );
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -1002,6 +1038,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
 `,
         );
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -1022,6 +1059,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
         yield* writeConfig("this is not valid = = toml [[[\n");
         const exit = yield* Effect.exit(
           secretsSet({
+            remote: Option.none(),
             projectRef: Option.none(),
             envFile: Option.none(),
             secrets: [],
@@ -1050,6 +1088,7 @@ FROM_CONFIG = "config-value"
 `,
         );
         const message = yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -1070,6 +1109,7 @@ FROM_CONFIG = "config-value"
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -1089,6 +1129,7 @@ FROM_CONFIG = "config-value"
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -1107,6 +1148,7 @@ FROM_CONFIG = "config-value"
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* secretsSet({
+        remote: Option.none(),
         projectRef: Option.none(),
         envFile: Option.none(),
         secrets: ["FOO=bar", "BAZ=qux"],
@@ -1123,6 +1165,7 @@ FROM_CONFIG = "config-value"
       const { layer, out } = setup({ outputFlag: "json" });
       return Effect.gen(function* () {
         yield* secretsSet({
+          remote: Option.none(),
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
@@ -1134,10 +1177,24 @@ FROM_CONFIG = "config-value"
   );
 });
 
+describeHostedRemoteSelection({
+  command: ["secrets", "set"],
+  args: ["FOO=bar"],
+  workdir: () => tempRoot.current,
+  respond: (request) => jsonResponse(request, 201, null),
+  run: (selector, layer) =>
+    secretsSet({ ...selector, envFile: Option.none(), secrets: ["FOO=bar"] }).pipe(
+      Effect.provide(
+        Layer.mergeAll(layer, cliConfigValuesTestLayer, mockDebugLoggerTracked().layer),
+      ),
+    ),
+});
+
 describeHostedConsent("secrets set", {
   api: { response: { status: 201, body: null } },
   invoke: () => ({
     run: secretsSet({
+      remote: Option.none(),
       projectRef: Option.none(),
       envFile: Option.none(),
       secrets: ["FOO=bar"],
