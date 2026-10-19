@@ -107,7 +107,7 @@ describe("quietProgressTextOutputLayer", () => {
     Effect.gen(function* () {
       const out = yield* Output;
       yield* out.info("hello");
-      expect(mockClack.log.info).toHaveBeenCalledWith("hello");
+      expect(mockClack.log.info).toHaveBeenCalledWith("hello", expect.anything());
     }).pipe(Effect.provide(layer)),
   );
 });
