@@ -90,10 +90,11 @@ describe("linkedProjectCacheLayer", () => {
           requests: api.requests,
         });
         expect(yield* encodeJson(analytics.aliased)).toContain("gotrue-abc");
-        const written = yield* Schema.decodeEffect(
-          Schema.fromJsonString(Schema.Struct({ ref: Schema.String })),
-        )(yield* fs.readFileString(path.join(workdir, "supabase", ".temp", "linked-project.json")));
-        expect(written.ref).toBe(VALID_REF);
+        expect(
+          yield* fs.readFileString(path.join(workdir, "supabase", ".temp", "linked-project.json")),
+        ).toBe(
+          `{"ref":"${VALID_REF}","name":"proj","organization_id":"org-1","organization_slug":"acme"}`,
+        );
         expect(analytics.groupIdentified).toEqual([
           {
             groupType: "organization",
