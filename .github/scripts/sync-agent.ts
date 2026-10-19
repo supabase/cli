@@ -33,12 +33,15 @@ const SYNC_BRANCH = "sync/develop-into-next";
 const PROMPTS_DIR = join(import.meta.dir, "../sync-branches");
 const RESOLVE_MARKER = "<!-- sync-agent resolve -->";
 const REPAIR_MARKER = "<!-- sync-agent repair";
+const REREVIEW_MARKER = "<!-- sync-agent re-review";
 const EXHAUSTED_MARKER = "<!-- sync-agent exhausted -->";
 /** Workflows on the sync branch run with repository secrets, so Claude's edits there are only proposed. */
 const WORKFLOWS = ".github/";
 /** Every merge in a pushed resolution brings in reviewed `next` commits, never a commit made during the run. */
 const MERGED_BRANCH = "refs/remotes/origin/next";
 const WORKFLOW_DIFF = "github.diff";
+/** Context file whose presence makes a repair round answer-only; see `repair-prompt.md`. */
+const EARLIER_REPLIES = "earlier-replies.md";
 const MAX_REPAIR_ROUNDS = 2;
 const LOG_TAIL_LINES = 150;
 /** The quick checks of the pull request's CI; integration and end-to-end tests are left to CI and `Sync repair`. */
@@ -62,10 +65,15 @@ export type RepairPlan =
   | { action: "skip"; reason: string }
   | { action: "exhausted" }
   | { action: "approve" }
-  | { action: "repair"; failures: CheckRun[]; threads: ReviewThread[] };
+  | { action: "repair"; failures: CheckRun[]; threads: ReviewThread[]; answerOnly: boolean };
 
 function repairMarker(head: string): string {
   return `${REPAIR_MARKER} head=${head} -->`;
+}
+
+/** Posted once per resolution when a repair commit moves the head and the AI review is dispatched again. */
+function rereviewMarker(head: string): string {
+  return `${REREVIEW_MARKER} head=${head} -->`;
 }
 
 function workflowMarker(head: string): string {
@@ -95,12 +103,14 @@ function latestRuns(runs: CheckRun[]): CheckRun[] {
 }
 
 /**
- * Repairs once the head's checks settle, at most `MAX_REPAIR_ROUNDS` times per pull request. A head a round already
- * repaired gets another round only for new review findings; its remaining failures go to a maintainer. Markers count
- * only at the start of a bot comment, where Claude's text never goes.
+ * Repairs once the head's checks settle, at most `MAX_REPAIR_ROUNDS` times per resolution: the bot comments after
+ * the latest resolve comment. A head a round already repaired gets another round only for new review findings; its
+ * remaining failures go to a maintainer. Once a repair commit was re-reviewed, rounds may only answer findings, and
+ * failures go to a maintainer. Markers count only at the start of a bot comment, where Claude's text never goes.
  */
 export function planRepair(state: {
   head: string;
+  /** Release-bot issue comments and review bodies, oldest first. */
   botComments: string[];
   runs: CheckRun[];
   threads: ReviewThread[];
@@ -111,7 +121,8 @@ export function planRepair(state: {
   changesRequested: boolean;
 }): RepairPlan {
   const { head, botComments, threads } = state;
-  if (!botComments.some((body) => body.startsWith(RESOLVE_MARKER))) {
+  const resolvedAt = botComments.findLastIndex((body) => body.startsWith(RESOLVE_MARKER));
+  if (resolvedAt < 0) {
     return { action: "skip", reason: "Claude did not resolve this pull request." };
   }
   if (botComments.some((body) => body.startsWith(EXHAUSTED_MARKER))) {
@@ -139,12 +150,18 @@ export function planRepair(state: {
   if (threads.length === 0 && failures.length === 0) {
     return planApproval(head, state.aiReview, state.changesRequested);
   }
-  const rounds = botComments.filter((body) => body.startsWith(REPAIR_MARKER)).length;
-  const headRepaired = botComments.some((body) => body.startsWith(repairMarker(head)));
-  if (rounds >= MAX_REPAIR_ROUNDS || (headRepaired && threads.length === 0)) {
+  const resolution = botComments.slice(resolvedAt + 1);
+  const rounds = resolution.filter((body) => body.startsWith(REPAIR_MARKER)).length;
+  const headRepaired = resolution.some((body) => body.startsWith(repairMarker(head)));
+  const rereviewed = resolution.some((body) => body.startsWith(REREVIEW_MARKER));
+  if (
+    rounds >= MAX_REPAIR_ROUNDS ||
+    (headRepaired && threads.length === 0) ||
+    (rereviewed && failures.length > 0)
+  ) {
     return { action: "exhausted" };
   }
-  return { action: "repair", failures, threads };
+  return { action: "repair", failures, threads, answerOnly: rereviewed };
 }
 
 /**
@@ -397,9 +414,9 @@ function check(workDir: string, outputDir: string): void {
 
 /**
  * Lets Claude fix the checked-out tree from the context files. Its edits are committed, except under `.github/`, only
- * when it returned a result.
+ * when it returned a result; with `answerOnly` nothing is committed and `edited` reports whether it touched the tree.
  */
-function claudeFix(workDir: string, outputDir: string, message: string) {
+function claudeFix(workDir: string, outputDir: string, message: string, answerOnly = false) {
   const git = makeGit(workDir);
   applyWorkflowDiff(git, outputDir);
   const output = runClaude(
@@ -409,10 +426,13 @@ function claudeFix(workDir: string, outputDir: string, message: string) {
     join(outputDir, "context"),
   );
   const result = typeof output === "object" ? (output as Repair) : undefined;
-  const changed = result !== undefined && commitOutsideWorkflows(git, outputDir, message);
+  const changed =
+    !answerOnly && result !== undefined && commitOutsideWorkflows(git, outputDir, message);
   setOutput("changed", String(changed));
   return {
     result,
+    changed,
+    edited: answerOnly && gitOrThrow(git, ["status", "--porcelain"]) !== "",
     summary:
       result?.summary ??
       `${typeof output === "string" ? output : ""} @supabase/cli please take a look.`,
@@ -597,14 +617,14 @@ interface ThreadsPage {
 }
 
 /**
- * AI review threads, answered when resolved or replied to by the release bot. Only the AI review's own comments are
- * read, so nobody else's text reaches the agent.
+ * AI review threads, answered when resolved or replied to by the release bot. Only the AI review's own comments and the
+ * release bot's replies are read, so nobody else's text reaches the agent.
  */
 async function fetchAiReviewThreads(
   token: string,
   repository: string,
   number: number,
-): Promise<{ thread: ReviewThread; reviewId: number; answered: boolean }[]> {
+): Promise<{ thread: ReviewThread; reviewId: number; answered: boolean; replies: string[] }[]> {
   const [owner, name] = repository.split("/");
   const page = await githubGraphql<ThreadsPage>(token, THREADS_QUERY, { owner, name, number });
   return (page.repository?.pullRequest?.reviewThreads.nodes ?? []).flatMap((thread) => {
@@ -615,6 +635,9 @@ async function fetchAiReviewThreads(
     ) {
       return [];
     }
+    const replies = rest
+      .filter((comment) => isLogin(comment.author?.login, RELEASE_BOT_LOGIN))
+      .map((comment) => comment.body);
     return [
       {
         thread: {
@@ -625,9 +648,8 @@ async function fetchAiReviewThreads(
           body: first.body,
         },
         reviewId: first.pullRequestReview.databaseId,
-        answered:
-          thread.isResolved ||
-          rest.some((comment) => isLogin(comment.author?.login, RELEASE_BOT_LOGIN)),
+        answered: thread.isResolved || replies.length > 0,
+        replies,
       },
     ];
   });
@@ -735,17 +757,21 @@ async function collect(outputDir: string): Promise<void> {
     setOutput("action", "skip");
     return;
   }
-  const comments = [
-    ...(await listAll<{ user: { login: string } | null; body: string }>(
-      token,
-      `/repos/${repository}/issues/${pull.number}/comments`,
-    )),
-  ];
-  const reviews = await listAll<PullRequestReview & { id: number; body: string }>(
-    token,
-    `/repos/${repository}/pulls/${pull.number}/reviews`,
-  );
-  comments.push(...reviews);
+  const comments = await listAll<{
+    user: { login: string } | null;
+    body: string;
+    created_at: string;
+  }>(token, `/repos/${repository}/issues/${pull.number}/comments`);
+  const reviews = await listAll<
+    PullRequestReview & { id: number; body: string; submitted_at: string | null }
+  >(token, `/repos/${repository}/pulls/${pull.number}/reviews`);
+  const botComments = [
+    ...comments.map(({ user, body, created_at }) => ({ user, body, at: created_at })),
+    ...reviews.map(({ user, body, submitted_at }) => ({ user, body, at: submitted_at ?? "" })),
+  ]
+    .filter((entry) => entry.user?.login === RELEASE_BOT_LOGIN)
+    .sort((a, b) => a.at.localeCompare(b.at))
+    .map((entry) => entry.body);
   const aiReview = reviews.findLast(
     (review) =>
       isLogin(review.user?.login, AI_REVIEW_LOGIN) &&
@@ -756,9 +782,7 @@ async function collect(outputDir: string): Promise<void> {
   const aiThreads = await fetchAiReviewThreads(token, repository, pull.number);
   const plan = planRepair({
     head: pull.head.sha,
-    botComments: comments
-      .filter((comment) => comment.user?.login === RELEASE_BOT_LOGIN)
-      .map((comment) => comment.body),
+    botComments,
     runs: await fetchPullRequestCheckRuns(
       (query, variables) => githubGraphql(token, query, variables),
       repository,
@@ -813,6 +837,18 @@ async function collect(outputDir: string): Promise<void> {
       .join("\n") || "No open review findings.\n",
   );
   writeFileSync(join(outputDir, "threads.json"), JSON.stringify(plan.threads));
+  if (plan.answerOnly) {
+    writeFileSync(
+      join(contextDir, EARLIER_REPLIES),
+      aiThreads
+        .filter((entry) => entry.replies.length > 0)
+        .map(
+          ({ thread, replies }) =>
+            `## \`${thread.path}${thread.line ? `:${thread.line}` : ""}\`\n\n${thread.body}\n\n### Reply\n\n${replies.join("\n\n")}\n`,
+        )
+        .join("\n") || "No earlier replies.\n",
+    );
+  }
 }
 
 interface Repair {
@@ -820,23 +856,30 @@ interface Repair {
   findings: { id: number; fixed: boolean; reply: string }[];
 }
 
-/** Lets Claude repair the checked-out sync branch, then commits its edits and writes the replies to post. */
+/**
+ * Lets Claude repair the checked-out sync branch, then commits its edits and writes the replies to post. An answer-only
+ * round commits nothing and hands the pull request to a maintainer when Claude would change the branch.
+ */
 function repair(workDir: string, outputDir: string, head: string): void {
   const threads = JSON.parse(
     readFileSync(join(outputDir, "threads.json"), "utf8"),
   ) as ReviewThread[];
-  const { result, summary } = claudeFix(
+  const answerOnly = existsSync(join(outputDir, "context", EARLIER_REPLIES));
+  const { result, changed, edited, summary } = claudeFix(
     workDir,
     outputDir,
     "chore(repo): repair the develop-into-next sync",
+    answerOnly,
   );
   // A fix may depend on workflow edits that are only suggested, so threads stay open until a maintainer commits them.
   const diffFile = join(outputDir, WORKFLOW_DIFF);
   const withheld = existsSync(diffFile) && readFileSync(diffFile, "utf8") !== "";
   const findings = result?.findings ?? [];
+  const handoff =
+    answerOnly && (result === undefined || edited || findings.some((finding) => finding.fixed));
   const replies = findings.flatMap(({ id, fixed, reply }) => {
     const thread = threads[id - 1];
-    return thread
+    return thread && !(handoff && fixed)
       ? [
           {
             commentId: thread.commentId,
@@ -848,6 +891,20 @@ function repair(workDir: string, outputDir: string, head: string): void {
       : [];
   });
   writeFileSync(join(outputDir, "replies.json"), JSON.stringify(replies));
+  if (handoff) {
+    writeFileSync(
+      join(outputDir, "comment.md"),
+      `${EXHAUSTED_MARKER}\n@supabase/cli The AI review already re-ran after a repair commit, and Claude would change the branch again: ${summary} Please take over (${runLink()}).\n`,
+    );
+    return;
+  }
+  if (changed) {
+    const repaired = gitOrThrow(makeGit(workDir), ["rev-parse", "HEAD"]);
+    writeFileSync(
+      join(outputDir, "rereview.md"),
+      `${rereviewMarker(repaired)}\nThe repair commit moved the head to \`${repaired.slice(0, 7)}\`, so the AI review runs once more; later rounds only answer its findings.\n`,
+    );
+  }
   writeFileSync(
     join(outputDir, "comment.md"),
     [

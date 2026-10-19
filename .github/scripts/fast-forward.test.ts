@@ -422,9 +422,10 @@ function scenarioIo(
   pullRequest: PullRequest,
   checks: CheckRun[],
   openSyncPullRequest?: number | Error,
-): { io: FastForwardIo; comments: string[]; lookups: string[] } {
+): { io: FastForwardIo; comments: string[]; lookups: string[]; dispatches: string[] } {
   const comments: string[] = [];
   const lookups: string[] = [];
+  const dispatches: string[] = [];
   const io: FastForwardIo = {
     git: makeGit(checkout),
     getPullRequest: async () => pullRequest,
@@ -437,11 +438,15 @@ function scenarioIo(
       }
       return openSyncPullRequest;
     },
+    listComments: async () => [],
     comment: async (body) => {
       comments.push(body);
     },
+    dispatchResync: async () => {
+      dispatches.push(pullRequest.head.ref);
+    },
   };
-  return { io, comments, lookups };
+  return { io, comments, lookups, dispatches };
 }
 
 function publish(repo: TestRepo, number: number): void {
@@ -662,36 +667,38 @@ interface SyncScenario {
   head: string;
   io: FastForwardIo;
   comments: string[];
+  dispatches: string[];
 }
 
-function resolvedSyncScenario(): SyncScenario {
+function resolvedSyncScenario(source = "main", target = "develop"): SyncScenario {
   const repo = setup();
-  git(repo.seed, "switch", "-c", "develop");
-  repo.commit(repo.seed, "shared.txt", "develop\n", "feat(cli): develop edit");
-  git(repo.seed, "push", "origin", "develop");
-  git(repo.seed, "switch", "main");
-  repo.commit(repo.seed, "shared.txt", "main\n", "fix(cli): main edit");
-  git(repo.seed, "push", "origin", "main");
-  git(repo.seed, "switch", "-c", "sync/main-into-develop");
+  git(repo.seed, "switch", "-c", target);
+  repo.commit(repo.seed, "shared.txt", `${target}\n`, `feat(cli): ${target} edit`);
+  git(repo.seed, "push", "origin", target);
+  git(repo.seed, "switch", "-C", source, "main");
+  repo.commit(repo.seed, "shared.txt", `${source}\n`, `fix(cli): ${source} edit`);
+  git(repo.seed, "push", "origin", source);
+  const syncBranch = `sync/${source}-into-${target}`;
+  git(repo.seed, "switch", "-c", syncBranch);
   try {
-    git(repo.seed, "merge", "--no-edit", "develop");
+    git(repo.seed, "merge", "--no-edit", target);
   } catch {
     repo.commit(repo.seed, "shared.txt", "resolved\n", "chore(repo): resolve sync");
   }
   const head = git(repo.seed, "rev-parse", "HEAD");
-  git(repo.seed, "push", "origin", "sync/main-into-develop");
+  git(repo.seed, "push", "origin", syncBranch);
   publish(repo, 21);
   const pullRequest: PullRequest = {
     number: 21,
     state: "open",
     draft: false,
     user: releaseBot,
-    head: { sha: head, ref: "sync/main-into-develop" },
-    base: { ref: "develop" },
+    head: { sha: head, ref: syncBranch },
+    base: { ref: target },
     labels: [],
   };
-  const { io, comments } = scenarioIo(repo, repo.checkout(), pullRequest, greenChecks);
-  return { repo, head, io, comments };
+  const { io, comments, dispatches } = scenarioIo(repo, repo.checkout(), pullRequest, greenChecks);
+  return { repo, head, io, comments, dispatches };
 }
 
 describe("runFastForward sync", () => {
@@ -864,7 +871,7 @@ describe("runFastForward sync", () => {
   });
 
   test("refuses and leaves the branch alone when a moved target conflicts", async () => {
-    const { repo, head, io, comments } = resolvedSyncScenario();
+    const { repo, head, io, comments, dispatches } = resolvedSyncScenario();
     git(repo.seed, "switch", "develop");
     const movedDevelop = repo.commit(
       repo.seed,
@@ -880,6 +887,54 @@ describe("runFastForward sync", () => {
     expect(repo.remoteTip("sync/main-into-develop")).toBe(head);
     expect(repo.remoteTip("develop")).toBe(movedDevelop);
     expect(comments[0]).toContain("- `shared.txt`");
+    expect(dispatches).toEqual([]);
+  });
+
+  test("hands a conflicting move of next back to Claude for two resyncs, or a maintainer when dispatch fails", async () => {
+    const attempt = async (resyncs: number, dispatchFails = false) => {
+      const { repo, head, io, comments, dispatches } = resolvedSyncScenario("develop", "next");
+      git(repo.seed, "switch", "next");
+      repo.commit(repo.seed, "shared.txt", "conflicting\n", "feat(cli)!: conflicting");
+      git(repo.seed, "push", "origin", "next");
+      const botComments = [
+        {
+          user: { login: releaseBot.login },
+          body: "<!-- sync-agent resolve -->\n### Claude resolved the merge of `next`",
+        },
+        ...Array.from({ length: resyncs }, () => ({
+          user: { login: "github-actions[bot]" },
+          body: "<!-- fast-forward resync -->\n`next` moved since approval",
+        })),
+      ];
+
+      const outcome = await runFastForward(
+        {
+          ...io,
+          listComments: async () => botComments,
+          ...(dispatchFails && {
+            dispatchResync: async () => {
+              throw new Error("HTTP 403");
+            },
+          }),
+        },
+        { reviewCommitId: head },
+      );
+
+      expect(repo.remoteTip("sync/develop-into-next")).toBe(head);
+      return { status: outcome.status, dispatches, comment: comments.at(-1) };
+    };
+
+    const resync = await attempt(1);
+    expect(resync).toMatchObject({
+      status: "resync-dispatched",
+      dispatches: ["sync/develop-into-next"],
+    });
+    expect(resync.comment).toContain("- `shared.txt`");
+    expect(resync.comment).toContain("resync 2 of 2");
+    expect(await attempt(2)).toMatchObject({ status: "refused", dispatches: [] });
+    const failed = await attempt(0, true);
+    expect(failed.status).toBe("refused");
+    expect(failed.comment).toContain("Starting Claude's resync failed (HTTP 403)");
   });
 
   test("fast-forwards the approved head even when the source moved with a conflicting change", async () => {

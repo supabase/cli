@@ -820,7 +820,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RegionsInfo_Output"
+                  "$ref": "#/components/schemas/RegionsInfoV1_Output"
                 }
               }
             }
@@ -32099,7 +32099,7 @@
           "status"
         ]
       },
-      "RegionsInfo_Output": {
+      "RegionsInfoV1_Output": {
         "type": "object",
         "properties": {
           "recommendations": {
