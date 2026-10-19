@@ -148,7 +148,7 @@ export interface PullConfirmMessageInput {
   /** The resolved target project ref — named in the header line so the confirmation body says
    *  which project/branch is about to be written to. */
   readonly ref: string;
-  /** The branch name `--project-ref` resolved, when it named one; `undefined` for a ref-shaped
+  /** The branch name `--remote` resolved, when it named one; `undefined` for a ref-shaped
    *  or linked-fallback target. */
   readonly branch: string | undefined;
   /** `config pull`'s own rendered diff body (`renderConfigPullText`), when there was

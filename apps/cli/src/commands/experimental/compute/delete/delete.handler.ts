@@ -6,7 +6,7 @@ import { renderComputeDetails } from "../compute.format.ts";
 import {
   emitComputeMachineOutput,
   rejectComputeEnvOutput,
-  computeProjectRefSuffix,
+  computeRemoteSuffix,
 } from "../compute.output.ts";
 import { CommandPlatformApi } from "../../../../auth/command-platform-api.service.ts";
 import { displayPath } from "../../../../shared/compute/compute-paths.ts";
@@ -17,7 +17,7 @@ import {
 } from "../../../../shared/compute/compute.errors.ts";
 import { resolveYes } from "../../../../command-internal/global-flags.ts";
 import { requireHostedMutationConsent } from "../../../../command-internal/hosted-consent/hosted-consent.ts";
-import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
@@ -38,7 +38,6 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
   const output = yield* Output;
   const path = yield* Path.Path;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const yes = yield* resolveYes;
@@ -47,10 +46,13 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
   // them; everything that can fail on its own — loading `config.toml`,
   // validating the name, resolving the compute — belongs inside, so those
   // failures still flush telemetry. Same shape as `config/push`.
-  const projectRef = yield* resolver.resolve(flags.projectRef);
+  const projectRef = yield* resolveProjectTarget({
+    remote: flags.remote,
+    projectRef: flags.projectRef,
+  });
   // Every retry this command suggests is for a *destructive* re-run, so the ref
   // has to survive the copy-paste.
-  const refSuffix = computeProjectRefSuffix(flags.projectRef);
+  const refSuffix = computeRemoteSuffix(flags, projectRef);
 
   yield* Effect.gen(function* () {
     const project = yield* loadComputeProjectForReporting();

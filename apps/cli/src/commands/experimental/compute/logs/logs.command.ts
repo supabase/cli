@@ -14,6 +14,8 @@ import {
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computeLogs } from "./logs.handler.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { branchResolution } from "../../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../../command-internal/target/target-flags.ts";
 
 /**
  * The endpoint's own ceiling is the SQL `LIMIT`, so this bound is the CLI's
@@ -27,10 +29,7 @@ const MAX_TAIL = 1000;
 
 const config = {
   name: Argument.String("name").pipe(Argument.withDescription("Compute to read logs for.")),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   kind: Flag.Literals("kind", COMPUTE_LOG_KINDS).pipe(
     Flag.withDescription(
       "Limit to one log stream: app (the compute's own output), requests (HTTP access), " +
@@ -111,6 +110,7 @@ export const computeLogsCommand = Command.make("logs", config).pipe(
       withContext(computeRead, "the log query returned no rows, or --tail 0 with --follow"),
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>

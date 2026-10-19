@@ -1,4 +1,4 @@
-import { Command, Flag } from "effect/cli";
+import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../../command-internal/command-permissions/model.ts";
@@ -11,12 +11,11 @@ import { managementApiRuntimeLayer } from "../../../../command-internal/manageme
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computeList } from "./list.handler.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { branchResolution } from "../../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../../command-internal/target/target-flags.ts";
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
 } as const;
 
 export type ComputeListFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -37,6 +36,7 @@ export const computeListCommand = Command.make("list", config).pipe(
       { operations: [{ operationId: "v2-list-all-compute-instances", kind: "required" }] },
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>

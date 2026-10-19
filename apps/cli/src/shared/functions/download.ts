@@ -55,7 +55,6 @@ const DOCKER_ESZIP_DIR = "/root/eszips";
 
 export interface DownloadFunctionsOptions {
   readonly functionName: Option.Option<string>;
-  readonly projectRef: Option.Option<string>;
   readonly useApi: boolean;
   readonly useDocker: boolean;
 }
@@ -113,9 +112,7 @@ interface EdgeRuntimeImageDependencies {
 
 export interface DownloadFunctionsDependencies<ResolveError, ResolveRequirements>
   extends DownloadDockerRuntimeDependencies, EdgeRuntimeImageDependencies {
-  readonly resolveProjectRef: (
-    projectRef: Option.Option<string>,
-  ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
+  readonly resolveProjectRef: Effect.Effect<string, ResolveError, ResolveRequirements>;
 }
 
 interface DownloadMetadata {
@@ -1176,7 +1173,7 @@ export const downloadFunctions = Effect.fn("functions.download")(function* <
     yield* validateSlug(flags.functionName.value);
   }
 
-  const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
+  const projectRef = yield* dependencies.resolveProjectRef;
 
   // Resolved unconditionally here, before checking `useDocker` or whether
   // Docker is running: an invalid `supabase/config.toml` (e.g. a bad

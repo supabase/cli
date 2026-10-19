@@ -1,5 +1,5 @@
 import { Option } from "effect";
-import { Command, Flag } from "effect/cli";
+import { Command } from "effect/cli";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
@@ -16,16 +16,10 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { configPush } from "./push.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 
 const config = {
-  // Accepts either a project ref or a branch name/UUID of the linked project; there's no
-  // separate --target flag.
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription(
-      "Project ref of the Supabase project, or the name (or UUID) of one of its branches. Values that are exactly 20 lowercase letters are always treated as project refs.",
-    ),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
 } as const;
 
 export type ConfigPushFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -73,7 +67,7 @@ export const configPushCommand = Command.make("push", config).pipe(
           {
             operationId: "v1-get-project",
             kind: "best-effort",
-            context: "--project-ref is absent, empty or a 20-letter project ref (the branch probe)",
+            context: "--remote is absent, bare or a 20-letter project ref (the branch probe)",
           },
           { operationId: "v1-list-project-addons", kind: "required" },
           { operationId: "v2-get-project-config", kind: "required" },
@@ -118,7 +112,7 @@ export const configPushCommand = Command.make("push", config).pipe(
       },
       withContext(
         branchTarget,
-        "the target is a branch (a UUID --project-ref, or the probe returned 404) and supabase/.temp/linked-project.json names a different project",
+        "the target is a branch (a UUID --remote, or the probe returned 404) and supabase/.temp/linked-project.json names a different project",
       ),
       linkedProjectCache,
     ),

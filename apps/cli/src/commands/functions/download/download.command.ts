@@ -5,6 +5,7 @@ import { withPermissions } from "../../../command-internal/command-permissions/c
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { functionsDownload as functionsDownloadCalls } from "../../../shared/functions/download.ts";
@@ -17,16 +18,15 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { functionsDownload } from "./download.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 
 const config = {
   functionName: Argument.String("Function name").pipe(
     Argument.withDescription("Name of the Function to download. Downloads all if omitted."),
     Argument.optional,
   ),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   useApi: Flag.Boolean("use-api").pipe(
     Flag.withDescription("Unbundle functions server-side without using Docker."),
     Flag.withDefault(false),
@@ -49,9 +49,14 @@ export type FunctionsDownloadFlags = CliCommand.Command.Config.Infer<typeof conf
 
 // Exported so integration tests can drive the exact wiring `Command.withHandler`
 // uses below, instead of re-asserting the generic instrumentation mechanism.
+const projectRefSafeFlags = (flags: FunctionsDownloadFlags) =>
+  Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
+    ? FUNCTIONS_PROJECT_REF_SAFE_FLAGS
+    : [];
+
 export const functionsDownloadHandler = (flags: FunctionsDownloadFlags) =>
   functionsDownload(flags).pipe(
-    withCommandTelemetry({ flags, safeFlags: FUNCTIONS_PROJECT_REF_SAFE_FLAGS }),
+    withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
     withJsonErrorHandling,
   );
 
@@ -67,7 +72,7 @@ const functionsDownloadLegacyBundleHandler = (flags: FunctionsDownloadFlags) => 
     "--legacy-bundle",
     `Retry with \`supabase functions download --use-api ${slug}\` to unbundle server-side without Docker. If that also fails and the Function was deployed with a CLI older than 1.120.0, redeploy it with the current CLI.`,
   ).pipe(
-    withCommandTelemetry({ flags, safeFlags: FUNCTIONS_PROJECT_REF_SAFE_FLAGS }),
+    withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
     withJsonErrorHandling,
     Effect.provide(removedFlagLayer),
   );
@@ -97,6 +102,7 @@ export const functionsDownloadCommand = Command.make("download", config).pipe(
       functionsDownloadCalls,
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>

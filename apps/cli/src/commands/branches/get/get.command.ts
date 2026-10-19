@@ -1,4 +1,4 @@
-import { Argument, Command, Flag } from "effect/cli";
+import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -14,6 +14,8 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesGet } from "./get.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { branchesParentTarget, branchesSafeFlags } from "../branches.target.ts";
 
 // `get.handler.ts` skips the api-keys and pooler calls for `-o pretty`, and with no `-o` when the output format is text.
 const MACHINE_OUTPUT: ReadonlyArray<{
@@ -49,10 +51,7 @@ const config = {
     Argument.withDescription("Branch name or ID."),
     Argument.optional,
   ),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
 } as const;
 
 export type BranchesGetFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -83,6 +82,7 @@ export const branchesGetCommand = Command.make("get", config).pipe(
           ),
         ],
       },
+      branchesParentTarget,
       projectRefPicker,
       branchPrompt,
       linkedProjectCache,
@@ -90,7 +90,7 @@ export const branchesGetCommand = Command.make("get", config).pipe(
   ),
   Command.withHandler((flags) =>
     branchesGet(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: ["project-ref"] }),
+      withCommandTelemetry({ flags, safeFlags: branchesSafeFlags(flags) }),
       withJsonErrorHandling,
     ),
   ),

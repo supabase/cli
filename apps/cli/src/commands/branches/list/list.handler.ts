@@ -13,7 +13,7 @@ import {
   encodeStructYaml,
 } from "../../../command-internal/struct-output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
+import { resolveBranchesParent } from "../branches.target.ts";
 import { BRANCHES_LIST_SHAPE, BRANCHES_TOML_WRAPPER_SHAPE } from "../branches.response-shape.ts";
 import {
   BranchesEnvNotSupportedError,
@@ -42,7 +42,7 @@ export const branchesList = Effect.fn("branches.list")(function* (flags: Branche
 
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
-  const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  const ref = yield* resolveBranchesParent({ remote: flags.remote, projectRef: flags.projectRef });
   yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {

@@ -116,7 +116,6 @@ export const pullFunctionsStep = Effect.fnUntraced(function* (context: PullStepC
   const result: DownloadFunctionsResult = yield* downloadFunctions(
     {
       functionName: Option.none(),
-      projectRef: Option.some(context.ref),
       useApi: false,
       useDocker: true,
     },
@@ -129,7 +128,7 @@ export const pullFunctionsStep = Effect.fnUntraced(function* (context: PullStepC
       styleEmphasis: (text) => bold(text),
       styleAqua: (text) => aqua(text),
       styleWarning: (text) => yellow(text),
-      resolveProjectRef: () => Effect.succeed(context.ref),
+      resolveProjectRef: Effect.succeed(context.ref),
     },
   );
   return { kind: "downloaded", result } satisfies PullFunctionsStepOutcome;

@@ -11,6 +11,8 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesCreate } from "./create.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { branchesParentTarget, branchesSafeFlags } from "../branches.target.ts";
 
 const BRANCH_REGIONS = [
   "ap-east-1",
@@ -59,10 +61,7 @@ const config = {
     Argument.withDescription("Name for the new branch."),
     Argument.optional,
   ),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   region: Flag.Literals("region", BRANCH_REGIONS).pipe(
     Flag.withDescription("Select a region to deploy the branch database."),
     Flag.optional,
@@ -102,6 +101,7 @@ export const branchesCreateCommand = Command.make("create", config).pipe(
         operations: [{ operationId: "v1-create-a-branch", kind: "required" }],
         noApiEffectFlags: ["region", "size", "persistent", "with-data", "notify-url", "git-branch"],
       },
+      branchesParentTarget,
       projectRefPicker,
       upgradeSuggestion,
       linkedProjectCache,
@@ -109,7 +109,7 @@ export const branchesCreateCommand = Command.make("create", config).pipe(
   ),
   Command.withHandler((flags) =>
     branchesCreate(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: ["project-ref"], config }),
+      withCommandTelemetry({ flags, safeFlags: branchesSafeFlags(flags), config }),
       withJsonErrorHandling,
     ),
   ),

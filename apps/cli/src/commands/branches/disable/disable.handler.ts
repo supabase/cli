@@ -6,7 +6,7 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
+import { resolveBranchesParent } from "../branches.target.ts";
 import {
   BranchesDisableNetworkError,
   BranchesDisableUnexpectedStatusError,
@@ -31,7 +31,7 @@ export const branchesDisable = Effect.fn("branches.disable")(function* (
   // `branches` is PARENT-scoped: after `supabase link <branch>`,
   // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
   // 403s on that ref for every branches-management endpoint.
-  const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  const ref = yield* resolveBranchesParent({ remote: flags.remote, projectRef: flags.projectRef });
   yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {

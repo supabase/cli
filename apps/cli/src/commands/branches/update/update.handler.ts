@@ -13,7 +13,7 @@ import {
 } from "../../../command-internal/struct-output.encoders.ts";
 import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
+import { resolveBranchesParent } from "../branches.target.ts";
 import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
 import { BRANCH_RESPONSE_SHAPE } from "../branches.response-shape.ts";
 import {
@@ -43,7 +43,7 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
 
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
-  const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  const ref = yield* resolveBranchesParent({ remote: flags.remote, projectRef: flags.projectRef });
   yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {

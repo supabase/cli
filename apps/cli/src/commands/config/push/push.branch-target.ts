@@ -16,7 +16,7 @@ import { Output } from "../../../shared/output/output.service.ts";
  * What `ref` actually is, resolved for `config push`'s payload:
  *
  * - `"project"` — `ref` is the linked project itself.
- * - `"branch"` — `ref` is confirmed to be a preview branch (an explicit `--project-ref
+ * - `"branch"` — `ref` is confirmed to be a preview branch (an explicit `--remote
  *   <name-or-uuid>`, or a live 404); `parentRef`/`branch` are each present only when they could
  *   be determined.
  * - `"unknown"` — the live probe couldn't tell (a timeout, a transport failure, or an

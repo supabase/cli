@@ -17,16 +17,10 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { configPull } from "./pull.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 
 const config = {
-  // Accepts either a project ref or a branch name/UUID of the linked project; there's no
-  // separate --target flag.
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription(
-      "Project ref of the Supabase project, or the name (or UUID) of one of its branches. Values that are exactly 20 lowercase letters are always treated as project refs.",
-    ),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   remoteLabel: Flag.String("remote-label").pipe(
     Flag.withDescription(
       "Name of the [remotes.*] block to write into, overriding the block config pull would otherwise reuse or create.",

@@ -22,6 +22,7 @@ import {
 } from "../../../command-internal/http-errors.ts";
 import {
   configTargetErrorsFor,
+  requestedConfigTarget,
   resolveConfigTarget,
 } from "../../../command-internal/project-target.ts";
 import { configIsRecord } from "../config.paths.ts";
@@ -81,9 +82,6 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
   const outputFlag = yield* OutputFlag;
   const fs = yield* FileSystem.FileSystem;
 
-  // An empty `--project-ref` value is absent, mirroring the resolver's own rule.
-  const requested = Option.filter(flags.projectRef, (value) => value.length > 0);
-
   const makeLoadError = (message: string) => new ConfigDiffLoadConfigError({ message });
 
   // Set once the target ref resolves, so the Effect.ensuring cache write below only fires for
@@ -115,6 +113,10 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
     );
 
     // See resolveConfigTarget's doc comment for the target-resolution rules this preserves.
+    const requested = yield* requestedConfigTarget({
+      remote: flags.remote,
+      projectRef: flags.projectRef,
+    });
     const { ref, branch } = yield* resolveConfigTarget(
       requested,
       configTargetErrors,
