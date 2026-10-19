@@ -13,6 +13,7 @@ import { storageCredentials } from "../../../command-internal/storage-credential
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import {
   seedTargetGlobalFlags,
   targetFlags,
@@ -41,8 +42,9 @@ export const bucketsCommand = Command.make("buckets", config).pipe(
   withPermissions(
     withDbTarget(
       compose(
-        { operations: [], noApiEffectFlags: ["project-ref"] },
+        { operations: [], noApiEffectFlags: [] },
         withCondition(compose(storageCredentials, linkedProjectCache), { dbTarget: ["linked"] }),
+        branchResolution,
       ),
       { default: "local" },
     ),

@@ -14,6 +14,7 @@ import {
   dbConfigPoolerFallbackLinked,
 } from "../../../command-internal/db-config.layer.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -69,6 +70,7 @@ const config = {
 
 /** Every flag name `gen types` already answers to: its own, the globals, and Effect's built-ins. */
 const GEN_TYPES_RESERVED_FLAG_NAMES: ReadonlyArray<string> = [
+  "remote",
   "local",
   "linked",
   "db-url",
@@ -164,6 +166,13 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
                 context:
                   "the ref names a preview branch and generating against its direct host fails with an IPv6 connectivity error",
               },
+              {
+                operationId: "v1-list-all-branches",
+                kind: "required",
+                when: [{ flag: "project-id", present: true }],
+                context:
+                  "--project-id names a branch (not a 20-letter project ref) of the linked project",
+              },
             ],
             noApiEffectFlags: ["schema", "query-timeout", ...GEN_TYPES_LANGUAGE_FLAG_NAMES],
           },
@@ -171,6 +180,7 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
           withCondition(withContext(dbConfigPoolerFallbackLinked, notBranch), nonTypescript),
           withCondition(projectRefPicker, { flag: "project-id", present: false }),
           linkedProjectCache,
+          branchResolution,
         ),
       ),
       { default: "local" },
@@ -181,7 +191,9 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
       withCommandTelemetry({
         flags,
         safeFlags: [
-          "project-id",
+          ...(Option.isSome(flags.projectId) && PROJECT_REF_PATTERN.test(flags.projectId.value)
+            ? ["project-id"]
+            : []),
           ...(Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
             ? ["project-ref"]
             : []),

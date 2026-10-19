@@ -42,12 +42,13 @@ const dbConfig = dbConfigLayer.pipe(
  * The services every `inspect` leaf shares, minus the command-runtime identity: the DB-config
  * resolver, the project-ref resolver, the Postgres connection, the CLI config, and telemetry state.
  *
- * The Management API stack is not merged here — it resolves an access token eagerly, which would
- * break the auth-free `--local` / `--db-url` paths. The linked path reaches it lazily through the
- * platform-API factory and the resolver.
+ * The Management API client is not merged here — it resolves an access token eagerly, which would
+ * break the auth-free local and `--remote=<url>` paths. The linked path and branch-name lookups
+ * reach it lazily through the platform-API factory.
  */
 export const inspectBaseLayer = Layer.mergeAll(
   dbConfig,
+  platformApiFactory,
   projectRef,
   dbConnectionLayer,
   cliSettings,
