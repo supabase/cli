@@ -11,8 +11,8 @@ import {
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
+import { storagePermissions } from "../../../command-internal/storage-permissions.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
-import { STORAGE_PERMISSIONS } from "../../storage/storage.flags.ts";
 import { seedBuckets } from "./buckets.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
@@ -21,7 +21,7 @@ export type BucketsFlags = TargetFlagValuesWithoutDbUrl;
 export const bucketsCommand = Command.make("buckets").pipe(
   Command.withDescription("Seed buckets declared in [storage.buckets]."),
   Command.withShortDescription("Seed buckets declared in [storage.buckets]"),
-  withPermissions(STORAGE_PERMISSIONS),
+  withPermissions(storagePermissions([])),
   Command.withHandler(() =>
     Effect.gen(function* () {
       const flags: BucketsFlags = yield* readSeedTargetFlags();

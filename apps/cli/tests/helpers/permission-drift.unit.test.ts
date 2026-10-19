@@ -222,15 +222,30 @@ describe("assertDriftAgainst", () => {
     });
 
     it("classifies every flag that can carry the selector", () => {
-      for (const flag of ["remote", "linked", "project-ref", "project-id", "db-url", "local"]) {
+      const carriers = { remote: true, linked: true, "db-url": true, local: true };
+      for (const [flag, value] of Object.entries({
+        ...carriers,
+        "project-ref": REF,
+        "project-id": REF,
+      })) {
         expect(() =>
           assertDriftAgainst(branchLookup, {
             command: "secrets list",
-            activeFlags: { [flag]: true },
+            activeFlags: { [flag]: value },
             requests: [],
           }),
         ).not.toThrow();
       }
+    });
+
+    it("rejects --project-ref given as a boolean, since its value picks the entries that apply", () => {
+      expect(() =>
+        assertDriftAgainst(branchLookup, {
+          command: "secrets list",
+          activeFlags: { "project-ref": true },
+          requests: [],
+        }),
+      ).toThrow(/pass the value/);
     });
   });
 
