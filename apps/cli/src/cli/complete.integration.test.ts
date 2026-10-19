@@ -40,7 +40,7 @@ function makeCaptureTelemetry(
   return (exitCode, durationMs) =>
     captureCompleteTelemetryEffect(exitCode, durationMs).pipe(
       Effect.provide([analyticsLayer, BunCrypto.layer]),
-      Effect.ignore,
+      Effect.orDie,
     );
 }
 
