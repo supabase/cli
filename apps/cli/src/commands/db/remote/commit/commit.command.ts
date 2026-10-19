@@ -32,15 +32,15 @@ const config = {
 } as const;
 
 export const dbRemoteCommitCommand = Command.make("commit", config).pipe(
-  Command.withDescription("Removed: use `supabase db pull` instead."),
-  Command.withShortDescription("Removed: use `db pull` instead"),
+  Command.withDescription("Removed: use `supabase db pull --remote` instead."),
+  Command.withShortDescription("Removed: use `db pull --remote` instead"),
   // Removed: fails before any Management API call, so no flag changes what it calls.
   withPermissions({
     operations: [],
     noApiEffectFlags: ["db-url", "linked", "password", "schema"],
   }),
   Command.withHandler(() =>
-    removedCommand("Use `supabase db pull` instead.").pipe(
+    removedCommand("Use `supabase db pull --remote` instead.").pipe(
       withCommandTelemetry(),
       withJsonErrorHandling,
     ),

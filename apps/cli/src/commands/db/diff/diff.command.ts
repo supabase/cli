@@ -5,9 +5,14 @@ import { withPermissions } from "../../../command-internal/command-permissions/c
 import {
   compose,
   withCondition,
+  withContext,
   withDbTarget,
 } from "../../../command-internal/command-permissions/model.ts";
-import { dbConfig, dbConfigLinked } from "../../../command-internal/db-config.layer.ts";
+import {
+  dbConfig,
+  dbConfigLinked,
+  dbConfigNamedProject,
+} from "../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
@@ -51,13 +56,13 @@ const config = {
   ),
   from: Flag.String("from").pipe(
     Flag.withDescription(
-      "Diff from local, migrations, remote, a project ref, a branch, or a Postgres URL.",
+      "Diff from local, migrations, remote (always the linked project), a project ref, a branch, or a Postgres URL.",
     ),
     Flag.optional,
   ),
   to: Flag.String("to").pipe(
     Flag.withDescription(
-      "Diff to local, migrations, remote, a project ref, a branch, or a Postgres URL.",
+      "Diff to local, migrations, remote (always the linked project), a project ref, a branch, or a Postgres URL.",
     ),
     Flag.optional,
   ),
@@ -91,9 +96,16 @@ const config = {
 
 export type DbDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// An explicit `--from`/`--to` of `remote` or the deprecated `linked` resolves the linked project without `--remote`. A project ref, branch or URL side is not modelled: `oneOf` only matches fixed values.
+// An explicit `--from`/`--to` of `remote` or the deprecated `linked` resolves the linked project without `--remote`.
 const explicitLinkedSide = (flag: "from" | "to") =>
   withCondition(compose(dbConfigLinked, linkedProjectCache), { flag, oneOf: ["linked", "remote"] });
+
+// A condition can't tell a ref or branch value from `local`, `migrations` or a URL, so any value declares the block.
+const explicitNamedProjectSide = (flag: "from" | "to") =>
+  withContext(
+    withCondition(compose(dbConfigNamedProject, linkedProjectCache), { flag, present: true }),
+    `--${flag} is a project ref or branch name, not local, migrations, remote or a URL`,
+  );
 
 const explicitBranchSide = (flag: "from" | "to") =>
   ({
@@ -128,6 +140,8 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
         explicitLinkedSide("from"),
         explicitLinkedSide("to"),
+        explicitNamedProjectSide("from"),
+        explicitNamedProjectSide("to"),
         branchResolution,
       ),
       { default: "local" },

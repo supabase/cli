@@ -131,7 +131,7 @@ A hosted target asks (or is confirmed by `--yes`) right after the target, config
 stdout: only `Finished supabase migration squash.` (aqua), printed inline by the
 handler itself (there is no shared group-level epilogue that prints it). Local
 target additionally prints `Run
-supabase migration repair --status applied to update your remote migration
+supabase migration repair --status applied --remote to update your remote migration
 history table.` to stderr, after the stdout line.
 
 ### `--output-format json` / `stream-json`

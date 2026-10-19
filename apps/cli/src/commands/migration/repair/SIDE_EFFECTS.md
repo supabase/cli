@@ -61,7 +61,8 @@ Local targets and database URLs make none.
 Prints `Target: …` to stderr first. When repairing specific versions, prints `Repaired migration history: [<versions>]
 => <status>` to stderr, then `Finished supabase migration repair.` to stdout and
 the suggestion `Run supabase migration list to show the updated migration history.`
-to stderr. The DB work is the history-table provisioning (its own transaction,
+to stderr; the suggestion carries the flags that select the repaired hosted target
+(`--remote`, `--remote=<ref>`), so it lists the same database. The DB work is the history-table provisioning (its own transaction,
 skipped entirely when a read-only probe finds the ledger already provisioned, so a
 provisioned remote runs no provisioning DDL — supabase/cli#6393) followed by one
 repair transaction: (for repair-all) `TRUNCATE`, plus `applied` → per-version

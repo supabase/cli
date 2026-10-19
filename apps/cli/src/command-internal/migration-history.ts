@@ -225,7 +225,7 @@ export function reconcileMigrations(
   return { kind: "in-sync" };
 }
 
-const withTargetFlags = (command: string, targetFlags: string): string =>
+export const withTargetFlags = (command: string, targetFlags: string): string =>
   targetFlags === "" ? command : `${command} ${targetFlags}`;
 
 /** `targetFlags` are the flags that select the resolved target (see `flagsForTarget`), appended last. */

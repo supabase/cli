@@ -525,7 +525,7 @@ const runSquash = Effect.fnUntraced(function* (flags: MigrationSquashFlags) {
       if (output.format === "text") {
         yield* output.raw(`Finished ${aqua("supabase migration squash")}.\n`);
         yield* output.raw(
-          `Run ${aqua("supabase migration repair --status applied")} to update your remote migration history table.\n`,
+          `Run ${aqua("supabase migration repair --status applied --remote")} to update your remote migration history table.\n`,
           "stderr",
         );
       } else {

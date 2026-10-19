@@ -382,6 +382,23 @@ describe("migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("suggests listing the history of the hosted project it repaired", () => {
+    const ctx = setup(tmp.current, { yes: true });
+    return Effect.gen(function* () {
+      yield* seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
+      yield* migrationRepair(
+        input({
+          versions: ["20240101000000"],
+          status: "applied",
+          remote: Option.some({ _tag: "Ref", ref: FLAG_REF }),
+        }),
+      );
+      expect(stripAnsi(ctx.out.stderrText)).toContain(
+        `Run supabase migration list --remote=${FLAG_REF} to show the updated migration history.`,
+      );
+    }).pipe(Effect.provide(ctx.layer));
+  });
+
   it.effect("prints multiple repaired versions using the `[a b]` slice format", () => {
     // The established format is space-separated and bracketed, with no commas; a
     // `.join(", ")` cleanup would silently change established output.

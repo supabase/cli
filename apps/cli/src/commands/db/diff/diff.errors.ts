@@ -20,8 +20,8 @@ export class DbDiffEngineConflictError extends Data.TaggedError("DbDiffEngineCon
 }
 
 /**
- * Only one of `--from` / `--to` was set in explicit diff mode; message text is
- * an established output contract.
+ * Explicit diff mode got only one of `--from` / `--to`, or a target selector (`--remote` and its
+ * aliases), which it doesn't take; message text is an established output contract.
  */
 export class DbDiffExplicitFlagsError extends Data.TaggedError("DbDiffExplicitFlagsError")<{
   readonly message: string;

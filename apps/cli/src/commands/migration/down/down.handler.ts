@@ -13,8 +13,12 @@ import {
   requireTargetMutationConsent,
 } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { migrateAndSeed } from "../../../command-internal/migrate-and-seed.ts";
-import { listRemoteMigrations } from "../../../command-internal/migration-history.ts";
+import {
+  listRemoteMigrations,
+  withTargetFlags,
+} from "../../../command-internal/migration-history.ts";
 import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
+import { flagsForTarget } from "../../../command-internal/target/target-flags.ts";
 import { upsertVaultSecrets } from "../../../command-internal/vault.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -62,7 +66,7 @@ const runDown = Effect.fnUntraced(function* (flags: MigrationDownFlags) {
         if (total <= flags.last || version === undefined) {
           return yield* new MigrationLastTooLargeError({
             message: `--last must be smaller than total applied migrations: ${total}`,
-            suggestion: `Try ${aqua("supabase db reset")} if you want to revert all migrations.`,
+            suggestion: `Try ${aqua(withTargetFlags("supabase db reset", flagsForTarget(target)))} if you want to revert all migrations.`,
           });
         }
 

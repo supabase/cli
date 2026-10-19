@@ -63,7 +63,7 @@ describe("supabase migration squash", () => {
         );
         expect(stripAnsi(stdout)).toContain("Finished supabase migration squash.");
         expect(stripAnsi(stderr)).toContain(
-          "Run supabase migration repair --status applied to update your remote migration history table.",
+          "Run supabase migration repair --status applied --remote to update your remote migration history table.",
         );
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     E2E_TIMEOUT_MS,

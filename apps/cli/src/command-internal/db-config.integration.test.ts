@@ -1429,6 +1429,55 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
   );
 
   it.effect(
+    "an ad-hoc --remote=<ref> with no pooler configured suggests the pooler URL, not re-linking",
+    () => {
+      const ref = "adhocnopoolerrefabcd";
+      const previousFetch = globalThis.fetch;
+      const dbConnection = Layer.succeed(DbConnection, {
+        connect: () => Effect.die("unexpected connect()"),
+      });
+      globalThis.fetch = Object.assign(
+        (): Promise<Response> =>
+          Promise.resolve(
+            new Response("[]", { status: 200, headers: { "content-type": "application/json" } }),
+          ),
+        { preconnect: previousFetch.preconnect },
+      );
+
+      return Effect.gen(function* () {
+        const dir = yield* withWorkdir();
+        return yield* resolveConnection(
+          dir,
+          inputFor(explicitRefTarget(ref, { matchesLinkedRef: false })),
+          {
+            projectHost: "invalid",
+            dbConnection,
+            configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+          },
+        );
+      }).pipe(
+        Effect.flip,
+        Effect.tap((error) =>
+          Effect.sync(() => {
+            expect(error).toMatchObject({
+              _tag: "DbConfigIpv6Error",
+              suggestion:
+                "Pass the project's connection pooler URL with --remote=<pooler db-url> to connect over IPv4.",
+            });
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            globalThis.fetch = previousFetch;
+          }),
+        ),
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
+
+  it.effect(
     "the plain --linked path (no --project-ref) keeps the IPv6 error when no pooler URL is saved",
     () => {
       const ref = "plainlinkedrefabcdef";

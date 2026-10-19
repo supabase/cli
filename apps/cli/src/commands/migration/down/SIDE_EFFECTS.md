@@ -101,7 +101,8 @@ Same structured result delivered as an NDJSON `result` event.
   be combined with `--local`, `--db-url` or `--remote=<value>`, an empty `--db-url` or
   `--project-ref` is rejected, and `--linked=false` selects nothing.
 - `--last` (default 1) resets up to the last n migration versions; must be `> 0`
-  and `<` the number of applied migrations.
+  and `<` the number of applied migrations. The error's `Try supabase db reset …`
+  suggestion carries the flags that select a hosted target (`--remote`, `--remote=<ref>`).
 - Takes no positional arguments.
 - Performs no best-effort migrations-catalog cache optimization.
 - Dotenvx-encrypted (`encrypted:`) `[db.vault]` values are decrypted during config

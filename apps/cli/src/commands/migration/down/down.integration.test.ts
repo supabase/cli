@@ -284,6 +284,24 @@ describe("migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("suggests the db reset of the same hosted target when --last is too large", () => {
+    const { layer } = setup(tmp.current, { remote: ["20240101000000"] });
+    return Effect.gen(function* () {
+      const suggestionOf = (error: unknown) =>
+        error instanceof MigrationLastTooLargeError ? stripAnsi(error.suggestion) : undefined;
+      const local = yield* migrationDown(flags({ last: 1 })).pipe(Effect.flip);
+      const hosted = yield* migrationDown(
+        flags({ last: 1, remote: Option.some({ _tag: "Linked" }) }),
+      ).pipe(Effect.flip);
+      expect(suggestionOf(local)).toBe(
+        "Try supabase db reset if you want to revert all migrations.",
+      );
+      expect(suggestionOf(hosted)).toBe(
+        "Try supabase db reset --remote if you want to revert all migrations.",
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("reverts the local database to the target version without prompting", () => {
     const { layer, out, execs, queries } = setup(tmp.current, {
       remote: ["20240101000000", "20240102000000"],

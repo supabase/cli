@@ -42,7 +42,7 @@ regardless of `-o`/`--output`:
 
 ```
 supabase db remote commit was removed.
-Use `supabase db pull` instead.
+Use `supabase db pull --remote` instead.
 ```
 
 ### `--output-format json` / `stream-json`

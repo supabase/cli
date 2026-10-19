@@ -8,7 +8,7 @@ import { bold } from "./colors.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import { DbConnection } from "./db-connection.service.ts";
 import { loadProjectEnvValues } from "./db-config.toml-read.ts";
-import { hostedMutationPreapproval } from "./hosted-consent/hosted-consent.ts";
+import { announcedTarget, hostedMutationPreapproval } from "./hosted-consent/hosted-consent.ts";
 import { readMigrationTable } from "./migration-history.ts";
 import { promptYesNo } from "./prompt-yes-no.ts";
 import type { ResolvedTarget } from "./target/resolve-target.ts";
@@ -77,7 +77,11 @@ export const runMigrationFetch = Effect.fn("MigrationFetch.run")(function* (
       ),
     );
     if (existing.length > 0) {
-      const title = `Do you want to overwrite existing files in ${bold("supabase/migrations")} directory?`;
+      const source = Option.match(yield* announcedTarget, {
+        onNone: () => "the target database",
+        onSome: bold,
+      });
+      const title = `Overwrite local migrations with the history from ${source}?`;
       const overwrite =
         assumeYes !== undefined
           ? assumeYes
