@@ -73,8 +73,6 @@ export const dbResetCommand = Command.make("reset", config).pipe(
           version: flags.version,
           last: flags.last,
         },
-        // No safeFlags: telemetry-safe marking is per flag instance, and neither `--version` nor
-        // `--project-ref` is marked safe on this command, so both stay redacted.
       }),
       withJsonErrorHandling,
     ),

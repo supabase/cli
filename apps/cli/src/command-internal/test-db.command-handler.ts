@@ -72,7 +72,6 @@ export function runTestDbCommand(flags: CliCommand.Command.Config.Infer<typeof t
         local: flags.local,
         "project-ref": flags.projectRef,
       },
-      // No safe-flag whitelist entry for --project-ref here, so it stays redacted.
     }),
     // Run failures must not corrupt the TAP stream in machine modes; see `onRunFailure`.
     Effect.catchTag(["TestDbRunError", "TestDbNoTestsError"], onRunFailure),

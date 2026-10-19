@@ -63,8 +63,6 @@ export const migrationSquashCommand = Command.make("squash", config).pipe(
           password: flags.password,
           "project-ref": flags.projectRef,
         },
-        // Only `--version`'s value is recorded verbatim. `--project-ref` has no
-        // established telemetry-safety baseline, so it stays redacted.
         safeFlags: ["version"],
         aliases: { p: "password" },
       }),

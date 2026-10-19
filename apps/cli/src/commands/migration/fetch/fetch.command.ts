@@ -47,7 +47,6 @@ export const migrationFetchCommand = Command.make("fetch", config).pipe(
           local: flags.local,
           "project-ref": flags.projectRef,
         },
-        // `--project-ref` has no telemetry-safety baseline, so it stays redacted.
       }),
       withJsonErrorHandling,
     ),

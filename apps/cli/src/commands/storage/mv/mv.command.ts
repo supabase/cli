@@ -46,10 +46,7 @@ export const storageMvCommand = Command.make("mv", config).pipe(
         local: flags.local,
         "project-ref": flags.projectRef,
       };
-      return yield* storageMv(flags).pipe(
-        // Not in the safe-flags allowlist, so `--project-ref` stays redacted.
-        withCommandTelemetry({ flags: telemetryFlags }),
-      );
+      return yield* storageMv(flags).pipe(withCommandTelemetry({ flags: telemetryFlags }));
     }).pipe(withJsonErrorHandling),
   ),
   Command.provide(storageGatewayRuntimeLayer(["storage", "mv"])),

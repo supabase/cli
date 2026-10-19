@@ -60,7 +60,6 @@ export const bucketsCommand = Command.make("buckets", config).pipe(
             local: flags.local,
             "project-ref": flags.projectRef,
           },
-          // Not in the safe-flags allowlist, so this stays redacted.
         }),
       );
     }).pipe(withJsonErrorHandling),

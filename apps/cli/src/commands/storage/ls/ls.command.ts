@@ -48,10 +48,7 @@ export const storageLsCommand = Command.make("ls", config).pipe(
         local: flags.local,
         "project-ref": flags.projectRef,
       };
-      return yield* storageLs(flags).pipe(
-        // Not in the safe-flags allowlist, so `--project-ref` stays redacted.
-        withCommandTelemetry({ flags: telemetryFlags }),
-      );
+      return yield* storageLs(flags).pipe(withCommandTelemetry({ flags: telemetryFlags }));
     }).pipe(withJsonErrorHandling),
   ),
   Command.provide(storageGatewayRuntimeLayer(["storage", "ls"])),

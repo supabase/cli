@@ -153,7 +153,6 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
           file: flags.file,
           schema: flags.schema,
         },
-        // No established telemetry-safety baseline for --project-ref, so it stays redacted.
         aliases: { o: "output", f: "file", s: "schema" },
       }),
       withJsonErrorHandling,

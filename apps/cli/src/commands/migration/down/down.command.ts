@@ -65,7 +65,6 @@ export const migrationDownCommand = Command.make("down", config).pipe(
           local: flags.local,
           "project-ref": flags.projectRef,
         },
-        // `--project-ref` isn't marked safe here, so it stays redacted.
       }),
       withJsonErrorHandling,
     ),

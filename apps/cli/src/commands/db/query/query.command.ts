@@ -76,7 +76,6 @@ export const dbQueryCommand = Command.make("query", config).pipe(
           file: flags.file,
           "read-only": flags.readOnly,
         },
-        // --project-ref isn't in the telemetry safe-flags list, so it stays redacted.
         outputFormats: QUERY_OUTPUT_FORMATS,
         // Telemetry reports changed flags by canonical name, so `-f query.sql` must log as `file`.
         aliases: { f: "file" },

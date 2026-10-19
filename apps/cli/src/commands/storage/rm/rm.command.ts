@@ -57,10 +57,7 @@ export const storageRmCommand = Command.make("rm", config).pipe(
         linked: flags.linked,
         local: flags.local,
         projectRef: flags.projectRef,
-      }).pipe(
-        // project-ref isn't on the safe-flags allowlist, so it stays redacted in telemetry.
-        withCommandTelemetry({ flags: telemetryFlags }),
-      );
+      }).pipe(withCommandTelemetry({ flags: telemetryFlags }));
     }).pipe(withJsonErrorHandling),
   ),
   Command.provide(Layer.mergeAll(storageGatewayRuntimeLayer(["storage", "rm"]), stdinLayer)),
