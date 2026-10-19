@@ -71,7 +71,7 @@ describe("resolveGroups", () => {
     expect(resolveGroups({}, Option.none())).toBeUndefined();
   });
 
-  it("keys the organization group by organization_id (not slug) to match Go", () => {
+  it("keys the organization group by organization_id (not slug)", () => {
     const groups = resolveGroups({}, Option.some(linkedCacheValue()));
     // Must be the org ID so the event group matches what groupIdentify published; the slug is
     // never a key.

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { Schema } from "effect";
-import { ENV_PATTERN, env } from "./env.ts";
+import { ENV_PATTERN, env, interpolateEnvReferencesAgainstSchema } from "./env.ts";
 
 describe("env()", () => {
   test("adds env() pattern to JSON schema", () => {
@@ -23,5 +23,27 @@ describe("env()", () => {
     const normalized = JSON.parse(JSON.stringify(json));
 
     expect(normalized.pattern).toBe(ENV_PATTERN);
+  });
+});
+
+describe("interpolateEnvReferencesAgainstSchema", () => {
+  const schema = Schema.Struct({ project_id: Schema.String });
+
+  test("keeps a __proto__ table name as an own key", () => {
+    const document = JSON.parse('{"__proto__":{"subject":"file"},"project_id":"x"}');
+
+    const result = interpolateEnvReferencesAgainstSchema(document, {}, schema);
+
+    expect(Object.getOwnPropertyDescriptor(result, "__proto__")?.value).toEqual({
+      subject: "file",
+    });
+  });
+
+  test("treats a reference to an inherited property name as unset", () => {
+    expect(
+      interpolateEnvReferencesAgainstSchema({ project_id: "env(toString)" }, {}, schema, {
+        cliCompat: true,
+      }),
+    ).toEqual({ project_id: "env(toString)" });
   });
 });

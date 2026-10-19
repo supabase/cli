@@ -51,7 +51,7 @@ const tempRoot = useTempWorkdir("supabase-sso-add-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   status?: number;
   body?: unknown;
   network?: "fail";
@@ -59,7 +59,7 @@ interface SetupOpts {
   // Metadata-URL fetch responses keyed by URL prefix.
   metadataUrlResponse?: { status: number; body: string };
   /**
-   * Raw argv the handler sees via `Stdio.Stdio`, driving the pflag-faithful
+   * Raw argv the handler sees via `Stdio.Stdio`, driving the raw-argv
    * scan behind the required-flag, mutex, and value-reconciliation checks.
    * Keep in sync with the flags passed to `ssoAdd` (usually via `cliArgsFor`).
    */
@@ -175,7 +175,7 @@ function setup(opts: SetupOpts = {}) {
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
       analytics,
-      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     }),
     Stdio.layerTest({
       args: Effect.succeed(opts.cliArgs ?? ["sso", "add", "--type", "saml"]),
@@ -292,40 +292,37 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "mutex check: --metadata-file + --metadata-url fails with cobra's exact error text",
-    () => {
-      const { layer } = setup({
-        cliArgs: [
-          "sso",
-          "add",
-          "--type",
-          "saml",
-          "--metadata-file",
-          "/tmp/missing.xml",
-          "--metadata-url",
-          "https://idp.example.com/m",
-        ],
-      });
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(
-          ssoAdd({
-            ...defaultFlags,
-            metadataFile: Option.some("/tmp/missing.xml"),
-            metadataUrl: Option.some("https://idp.example.com/m"),
-          }),
+  it.effect("mutex check: --metadata-file + --metadata-url fails with the exact error text", () => {
+    const { layer } = setup({
+      cliArgs: [
+        "sso",
+        "add",
+        "--type",
+        "saml",
+        "--metadata-file",
+        "/tmp/missing.xml",
+        "--metadata-url",
+        "https://idp.example.com/m",
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        ssoAdd({
+          ...defaultFlags,
+          metadataFile: Option.some("/tmp/missing.xml"),
+          metadataUrl: Option.some("https://idp.example.com/m"),
+        }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("SsoMutexFlagError");
+        expect(dump).toContain(
+          "if any flags in the group [metadata-file metadata-url] are set none of the others can be; [metadata-file metadata-url] were all set",
         );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const dump = Cause.pretty(exit.cause);
-          expect(dump).toContain("SsoMutexFlagError");
-          expect(dump).toContain(
-            "if any flags in the group [metadata-file metadata-url] are set none of the others can be; [metadata-file metadata-url] were all set",
-          );
-        }
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      }
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect(
     "mutex check: an explicit but empty --metadata-file= still conflicts with --metadata-url (changed, not truthy)",
@@ -381,7 +378,7 @@ describe("sso add integration", () => {
   );
 
   it.effect(
-    "reconciles project-ref consuming --metadata-file: fails ref validation like Go, never reads metadata",
+    "reconciles project-ref consuming --metadata-file: fails ref validation, never reads metadata",
     () => {
       const { layer, api } = setup({
         cliArgs: [
@@ -471,7 +468,7 @@ describe("sso add integration", () => {
   });
 
   it.effect(
-    "workdir emulation: --workdir consuming --metadata-file fails at Go's chdir, never POSTs",
+    "workdir emulation: --workdir consuming --metadata-file fails at chdir, never POSTs",
     () => {
       const { layer, api } = setup({
         cliArgs: [
@@ -576,7 +573,7 @@ describe("sso add integration", () => {
   });
 
   it.effect(
-    "required emulation: -t saml plus a consumed --type still POSTs, like pflag (type IS changed)",
+    "required emulation: -t saml plus a consumed --type still POSTs (type IS changed)",
     () => {
       const { layer, api } = setup({
         cliArgs: ["sso", "add", "-t", "saml", "--domains", "--type", "saml"],
@@ -610,7 +607,7 @@ describe("sso add integration", () => {
   );
 
   it.effect(
-    "invalid-value emulation: a later invalid --type occurrence fails with pflag's shorthand-labelled error, no POST",
+    "invalid-value emulation: a later invalid --type occurrence fails with the shorthand-labelled error, no POST",
     () => {
       const { layer, api } = setup({
         cliArgs: ["sso", "add", "--type", "saml", "--type", "bogus"],
@@ -631,7 +628,7 @@ describe("sso add integration", () => {
   );
 
   it.effect(
-    "invalid-value emulation: a later inline-empty --skip-url-validation= fails like pflag, no POST",
+    "invalid-value emulation: a later inline-empty --skip-url-validation= fails, no POST",
     () => {
       const { layer, api } = setup({
         cliArgs: [
@@ -658,7 +655,7 @@ describe("sso add integration", () => {
           const dump = Cause.pretty(exit.cause);
           expect(dump).toContain("SsoInvalidFlagValueError");
           expect(dump).toContain(
-            'invalid argument "" for "--skip-url-validation" flag: strconv.ParseBool: parsing "": invalid syntax',
+            'invalid argument "" for "--skip-url-validation" flag: expected a boolean',
           );
         }
         expect(api.requests.length).toBe(0);
@@ -667,7 +664,7 @@ describe("sso add integration", () => {
   );
 
   it.effect(
-    "value reconciliation: repeated --skip-url-validation resolves last-wins like pflag and skips validation",
+    "value reconciliation: repeated --skip-url-validation resolves last-wins and skips validation",
     () => {
       const { layer, api } = setup({
         cliArgs: [
@@ -694,7 +691,7 @@ describe("sso add integration", () => {
   );
 
   it.effect(
-    "value reconciliation: repeated --name-id-format resolves last-wins like pflag in the POST body",
+    "value reconciliation: repeated --name-id-format resolves last-wins in the POST body",
     () => {
       const transient = "urn:oasis:names:tc:SAML:2.0:nameid-format:transient" as const;
       const persistent = "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent";
@@ -719,24 +716,27 @@ describe("sso add integration", () => {
     },
   );
 
-  it.effect("missing-value emulation: a trailing bare --domains fails pflag parse, no POST", () => {
-    const { layer, api } = setup({
-      cliArgs: ["sso", "add", "--type", "saml", "--domains"],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(ssoAdd(defaultFlags));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const dump = Cause.pretty(exit.cause);
-        expect(dump).toContain("SsoFlagNeedsArgumentError");
-        expect(dump).toContain("flag needs an argument: --domains");
-      }
-      expect(api.requests.length).toBe(0);
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect(
+    "missing-value emulation: a trailing bare --domains fails flag parsing, no POST",
+    () => {
+      const { layer, api } = setup({
+        cliArgs: ["sso", "add", "--type", "saml", "--domains"],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(ssoAdd(defaultFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = Cause.pretty(exit.cause);
+          expect(dump).toContain("SsoFlagNeedsArgumentError");
+          expect(dump).toContain("flag needs an argument: --domains");
+        }
+        expect(api.requests.length).toBe(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect(
-    "reconciles a bare --domains consuming --metadata-file: POSTs the domain pflag saw, no metadata",
+    "reconciles a bare --domains consuming --metadata-file: POSTs the domain the scan saw, no metadata",
     () => {
       const { layer, api } = setup({
         cliArgs: ["sso", "add", "--type", "saml", "--domains", "--metadata-file", "x.xml"],
@@ -870,7 +870,7 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects non-HTTPS metadata URL with Go-format message", () => {
+  it.effect("rejects non-HTTPS metadata URL with the formatted message", () => {
     const flags = {
       ...defaultFlags,
       metadataUrl: Option.some("http://idp.example.com/m"),
@@ -928,16 +928,16 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=env returns no output", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+  it.effect("--output=env returns no output", () => {
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=json encodes response verbatim", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("--output=json encodes response verbatim", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
       expect(out.stdoutText).toContain(RESPONSE_PROVIDER.id);
@@ -946,7 +946,7 @@ describe("sso add integration", () => {
 
   it.effect("Go --output=json keeps response keys outside the OpenAPI schema", () => {
     const { layer, out } = setup({
-      goOutput: "json",
+      outputFlag: "json",
       body: { ...RESPONSE_PROVIDER, resource_id: "res-123" },
     });
     return Effect.gen(function* () {
@@ -1010,16 +1010,16 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=yaml encodes response verbatim", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+  it.effect("--output=yaml encodes response verbatim", () => {
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
       expect(out.stdoutText).toContain(RESPONSE_PROVIDER.id);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=toml encodes response verbatim", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+  it.effect("--output=toml encodes response verbatim", () => {
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* ssoAdd(defaultFlags);
       expect(out.stdoutText).toContain(RESPONSE_PROVIDER.id);
@@ -1228,14 +1228,14 @@ describe("sso add integration", () => {
         if (Exit.isFailure(exit)) {
           const dump = Cause.pretty(exit.cause);
           expect(dump).toContain("ProfileLoadError");
-          expect(dump).toContain(`failed to read profile: Unsupported Config Type ""`);
+          expect(dump).toContain(`failed to read profile: unsupported config file type ""`);
         }
         expect(api.requests.length).toBe(0);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.effect("profile emulation: repeated --profile resolves last-wins, matching pflag", () =>
+  it.effect("profile emulation: repeated --profile resolves last-wins", () =>
     Effect.gen(function* () {
       const first = yield* writeProfileYaml("first.yml", "http://first.example");
       const second = yield* writeProfileYaml("second.yml", "http://second.example");
