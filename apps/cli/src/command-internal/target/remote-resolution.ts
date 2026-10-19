@@ -1,5 +1,6 @@
 import { Effect, FileSystem, Option, Path, Result } from "effect";
 
+import { AccessTokenRequiredError, InvalidAccessTokenError } from "../../auth/errors.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { ProjectRefResolver, type ResolvedProjectRef } from "../../config/project-ref.service.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
@@ -25,7 +26,7 @@ import {
   remoteFlagText,
   shellQuote,
 } from "./target-deprecation.ts";
-import { renderBranchTarget } from "./target-identity.ts";
+import { describeLinkedTarget, renderBranchTarget } from "./target-identity.ts";
 import {
   parseTargetSelector,
   type TargetDeprecation,
@@ -95,13 +96,43 @@ const linkedProjectName = Effect.fnUntraced(function* (ref: string) {
 const LOGIN_SUGGESTION =
   "Run `supabase login` with an account that can list this project's branches.";
 
-const listingFailure = (error: unknown) => {
-  const status = error instanceof LinkBranchListStatusError ? error.status : undefined;
-  return {
-    status,
-    reason: status === undefined ? "" : ` with HTTP ${status}`,
-    suggestion: status === 401 || status === 403 ? LOGIN_SUGGESTION : undefined,
-  };
+interface ListingFailure {
+  readonly reason: string;
+  readonly suggestion?: string | undefined;
+  readonly status?: number;
+  readonly authFailure?: "login" | "token";
+}
+
+const listingFailure = (error: unknown): ListingFailure => {
+  if (error instanceof LinkBranchListStatusError) {
+    const { status } = error;
+    return {
+      status,
+      reason: ` with HTTP ${status}`,
+      suggestion: status === 401 || status === 403 ? LOGIN_SUGGESTION : undefined,
+    };
+  }
+  if (error instanceof AccessTokenRequiredError) {
+    return {
+      reason: " because no access token is set",
+      suggestion: LOGIN_SUGGESTION,
+      authFailure: "login",
+    };
+  }
+  if (error instanceof InvalidAccessTokenError) {
+    return error.source === "env"
+      ? {
+          reason: " because SUPABASE_ACCESS_TOKEN is not a valid access token",
+          suggestion: "Set SUPABASE_ACCESS_TOKEN to a valid access token.",
+          authFailure: "token",
+        }
+      : {
+          reason: " because the stored access token is not valid",
+          suggestion: LOGIN_SUGGESTION,
+          authFailure: "login",
+        };
+  }
+  return { reason: "" };
 };
 
 const checkRemoteOperand = Effect.fn("Target.checkRemoteOperand")(function* (rawOperand: string) {
@@ -115,11 +146,14 @@ const checkRemoteOperand = Effect.fn("Target.checkRemoteOperand")(function* (raw
 
   const listed = yield* listParentBranches(parent.ref, "Checking branches...").pipe(Effect.result);
   if (Result.isFailure(listed)) {
-    const { status, reason, suggestion } = listingFailure(listed.failure);
+    const failure = listingFailure(listed.failure);
+    const cliArgs = Option.getOrUndefined(yield* Effect.serviceOption(CliArgs));
+    const operands = cliArgs?.operandPlaceholders?.() ?? [];
     return yield* new TargetRemoteAmbiguousError({
-      message: `Can't tell whether "${operand}" is a branch (listing the branches of project ${parent.ref} failed${reason}). ${options}`,
-      ...(suggestion === undefined ? {} : { suggestion }),
-      ...(status === undefined ? {} : { status }),
+      message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${parent.ref} failed${failure.reason}). For the branch: ${usage} --remote=<branch>. For the linked project: ${[usage, ...operands, "--remote"].join(" ")}`,
+      ...(failure.suggestion === undefined ? {} : { suggestion: failure.suggestion }),
+      ...(failure.status === undefined ? {} : { status: failure.status }),
+      ...(failure.authFailure === undefined ? {} : { authFailure: failure.authFailure }),
       cause: listed.failure,
     });
   }
@@ -162,6 +196,12 @@ const resolveRemoteBranch = Effect.fnUntraced(function* (name: string) {
   const found = yield* resolveRemoteBranchRef(name);
   const cell = yield* Effect.serviceOption(CommandTarget);
   if (Option.isSome(cell)) {
+    if (found.isDefault === undefined) {
+      yield* cell.value.announce(
+        describeLinkedTarget({ ref: found.projectRef, cache: Option.none() }),
+      );
+      return found;
+    }
     const nameOwner = found.isDefault ? found.projectRef : found.parentRef;
     yield* cell.value.announce(
       renderBranchTarget({

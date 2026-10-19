@@ -15,6 +15,10 @@ import { rootCommandForFeatures } from "../../cli/root.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { prepareCliArgs } from "../../shared/cli/run.ts";
 import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
+import {
+  CommandTarget,
+  type CommandTargetJson,
+} from "../../shared/output/command-target.service.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import type { RemoteValue } from "./remote-value.ts";
 import { resolveProjectTarget } from "./resolve-project-target.ts";
@@ -111,10 +115,20 @@ const runWith = <A, E, R>(
         return Effect.succeed(jsonResponse(request, 200, options.branches ?? []));
       },
     });
+    let announced: Option.Option<CommandTargetJson> = Option.none();
     const exit = yield* resolve({
       remote: Option.fromNullishOr(input.remote),
       projectRef: Option.fromNullishOr(input.projectRef),
     }).pipe(
+      Effect.tap(() =>
+        CommandTarget.use((cell) => cell.json).pipe(
+          Effect.tap((json) =>
+            Effect.sync(() => {
+              announced = json;
+            }),
+          ),
+        ),
+      ),
       Effect.provide(
         Layer.mergeAll(
           commandTargetLayer.pipe(Layer.provide(out.layer)),
@@ -134,6 +148,7 @@ const runWith = <A, E, R>(
       exit,
       stderr: out.stderrText,
       stdout: out.stdoutText,
+      target: announced,
       warnings: stripAnsi(out.stderrText)
         .split("\n")
         .filter((line) => line.startsWith("Warning: "))
@@ -300,16 +315,23 @@ describe("resolveProjectTarget", () => {
       }),
   );
 
-  it.effect("resolves a branch UUID through GET /v1/branches/{id} when no project is linked", () =>
-    Effect.gen(function* () {
-      const result = yield* run(
-        { remote: { _tag: "Branch", name: BRANCH_UUID } },
-        { branchById: { status: 200, body: branchConfig(BRANCH_REF, "ACTIVE_HEALTHY") } },
-      );
-      expect(refOf(result.exit)).toBe(BRANCH_REF);
-      expect(result.requestedUrls).toEqual([`https://api.supabase.com/v1/branches/${BRANCH_UUID}`]);
-      expect(result.stderr).toContain(`branch ${BRANCH_REF}`);
-    }),
+  it.effect(
+    "resolves a branch UUID through GET /v1/branches/{id} when no project is linked, as an unverified project",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          { remote: { _tag: "Branch", name: BRANCH_UUID } },
+          { branchById: { status: 200, body: branchConfig(BRANCH_REF, "ACTIVE_HEALTHY") } },
+        );
+        expect(refOf(result.exit)).toBe(BRANCH_REF);
+        expect(result.requestedUrls).toEqual([
+          `https://api.supabase.com/v1/branches/${BRANCH_UUID}`,
+        ]);
+        expect(result.stderr).toBe(`Target: project ${BRANCH_REF}\n`);
+        expect(result.target).toEqual(
+          Option.some({ kind: "linked", project_ref: BRANCH_REF, environment: "unverified" }),
+        );
+      }),
   );
 
   it.effect("reports an unknown branch UUID without a linked project", () =>

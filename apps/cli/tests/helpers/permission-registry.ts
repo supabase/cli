@@ -1,4 +1,4 @@
-import { Option } from "effect";
+import { Option, Result } from "effect";
 
 import { rootCommandForFeatures } from "../../src/cli/root.ts";
 import { readPermissions } from "../../src/command-internal/command-permissions/command-permissions.annotation.ts";
@@ -9,11 +9,10 @@ import type {
   OperationEntry,
   SelectorShape,
 } from "../../src/command-internal/command-permissions/model.ts";
-import { classifyNamedRemote } from "../../src/command-internal/target/remote-value.ts";
-import {
-  DB_URL_PATTERN,
-  LINKED_LITERAL,
-} from "../../src/command-internal/target/remote-vocabulary.ts";
+import { BRANCH_UUID_PATTERN } from "../../src/command-internal/ref-patterns.ts";
+import { classifyRemoteValue } from "../../src/command-internal/target/remote-value.ts";
+import { DB_URL_PATTERN } from "../../src/command-internal/target/remote-vocabulary.ts";
+import { parseTargetSelector } from "../../src/command-internal/target/target-selector.ts";
 import { findCommand } from "../../src/shared/cli/command-docs.ts";
 
 /** Which command tree to resolve against: `start`/`status`/`stop` differ by stack backend. */
@@ -41,33 +40,47 @@ export const SELECTOR_FLAGS = [
   "local",
 ] as const;
 
-const shapeOfNamedRemote = (value: string): SelectorShape => {
-  const named = classifyNamedRemote(value);
-  return named._tag === "Ref" ? "ref" : named._tag === "DbUrl" ? "url" : "branch";
-};
+const optionalText = (value: boolean | string | undefined): Option.Option<string> =>
+  typeof value === "string" ? Option.some(value) : Option.none();
 
-/** The shape of the target selector `activeFlags` carries, read in the order the CLI resolves them. */
+/** The shape of the target selector `activeFlags` carries, read the way the CLI parses it. */
 function selectorShapeOf(activeFlags: ActiveFlags): SelectorShape {
   const given = (flag: string) => {
     const value = Object.hasOwn(activeFlags, flag) ? activeFlags[flag] : undefined;
     return value === "" ? undefined : value;
   };
-  if (given("local") !== undefined) return "none";
-  const dbUrl = given("db-url");
-  if (dbUrl !== undefined) return "url";
-  const alias = given("project-ref") ?? given("project-id");
-  if (alias === true) {
+  if (given("project-ref") === true || given("project-id") === true) {
     throw new Error(
       "activeFlags gives --project-ref/--project-id as `true`; pass the value, since its shape picks the entries that apply",
     );
   }
-  if (typeof alias === "string") return shapeOfNamedRemote(alias);
-  if (given("linked") !== undefined) return "bare";
   const remote = given("remote");
-  if (remote === undefined) return "none";
-  return typeof remote === "string" && !LINKED_LITERAL.test(remote)
-    ? shapeOfNamedRemote(remote)
-    : "bare";
+  const parsed = parseTargetSelector({
+    local: given("local") !== undefined,
+    linked: given("linked") !== undefined,
+    remote:
+      typeof remote === "string"
+        ? Option.fromNullishOr(classifyRemoteValue(remote))
+        : Option.fromNullishOr(remote === undefined ? undefined : ({ _tag: "Linked" } as const)),
+    projectRef: optionalText(given("project-ref")),
+    projectId: optionalText(given("project-id")),
+    dbUrl: optionalText(given("db-url")),
+  });
+  if (Result.isFailure(parsed)) throw new Error(parsed.failure.message);
+  const { selection } = parsed.success;
+  switch (selection._tag) {
+    case "Default":
+    case "Local":
+      return "none";
+    case "Linked":
+      return "bare";
+    case "Ref":
+      return "ref";
+    case "DbUrl":
+      return "url";
+    case "Branch":
+      return BRANCH_UUID_PATTERN.test(selection.name) ? "uuid" : "branch";
+  }
 }
 
 /** The target `activeFlags` selects (`db-url`, `local`, `linked`, `remote`, or `project-ref`, which imply linked unless `remote` is a database URL), else `fallback`. */

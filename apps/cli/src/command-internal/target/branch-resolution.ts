@@ -40,20 +40,21 @@ export const branchResolution = block("branch-resolution", [
   {
     operationId: "v1-list-all-branches",
     kind: "required",
-    when: [{ selector: ["branch"] }],
+    when: [{ selector: ["branch", "uuid"] }],
     context: "a project is linked, or the value is a branch name",
   },
   {
     operationId: "v1-get-a-branch-config",
     kind: "required",
-    when: [{ selector: ["branch"] }],
-    context: "the value is a branch UUID and no project is linked",
+    when: [{ selector: ["uuid"] }],
+    context: "no linked project resolves, so the branch is looked up by its UUID",
   },
   {
     operationId: "v1-list-all-branches",
-    kind: "best-effort",
+    kind: "required",
     when: [{ selector: ["bare"] }],
-    context: "a word after the bare --remote could name a branch of the linked project",
+    context:
+      "a bare --remote is followed by an operand that could name a branch of the linked project",
   },
 ]);
 
@@ -229,7 +230,13 @@ const resolveBranchById = Effect.fnUntraced(function* (id: string) {
       message: `Branch "${sanitizeInlineName(id)}" has no project ref yet (status: ${detail.status}). Wait for it to finish provisioning, then retry.`,
     });
   }
-  return { projectRef: detail.ref, branchName: undefined, parentRef: undefined, isDefault: false };
+  return {
+    projectRef: detail.ref,
+    branchName: undefined,
+    parentRef: undefined,
+    // `GET /v1/branches/{id}` does not say whether this is the production branch.
+    isDefault: undefined,
+  };
 });
 
 /**

@@ -8,16 +8,17 @@ Database commands run against the local stack unless `--remote` is passed: bare 
 
 `Target: <text>` on stderr in every output format, printed once per distinct text.
 
-| Target                                | Text                                                                                         |
-| ------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Local stack                           | `local stack (<host>:<port>)`                                                                |
-| Local stack, nothing selected, linked | `local stack (<host>:<port>) · default; pass --remote for <name> (<ref>)`                    |
-| `--remote=<url>`                      | `custom Postgres (<host>:<port>)`; the connection string's credentials never appear          |
-| Linked project the cache names        | `project <name> (<ref>) · production`                                                        |
-| Linked project nothing vouches for    | `project <ref>`, or `project <name> (<ref>)` when the project picker named it                |
-| Ref other than the linked project     | `project <ref> (not the linked project)`                                                     |
-| Branch found by name or UUID          | `project <parent name> (<parent ref>) · branch <name> (<ref>)`, or `branch <ref>` for a UUID |
-| The project's default branch          | `project <name> (<ref>) · production`                                                        |
+| Target                                | Text                                                                                |
+| ------------------------------------- | ----------------------------------------------------------------------------------- |
+| Local stack                           | `local stack (<host>:<port>)`                                                       |
+| Local stack, nothing selected, linked | `local stack (<host>:<port>) · default; pass --remote for <name> (<ref>)`           |
+| `--remote=<url>`                      | `custom Postgres (<host>:<port>)`; the connection string's credentials never appear |
+| Linked project the cache names        | `project <name> (<ref>) · production`                                               |
+| Linked project nothing vouches for    | `project <ref>`, or `project <name> (<ref>)` when the project picker named it       |
+| Ref other than the linked project     | `project <ref> (not the linked project)`                                            |
+| Branch found by name or UUID          | `project <parent name> (<parent ref>) · branch <name> (<ref>)`                      |
+| The project's default branch          | `project <name> (<ref>) · production`                                               |
+| Branch UUID, no linked project        | `project <ref>`: the lookup does not say whether it is the default branch           |
 
 The `default; pass --remote` hint appears only when a project is linked, by `SUPABASE_PROJECT_ID` or the link file, and no `--remote` was passed. "Branch" is claimed only on positive evidence: a branch lookup by name or UUID, or a live probe. A cached link never proves one. A branch's parent shows as its bare ref when the cache doesn't know its name.
 
@@ -31,7 +32,7 @@ The `default; pass --remote` hint appears only when a project is linked, by `SUP
 | `db-url` | `host`, `port`                                                                                                                                            |
 | `linked` | `project_ref`, `environment` (`production`, `branch` or `unverified`), optional `project_name`, optional `parent_project_ref` (a branch's parent project) |
 
-`environment` is `production` when the linked-project cache names the resolved ref or the resolved branch is the project's default branch, `branch` on positive evidence of any other branch, and `unverified` otherwise. A failed identity check is `unverified`, never `branch`.
+`environment` is `production` when the linked-project cache names the resolved ref or the resolved branch is the project's default branch, `branch` on positive evidence of any other branch, and `unverified` otherwise, including a branch UUID looked up with no linked project. A failed identity check is `unverified`, never `branch`.
 
 The first announced target becomes the run's `target`. It is merged into object results and into the machine error envelope. Array results are written unchanged. A command that owns extra `target` fields (for example `branch`, `local_scope`, or `config push`'s probed `environment`) adds them in front of the announced identity's, and its own values win on a clash.
 

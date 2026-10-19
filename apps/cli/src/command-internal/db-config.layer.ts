@@ -84,7 +84,7 @@ const networkBanEntries = [
 
 const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
   loginRoleEntry,
-  { ...poolerConfigEntry, when: [{ selector: ["ref", "branch"] }] },
+  { ...poolerConfigEntry, when: [{ selector: ["ref", "branch", "uuid"] }] },
   ...networkBanEntries,
   ...projectRefPicker.operations,
 ];

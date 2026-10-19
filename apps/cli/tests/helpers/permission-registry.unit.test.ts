@@ -134,9 +134,16 @@ describe("applicableOperations", () => {
         kind: "required",
         when: [{ selector: ["none", "bare"] }],
       },
+      { operationId: "v1-get-a-branch-config", kind: "required", when: [{ selector: ["uuid"] }] },
     ]);
     const applied = (activeFlags: Parameters<typeof applicableOperations>[1]) =>
       applicableOperations(permissions, activeFlags).map((e) => e.operationId);
+
+    it("reads a branch UUID as its own shape, apart from a branch name", () => {
+      expect(applied({ remote: "6f0b5d2e-3c1a-4f7e-9a58-2b1d4c7e8f90" })).toEqual([
+        "v1-get-a-branch-config",
+      ]);
+    });
 
     it("reads a --remote value by what it names", () => {
       expect(applied({ remote: true })).toEqual(["v1-list-all-projects"]);

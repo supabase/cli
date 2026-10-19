@@ -127,8 +127,7 @@ command (exit 1).
   `--remote=false` fails with `--remote doesn't take false. Leave it out to target the local database.`, and `--remote=` with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A
   bare `--remote` followed by a word that exactly matches a branch of the linked project, is within
   a small edit distance of one, or can't be checked because the branch listing failed stops the run
-  with an error that offers both readings: `--remote=<word>` for the branch, `<word> --remote` for
-  the operand. Any other word runs as the operand.
+  with an error that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project. Any other word runs as the operand.
 - **Deprecated aliases.** `--linked`, `--project-ref=<ref>`, `--db-url=<url>` and `--local` still
   work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
   warns that local is the default). They are mutually exclusive with each other and with

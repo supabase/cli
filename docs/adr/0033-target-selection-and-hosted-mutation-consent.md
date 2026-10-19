@@ -69,7 +69,9 @@ line and nowhere else.
 
 Every command resolves a `--remote=<branch|uuid>` value with one resolver, the one `supabase link`
 uses. A value that matches no branch fails with link's error, which lists the branches. A branch
-UUID also resolves in a checkout with no linked project. A URL applies only where the remote side is
+UUID also resolves in a checkout with no linked project, where it is reported as the bare project
+ref, `unverified` in JSON, because the lookup does not say whether it is the default branch. A keyword
+connection string (`host=… user=…`) is rejected, not looked up as a branch. A URL applies only where the remote side is
 Postgres: `storage`, `seed buckets` and `hosted` commands need a project and reject one. `hosted`
 commands accept `--remote=<ref|branch>`, and bare `--remote` changes nothing for them. The linked
 project comes from `SUPABASE_PROJECT_ID`, then the link file. `SUPABASE_PROJECT_ID` alone never
@@ -82,7 +84,7 @@ already has more bare tokens than positionals. The one ambiguous shape, a bare `
 followed by a token the command took as a positional, is checked against the linked project's
 branches before anything runs. A token that exactly matches a branch, is within a small edit
 distance of one, or can't be checked because the branch listing failed stops the run with an error
-that offers both readings: `--remote=<word>` for the branch, `<word> --remote` for the operand. Any
+that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project. Any
 other token runs as the command's operand.
 
 ### Deprecated aliases
@@ -161,8 +163,8 @@ line names the parent project when the cache knows its name, and shows the paren
 A project's default branch is production, not a preview branch. `--remote=<default branch>`, by name
 or UUID, resolves to the production project: the banner, the consent prompt and JSON
 `environment: "production"` all say so, so a script that checks `environment` to stay away from
-production sees it. The full table and the JSON shape live in
-[the command target doc](../../apps/cli/docs/command-target.md).
+production sees it. A UUID looked up with no linked project cannot tell, so it stays `unverified`.
+The full table and the JSON shape live in [the command target doc](../../apps/cli/docs/command-target.md).
 
 JSON results carry the same information as `target`:
 

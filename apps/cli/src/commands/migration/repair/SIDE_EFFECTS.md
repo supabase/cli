@@ -101,7 +101,7 @@ Same structured result delivered as an NDJSON `result` event.
   linked project, which resolves to that branch's own project. `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to target the local database.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A bare `--remote`
   followed by a word that exactly matches a branch of the linked project, is within a small edit
   distance of one, or can't be checked because the branch listing failed stops the run with an error
-  that offers both readings: `--remote=<word>` for the branch, `<word> --remote` for the operand.
+  that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project.
   Any other word runs as the operand. The
   resolved target is announced on stderr (`Target: …`) in every output format and, in JSON results,
   as a `target` object.

@@ -3502,7 +3502,7 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
     return Effect.gen(function* () {
       const exit = yield* configPush(pushRemoteBranch(BRANCH_UUID)).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      expect(out.stderrText).toContain(`Target: branch ${UUID_TARGET_REF}\n`);
+      expect(out.stderrText).toContain(`Target: project ${UUID_TARGET_REF}\n`);
       expect(out.stderrText).not.toContain(BRANCH_UUID);
       const branchRequests = api.requests.filter((r) => r.url.includes("/branches"));
       expect(branchRequests).toHaveLength(1);
@@ -3529,7 +3529,7 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
     return Effect.gen(function* () {
       const error = yield* configPush(pushRemoteBranch(BRANCH_UUID)).pipe(Effect.flip);
       expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
-      expect(out.stderrText).toContain(`Target: branch ${UUID_TARGET_REF}`);
+      expect(out.stderrText).toContain(`Target: project ${UUID_TARGET_REF}`);
       expect(api.requests.some((r) => r.method === "PATCH")).toBe(false);
     }).pipe(Effect.provide(layer));
   });

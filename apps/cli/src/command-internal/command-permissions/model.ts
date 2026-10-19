@@ -71,8 +71,8 @@ interface DbTargetCondition {
   readonly oneOf?: never;
 }
 
-/** What the target selector carries once the deprecated aliases are folded in; `bare` is `--remote` or `--linked` with no value. */
-export type SelectorShape = "none" | "bare" | "ref" | "branch" | "url";
+/** What the target selector carries once the deprecated aliases are folded in; `bare` is `--remote` or `--linked` with no value, `uuid` a branch's UUID. */
+export type SelectorShape = "none" | "bare" | "ref" | "branch" | "uuid" | "url";
 
 /** Holds when the selector's shape is one of `selector`, whichever flag spelled it. */
 interface SelectorCondition {

@@ -10,6 +10,8 @@ import {
 } from "../../../tests/helpers/command-mocks.ts";
 import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import { AccessTokenRequiredError, InvalidAccessTokenError } from "../../auth/errors.ts";
+import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
 import { rootCommandForFeatures } from "../../cli/root.ts";
 import { ProjectRefNotLinkedError } from "../../config/project-ref.errors.ts";
 import { ProjectRefResolver } from "../../config/project-ref.service.ts";
@@ -20,6 +22,7 @@ import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.
 import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 import { announceTarget } from "../../shared/output/command-target.service.ts";
 import type { OutputFormat } from "../../shared/output/types.ts";
+import { actionability, ErrorActionabilityId } from "../../shared/telemetry/error-actionability.ts";
 import type { RemoteValue } from "./remote-value.ts";
 import { resolveTarget } from "./resolve-target.ts";
 import { renderLocalTarget } from "./target-identity.ts";
@@ -94,6 +97,7 @@ const run = (
     readonly args?: ReadonlyArray<string>;
     readonly command?: ReadonlyArray<string>;
     readonly format?: OutputFormat;
+    readonly tokenFailure?: AccessTokenRequiredError | InvalidAccessTokenError;
     readonly branches?:
       | ReadonlyArray<ReturnType<typeof branchRow>>
       | "unavailable"
@@ -148,7 +152,9 @@ const run = (
           commandTargetLayer.pipe(Layer.provide(out.layer)),
           out.layer,
           resolver.layer,
-          api.layer,
+          options.tokenFailure === undefined
+            ? api.layer
+            : Layer.succeed(CommandPlatformApiFactory, { make: Effect.fail(options.tokenFailure) }),
           mockCommandSettings({
             workdir: dir,
             projectId: options.projectId ?? Option.none(),
@@ -393,6 +399,7 @@ describe("resolveTarget", () => {
     const command = ["db", "pull"];
     const bare = { ...none, ...remote({ _tag: "Linked" }) };
     const options = `For the branch: supabase db pull --remote=feature-x. For the linked project: supabase db pull feature-x --remote`;
+    const placeholderOptions = `For the branch: supabase db pull --remote=<branch>. For the linked project: supabase db pull <migration name> --remote`;
 
     it.effect("fails when the word is a branch of the linked project", () =>
       Effect.gen(function* () {
@@ -447,7 +454,7 @@ describe("resolveTarget", () => {
         const error = failureOf(result.exit);
         expect(error).toMatchObject({
           _tag: "TargetRemoteAmbiguousError",
-          message: `Can't tell whether "feature-x" is a branch (listing the branches of project ${FILE_REF} failed with HTTP 500). ${options}`,
+          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed with HTTP 500). ${placeholderOptions}`,
           status: 500,
           cause: { _tag: "LinkBranchListStatusError", status: 500 },
         });
@@ -468,10 +475,91 @@ describe("resolveTarget", () => {
         });
         expect(failureOf(result.exit)).toMatchObject({
           _tag: "TargetRemoteAmbiguousError",
-          message: `Can't tell whether "feature-x" is a branch (listing the branches of project ${FILE_REF} failed with HTTP ${status}). ${options}`,
+          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed with HTTP ${status}). ${placeholderOptions}`,
           suggestion: "Run `supabase login` with an account that can list this project's branches.",
           status,
         });
+      }),
+    );
+
+    it.effect.each([
+      {
+        name: "no access token",
+        failure: new AccessTokenRequiredError({ message: "Access token not provided." }),
+        reason: "no access token is set",
+        suggestion: "Run `supabase login` with an account that can list this project's branches.",
+        actionability: actionability.authLogin,
+      },
+      {
+        name: "a malformed stored access token",
+        failure: new InvalidAccessTokenError({ message: "Invalid access token format." }),
+        reason: "the stored access token is not valid",
+        suggestion: "Run `supabase login` with an account that can list this project's branches.",
+        actionability: actionability.authLogin,
+      },
+      {
+        name: "a malformed SUPABASE_ACCESS_TOKEN",
+        failure: new InvalidAccessTokenError({
+          message: "Invalid access token format.",
+          source: "env",
+        }),
+        reason: "SUPABASE_ACCESS_TOKEN is not a valid access token",
+        suggestion: "Set SUPABASE_ACCESS_TOKEN to a valid access token.",
+        actionability: actionability.authToken,
+      },
+    ])("names the cause and how to fix it when the listing has $name", (testCase) =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args,
+          command,
+          savedRef: FILE_REF,
+          tokenFailure: testCase.failure,
+        });
+        const error = failureOf(result.exit);
+        expect(error).toMatchObject({
+          _tag: "TargetRemoteAmbiguousError",
+          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed because ${testCase.reason}). ${placeholderOptions}`,
+          suggestion: testCase.suggestion,
+          cause: testCase.failure,
+        });
+        expect(error).not.toHaveProperty("status");
+        expect((error as { [ErrorActionabilityId]: unknown })[ErrorActionabilityId]).toEqual(
+          testCase.actionability,
+        );
+      }),
+    );
+
+    it.effect.each(["text", "json"] as const)(
+      "never prints a NAME=value pair after --remote when the listing is forbidden (%s)",
+      (format) =>
+        Effect.gen(function* () {
+          const result = yield* run("selectable", bare, {
+            args: ["secrets", "set", "--remote", "STRIPE_KEY=sk_live_secret"],
+            command: ["secrets", "set"],
+            format,
+            savedRef: FILE_REF,
+            branches: "forbidden",
+          });
+          expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FILE_REF });
+          expect(result.apiRequests).toEqual([]);
+          expect(result.stdout + result.stderr).not.toContain("sk_live_secret");
+        }),
+    );
+
+    it.effect("never echoes a word it could not check against the branches", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args: ["secrets", "unset", "--remote", "sk_live_secret"],
+          command: ["secrets", "unset"],
+          savedRef: FILE_REF,
+          branches: "forbidden",
+        });
+        const error = failureOf(result.exit);
+        expect(error).toMatchObject({
+          _tag: "TargetRemoteAmbiguousError",
+          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed with HTTP 403). For the branch: supabase secrets unset --remote=<branch>. For the linked project: supabase secrets unset <NAME>... --remote`,
+        });
+        expect(JSON.stringify(error)).not.toContain("sk_live_secret");
       }),
     );
 

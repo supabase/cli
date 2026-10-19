@@ -64,18 +64,22 @@ export class TargetNeedsProjectError extends Data.TaggedError("TargetNeedsProjec
 
 /**
  * A bare `--remote` is followed by a word that names a branch, nearly names one, or could not be
- * checked because the branch listing failed; `status` is that failure's HTTP status, when it had one.
+ * checked because the branch listing failed; `status` is that failure's HTTP status, when it had
+ * one, and `authFailure` says the access token was missing or invalid (`token` when only the
+ * environment variable can fix it).
  */
 export class TargetRemoteAmbiguousError extends Data.TaggedError("TargetRemoteAmbiguousError")<{
   readonly message: string;
   readonly suggestion?: string;
   readonly status?: number;
+  readonly authFailure?: "login" | "token";
   readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return this.status === 401 || this.status === 403
-      ? statusCodeActionability(this.status)
-      : actionability.provideFlags;
+    if (this.status === 401 || this.status === 403) return statusCodeActionability(this.status);
+    if (this.authFailure === "login") return actionability.authLogin;
+    if (this.authFailure === "token") return actionability.authToken;
+    return actionability.provideFlags;
   }
 }
 
