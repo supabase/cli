@@ -173,6 +173,7 @@ function setupTracked(opts: SetupOpts = {}) {
 
 const baseFlags: BranchesCreateFlags = {
   name: Option.none(),
+  remote: Option.none(),
   projectRef: Option.none(),
   region: Option.none(),
   size: Option.none(),

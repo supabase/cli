@@ -21,15 +21,10 @@ import { pull } from "./pull.handler.ts";
 import { pullRuntimeLayer } from "./pull.layers.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
+import { projectTargetFlags } from "../../command-internal/target/target-flags.ts";
 
 const config = {
-  // Accepts either a project ref or a branch name of the linked project — no separate `--target`.
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription(
-      "Project ref of the Supabase project, or the name (or UUID) of one of its branches. Values that are exactly 20 lowercase letters are always treated as project refs.",
-    ),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   remoteLabel: Flag.String("remote-label").pipe(
     Flag.withDescription(
       "Name of the [remotes.*] block the config step writes into, overriding the block it would otherwise reuse or create.",
@@ -64,7 +59,7 @@ export type PullFlags = CliCommand.Command.Config.Infer<typeof config>;
 // uses below, instead of re-implementing the `safeFlags`/telemetry wrapper inline.
 export const pullHandler = (flags: PullFlags) =>
   pull(flags).pipe(
-    // `--project-ref` accepts branch names, so its value is only safe to log verbatim when it's
+    // `--project-ref` can carry a branch name, so its value is only safe to log verbatim when it's
     // actually ref-shaped — a user-created branch name must never reach PostHog.
     // `--remote-label` is a free-form, user-chosen string and is never safe to log verbatim.
     withCommandTelemetry({
@@ -111,7 +106,7 @@ export const pullCommand = Command.make("pull", config).pipe(
             kind: "required",
             when: [stepsRun],
             context:
-              "the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url; the database steps get the resolved ref, so this needs no --project-ref",
+              "the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url; the database steps get the resolved ref, so this needs no --remote",
           },
         ],
         noApiEffectFlags: ["remote-label", "force", "with-migration-history"],

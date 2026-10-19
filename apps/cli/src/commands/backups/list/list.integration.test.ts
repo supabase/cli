@@ -12,6 +12,7 @@ import {
   mockCommandPlatformApi,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { backupsList } from "./list.handler.ts";
@@ -66,6 +67,7 @@ interface SetupOpts {
   network?: "fail";
   apiUrl?: string;
   userAgent?: string;
+  projectId?: string;
 }
 
 const tempRoot = useTempWorkdir("supabase-backups-list-int-");
@@ -82,6 +84,7 @@ function setup(opts: SetupOpts = {}) {
     workdir: tempRoot.current,
     apiUrl: opts.apiUrl,
     userAgent: opts.userAgent,
+    ...(opts.projectId === undefined ? {} : { projectId: Option.some(opts.projectId) }),
   });
   const layer = buildTestRuntime({
     out,
@@ -96,7 +99,7 @@ describe("backups list integration", () => {
   it.effect("renders a PITR-only table when no physical backups exist", () => {
     const { layer, out } = setup({ response: PITR_RESPONSE });
     return Effect.gen(function* () {
-      yield* backupsList({ projectRef: Option.none() });
+      yield* backupsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("REGION");
       expect(out.stdoutText).toContain("WALG");
       expect(out.stdoutText).toContain("PITR");
@@ -110,7 +113,7 @@ describe("backups list integration", () => {
   it.effect("renders a logical backups table with PHYSICAL classification", () => {
     const { layer, out } = setup({ response: LOGICAL_RESPONSE });
     return Effect.gen(function* () {
-      yield* backupsList({ projectRef: Option.none() });
+      yield* backupsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("BACKUP TYPE");
       expect(out.stdoutText).toContain("PHYSICAL");
       expect(out.stdoutText).toContain("COMPLETED");
@@ -121,7 +124,7 @@ describe("backups list integration", () => {
   it.effect("translates ap-southeast-1 to Southeast Asia (Singapore)", () => {
     const { layer, out } = setup({ response: PITR_RESPONSE });
     return Effect.gen(function* () {
-      yield* backupsList({ projectRef: Option.none() });
+      yield* backupsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("Southeast Asia (Singapore)");
     }).pipe(Effect.provide(layer));
   });
@@ -129,7 +132,7 @@ describe("backups list integration", () => {
   it.effect("emits a JSON success event when --output-format=json", () => {
     const { layer, out } = setup({ format: "json", response: PITR_RESPONSE });
     return Effect.gen(function* () {
-      yield* backupsList({ projectRef: Option.none() });
+      yield* backupsList({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({ region: "ap-southeast-1", walg_enabled: true });
@@ -139,7 +142,7 @@ describe("backups list integration", () => {
   it.effect("emits a result event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", response: PITR_RESPONSE });
     return Effect.gen(function* () {
-      yield* backupsList({ projectRef: Option.none() });
+      yield* backupsList({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({ region: "ap-southeast-1" });
@@ -149,7 +152,7 @@ describe("backups list integration", () => {
   it.effect("emits indented JSON to stdout for --output json", () => {
     const { layer, out } = setup({ outputFlag: "json", response: PITR_RESPONSE });
     return Effect.gen(function* () {
-      yield* backupsList({ projectRef: Option.none() });
+      yield* backupsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toBe(
         `{
   "backups": null,
@@ -166,7 +169,7 @@ describe("backups list integration", () => {
   it.effect("emits YAML to stdout for --output yaml", () => {
     const { layer, out } = setup({ outputFlag: "yaml", response: PITR_RESPONSE });
     return Effect.gen(function* () {
-      yield* backupsList({ projectRef: Option.none() });
+      yield* backupsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("region: ap-southeast-1");
       expect(out.stdoutText).toContain("walgenabled: true");
     }).pipe(Effect.provide(layer));
@@ -175,7 +178,7 @@ describe("backups list integration", () => {
   it.effect("emits TOML to stdout for --output toml", () => {
     const { layer, out } = setup({ outputFlag: "toml", response: PITR_RESPONSE });
     return Effect.gen(function* () {
-      yield* backupsList({ projectRef: Option.none() });
+      yield* backupsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain('Region = "ap-southeast-1"');
       expect(out.stdoutText).toContain("WalgEnabled = true");
     }).pipe(Effect.provide(layer));
@@ -184,7 +187,7 @@ describe("backups list integration", () => {
   it.effect("emits [[Backups]] array-of-tables for --output toml with logical backups", () => {
     const { layer, out } = setup({ outputFlag: "toml", response: LOGICAL_RESPONSE });
     return Effect.gen(function* () {
-      yield* backupsList({ projectRef: Option.none() });
+      yield* backupsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toBe(`PitrEnabled = true
 Region = "ap-southeast-1"
 WalgEnabled = true
@@ -203,7 +206,7 @@ WalgEnabled = true
   it.effect("emits KEY=VALUE lines for --output env", () => {
     const { layer, out } = setup({ outputFlag: "env", response: PITR_RESPONSE });
     return Effect.gen(function* () {
-      yield* backupsList({ projectRef: Option.none() });
+      yield* backupsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain('REGION="ap-southeast-1"');
       expect(out.stdoutText).toContain('WALG_ENABLED="true"');
     }).pipe(Effect.provide(layer));
@@ -212,7 +215,7 @@ WalgEnabled = true
   it.effect("treats --output pretty as identical to text mode (Glamour table)", () => {
     const { layer, out } = setup({ outputFlag: "pretty", response: PITR_RESPONSE });
     return Effect.gen(function* () {
-      yield* backupsList({ projectRef: Option.none() });
+      yield* backupsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("Southeast Asia (Singapore)");
     }).pipe(Effect.provide(layer));
   });
@@ -224,7 +227,7 @@ WalgEnabled = true
       response: PITR_RESPONSE,
     });
     return Effect.gen(function* () {
-      yield* backupsList({ projectRef: Option.none() });
+      yield* backupsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("region: ap-southeast-1");
       expect(out.stdoutText.startsWith("{")).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -233,22 +236,25 @@ WalgEnabled = true
   it.effect("passes the resolved project ref into the listAllBackups URL", () => {
     const { layer, api } = setup({ response: PITR_RESPONSE });
     return Effect.gen(function* () {
-      yield* backupsList({ projectRef: Option.none() });
+      yield* backupsList({ remote: Option.none(), projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/database/backups`);
       assertPermissionDrift({ command: "backups list", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("uses --project-ref flag value over CommandSettings.projectId env", () => {
+  it.effect("uses the --remote=<ref> value over CommandSettings.projectId env", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ response: PITR_RESPONSE });
     return Effect.gen(function* () {
-      yield* backupsList({ projectRef: Option.some(flagRef) });
+      yield* backupsList({
+        remote: Option.some({ _tag: "Ref", ref: flagRef }),
+        projectRef: Option.none(),
+      });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${flagRef}/`);
       assertPermissionDrift({
         command: "backups list",
-        activeFlags: { "project-ref": true },
+        activeFlags: { remote: flagRef },
         requests: api.requests,
         exact: true,
       });
@@ -288,7 +294,7 @@ WalgEnabled = true
         const fs = yield* FileSystem.FileSystem;
         const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
         expect(yield* fs.exists(cachePath)).toBe(false);
-        yield* backupsList({ projectRef: Option.none() });
+        yield* backupsList({ remote: Option.none(), projectRef: Option.none() });
         expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
           "GET https://api.supabase.com/v1/projects",
           `GET https://api.supabase.com/v1/projects/${VALID_REF}/database/backups`,
@@ -320,7 +326,7 @@ WalgEnabled = true
       yield* fs.makeDirectory(tempDir, { recursive: true });
       yield* fs.writeFileString(path.join(tempDir, "project-ref"), fileRef);
 
-      yield* backupsList({ projectRef: Option.none() });
+      yield* backupsList({ remote: Option.none(), projectRef: Option.none() });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${fileRef}/`);
     }).pipe(Effect.provide(layer));
   });
@@ -336,7 +342,9 @@ WalgEnabled = true
 
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        backupsList({ projectRef: Option.none() }).pipe(Effect.provide(layer)),
+        backupsList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.provide(layer),
+        ),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -346,9 +354,11 @@ WalgEnabled = true
   });
 
   it.effect("fails with InvalidProjectRefError when the resolved ref is malformed", () => {
-    const { layer } = setup({ response: PITR_RESPONSE });
+    const { layer } = setup({ response: PITR_RESPONSE, projectId: "BADREF" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(backupsList({ projectRef: Option.some("BADREF") }));
+      const exit = yield* Effect.exit(
+        backupsList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("InvalidProjectRefError");
@@ -359,7 +369,9 @@ WalgEnabled = true
   it.effect("fails with BackupListUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503, response: PITR_RESPONSE });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(backupsList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        backupsList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -372,7 +384,9 @@ WalgEnabled = true
   it.effect("fails with BackupListNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail", response: PITR_RESPONSE });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(backupsList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        backupsList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -385,7 +399,9 @@ WalgEnabled = true
   it.effect("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 503, response: PITR_RESPONSE });
     return Effect.gen(function* () {
-      yield* backupsList({ projectRef: Option.none() }).pipe(withJsonErrorHandling);
+      yield* backupsList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        withJsonErrorHandling,
+      );
       expect(out.messages.some((m) => m.type === "fail")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -396,11 +412,16 @@ WalgEnabled = true
       userAgent: "SupabaseCLI/1.42.0",
     });
     return Effect.gen(function* () {
-      yield* backupsList({ projectRef: Option.none() });
+      yield* backupsList({ remote: Option.none(), projectRef: Option.none() });
       const headers = api.requests[0]?.headers;
       expect(headers?.["user-agent"]).toBe("SupabaseCLI/1.42.0");
       expect(headers?.["x-supabase-command"]).toBeUndefined();
       expect(headers?.["x-supabase-command-run-id"]).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedTargetSelection("backups list", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, PITR_RESPONSE)),
+  run: (flags) => backupsList(flags),
 });

@@ -12,12 +12,11 @@ import { rejectIncludeRawOutput } from "../domains.removed-flag.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { domainsDelete } from "./delete.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   // Kept parsed (and hidden) only so using it produces the removal error instead of an
   // unknown-flag parse error.
   includeRawOutput: Flag.Boolean("include-raw-output").pipe(
@@ -49,6 +48,7 @@ export const domainsDeleteCommand = Command.make("delete", config).pipe(
       },
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>

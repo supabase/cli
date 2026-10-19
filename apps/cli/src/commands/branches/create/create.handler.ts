@@ -14,7 +14,7 @@ import {
   encodeStructYaml,
 } from "../../../command-internal/struct-output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
+import { resolveBranchesParent } from "../branches.target.ts";
 import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
 import { BRANCH_RESPONSE_SHAPE } from "../branches.response-shape.ts";
 import {
@@ -67,7 +67,7 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, and the platform 403s on that ref for every branches-management
   // endpoint.
-  const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  const ref = yield* resolveBranchesParent({ remote: flags.remote, projectRef: flags.projectRef });
   yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {

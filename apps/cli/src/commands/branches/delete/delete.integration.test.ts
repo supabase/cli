@@ -139,6 +139,7 @@ function setupTracked(opts: SetupOpts = {}) {
 
 const baseFlags: BranchesDeleteFlags = {
   name: Option.none(),
+  remote: Option.none(),
   projectRef: Option.none(),
 };
 

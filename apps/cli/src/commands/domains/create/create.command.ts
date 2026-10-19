@@ -12,12 +12,11 @@ import { rejectIncludeRawOutput } from "../domains.removed-flag.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { domainsCreate } from "./create.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   customHostname: Flag.String("custom-hostname").pipe(
     Flag.withDescription("The custom hostname to use for your Supabase project."),
   ),
@@ -55,6 +54,7 @@ export const domainsCreateCommand = Command.make("create", config).pipe(
       },
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>

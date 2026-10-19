@@ -20,25 +20,25 @@ interface PullStatusErrorArgs {
 }
 
 /**
- * `--project-ref` target-resolution errors, minted via `mintConfigTargetErrors`. Its tags are
+ * `--remote` target-resolution errors, minted via `mintConfigTargetErrors`. Its tags are
  * template-interpolated, so `error-actionability-coverage.unit.test.ts`'s static scan can't see
  * them there — each class is re-exported below under its own top-level export so the scan finds it.
  */
 const pullTargetErrors = mintConfigTargetErrors("Pull");
 
-/** `--project-ref` named a branch the parent project does not have. */
+/** `--remote` named a branch the parent project does not have. */
 export const PullBranchNotFoundError = pullTargetErrors.BranchNotFoundError;
 export type PullBranchNotFoundError = InstanceType<typeof PullBranchNotFoundError>;
 
 /**
- * `--project-ref` named a branch (by name), but no project is linked to
+ * `--remote` named a branch (by name), but no project is linked to
  * search for branches under.
  */
 export const PullBranchNotLinkedError = pullTargetErrors.BranchNotLinkedError;
 export type PullBranchNotLinkedError = InstanceType<typeof PullBranchNotLinkedError>;
 
 /**
- * `--project-ref` named a branch (by name), and a parent-project candidate
+ * `--remote` named a branch (by name), and a parent-project candidate
  * exists but is not ref-shaped — corrupt or stale linked state.
  */
 export const PullParentRefInvalidError = pullTargetErrors.ParentRefInvalidError;
@@ -48,7 +48,7 @@ export type PullParentRefInvalidError = InstanceType<typeof PullParentRefInvalid
 export const PullBranchNotReadyError = pullTargetErrors.BranchNotReadyError;
 export type PullBranchNotReadyError = InstanceType<typeof PullBranchNotReadyError>;
 
-/** A transport/decode failure resolving a branch-shaped `--project-ref` (`GET`-by-UUID or
+/** A transport/decode failure resolving a branch-shaped `--remote` (`GET`-by-UUID or
  *  `FIND`-by-name). */
 export class PullBranchResolveNetworkError extends Data.TaggedError(
   "PullBranchResolveNetworkError",
@@ -60,7 +60,7 @@ export class PullBranchResolveNetworkError extends Data.TaggedError(
   }
 }
 
-/** An unexpected HTTP status resolving a branch-shaped `--project-ref`. */
+/** An unexpected HTTP status resolving a branch-shaped `--remote`. */
 export class PullBranchResolveStatusError extends Data.TaggedError(
   "PullBranchResolveStatusError",
 )<PullStatusErrorArgs> {

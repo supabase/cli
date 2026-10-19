@@ -16,6 +16,7 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -70,7 +71,7 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>() };
+const baseFlags = { remote: Option.none(), projectRef: Option.none<string>() };
 
 describe("encryption update-root-key integration", () => {
   it.effect("reads a piped root key and PUTs it, printing the finished message to stderr", () => {
@@ -268,8 +269,14 @@ describe("encryption update-root-key integration", () => {
 describeHostedConsent("encryption update-root-key", {
   api: { response: { status: 200, body: ROOT_KEY_RESPONSE } },
   invoke: () => ({
-    run: encryptionUpdateRootKey({ projectRef: Option.some(VALID_REF) }).pipe(
-      Effect.provide(mockStdin(false, "new-key")),
-    ),
+    run: encryptionUpdateRootKey({
+      remote: Option.some({ _tag: "Ref", ref: VALID_REF }),
+      projectRef: Option.none(),
+    }).pipe(Effect.provide(mockStdin(false, "new-key"))),
   }),
+});
+
+describeHostedTargetSelection("encryption update-root-key", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, ROOT_KEY_RESPONSE)),
+  run: (flags) => encryptionUpdateRootKey(flags).pipe(Effect.provide(mockStdin(false, "new-key"))),
 });

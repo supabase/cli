@@ -117,7 +117,7 @@ describe("native hidden flags", () => {
     ]);
 
     expect(buildHelpDoc(functionsDownloadCommand).flags.map((flag) => flag.name)).toEqual([
-      "project-ref",
+      "remote",
       "use-api",
     ]);
 

@@ -3,7 +3,7 @@ import * as HttpClient from "effect/http/HttpClient";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -21,11 +21,10 @@ export const domainsCreate = Effect.fn("domains.create")(function* (flags: Domai
   const httpClient = yield* HttpClient.HttpClient;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
 
   // Write the linked-project cache and persist the telemetry state file on
   // success and failure.

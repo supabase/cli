@@ -66,16 +66,16 @@ export class ConfigPushWorkdirError extends Data.TaggedError(
   }
 }
 
-// --project-ref accepts a project ref, or the name (or UUID) of one of its branches; mirrors
+// --remote accepts a project ref, or the name (or UUID) of one of its branches; mirrors
 // config diff's own error set under push's own names.
 const targetErrors = mintConfigTargetErrors("ConfigPush");
 
-/** `--project-ref` named a branch the parent project does not have. */
+/** `--remote` named a branch the parent project does not have. */
 export const ConfigPushBranchNotFoundError = targetErrors.BranchNotFoundError;
 export type ConfigPushBranchNotFoundError = InstanceType<typeof ConfigPushBranchNotFoundError>;
 
 /**
- * `--project-ref` named a branch (by name), but no project is linked to
+ * `--remote` named a branch (by name), but no project is linked to
  * search for branches under — none of `SUPABASE_PROJECT_ID`,
  * `supabase/.temp/linked-project.json`, or `supabase/.temp/project-ref`
  * yielded a candidate.
@@ -84,7 +84,7 @@ export const ConfigPushBranchNotLinkedError = targetErrors.BranchNotLinkedError;
 export type ConfigPushBranchNotLinkedError = InstanceType<typeof ConfigPushBranchNotLinkedError>;
 
 /**
- * `--project-ref` named a branch (by name), and a parent-project candidate
+ * `--remote` named a branch (by name), and a parent-project candidate
  * exists but is not ref-shaped — corrupt or stale linked state.
  */
 export const ConfigPushParentRefInvalidError = targetErrors.ParentRefInvalidError;

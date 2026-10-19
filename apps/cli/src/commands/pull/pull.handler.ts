@@ -16,6 +16,7 @@ import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import {
   configTargetErrorsFor,
+  requestedConfigTarget,
   resolveConfigTarget,
 } from "../../command-internal/project-target.ts";
 import { unexpectedStatusMessage } from "../../command-internal/http-errors.ts";
@@ -202,7 +203,6 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
   const telemetryState = yield* TelemetryState;
   const machineErrorContext = yield* MachineErrorContext;
 
-  const requested = Option.filter(flags.projectRef, (value) => value.length > 0);
   const remoteLabel = Option.getOrUndefined(
     Option.filter(flags.remoteLabel, (value) => value.length > 0),
   );
@@ -227,6 +227,10 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     // instead of re-resolving (ADR 0024).
     const { ref, branch, linked, runPlan, source } = yield* Effect.gen(function* () {
       const pullSource = yield* openConfigPullSource();
+      const requested = yield* requestedConfigTarget({
+        remote: flags.remote,
+        projectRef: flags.projectRef,
+      });
       const target = yield* resolveConfigTarget(requested, pullTargetErrors, mapBranchResolveError);
       yield* Ref.set(resolvedRef, Option.some(target.ref));
 

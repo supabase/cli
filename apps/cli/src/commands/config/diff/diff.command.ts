@@ -15,15 +15,10 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { configDiff } from "./diff.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 
 const config = {
-  // Accepts either a project ref or a branch of the linked project; no separate `--target` flag.
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription(
-      "Project ref of the Supabase project, or the name (or UUID) of one of its branches. Values that are exactly 20 lowercase letters are always treated as project refs.",
-    ),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   exitCode: Flag.Boolean("exit-code").pipe(
     Flag.withDescription(
       "Exit with status 2 when any difference is found (errors keep exiting 1).",
@@ -38,7 +33,7 @@ export type ConfigDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const configDiffHandler = (flags: ConfigDiffFlags) =>
   configDiff(flags).pipe(
-    // `--project-ref` also accepts branch names, so its value is safe to log only when it's
+    // `--project-ref` can also carry a branch name, so its value is safe to log only when it's
     // actually ref-shaped — a user-created branch name must never reach PostHog.
     withCommandTelemetry({
       flags,

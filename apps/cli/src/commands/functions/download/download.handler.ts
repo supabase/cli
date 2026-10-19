@@ -6,7 +6,7 @@ import { aqua, bold, yellow } from "../../../command-internal/colors.ts";
 import { functionsLocalConfigLoader } from "../../../command-internal/functions-local-config.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { FunctionsDownloadFlags } from "./download.command.ts";
@@ -16,7 +16,6 @@ export const functionsDownload = Effect.fn("functions.download")(function* (
 ) {
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const output = yield* Output;
@@ -41,10 +40,10 @@ export const functionsDownload = Effect.fn("functions.download")(function* (
       styleAqua: (text) => aqua(text),
       // Written to stderr, matching `yellow`'s default TTY gate.
       styleWarning: (text) => yellow(text),
-      resolveProjectRef: (projectRef) =>
-        resolver
-          .resolve(projectRef)
-          .pipe(Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref)))),
+      resolveProjectRef: resolveProjectTarget({
+        remote: flags.remote,
+        projectRef: flags.projectRef,
+      }).pipe(Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref)))),
     });
 
     yield* Effect.annotateCurrentSpan("function.count", result.slugs.length);

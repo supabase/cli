@@ -9,6 +9,7 @@ import {
 } from "../../../command-internal/http-errors.ts";
 import {
   configTargetErrorsFor,
+  requestedConfigTarget,
   resolveConfigTarget,
   type ConfigTarget,
 } from "../../../command-internal/project-target.ts";
@@ -225,9 +226,7 @@ export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullF
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  // An empty `--project-ref`/`--remote-label` value is absent, mirroring the
-  // target resolver's own rule.
-  const requested = Option.filter(flags.projectRef, (value) => value.length > 0);
+  // An empty `--remote-label` value is absent.
   const remoteLabel = Option.getOrUndefined(
     Option.filter(flags.remoteLabel, (value) => value.length > 0),
   );
@@ -257,6 +256,10 @@ export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullF
     const source = yield* openConfigPullSource();
 
     // Resolves the pull target via resolveConfigTarget, shared with config diff/config push.
+    const requested = yield* requestedConfigTarget({
+      remote: flags.remote,
+      projectRef: flags.projectRef,
+    });
     const { ref, branch } = yield* resolveConfigTarget(
       requested,
       configTargetErrors,

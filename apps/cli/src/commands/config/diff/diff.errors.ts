@@ -51,12 +51,12 @@ export class ConfigDiffOutputFlagUnsupportedError extends Data.TaggedError(
 
 const targetErrors = mintConfigTargetErrors("ConfigDiff");
 
-/** `--project-ref` named a branch the parent project does not have. */
+/** `--remote` named a branch the parent project does not have. */
 export const ConfigDiffBranchNotFoundError = targetErrors.BranchNotFoundError;
 export type ConfigDiffBranchNotFoundError = InstanceType<typeof ConfigDiffBranchNotFoundError>;
 
 /**
- * `--project-ref` named a branch by name, but no project is linked to search branches under —
+ * `--remote` named a branch by name, but no project is linked to search branches under —
  * none of `SUPABASE_PROJECT_ID`, `supabase/.temp/linked-project.json`, or
  * `supabase/.temp/project-ref` yielded a candidate. Mirrors `LinkBranchNotLinkedError`.
  */
@@ -64,7 +64,7 @@ export const ConfigDiffBranchNotLinkedError = targetErrors.BranchNotLinkedError;
 export type ConfigDiffBranchNotLinkedError = InstanceType<typeof ConfigDiffBranchNotLinkedError>;
 
 /**
- * `--project-ref` named a branch by name, and a parent-project candidate exists but isn't
+ * `--remote` named a branch by name, and a parent-project candidate exists but isn't
  * ref-shaped — corrupt or stale linked state. Mirrors `LinkParentRefInvalidError`.
  */
 export const ConfigDiffParentRefInvalidError = targetErrors.ParentRefInvalidError;

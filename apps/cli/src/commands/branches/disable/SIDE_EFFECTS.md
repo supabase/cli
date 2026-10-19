@@ -15,11 +15,11 @@ Same auth fallback chain as every Management-API command. Project-ref discovery 
 
 ## API Routes
 
-| Method   | Path                          | Auth         | Request body | Response                                                                                                                                                                                                   |
-| -------- | ----------------------------- | ------------ | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DELETE` | `/v1/projects/{ref}/branches` | Bearer token | none         | none (expect 200)                                                                                                                                                                                          |
-| `GET`    | `/v1/projects`                | Bearer token | none         | `[{id, name, organization_slug, region, …}]` — no project ref from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref`, with stdin and stdout TTYs and a non-JSON output format (project picker) |
-| `GET`    | `/v1/projects/{ref}`          | Bearer token | none         | `{ref, name, organization_id, organization_slug}` — linked-project cache miss only (best-effort, after the command)                                                                                        |
+| Method   | Path                          | Auth         | Request body | Response                                                                                                                                                                                                    |
+| -------- | ----------------------------- | ------------ | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DELETE` | `/v1/projects/{ref}/branches` | Bearer token | none         | none (expect 200)                                                                                                                                                                                           |
+| `GET`    | `/v1/projects`                | Bearer token | none         | `[{id, name, organization_slug, region, …}]` — no project ref from `--remote=<ref>`, `SUPABASE_PROJECT_ID` or `.temp/project-ref`, with stdin and stdout TTYs and a non-JSON output format (project picker) |
+| `GET`    | `/v1/projects/{ref}`          | Bearer token | none         | `{ref, name, organization_id, organization_slug}` — linked-project cache miss only (best-effort, after the command)                                                                                         |
 
 ## Environment Variables
 
@@ -55,5 +55,7 @@ Single `success` event carrying `{project_ref}`.
 
 ## Notes
 
+- `--remote=<ref>` names the parent project; with no selector or a bare `--remote` the parent comes from the chain above. A branch name or UUID is rejected with `` `supabase branches disable` acts on a parent project, so --remote takes its project ref, not a branch name. Use --remote=<ref>. ``, and a database URL with `` `supabase branches disable` needs a project, not a database URL. ``; `false|no|off|0`, `--no-remote` and an empty value fail with `Leave out --remote to use the linked project.` The branch itself stays a positional argument.
+- The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
 - Resolves the parent project and prints `Target: <project>` once on stderr in every output format, for example `Target: project <name> (<ref>) · production`. `--output-format json|stream-json` object results and error envelopes also carry a `target` object; `--output {json,yaml,toml,env}` payloads are unchanged.
 - **Consent.** Asks once, after the parent project is resolved and before the DELETE, with default No: `Disable preview branching`. `--yes` or a shell `SUPABASE_YES` approves it (`supabase/.env` does not) and echoes `Confirmed by --yes: <action> on <target>` to stderr. Without it, only an interactive text-mode terminal is asked: JSON, `-o`, piped and agent runs exit 1 with `HostedMutationConsentRequiredError` and change nothing, and declining exits 1 with `HostedMutationDeclinedError`. Stdin is never read.

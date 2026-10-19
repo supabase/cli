@@ -52,16 +52,16 @@ export class ConfigPullOutputFlagUnsupportedError extends Data.TaggedError(
 
 const targetErrors = mintConfigTargetErrors("ConfigPull");
 
-/** `--project-ref` named a branch the parent project does not have. */
+/** `--remote` named a branch the parent project does not have. */
 export const ConfigPullBranchNotFoundError = targetErrors.BranchNotFoundError;
 export type ConfigPullBranchNotFoundError = InstanceType<typeof ConfigPullBranchNotFoundError>;
 
-/** `--project-ref` named a branch (by name), but no project is linked to search branches under. */
+/** `--remote` named a branch (by name), but no project is linked to search branches under. */
 export const ConfigPullBranchNotLinkedError = targetErrors.BranchNotLinkedError;
 export type ConfigPullBranchNotLinkedError = InstanceType<typeof ConfigPullBranchNotLinkedError>;
 
 /**
- * `--project-ref` named a branch (by name), and a parent-project candidate exists but is not
+ * `--remote` named a branch (by name), and a parent-project candidate exists but is not
  * ref-shaped — corrupt or stale linked state.
  */
 export const ConfigPullParentRefInvalidError = targetErrors.ParentRefInvalidError;

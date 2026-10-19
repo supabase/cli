@@ -28,8 +28,8 @@ banner comes from the target resolution, not from the sub-steps); see
 | ---------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.toml` or `config.json`          | TOML/JSON  | always, before any network call — `openConfigPullSource`, the SAME base load `config pull` itself opens (no `[remotes.*]` overlay yet); see `config/pull/SIDE_EFFECTS.md` for the loader's own rules                                         |
 | `<workdir>/supabase/.env`, `.env.local`                    | dotenv     | always, to resolve `env(VAR)` references inside `config.toml` (via the config step's loader)                                                                                                                                                 |
-| `<workdir>/supabase/.temp/project-ref`                     | plain text | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file) when `--project-ref` is absent; parent-ref candidate for a branch-name `--project-ref` (checked eagerly, before any spinner or branch lookup)                                |
-| `<workdir>/supabase/.temp/linked-project.json`             | JSON       | parent-ref candidate for a branch-name `--project-ref` (same eager pre-check)                                                                                                                                                                |
+| `<workdir>/supabase/.temp/project-ref`                     | plain text | project-ref fallback (`--remote=<ref>` → `SUPABASE_PROJECT_ID` → this file) when `--remote` is absent; parent-ref candidate for a branch-name `--remote` (checked eagerly, before any spinner or branch lookup)                              |
+| `<workdir>/supabase/.temp/linked-project.json`             | JSON       | parent-ref candidate for a branch-name `--remote` (same eager pre-check)                                                                                                                                                                     |
 | `~/.supabase/access-token`                                 | plain text | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                                                                                                   |
 | `<workdir>/supabase/config.toml` or `config.json` (reload) | TOML/JSON  | re-loaded WITH the `[remotes.*]` overlay applied, only when the resolved target ref matches an existing `[remotes.*]` block — the config step's own conditional reload (`config/pull/SIDE_EFFECTS.md`)                                       |
 | `<workdir>/supabase/migrations` (directory listing)        | filenames  | once, in the preview phase, to decide whether the migration-history step auto-runs — skipped when `--with-migration-history` is already set (see Notes); a read failure other than "directory missing" fails the whole command at this point |
@@ -97,8 +97,8 @@ each location's check is independent, so a spawn failure on one does not affect 
 
 | #   | Purpose                 | Method | Path                                 | When                                                                                                                                        |
 | --- | ----------------------- | ------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1a  | branch by UUID          | GET    | `/v1/branches/{branch_id}`           | `--project-ref` is a branch UUID — resolved once, up front (ADR 0024 "resolve once"); needs no linked project                               |
-| 1b  | branch by name          | GET    | `/v1/projects/{ref}/branches/{name}` | `--project-ref` is a branch NAME (not a ref/UUID); the parent ref is resolved from local state first                                        |
+| 1a  | branch by UUID          | GET    | `/v1/branches/{branch_id}`           | `--remote` is a branch UUID — resolved once, up front (ADR 0024 "resolve once"); needs no linked project                                    |
+| 1b  | branch by name          | GET    | `/v1/projects/{ref}/branches/{name}` | `--remote` is a branch NAME (not a ref/UUID); the parent ref is resolved from local state first                                             |
 | 2   | effective remote config | GET    | `/v2/projects/{ref}/config`          | the config step's own fetch (`planConfigPullRun`) — guaranteed single by the plan/apply split, never repeated for a dry run or a real apply |
 
 Every other route belongs to a reused sub-step, called with the already-resolved `ref` (no
@@ -152,7 +152,7 @@ Docker-dependent.
 | Variable                | Purpose                                                                                                 | Required?                                                                                         |
 | ----------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `SUPABASE_YES`          | grants `pull`'s consent (same as `--yes`); does NOT bypass the dirty guard                              | no — shell environment only (`resolveYes`); a value in the project `supabase/.env` does not count |
-| `SUPABASE_PROJECT_ID`   | project ref (flag → this → `.temp/project-ref` → prompt)                                                | no                                                                                                |
+| `SUPABASE_PROJECT_ID`   | project ref (`--remote=<ref>` → this → `.temp/project-ref` → prompt)                                    | no                                                                                                |
 | `SUPABASE_WORKDIR`      | working directory `config.toml`/`.json`/`supabase/migrations`/`supabase/functions` are resolved against | no                                                                                                |
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                    | no (falls back to keyring → `~/.supabase/access-token`)                                           |
 | `SUPABASE_PROFILE`      | API profile selection                                                                                   | no                                                                                                |
@@ -168,16 +168,16 @@ functions) — `pull` does not read or override any of these itself, it only sup
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                                   |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | every step succeeded (any mix of `changed`/`unchanged`/`skipped`)                                                                                                                                                                           |
-| `0`  | `--dry-run` (every step reports `planned`/`skipped`, nothing written)                                                                                                                                                                       |
-| `1`  | consent declined at the prompt (`HostedMutationDeclinedError`, `context canceled`), or needed in a run that cannot prompt (JSON, stream-json, non-interactive) without `--yes` (`HostedMutationConsentRequiredError`) — nothing is written  |
-| `1`  | the `-o`/`--output` global flag passed (any value — not supported by this command, `PullOutputFlagUnsupportedError`)                                                                                                                        |
-| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`PullWorkdirError`)                                                                                                                                             |
-| `1`  | branch-name `--project-ref` target-resolution failure (`PullBranchNotLinkedError` / `PullParentRefInvalidError` / `PullBranchNotFoundError` / `PullBranchNotReadyError` / `PullBranchResolveNetworkError` / `PullBranchResolveStatusError`) |
-| `1`  | `supabase/config.toml`/`.json`, `supabase/migrations`, and/or `supabase/functions` has uncommitted or untracked changes and no human will read the warning (`PullUncommittedChangesError`) — see Git above                                  |
-| `1`  | any one step fails (config, migration history, db, or functions) — every OTHER step still runs and is reported, but the process exits non-zero and re-fails with the FIRST original failure's own cause/classification                      |
+| Code | Condition                                                                                                                                                                                                                                  |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | every step succeeded (any mix of `changed`/`unchanged`/`skipped`)                                                                                                                                                                          |
+| `0`  | `--dry-run` (every step reports `planned`/`skipped`, nothing written)                                                                                                                                                                      |
+| `1`  | consent declined at the prompt (`HostedMutationDeclinedError`, `context canceled`), or needed in a run that cannot prompt (JSON, stream-json, non-interactive) without `--yes` (`HostedMutationConsentRequiredError`) — nothing is written |
+| `1`  | the `-o`/`--output` global flag passed (any value — not supported by this command, `PullOutputFlagUnsupportedError`)                                                                                                                       |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`PullWorkdirError`)                                                                                                                                            |
+| `1`  | branch-name `--remote` target-resolution failure (`PullBranchNotLinkedError` / `PullParentRefInvalidError` / `PullBranchNotFoundError` / `PullBranchNotReadyError` / `PullBranchResolveNetworkError` / `PullBranchResolveStatusError`)     |
+| `1`  | `supabase/config.toml`/`.json`, `supabase/migrations`, and/or `supabase/functions` has uncommitted or untracked changes and no human will read the warning (`PullUncommittedChangesError`) — see Git above                                 |
+| `1`  | any one step fails (config, migration history, db, or functions) — every OTHER step still runs and is reported, but the process exits non-zero and re-fails with the FIRST original failure's own cause/classification                     |
 
 **Difference from standalone `db pull`:** when the db step finds the remote already in
 sync with local migrations (`DbPullInSyncError`), `pull` reports it as `status: "unchanged"`
@@ -186,9 +186,9 @@ condition. Every other step's failure still counts as a `pull` failure.
 
 ## Telemetry Events Fired
 
-| Event                  | When                                                      | Notable properties / groups                                                                                                                                                                  |
-| ---------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via `withCommandTelemetry`) | `exit_code`, `duration_ms`, `flags`; `--project-ref`'s value is only in `safeFlags` (logged verbatim) when it is ref-shaped (`PROJECT_REF_PATTERN`) — a user-created branch name is redacted |
+| Event                  | When                                                      | Notable properties / groups                                                                                                                                                                                                                                                                                            |
+| ---------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via `withCommandTelemetry`) | `exit_code`, `duration_ms`, `flags`; `--remote=<ref>` is logged as the ref, a bare `--remote` as `true`, and a branch name or UUID is redacted; the deprecated `--project-ref`'s value is only in `safeFlags` (logged verbatim) when it is ref-shaped (`PROJECT_REF_PATTERN`) — a user-created branch name is redacted |
 
 Exactly one `cli_command_executed` fires per `pull` invocation. None of the four reused steps fire
 their own `cli_command_executed` (or any other event) when run through `pull` — each is called as a
@@ -240,7 +240,7 @@ Shape (`pull.format.ts`):
   "schema_version": 1,
   "target": {
     // the command target (docs/command-target.md), plus:
-    "branch": "...", // only when --project-ref named a branch
+    "branch": "...", // only when --remote named a branch
   },
   "dry_run": false,
   "confirmed": true,
@@ -293,6 +293,8 @@ the -o/--output flag is not supported by pull; use --output-format json|stream-j
 
 ## Notes
 
+- `--remote=<value>` selects the target: a project ref (20 lowercase letters), or the name or UUID of a branch of the linked project (resolved through `GET /v1/projects/{ref}/branches/{name}` or `GET /v1/branches/{id}`). A bare `--remote` and no selector both target the linked project. A database URL is rejected (`supabase pull` takes a project, not a database); `false|no|off|0`, `--no-remote` and an empty value fail with `Leave out --remote to use the linked project.`
+- The deprecated `--project-ref` is an alias of `--remote=<ref>` (it still accepts a branch name or UUID) and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
 - **Steps run sequentially, not in parallel**, refining ADR 0004's "runs all sub-syncs in parallel"
   aspiration for `pull` specifically — see [ADR
   0024](../../../../../docs/adr/0024-top-level-pull-orchestration.md) for the two real data

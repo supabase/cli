@@ -4,7 +4,7 @@ import {
   SupabaseApiInputError,
   type ApiClient,
 } from "@supabase/api/effect";
-import { Effect, type Option } from "effect";
+import { Effect } from "effect";
 import * as HttpClientError from "effect/http/HttpClientError";
 import { requireHostedMutationConsent } from "../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../output/output.service.ts";
@@ -18,14 +18,11 @@ import { invalidFunctionSlugDetail, validateFunctionSlugMessage } from "./functi
 
 export interface DeleteFunctionOptions {
   readonly slug: string;
-  readonly projectRef: Option.Option<string>;
 }
 
 export interface DeleteFunctionDependencies<ResolveError, ResolveRequirements> {
   readonly api: ApiClient;
-  readonly resolveProjectRef: (
-    projectRef: Option.Option<string>,
-  ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
+  readonly resolveProjectRef: Effect.Effect<string, ResolveError, ResolveRequirements>;
   /**
    * Optional shell-specific styling for the slug/ref in the success line. Defaults to identity
    * (plain text); keeping the hook injected keeps this shared module free of CLI-specific
@@ -52,7 +49,7 @@ export const deleteFunction = Effect.fn("functions.delete")(function* <
   const output = yield* Output;
 
   yield* validateSlug(flags.slug);
-  const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
+  const projectRef = yield* dependencies.resolveProjectRef;
   yield* requireHostedMutationConsent({ action: `Delete Function ${flags.slug}` });
 
   const response = yield* dependencies.api

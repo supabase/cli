@@ -23,6 +23,7 @@ import {
 } from "../../../command-internal/http-errors.ts";
 import {
   configTargetErrorsFor,
+  requestedConfigTarget,
   resolveConfigTarget,
 } from "../../../command-internal/project-target.ts";
 import {
@@ -224,10 +225,6 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
   const telemetryState = yield* TelemetryState;
   const fs = yield* FileSystem.FileSystem;
 
-  // `--project-ref` accepts a project ref, or the name (or UUID) of a branch of the linked
-  // project. An empty value is treated as absent, mirroring the resolver's own rule.
-  const requestedRef = Option.filter(flags.projectRef, (value) => value.length > 0);
-
   // Set once ref resolution succeeds, so the linked-project cache write below only fires for
   // invocations that got that far.
   const resolvedRef = yield* Ref.make(Option.none<string>());
@@ -255,6 +252,10 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // the resolved config load before its one schema decode, so a base document that's invalid without its
     // overlay must never be decoded on its own — this can cost a network round trip before a
     // malformed `config.toml` is caught.
+    const requestedRef = yield* requestedConfigTarget({
+      remote: flags.remote,
+      projectRef: flags.projectRef,
+    });
     const { ref, branch } = yield* resolveConfigTarget(
       requestedRef,
       configTargetErrors,

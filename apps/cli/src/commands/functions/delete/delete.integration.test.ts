@@ -17,6 +17,7 @@ import {
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { mockContextualAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
@@ -55,6 +56,7 @@ describe("functions delete", () => {
     return Effect.gen(function* () {
       yield* functionsDelete({
         functionName: "hello-world",
+        remote: Option.none(),
         projectRef: Option.none(),
       });
 
@@ -76,7 +78,7 @@ describe("functions delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("uses an explicit project ref", () => {
+  it.effect("uses an explicit --remote=<ref>", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
     const layer = Layer.mergeAll(
@@ -94,13 +96,14 @@ describe("functions delete", () => {
     return Effect.gen(function* () {
       yield* functionsDelete({
         functionName: "hello-world",
-        projectRef: Option.some("qrstuvwxyzabcdefghij"),
+        remote: Option.some({ _tag: "Ref", ref: "qrstuvwxyzabcdefghij" }),
+        projectRef: Option.none(),
       });
 
       expect(api.requests[0]?.url).toContain("/projects/qrstuvwxyzabcdefghij/functions/");
       assertPermissionDrift({
         command: "functions delete",
-        activeFlags: { "project-ref": "qrstuvwxyzabcdefghij" },
+        activeFlags: { remote: "qrstuvwxyzabcdefghij" },
         requests: api.requests,
         exact: true,
       });
@@ -141,7 +144,11 @@ describe("functions delete", () => {
       const fs = yield* FileSystem.FileSystem;
       const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
       expect(yield* fs.exists(cachePath)).toBe(false);
-      yield* functionsDelete({ functionName: "hello-world", projectRef: Option.none() });
+      yield* functionsDelete({
+        functionName: "hello-world",
+        remote: Option.none(),
+        projectRef: Option.none(),
+      });
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         "GET https://api.supabase.com/v1/projects",
         `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/functions/hello-world`,
@@ -178,7 +185,7 @@ describe("functions delete", () => {
 
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          functionsDelete({ functionName, projectRef: Option.none() }),
+          functionsDelete({ functionName, remote: Option.none(), projectRef: Option.none() }),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -217,6 +224,7 @@ describe("functions delete", () => {
     return Effect.gen(function* () {
       yield* functionsDeleteHandler({
         functionName: "hello-world",
+        remote: Option.none(),
         projectRef: Option.some("abcdefghijklmnopqrst"),
       });
 
@@ -229,6 +237,16 @@ describe("functions delete", () => {
 describeHostedConsent("functions delete", {
   api: { response: { status: 200, body: null } },
   invoke: () => ({
-    run: functionsDelete({ functionName: "hello-world", projectRef: Option.none() }),
+    run: functionsDelete({
+      functionName: "hello-world",
+      remote: Option.none(),
+      projectRef: Option.none(),
+    }),
   }),
+});
+
+describeHostedTargetSelection("functions delete", {
+  operands: ["hello-world"],
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, null)),
+  run: (flags) => functionsDelete({ functionName: "hello-world", ...flags }),
 });

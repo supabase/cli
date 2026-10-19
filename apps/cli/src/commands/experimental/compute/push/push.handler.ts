@@ -6,7 +6,7 @@ import {
   emitComputeMachineOutput,
   rejectComputeEnvOutput,
   computeMachineOutputRequested,
-  computeProjectRefSuffix,
+  computeRemoteSuffix,
 } from "../compute.output.ts";
 import { aqua } from "../../../../command-internal/colors.ts";
 import { CommandPlatformApi } from "../../../../auth/command-platform-api.service.ts";
@@ -51,7 +51,7 @@ import {
   MissingComputeExposureError,
 } from "../../../../shared/compute/compute.errors.ts";
 import { requireHostedMutationConsent } from "../../../../command-internal/hosted-consent/hosted-consent.ts";
-import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
@@ -222,7 +222,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   readonly name: string;
   readonly projectRef: string;
   /**
-   * ` --project-ref <ref>` when the flag supplied the ref, `""` when the link
+   * ` --remote=<ref>` when a flag selected the project, `""` when the link
    * did — the follow-up hint below is copy-pasted verbatim, so it has to carry
    * whatever the user typed to reach this project.
    */
@@ -545,14 +545,16 @@ export const computePush = Effect.fn("compute.push")(function* (
 ) {
   const output = yield* Output;
   const path = yield* Path.Path;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   // Resolved here, outside the block below, since caching it is one of that
   // block's own finalizers — everything else that can fail belongs inside so
   // those failures still flush telemetry.
-  const projectRef = yield* resolver.resolve(flags.projectRef);
+  const projectRef = yield* resolveProjectTarget({
+    remote: flags.remote,
+    projectRef: flags.projectRef,
+  });
 
   yield* Effect.gen(function* () {
     const project = yield* loadComputeProject;
@@ -574,7 +576,7 @@ export const computePush = Effect.fn("compute.push")(function* (
     }
 
     const names = [...new Set(requested)];
-    const refSuffix = computeProjectRefSuffix(flags.projectRef);
+    const refSuffix = computeRemoteSuffix(flags, projectRef);
 
     if (Option.isNone(flags.exposure)) {
       for (const name of names) {

@@ -18,6 +18,8 @@ import { branchRef, resolveBranchProjectRef } from "./branch-ref.resolver.ts";
 import { compose, withCondition } from "./command-permissions/model.ts";
 import { sanitizeInlineName } from "./http-errors.ts";
 import { BRANCH_PROJECT_REF_PATTERN, BRANCH_UUID_PATTERN } from "./ref-patterns.ts";
+import { selectProject } from "./target/project-selection.ts";
+import type { ProjectTargetInput } from "./target/resolve-project-target.ts";
 import { type LinkedTarget, linkedTarget } from "./target/resolve-target.ts";
 import { renderBranchTarget } from "./target/target-identity.ts";
 import {
@@ -27,7 +29,7 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 
 /**
- * The resolved comparison/pull target for a command that accepts `--project-ref`
+ * The resolved comparison/pull target for a command that accepts `--remote`
  * (`config diff`, `config pull`, `config push`, `pull`): a project ref, plus the branch
  * name/UUID it was given, if any.
  */
@@ -160,15 +162,36 @@ function reclassifyBranchNotFoundError<E extends ConfigTargetResolveFailure, C>(
   return cause.status === 404 ? Effect.fail(notFoundError) : Effect.fail(cause);
 }
 
-/** The calls `resolveConfigTarget` makes: a branch lookup for a non-ref `--project-ref`, the project picker when no ref is given or linked. */
+/** The calls `resolveConfigTarget` makes: a branch lookup for a non-ref `--remote`, the project picker when no ref is given or linked. */
 export const configTarget = compose(
+  withCondition(branchRef, { flag: "remote", present: true }),
   withCondition(branchRef, { flag: "project-ref", present: true }),
   projectRefPicker,
 );
 
+/** The ref, branch name or UUID that `--remote` (or the deprecated `--project-ref`) names; none means the linked project. */
+export const requestedConfigTarget = Effect.fn("ProjectTarget.requested")(function* (
+  input: ProjectTargetInput,
+) {
+  const { selection } = yield* selectProject(input);
+  switch (selection.explicit) {
+    case "branch":
+      return Option.some(selection.name);
+    case "linked":
+      return selection.ref;
+    case undefined:
+      return Option.none<string>();
+    case "local":
+    case "db-url":
+      return yield* Effect.die(
+        new Error(`a project-only selector cannot select "${selection.explicit}"`),
+      );
+  }
+});
+
 /**
- * Resolves `--project-ref` to a {@link ConfigTarget}: a project ref, or the name/UUID of a
- * branch on the linked project. A ref-shaped value (20 lowercase letters) is always a project ref.
+ * Resolves the requested `--remote` value to a {@link ConfigTarget}: a project ref, or the name/UUID
+ * of a branch on the linked project. A ref-shaped value (20 lowercase letters) is always a project ref.
  *
  * A UUID branch needs no parent ref, so it works unlinked; a name branch resolves the parent
  * ref eagerly, before any spinner starts, so an unlinked or stale link fails immediately.

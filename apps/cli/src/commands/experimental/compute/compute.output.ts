@@ -1,5 +1,6 @@
 import { Effect, Option } from "effect";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   encodeSortedJson,
@@ -93,16 +94,21 @@ export const rejectComputeEnvOutput = Effect.fnUntraced(function* () {
 });
 
 /**
- * The `--project-ref` a retry suggestion has to carry, or `""` when it came
- * from the link.
+ * The ` --remote=<ref>` a retry suggestion has to carry, or `""` when the project came from the
+ * link.
  *
- * Dropping an explicit `--project-ref` from a copy-pasted suggestion would
- * re-resolve to whichever project is currently linked — for `delete --yes`,
- * a same-named compute deleted without a prompt. Keyed off the flag, not the
- * resolved ref, so a link-supplied ref isn't echoed back as noise; an empty
- * flag value counts as "not supplied", matching `ProjectRefResolver`.
+ * Dropping an explicit selector from a copy-pasted suggestion would re-resolve to whichever
+ * project is currently linked — for `delete --yes`, a same-named compute deleted without a
+ * prompt. Keyed off the flags, not the resolved ref, so a link-supplied ref isn't echoed back as
+ * noise; the resolved ref also stands in for a branch name, which needs no second lookup.
  */
-export const computeProjectRefSuffix = (projectRef: Option.Option<string>): string =>
-  Option.isSome(projectRef) && projectRef.value.length > 0
-    ? ` --project-ref ${projectRef.value}`
+export const computeRemoteSuffix = (
+  flags: {
+    readonly remote: Option.Option<RemoteValue>;
+    readonly projectRef: Option.Option<string>;
+  },
+  ref: string,
+): string =>
+  Option.isSome(flags.projectRef) || Option.exists(flags.remote, (value) => value._tag !== "Linked")
+    ? ` --remote=${ref}`
     : "";

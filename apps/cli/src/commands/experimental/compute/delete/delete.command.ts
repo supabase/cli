@@ -1,4 +1,4 @@
-import { Argument, Command, Flag } from "effect/cli";
+import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withKind } from "../../../../command-internal/command-permissions/model.ts";
@@ -12,16 +12,15 @@ import { managementApiRuntimeLayer } from "../../../../command-internal/manageme
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computeDelete } from "./delete.handler.ts";
 import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { branchResolution } from "../../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../../command-internal/target/target-flags.ts";
 
 // No local `--yes`: it is a root persistent flag every other confirming command
 // reads through `resolveYes`, so redeclaring it here would shadow the
 // global, list `--yes` twice in `--help`, and quietly ignore `SUPABASE_YES`.
 const config = {
   name: Argument.String("name").pipe(Argument.withDescription("Compute to delete.")),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
 } as const;
 
 export type ComputeDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -47,6 +46,7 @@ export const computeDeleteCommand = Command.make("delete", config).pipe(
       { operations: [{ operationId: "v2-delete-a-compute-instance", kind: "required" }] },
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
