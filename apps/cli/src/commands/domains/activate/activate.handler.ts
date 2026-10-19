@@ -21,7 +21,7 @@ export const domainsActivate = Effect.fn("domains.activate")(function* (
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+  const ref = yield* resolveProjectTarget(flags);
 
   yield* Effect.gen(function* () {
     yield* requireHostedMutationConsent({

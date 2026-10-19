@@ -2,7 +2,6 @@ import { Cause, Effect, Exit, FileSystem, Option, Path, Ref } from "effect";
 
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { pathHasUncommittedChanges } from "../../command-internal/git-status.ts";
-import { mapHttpError } from "../../command-internal/http-errors.ts";
 import { MigrationsReadError } from "../../command-internal/migration.errors.ts";
 import { unsupportedOutputFlagMessage } from "../../command-internal/output-formats.ts";
 import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
@@ -14,12 +13,7 @@ import { Output } from "../../shared/output/output.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
-import {
-  configTargetErrorsFor,
-  resolveConfigTarget,
-} from "../../command-internal/project-target.ts";
 import { resolveProjectTarget } from "../../command-internal/target/resolve-project-target.ts";
-import { unexpectedStatusMessage } from "../../command-internal/http-errors.ts";
 import {
   configPullPayload,
   openConfigPullSource,
@@ -55,32 +49,11 @@ import {
 } from "./pull.format.ts";
 import type { PullAggregate, PullStepContext, PullStepResult } from "./pull.types.ts";
 import {
-  PullBranchNotFoundError,
-  PullBranchNotLinkedError,
-  PullBranchNotReadyError,
-  PullBranchResolveNetworkError,
-  PullBranchResolveStatusError,
   PullOutputFlagUnsupportedError,
-  PullParentRefInvalidError,
   PullUncommittedChangesError,
   PullWorkdirError,
 } from "./pull.errors.ts";
 import type { PullFlags } from "./pull.command.ts";
-
-/** Wires `pull`'s own tagged error classes into `resolveConfigTarget`. */
-const pullTargetErrors = configTargetErrorsFor({
-  notLinked: PullBranchNotLinkedError,
-  parentRefInvalid: PullParentRefInvalidError,
-  branchNotFound: PullBranchNotFoundError,
-  branchNotReady: PullBranchNotReadyError,
-});
-
-const mapBranchResolveError = mapHttpError({
-  networkError: PullBranchResolveNetworkError,
-  statusError: PullBranchResolveStatusError,
-  networkMessage: (cause) => `failed to resolve branch: ${cause}`,
-  statusMessage: unexpectedStatusMessage,
-});
 
 /** The union of every typed error the four step runners (`pull.steps.ts`) can fail with — keeps
  *  `firstFailureCause` typed instead of erasing the error channel to `unknown`. */
@@ -227,13 +200,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     // instead of re-resolving (ADR 0024).
     const { ref, branch, linked, runPlan, source } = yield* Effect.gen(function* () {
       const pullSource = yield* openConfigPullSource();
-      const target = yield* resolveProjectTarget(
-        { remote: flags.remote, projectRef: flags.projectRef },
-        {
-          resolveRequested: (requested) =>
-            resolveConfigTarget(requested, pullTargetErrors, mapBranchResolveError),
-        },
-      );
+      const target = yield* resolveProjectTarget(flags, { detail: true });
       yield* Ref.set(resolvedRef, Option.some(target.ref));
 
       // `planConfigPullRun` does everything up through the schema-validation gate: no git
@@ -246,7 +213,7 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
       return {
         ref: target.ref,
         branch: target.branch,
-        linked: target.linked,
+        linked: target,
         runPlan: plan,
         source: pullSource,
       };

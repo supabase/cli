@@ -95,11 +95,11 @@ each location's check is independent, so a spawn failure on one does not affect 
 
 ## API Routes
 
-| #   | Purpose                 | Method | Path                                 | When                                                                                                                                        |
-| --- | ----------------------- | ------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1a  | branch by UUID          | GET    | `/v1/branches/{branch_id}`           | `--remote` is a branch UUID — resolved once, up front (ADR 0024 "resolve once"); needs no linked project                                    |
-| 1b  | branch by name          | GET    | `/v1/projects/{ref}/branches/{name}` | `--remote` is a branch NAME (not a ref/UUID); the parent ref is resolved from local state first                                             |
-| 2   | effective remote config | GET    | `/v2/projects/{ref}/config`          | the config step's own fetch (`planConfigPullRun`) — guaranteed single by the plan/apply split, never repeated for a dry run or a real apply |
+| #   | Purpose                 | Method | Path                             | When                                                                                                                                                                                                           |
+| --- | ----------------------- | ------ | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1a  | branch list             | GET    | `/v1/projects/{parent}/branches` | `--remote` is a branch name or UUID and a project is linked — resolved once, up front (ADR 0024 "resolve once"); `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project, resolved from local state first |
+| 1b  | branch by UUID          | GET    | `/v1/branches/{id}`              | `--remote` is a branch UUID and no usable project is linked; needs no parent project                                                                                                                           |
+| 2   | effective remote config | GET    | `/v2/projects/{ref}/config`      | the config step's own fetch (`planConfigPullRun`) — guaranteed single by the plan/apply split, never repeated for a dry run or a real apply                                                                    |
 
 Every other route belongs to a reused sub-step, called with the already-resolved `ref` (no
 re-resolution): the db step's own routes (temp login role, IPv4 pooler config, linked-project
@@ -175,7 +175,7 @@ functions) — `pull` does not read or override any of these itself, it only sup
 | `1`  | consent declined at the prompt (`HostedMutationDeclinedError`, `context canceled`), or needed in a run that cannot prompt (JSON, stream-json, non-interactive) without `--yes` (`HostedMutationConsentRequiredError`) — nothing is written |
 | `1`  | the `-o`/`--output` global flag passed (any value — not supported by this command, `PullOutputFlagUnsupportedError`)                                                                                                                       |
 | `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`PullWorkdirError`)                                                                                                                                            |
-| `1`  | branch-name `--remote` target-resolution failure (`PullBranchNotLinkedError` / `PullParentRefInvalidError` / `PullBranchNotFoundError` / `PullBranchNotReadyError` / `PullBranchResolveNetworkError` / `PullBranchResolveStatusError`)     |
+| `1`  | branch-name `--remote` target-resolution failure (`LinkBranchNotLinkedError` / `LinkParentRefInvalidError` / `LinkBranchNotFoundError` / `LinkBranchNotReadyError` / `LinkBranchListNetworkError` / `LinkBranchListStatusError`)           |
 | `1`  | `supabase/config.toml`/`.json`, `supabase/migrations`, and/or `supabase/functions` has uncommitted or untracked changes and no human will read the warning (`PullUncommittedChangesError`) — see Git above                                 |
 | `1`  | any one step fails (config, migration history, db, or functions) — every OTHER step still runs and is reported, but the process exits non-zero and re-fails with the FIRST original failure's own cause/classification                     |
 
@@ -293,7 +293,7 @@ the -o/--output flag is not supported by pull; use --output-format json|stream-j
 
 ## Notes
 
-- `--remote=<value>` selects the target: a project ref (20 lowercase letters), or the name or UUID of a branch of the linked project (resolved through `GET /v1/projects/{ref}/branches/{name}` or `GET /v1/branches/{id}`). A bare `--remote` and no selector both target the linked project. A database URL is rejected (`supabase pull` takes a project, not a database); `false|no|off|0`, `--no-remote` and an empty value fail with `Leave out --remote to use the linked project.`
+- `--remote=<value>` selects the target: a project ref (20 lowercase letters), or the name or UUID of a branch of the linked project (resolved through `GET /v1/projects/{parent}/branches`, or `GET /v1/branches/{id}` for a UUID when no project is linked). A bare `--remote` and no selector both target the linked project. A database URL is rejected (`supabase pull` takes a project, not a database); `false|no|off|0`, `--no-remote` and an empty value fail with `Leave out --remote to use the linked project.`
 - The deprecated `--project-ref` is an alias of `--remote=<ref>` (it still accepts a branch name or UUID) and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
 - **Steps run sequentially, not in parallel**, refining ADR 0004's "runs all sub-syncs in parallel"
   aspiration for `pull` specifically — see [ADR

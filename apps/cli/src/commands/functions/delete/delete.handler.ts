@@ -19,10 +19,9 @@ export const functionsDelete = Effect.fn("functions.delete")(function* (
     { slug: flags.functionName },
     {
       api,
-      resolveProjectRef: resolveProjectTarget({
-        remote: flags.remote,
-        projectRef: flags.projectRef,
-      }).pipe(Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref)))),
+      resolveProjectRef: resolveProjectTarget(flags).pipe(
+        Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref))),
+      ),
       // The "Deleted Function" line is stdout-bound, so the TTY gate must check stdout.
       styleIdentifier: (text) => aqua(text, process.stdout),
     },

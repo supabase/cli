@@ -37,6 +37,7 @@ It only reads, so it never asks for confirmation, on any target.
 | POST   | `/v1/projects/{ref}/network-bans/retrieve` | Bearer | remote pooler temp-role retry (list bans)                                                                                                                                         |
 | DELETE | `/v1/projects/{ref}/network-bans`          | Bearer | remote pooler temp-role retry (clear self ban)                                                                                                                                    |
 | GET    | `/v1/projects/{parent}/branches`           | Bearer | Branch lookup — only for `--remote=<branch>`, and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
+| GET    | `/v1/branches/{id}`                        | Bearer | Branch lookup — only for `--remote=<branch UUID>` when no project is linked                                                                                                       |
 
 (The login-role and network-ban calls go through the shared `DbConfigResolver` linked path.)
 

@@ -32,6 +32,7 @@ Cloudflare DNS-over-HTTPS CNAME pre-check.
 | `DELETE` | `/v1/projects/{ref}/custom-hostname`            | Bearer token | none                        | 200 → empty/void body (`delete`)                                                                                                                                                                                                                         |
 | `GET`    | `/v1/projects/{ref}`                            | Bearer token | none                        | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available                                             |
 | `GET`    | `/v1/projects/{parent}/branches`                | Bearer token | none                        | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>` (or the deprecated `--project-ref=<branch>`), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
+| `GET`    | `/v1/branches/{id}`                             | Bearer token | none                        | `{ref, status, …}` — only for `--remote=<branch UUID>` when no project is linked                                                                                                                                                                         |
 
 ## Environment Variables
 
@@ -97,7 +98,7 @@ suppressed on stderr. `delete` ignores `-o`.
 
 ## Notes
 
-- Targets the linked project unless `--remote=<ref>` is given; a bare `--remote` also targets the linked project. `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked project (by name or UUID, resolved through `GET /v1/projects/{parent}/branches`), or `true|yes|on|1` for the linked project. A database URL is rejected (these commands take a project, not a database); `false|no|off|0`, `--no-remote` and an empty value fail with `Leave out --remote to use the linked project.`
+- Targets the linked project unless `--remote=<ref>` is given; a bare `--remote` also targets the linked project. `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked project (by name or UUID, resolved through `GET /v1/projects/{parent}/branches`, or `GET /v1/branches/{id}` for a UUID when no project is linked), or `true|yes|on|1` for the linked project. A database URL is rejected (these commands take a project, not a database); `false|no|off|0`, `--no-remote` and an empty value fail with `Leave out --remote to use the linked project.`
 - A word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes no operands.
 - The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
 - `--custom-hostname` is required for `create`.

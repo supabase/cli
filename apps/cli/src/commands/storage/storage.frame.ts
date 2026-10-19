@@ -44,12 +44,7 @@ interface StorageTargetFlags {
 
 /** The resolved target and its project ref, empty for the local stack. */
 export const resolveStorageTarget = Effect.fnUntraced(function* (flags: StorageTargetFlags) {
-  const target = yield* resolveTarget({
-    remote: flags.remote,
-    local: flags.local,
-    linked: flags.linked,
-    projectRef: flags.projectRef,
-  });
+  const target = yield* resolveTarget(flags);
   return { target, projectRef: target.kind === "linked" ? target.ref : "" };
 });
 

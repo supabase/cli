@@ -51,7 +51,7 @@ export const sslEnforcementUpdate = Effect.fn("ssl-enforcement.update")(function
       return yield* new SslEnforcementNoEnableDisableFlagError();
     }
 
-    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       yield* requireHostedMutationConsent({

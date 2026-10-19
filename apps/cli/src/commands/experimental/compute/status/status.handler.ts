@@ -43,10 +43,7 @@ export const computeStatus = Effect.fn("compute.status")(function* (flags: Compu
   // Resolved here, outside the block below, since caching it is one of that
   // block's own finalizers — everything else that can fail belongs inside so
   // those failures still flush telemetry.
-  const projectRef = yield* resolveProjectTarget({
-    remote: flags.remote,
-    projectRef: flags.projectRef,
-  });
+  const projectRef = yield* resolveProjectTarget(flags);
   const refSuffix = computeRemoteSuffix(flags, projectRef);
 
   yield* Effect.gen(function* () {

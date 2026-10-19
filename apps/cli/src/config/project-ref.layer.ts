@@ -28,7 +28,7 @@ export const projectRefPicker = block("project-ref", [
   {
     operationId: "v1-list-all-projects",
     kind: "required",
-    when: [{ flag: "project-ref", present: false }],
+    when: [{ selector: ["none", "bare"] }],
     context:
       "an interactive terminal (stdin and stdout are TTYs, output format not json), no SUPABASE_PROJECT_ID and no supabase/.temp/project-ref (`link` ignores that file)",
   },

@@ -120,6 +120,53 @@ describe("applicableOperations", () => {
     });
   });
 
+  describe("selector shape", () => {
+    const REF = "abcdefghijklmnopqrst";
+    const permissions = mapped([
+      { operationId: "v1-list-all-branches", kind: "required", when: [{ selector: ["branch"] }] },
+      {
+        operationId: "v1-get-pooler-config",
+        kind: "required",
+        when: [{ selector: ["ref", "branch", "url"] }],
+      },
+      {
+        operationId: "v1-list-all-projects",
+        kind: "required",
+        when: [{ selector: ["none", "bare"] }],
+      },
+    ]);
+    const applied = (activeFlags: Parameters<typeof applicableOperations>[1]) =>
+      applicableOperations(permissions, activeFlags).map((e) => e.operationId);
+
+    it("reads a --remote value by what it names", () => {
+      expect(applied({ remote: true })).toEqual(["v1-list-all-projects"]);
+      expect(applied({ remote: "yes" })).toEqual(["v1-list-all-projects"]);
+      expect(applied({ remote: REF })).toEqual(["v1-get-pooler-config"]);
+      expect(applied({ remote: "feature-x" })).toEqual([
+        "v1-list-all-branches",
+        "v1-get-pooler-config",
+      ]);
+      expect(applied({ remote: "postgresql://postgres@localhost:5432/postgres" })).toEqual([
+        "v1-get-pooler-config",
+      ]);
+    });
+
+    it("folds the deprecated aliases into the same shapes", () => {
+      expect(applied({ "project-ref": REF })).toEqual(applied({ remote: REF }));
+      expect(applied({ "project-id": "feature-x" })).toEqual(applied({ remote: "feature-x" }));
+      expect(applied({ "project-ref": "true" })).toEqual(applied({ remote: "feature-x" }));
+      expect(applied({ linked: true })).toEqual(applied({ remote: true }));
+      expect(applied({ "db-url": "postgresql://postgres@localhost:5432/postgres" })).toEqual(
+        applied({ remote: "postgresql://postgres@localhost:5432/postgres" }),
+      );
+    });
+
+    it("reads no selector, and --local, as none", () => {
+      expect(applied({})).toEqual(["v1-list-all-projects"]);
+      expect(applied({ local: true })).toEqual(["v1-list-all-projects"]);
+    });
+  });
+
   it("keeps a required entry with no context over a required entry that has one, for the same operationId", () => {
     const permissions = mapped([
       {

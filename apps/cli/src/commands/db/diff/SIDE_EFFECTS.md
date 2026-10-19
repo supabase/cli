@@ -105,6 +105,7 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 | DELETE | `/v1/projects/{ref}/network-bans`           | Bearer | Unban during pooler login retry                                                                                                                                                                                        |
 | GET    | `/v1/projects/{ref}`                        | Bearer | Linked-project cache (post-run)                                                                                                                                                                                        |
 | GET    | `/v1/projects/{parent}/branches`            | Bearer | Branch lookup — only for `--remote=<branch>`, a bare `--remote` followed by a word that could name a branch, and a `--from`/`--to` value naming a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
+| GET    | `/v1/branches/{id}`                         | Bearer | Branch lookup — only for `--remote=<branch UUID>` when no project is linked                                                                                                                                            |
 
 `--use-pgadmin` with a remote target performs every one of these calls natively (CLI-1968), as part
 of this command's own target resolve, ahead of the differ container.

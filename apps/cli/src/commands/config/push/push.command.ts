@@ -8,7 +8,8 @@ import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withContext } from "../../../command-internal/command-permissions/model.ts";
 import { branchTarget } from "../../../command-internal/branch-target.ts";
-import { configTarget } from "../../../command-internal/project-target.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
@@ -57,7 +58,8 @@ export const configPushCommand = Command.make("push", config).pipe(
   ]),
   withPermissions(
     compose(
-      configTarget,
+      branchResolution,
+      projectRefPicker,
       {
         operations: [
           {

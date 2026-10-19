@@ -37,13 +37,7 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
   const linkedRefForCache = yield* Ref.make<string | undefined>(undefined);
 
   const body = Effect.gen(function* () {
-    const target = yield* resolveTarget({
-      remote: flags.remote,
-      local: flags.local,
-      linked: flags.linked,
-      dbUrl: flags.dbUrl,
-      projectRef: flags.projectRef,
-    });
+    const target = yield* resolveTarget(flags);
     const projectRef = target.kind === "linked" ? target.ref : "";
     if (target.kind === "linked") yield* Ref.set(linkedRefForCache, projectRef);
 

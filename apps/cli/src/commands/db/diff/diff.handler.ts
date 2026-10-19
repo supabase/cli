@@ -22,12 +22,15 @@ import {
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import {
-  resolveRemoteTarget,
   resolveTarget,
   type LinkedTarget,
 } from "../../../command-internal/target/resolve-target.ts";
 import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
-import { warnTarget } from "../../../command-internal/target/remote-resolution.ts";
+import {
+  resolveRemoteTarget,
+  warnTarget,
+} from "../../../command-internal/target/remote-resolution.ts";
+import { hasExplicitSelector } from "../../../command-internal/target/target-selector.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import { makeDir } from "../../../command-internal/make-dir.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
@@ -188,20 +191,8 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       const hostedEndpoints = new Map<string, PgDeltaDatabaseEndpoint>();
       // A target flag validates the selection and, for a hosted project, merges
       // `[remotes.<ref>]` so the explicit `local`/`migrations` refs below see that override.
-      if (
-        flags.local ||
-        flags.linked ||
-        Option.isSome(flags.remote) ||
-        Option.isSome(flags.dbUrl) ||
-        Option.isSome(flags.projectRef)
-      ) {
-        const preflight = yield* resolveTarget({
-          remote: flags.remote,
-          local: flags.local,
-          linked: flags.linked,
-          dbUrl: flags.dbUrl,
-          projectRef: flags.projectRef,
-        });
+      if (hasExplicitSelector(flags)) {
+        const preflight = yield* resolveTarget(flags);
         if (preflight.kind === "linked") {
           linkedTarget = preflight;
           yield* Ref.set(linkedRefForCache, Option.some(preflight.ref));
@@ -400,13 +391,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     const usePgAdmin = Option.getOrElse(flags.usePgAdmin, () => false);
 
     // Native path: resolve the target, provision a live shadow source, then diff.
-    const diffTarget = yield* resolveTarget({
-      remote: flags.remote,
-      local: flags.local,
-      linked: flags.linked,
-      dbUrl: flags.dbUrl,
-      projectRef: flags.projectRef,
-    });
+    const diffTarget = yield* resolveTarget(flags);
 
     // The config is read before `resolver.resolveConnection()` below, so the "Loading config
     // override" print and merged-config validation happen before the actual connection work

@@ -19,7 +19,7 @@ export const domainsDelete = Effect.fn("domains.delete")(function* (flags: Domai
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+  const ref = yield* resolveProjectTarget(flags);
 
   yield* Effect.gen(function* () {
     yield* requireHostedMutationConsent({ action: "Delete the custom hostname config" });

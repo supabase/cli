@@ -1,17 +1,13 @@
 import { Effect } from "effect";
 import type { Command } from "effect/cli";
-import { Argument, Command as CommandApi, Flag, Param, Primitive } from "effect/cli";
+import { Argument, Command as CommandApi, Flag } from "effect/cli";
+import { targetFlags } from "../../src/command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../src/command-internal/target/target-policy.ts";
 import type { TargetPolicyDeclaration } from "../../src/command-internal/target/target-policy.ts";
 
-/** A bare-capable, string-valued flag shaped like `--remote`: the Boolean tag keeps the parser from taking the next token as its value. */
-export const remoteFlag = Param.makeSingle({
-  kind: Param.flagKind,
-  name: "remote",
-  primitiveType: Object.assign(Object.create(Primitive.Boolean), {
-    parse: (value: string) => Effect.succeed(value),
-  }),
-}).pipe(Flag.withDescription("Target a remote project."), Flag.optional);
+export const remoteFlag = targetFlags({ subject: "database", dbUrl: true }).remote.pipe(
+  Flag.withDescription("Target a remote project."),
+);
 
 const positional = (kind: "required" | "optional" | "variadic", index: number) => {
   const argument = Argument.String(`arg${index}`);

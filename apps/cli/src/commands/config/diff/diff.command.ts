@@ -6,7 +6,8 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
-import { configTarget } from "../../../command-internal/project-target.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { GLOBAL_OUTPUT_FORMATS } from "../../../command-internal/global-flags.ts";
@@ -62,7 +63,8 @@ export const configDiffCommand = Command.make("diff", config).pipe(
   ]),
   withPermissions(
     compose(
-      configTarget,
+      branchResolution,
+      projectRefPicker,
       {
         operations: [{ operationId: "v2-get-project-config", kind: "required" }],
         noApiEffectFlags: ["exit-code"],

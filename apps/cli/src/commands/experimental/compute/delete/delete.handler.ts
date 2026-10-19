@@ -46,10 +46,7 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
   // them; everything that can fail on its own — loading `config.toml`,
   // validating the name, resolving the compute — belongs inside, so those
   // failures still flush telemetry. Same shape as `config/push`.
-  const projectRef = yield* resolveProjectTarget({
-    remote: flags.remote,
-    projectRef: flags.projectRef,
-  });
+  const projectRef = yield* resolveProjectTarget(flags);
   // Every retry this command suggests is for a *destructive* re-run, so the ref
   // has to survive the copy-paste.
   const refSuffix = computeRemoteSuffix(flags, projectRef);

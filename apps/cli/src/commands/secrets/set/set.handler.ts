@@ -108,7 +108,7 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+  const ref = yield* resolveProjectTarget(flags);
 
   yield* Effect.gen(function* () {
     // Source 1: `[edge_runtime.secrets]` from `supabase/config.toml`. Only resolved values are

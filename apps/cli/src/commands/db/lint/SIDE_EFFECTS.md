@@ -39,7 +39,8 @@ resolve credentials); the lint itself issues no advisor/API requests.
 
 `--remote=<branch>`, and a bare `--remote` followed by a word that could name a branch, also call
 `GET /v1/projects/{parent}/branches` (Bearer) to find the branch's project; `{parent}` is
-`SUPABASE_PROJECT_ID`, else the linked project.
+`SUPABASE_PROJECT_ID`, else the linked project. A branch UUID with no linked project is resolved
+through `GET /v1/branches/{id}` instead.
 
 ## Database
 

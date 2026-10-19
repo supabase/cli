@@ -39,6 +39,7 @@ stack never prompts.
 | POST   | `/v1/projects/{ref}/database/query` | Bearer | `{"query":"<sql>"}`, plus `"read_only":true` with `--read-only` | 201, JSON array of row objects (read via `executeRaw`, since the typed operation voids the body).                                                                                                                     |
 | GET    | `/v1/projects/{ref}`                | Bearer | —                                                               | 200 → linked-project cache write; any other status → no write. Fired after the query on a remote project or branch.                                                                                                   |
 | GET    | `/v1/projects/{parent}/branches`    | Bearer | —                                                               | 200 → `[{id, name, project_ref}]`. Branch lookup — only for `--remote=<branch>`, and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project. |
+| GET    | `/v1/branches/{id}`                 | Bearer | —                                                               | 200 → `{ref, status, …}`. Branch lookup — only for `--remote=<branch UUID>` when no project is linked                                                                                                                 |
 
 ## Environment Variables
 

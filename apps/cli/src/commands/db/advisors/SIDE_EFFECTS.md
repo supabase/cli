@@ -35,6 +35,7 @@ The local lint query runs inside a transaction that is **always rolled back**.
 | GET    | `/v1/projects/{ref}/advisors/security`    | Bearer | —       | `{ lints: Lint[] }`                                                                                                                                                                             |
 | GET    | `/v1/projects/{ref}/advisors/performance` | Bearer | —       | `{ lints: Lint[] }`                                                                                                                                                                             |
 | GET    | `/v1/projects/{parent}/branches`          | Bearer | —       | `[{id, name, project_ref}]` — only for `--remote=<branch>`, and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
+| GET    | `/v1/branches/{id}`                       | Bearer | —       | `{ref, status, …}` — only for `--remote=<branch UUID>` when no project is linked                                                                                                                |
 
 Issued through the typed client; the generated schema keeps advisor
 `name` / `metadata.type` open, so values the API can add do not fail decoding.

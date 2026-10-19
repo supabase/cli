@@ -39,10 +39,9 @@ export const functionsList = Effect.fn("functions.list")(function* (flags: Funct
   const resolvedProjectRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
-    const ref = yield* resolveProjectTarget({
-      remote: flags.remote,
-      projectRef: flags.projectRef,
-    }).pipe(Effect.tap((projectRef) => Ref.set(resolvedProjectRef, Option.some(projectRef))));
+    const ref = yield* resolveProjectTarget(flags).pipe(
+      Effect.tap((projectRef) => Ref.set(resolvedProjectRef, Option.some(projectRef))),
+    );
     yield* Effect.annotateCurrentSpan("project.ref", ref);
 
     const fetching =

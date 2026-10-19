@@ -27,15 +27,16 @@ subcommand's own `SIDE_EFFECTS.md`.
 
 ## API Routes
 
-| Method   | Path                             | Auth         | Request body                                                                                                                         | Response (used fields)                                                             |
-| -------- | -------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| `GET`    | `/v1/projects`                   | Bearer token | —                                                                                                                                    | `[{id, ref, organization_slug, name, region, created_at, status, database}]`       |
-| `POST`   | `/v1/projects`                   | Bearer token | `{name, organization_slug, db_pass, region?, desired_instance_size?, high_availability?, release_channel?, postgres_engine?}` (JSON) | `{id, ref, organization_slug, name, region, created_at, status}`                   |
-| `DELETE` | `/v1/projects/{ref}`             | Bearer token | —                                                                                                                                    | `{id, ref, name}`; `404` → does-not-exist                                          |
-| `GET`    | `/v1/projects/{parent}/branches` | Bearer token | —                                                                                                                                    | `[{id, name, project_ref, is_default}]` — `api-keys` with `--remote=<branch>` only |
-| `GET`    | `/v1/projects/{ref}/api-keys`    | Bearer token | —                                                                                                                                    | `[{name, api_key?}]`                                                               |
-| `GET`    | `/v1/projects/{ref}`             | Bearer token | —                                                                                                                                    | linked-project cache fill, best-effort (`Effect.ensuring`)                         |
-| `GET`    | `/v1/organizations`              | Bearer token | —                                                                                                                                    | `[{id, slug, name}]` — `create` interactive org prompt only                        |
+| Method   | Path                             | Auth         | Request body                                                                                                                         | Response (used fields)                                                                        |
+| -------- | -------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `GET`    | `/v1/projects`                   | Bearer token | —                                                                                                                                    | `[{id, ref, organization_slug, name, region, created_at, status, database}]`                  |
+| `POST`   | `/v1/projects`                   | Bearer token | `{name, organization_slug, db_pass, region?, desired_instance_size?, high_availability?, release_channel?, postgres_engine?}` (JSON) | `{id, ref, organization_slug, name, region, created_at, status}`                              |
+| `DELETE` | `/v1/projects/{ref}`             | Bearer token | —                                                                                                                                    | `{id, ref, name}`; `404` → does-not-exist                                                     |
+| `GET`    | `/v1/projects/{parent}/branches` | Bearer token | —                                                                                                                                    | `[{id, name, project_ref, is_default}]` — `api-keys` with `--remote=<branch>` only            |
+| `GET`    | `/v1/branches/{id}`              | Bearer token | —                                                                                                                                    | `{ref, status, …}` — `api-keys` with `--remote=<branch UUID>` only, when no project is linked |
+| `GET`    | `/v1/projects/{ref}/api-keys`    | Bearer token | —                                                                                                                                    | `[{name, api_key?}]`                                                                          |
+| `GET`    | `/v1/projects/{ref}`             | Bearer token | —                                                                                                                                    | linked-project cache fill, best-effort (`Effect.ensuring`)                                    |
+| `GET`    | `/v1/organizations`              | Bearer token | —                                                                                                                                    | `[{id, slug, name}]` — `create` interactive org prompt only                                   |
 
 ## Environment Variables
 
@@ -101,4 +102,5 @@ subcommand's own `SIDE_EFFECTS.md`.
 - `api-keys` resolves `--remote=<ref|branch>` (or the deprecated `--project-ref` alias) via the shared
   resolver (flag → env → `.temp/project-ref` → prompt on a TTY → error when unlinked). A bare
   `--remote` targets the linked project, `--remote=<branch>` looks the branch up on the linked
-  project (`GET /v1/projects/{parent}/branches`), and `--remote=<url>` is rejected.
+  project (`GET /v1/projects/{parent}/branches`, or `GET /v1/branches/{id}` for a UUID when no
+  project is linked), and `--remote=<url>` is rejected.

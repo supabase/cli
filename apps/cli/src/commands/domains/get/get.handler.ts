@@ -18,7 +18,7 @@ export const domainsGet = Effect.fn("domains.get")(function* (flags: DomainsGetF
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+  const ref = yield* resolveProjectTarget(flags);
 
   // Write the linked-project cache and persist the telemetry state file on
   // success and failure.

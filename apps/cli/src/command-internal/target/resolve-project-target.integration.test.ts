@@ -11,11 +11,14 @@ import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import { ProjectRefNotLinkedError } from "../../config/project-ref.errors.ts";
 import { ProjectRefResolver } from "../../config/project-ref.service.ts";
+import { rootCommandForFeatures } from "../../cli/root.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { prepareCliArgs } from "../../shared/cli/run.ts";
 import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import type { RemoteValue } from "./remote-value.ts";
 import { resolveProjectTarget } from "./resolve-project-target.ts";
+import type { ProjectTargetFlagValues } from "./target-flags.ts";
 
 const FILE_REF = "filefilefilefilefile";
 const FLAG_REF = "flagflagflagflagflag";
@@ -34,15 +37,38 @@ const branchRow = (name: string) => ({
   with_data: true,
 });
 
-const run = (
-  input: { readonly remote?: RemoteValue; readonly projectRef?: string },
-  options: {
-    readonly linked?: boolean;
-    readonly savedRef?: string;
-    readonly args?: ReadonlyArray<string>;
-    readonly branches?: ReadonlyArray<ReturnType<typeof branchRow>>;
-    readonly interactive?: boolean;
-  } = {},
+const BRANCH_UUID = "11111111-2222-4333-8444-555555555555";
+
+const branchConfig = (ref: string, status: string) => ({
+  ref,
+  status,
+  postgres_version: "15",
+  postgres_engine: "15",
+  release_channel: "ga",
+  db_host: "h",
+  db_port: 5432,
+});
+
+const root = rootCommandForFeatures();
+
+interface RunOptions {
+  readonly linked?: boolean;
+  readonly savedRef?: string;
+  readonly args?: ReadonlyArray<string>;
+  readonly branches?: ReadonlyArray<ReturnType<typeof branchRow>>;
+  readonly branchById?: { readonly status: number; readonly body: unknown };
+  readonly interactive?: boolean;
+}
+
+interface RunInput {
+  readonly remote?: RemoteValue;
+  readonly projectRef?: string;
+}
+
+const runWith = <A, E, R>(
+  input: RunInput,
+  options: RunOptions,
+  resolve: (flags: ProjectTargetFlagValues) => Effect.Effect<A, E, R>,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -77,9 +103,15 @@ const run = (
       options.interactive === undefined ? {} : { interactive: options.interactive },
     );
     const api = mockCommandPlatformApi({
-      handler: (request) => Effect.succeed(jsonResponse(request, 200, options.branches ?? [])),
+      handler: (request) => {
+        if (request.url.includes("/v1/branches/")) {
+          const byId = options.branchById ?? { status: 404, body: { message: "not found" } };
+          return Effect.succeed(jsonResponse(request, byId.status, byId.body));
+        }
+        return Effect.succeed(jsonResponse(request, 200, options.branches ?? []));
+      },
     });
-    const exit = yield* resolveProjectTarget({
+    const exit = yield* resolve({
       remote: Option.fromNullishOr(input.remote),
       projectRef: Option.fromNullishOr(input.projectRef),
     }).pipe(
@@ -91,7 +123,9 @@ const run = (
           api.layer,
           mockCommandSettings({ workdir: dir, projectId: Option.none() }),
           commandRuntimeLayer(["functions", "deploy"]).pipe(Layer.provide(BunServices.layer)),
-          options.args === undefined ? Layer.empty : Layer.succeed(CliArgs, { args: options.args }),
+          options.args === undefined
+            ? Layer.empty
+            : Layer.succeed(CliArgs, prepareCliArgs(root, options.args)),
         ),
       ),
       Effect.exit,
@@ -108,13 +142,22 @@ const run = (
       progressEvents: out.progressEvents,
       refFlags,
       branchRequests: api.requests.length,
+      requestedUrls: api.requests.map((request) => request.url),
     };
   }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
 
-const refOf = (exit: Exit.Exit<string, unknown>) => {
+const run = (input: RunInput, options: RunOptions = {}) =>
+  runWith(input, options, (flags) => resolveProjectTarget(flags));
+
+const runDetailed = (input: RunInput, options: RunOptions = {}) =>
+  runWith(input, options, (flags) => resolveProjectTarget(flags, { detail: true }));
+
+const successOf = <A>(exit: Exit.Exit<A, unknown>): A => {
   if (!Exit.isSuccess(exit)) throw new Error(`expected success, got ${Cause.pretty(exit.cause)}`);
   return exit.value;
 };
+
+const refOf = (exit: Exit.Exit<string, unknown>) => successOf(exit);
 
 const failureOf = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
@@ -239,6 +282,131 @@ describe("resolveProjectTarget", () => {
     Effect.gen(function* () {
       const result = yield* run({}, { linked: false });
       expect(failureOf(result.exit)).toMatchObject({ _tag: "ProjectRefNotLinkedError" });
+    }),
+  );
+
+  it.effect(
+    "reads the branch list once, matching a branch UUID by id under the linked project",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          { remote: { _tag: "Branch", name: BRANCH_UUID } },
+          { savedRef: FILE_REF, branches: [{ ...branchRow("feature-x"), id: BRANCH_UUID }] },
+        );
+        expect(refOf(result.exit)).toBe(BRANCH_REF);
+        expect(result.requestedUrls).toEqual([
+          `https://api.supabase.com/v1/projects/${FILE_REF}/branches`,
+        ]);
+      }),
+  );
+
+  it.effect("resolves a branch UUID through GET /v1/branches/{id} when no project is linked", () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        { remote: { _tag: "Branch", name: BRANCH_UUID } },
+        { branchById: { status: 200, body: branchConfig(BRANCH_REF, "ACTIVE_HEALTHY") } },
+      );
+      expect(refOf(result.exit)).toBe(BRANCH_REF);
+      expect(result.requestedUrls).toEqual([`https://api.supabase.com/v1/branches/${BRANCH_UUID}`]);
+      expect(result.stderr).toContain(`branch ${BRANCH_REF}`);
+    }),
+  );
+
+  it.effect("reports an unknown branch UUID without a linked project", () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        { remote: { _tag: "Branch", name: BRANCH_UUID } },
+        { branchById: { status: 404, body: { message: "not found" } } },
+      );
+      expect(failureOf(result.exit)).toMatchObject({
+        _tag: "LinkBranchListStatusError",
+        message: expect.stringContaining(`Branch "${BRANCH_UUID}" not found`),
+      });
+    }),
+  );
+
+  it.effect("reports a branch UUID whose project is still provisioning", () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        { remote: { _tag: "Branch", name: BRANCH_UUID } },
+        { branchById: { status: 200, body: branchConfig("", "CREATING_PROJECT") } },
+      );
+      expect(failureOf(result.exit)).toMatchObject({
+        _tag: "LinkBranchNotReadyError",
+        message: expect.stringContaining("has no project ref yet"),
+      });
+    }),
+  );
+
+  it.effect("asks for a linked project before looking a branch name up", () =>
+    Effect.gen(function* () {
+      const result = yield* run({ remote: { _tag: "Branch", name: "feature-x" } });
+      expect(failureOf(result.exit)).toMatchObject({ _tag: "LinkBranchNotLinkedError" });
+      expect(result.branchRequests).toBe(0);
+    }),
+  );
+});
+
+describe("resolveProjectTarget with detail", () => {
+  it.effect("carries the source and linked-ref match the ref chain resolved", () =>
+    Effect.gen(function* () {
+      const flag = successOf((yield* runDetailed({ remote: { _tag: "Ref", ref: FLAG_REF } })).exit);
+      expect(flag).toEqual({
+        kind: "linked",
+        ref: FLAG_REF,
+        source: "flag",
+        matchesLinkedRef: false,
+      });
+      const file = successOf((yield* runDetailed({})).exit);
+      expect(file).toEqual({
+        kind: "linked",
+        ref: FILE_REF,
+        source: "file",
+        matchesLinkedRef: true,
+      });
+    }),
+  );
+
+  it.effect("names the branch and the project it was found under", () =>
+    Effect.gen(function* () {
+      const result = yield* runDetailed(
+        { remote: { _tag: "Branch", name: "feature-x" } },
+        { savedRef: FILE_REF, branches: [branchRow("feature-x")] },
+      );
+      expect(successOf(result.exit)).toEqual({
+        kind: "linked",
+        ref: BRANCH_REF,
+        source: "flag",
+        matchesLinkedRef: false,
+        branch: "feature-x",
+        parentRef: FILE_REF,
+      });
+    }),
+  );
+
+  it.effect("matches the linked ref when the branch's own ref is the saved one", () =>
+    Effect.gen(function* () {
+      const result = yield* runDetailed(
+        { remote: { _tag: "Branch", name: "feature-x" } },
+        { savedRef: BRANCH_REF, branches: [branchRow("feature-x")] },
+      );
+      expect(successOf(result.exit)).toMatchObject({ ref: BRANCH_REF, matchesLinkedRef: true });
+    }),
+  );
+
+  it.effect("names a branch resolved from a UUID by the UUID, with no parent", () =>
+    Effect.gen(function* () {
+      const result = yield* runDetailed(
+        { remote: { _tag: "Branch", name: BRANCH_UUID } },
+        { branchById: { status: 200, body: branchConfig(BRANCH_REF, "ACTIVE_HEALTHY") } },
+      );
+      expect(successOf(result.exit)).toEqual({
+        kind: "linked",
+        ref: BRANCH_REF,
+        source: "flag",
+        matchesLinkedRef: false,
+        branch: BRANCH_UUID,
+      });
     }),
   );
 });

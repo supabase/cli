@@ -116,13 +116,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
   const dnsResolver = yield* DnsResolverFlag;
 
   yield* Effect.gen(function* () {
-    const target = yield* resolveTarget({
-      remote: flags.remote,
-      local: flags.local,
-      linked: flags.linked,
-      dbUrl: flags.dbUrl,
-      projectRef: flags.projectRef,
-    });
+    const target = yield* resolveTarget(flags);
 
     const resolved = yield* resolver.resolveConnection({
       target,

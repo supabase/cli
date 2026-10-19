@@ -54,6 +54,7 @@ Managed local stack prove runs the catalog `pg_prove` tool through the owning st
 | POST   | `/v1/projects/{ref}/network-bans/retrieve` | access token | —                                         | `{ banned_ipv4_addresses }`                                                                                                                                                                     |
 | DELETE | `/v1/projects/{ref}/network-bans`          | access token | `{ ipv4_addresses, requester_ip: false }` | —                                                                                                                                                                                               |
 | GET    | `/v1/projects/{parent}/branches`           | access token | —                                         | `[{id, name, project_ref}]` — only for `--remote=<branch>`, and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
+| GET    | `/v1/branches/{id}`                        | access token | —                                         | `{ref, status, …}` — only for `--remote=<branch UUID>` when no project is linked                                                                                                                |
 
 ## Environment Variables
 

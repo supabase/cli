@@ -40,7 +40,7 @@ export const sslEnforcementGet = Effect.fn("ssl-enforcement.get")(function* (
   // emission fails. `linkedProjectCache.cache` requires a resolved ref, so
   // it wraps the inner sub-effect only.
   yield* Effect.gen(function* () {
-    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       const fetching =

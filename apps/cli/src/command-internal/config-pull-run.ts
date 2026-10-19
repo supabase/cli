@@ -27,7 +27,7 @@ import {
 } from "../config/cli-config-validation.ts";
 import { block } from "./command-permissions/model.ts";
 import { sanitizeErrorBody, sanitizeInlineName } from "./http-errors.ts";
-import type { ConfigTarget } from "./project-target.ts";
+import type { LinkedTarget } from "./target/resolve-target.ts";
 import { BRANCH_UUID_PATTERN } from "./ref-patterns.ts";
 import {
   configDeepSetAtPath,
@@ -92,7 +92,7 @@ import {
  */
 
 export interface ConfigPullPlanRequest {
-  readonly target: ConfigTarget;
+  readonly target: Pick<LinkedTarget, "ref" | "branch">;
   readonly remoteLabel: string | undefined;
   readonly source: ConfigPullSource;
 }

@@ -39,7 +39,7 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
     rawArgs,
     edgeRuntimeVersion,
     resolveProjectRef: () =>
-      resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef }).pipe(
+      resolveProjectTarget(flags).pipe(
         Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref))),
       ),
     // Written to stdout, so the TTY color gate must check stdout.

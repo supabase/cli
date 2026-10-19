@@ -40,10 +40,9 @@ export const functionsDownload = Effect.fn("functions.download")(function* (
       styleAqua: (text) => aqua(text),
       // Written to stderr, matching `yellow`'s default TTY gate.
       styleWarning: (text) => yellow(text),
-      resolveProjectRef: resolveProjectTarget({
-        remote: flags.remote,
-        projectRef: flags.projectRef,
-      }).pipe(Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref)))),
+      resolveProjectRef: resolveProjectTarget(flags).pipe(
+        Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref))),
+      ),
     });
 
     yield* Effect.annotateCurrentSpan("function.count", result.slugs.length);

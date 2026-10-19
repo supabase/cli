@@ -15,6 +15,7 @@ interface FlagConditionBase {
    */
   readonly source?: string;
   readonly dbTarget?: never;
+  readonly selector?: never;
 }
 
 /**
@@ -63,13 +64,28 @@ export type DbTarget = "local" | "db-url" | "linked";
 interface DbTargetCondition {
   readonly dbTarget: ReadonlyArray<DbTarget>;
   readonly source?: string;
+  readonly selector?: never;
   readonly flag?: never;
   readonly present?: never;
   readonly is?: never;
   readonly oneOf?: never;
 }
 
-export type EntryCondition = FlagCondition | DbTargetCondition;
+/** What the target selector carries once the deprecated aliases are folded in; `bare` is `--remote` or `--linked` with no value. */
+export type SelectorShape = "none" | "bare" | "ref" | "branch" | "url";
+
+/** Holds when the selector's shape is one of `selector`, whichever flag spelled it. */
+interface SelectorCondition {
+  readonly selector: ReadonlyArray<SelectorShape>;
+  readonly source?: string;
+  readonly dbTarget?: never;
+  readonly flag?: never;
+  readonly present?: never;
+  readonly is?: never;
+  readonly oneOf?: never;
+}
+
+export type EntryCondition = FlagCondition | DbTargetCondition | SelectorCondition;
 
 export interface OperationEntry {
   /** The spec's `operationId`, e.g. `"v1-list-all-secrets"`. */

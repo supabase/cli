@@ -7,8 +7,13 @@ import type {
   DbTarget,
   EntryCondition,
   OperationEntry,
+  SelectorShape,
 } from "../../src/command-internal/command-permissions/model.ts";
-import { DB_URL_PATTERN } from "../../src/command-internal/target/remote-vocabulary.ts";
+import { classifyNamedRemote } from "../../src/command-internal/target/remote-value.ts";
+import {
+  DB_URL_PATTERN,
+  LINKED_LITERAL,
+} from "../../src/command-internal/target/remote-vocabulary.ts";
 import { findCommand } from "../../src/shared/cli/command-docs.ts";
 
 /** Which command tree to resolve against: `start`/`status`/`stop` differ by stack backend. */
@@ -25,6 +30,40 @@ export type ActiveFlags = Readonly<Record<string, boolean | string>>;
 
 /** The flags that select a database target, in precedence order. */
 export const DB_TARGET_FLAGS = ["db-url", "local", "linked", "remote"] as const;
+
+/** The flags that carry a target selector, whichever spelling the run used. */
+export const SELECTOR_FLAGS = [
+  "remote",
+  "linked",
+  "project-ref",
+  "project-id",
+  "db-url",
+  "local",
+] as const;
+
+const shapeOfNamedRemote = (value: string): SelectorShape => {
+  const named = classifyNamedRemote(value);
+  return named._tag === "Ref" ? "ref" : named._tag === "DbUrl" ? "url" : "branch";
+};
+
+/** The shape of the target selector `activeFlags` carries, read in the order the CLI resolves them. */
+function selectorShapeOf(activeFlags: ActiveFlags): SelectorShape {
+  const given = (flag: string) => {
+    const value = Object.hasOwn(activeFlags, flag) ? activeFlags[flag] : undefined;
+    return value === "" ? undefined : value;
+  };
+  if (given("local") !== undefined) return "none";
+  const dbUrl = given("db-url");
+  if (dbUrl !== undefined) return "url";
+  const alias = given("project-ref") ?? given("project-id");
+  if (typeof alias === "string") return shapeOfNamedRemote(alias);
+  if (given("linked") !== undefined) return "bare";
+  const remote = given("remote");
+  if (remote === undefined) return "none";
+  return typeof remote === "string" && !LINKED_LITERAL.test(remote)
+    ? shapeOfNamedRemote(remote)
+    : "bare";
+}
 
 /** The target `activeFlags` selects (`db-url`, `local`, `linked`, `remote`, or `project-ref`, which imply linked unless `remote` is a database URL), else `fallback`. */
 function dbTargetOf(
@@ -48,6 +87,9 @@ function conditionHolds(
   dbTarget: () => DbTarget,
 ): boolean {
   if (condition.dbTarget !== undefined) return condition.dbTarget.includes(dbTarget());
+  if (condition.selector !== undefined) {
+    return condition.selector.includes(selectorShapeOf(activeFlags));
+  }
   const value = Object.hasOwn(activeFlags, condition.flag)
     ? activeFlags[condition.flag]
     : undefined;

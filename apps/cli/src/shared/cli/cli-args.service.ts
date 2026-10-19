@@ -1,11 +1,10 @@
 import { Context } from "effect";
 
-import type { RemoteArgvLeaf } from "./remote-argv.ts";
-
 export interface CliArgsShape {
+  /** The argv the command parses, with a bare `--remote <word>` already joined where that is the only reading. */
   readonly args: ReadonlyArray<string>;
-  /** How the resolved command reads its operands; present only when argv holds a bare `--remote`. */
-  readonly remoteLeaf?: RemoteArgvLeaf | undefined;
+  /** The word a bare `--remote` is followed by when it was taken as an operand and could name a branch. */
+  readonly bareRemoteOperand?: string | undefined;
 }
 
 export class CliArgs extends Context.Service<CliArgs, CliArgsShape>()("supabase/cli/CliArgs") {}

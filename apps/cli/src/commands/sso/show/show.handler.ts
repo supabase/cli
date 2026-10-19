@@ -56,7 +56,7 @@ export const ssoShow = Effect.fn("sso.show")(function* (flags: SsoShowFlags) {
   yield* Effect.gen(function* () {
     const providerId = yield* Effect.fromResult(validateUuid(flags.providerId));
 
-    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       const fetching =

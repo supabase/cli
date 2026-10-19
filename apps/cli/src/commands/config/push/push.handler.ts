@@ -13,7 +13,6 @@ import { requireHostedMutationConsent } from "../../../command-internal/hosted-c
 import { withAnnouncedTarget } from "../../../shared/output/command-target.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { assertDecryptableSecrets } from "../../../command-internal/db-config.toml-read.ts";
-import { resolveLinkedParentRef } from "../../../command-internal/parent-project-ref.ts";
 import { BRANCH_UUID_PATTERN } from "../../../command-internal/ref-patterns.ts";
 import {
   sanitizeInlineName,
@@ -21,10 +20,6 @@ import {
   sanitizeErrorBody,
   unexpectedStatusMessage,
 } from "../../../command-internal/http-errors.ts";
-import {
-  configTargetErrorsFor,
-  resolveConfigTarget,
-} from "../../../command-internal/project-target.ts";
 import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import {
   missingProjectConfigMessageEffect,
@@ -58,11 +53,6 @@ import {
   ConfigPushApiUpdateStatusError,
   ConfigPushAuthUpdateNetworkError,
   ConfigPushAuthUpdateStatusError,
-  ConfigPushBranchNotFoundError,
-  ConfigPushBranchNotLinkedError,
-  ConfigPushBranchNotReadyError,
-  ConfigPushBranchResolveNetworkError,
-  ConfigPushBranchResolveStatusError,
   ConfigPushConfigEmptyError,
   ConfigPushConfigReadNetworkError,
   ConfigPushConfigReadStatusError,
@@ -73,7 +63,6 @@ import {
   ConfigPushLoadConfigError,
   ConfigPushNetworkRestrictionsUpdateNetworkError,
   ConfigPushNetworkRestrictionsUpdateStatusError,
-  ConfigPushParentRefInvalidError,
   ConfigPushSslEnforcementUpdateNetworkError,
   ConfigPushSslEnforcementUpdateStatusError,
   ConfigPushStorageUpdateNetworkError,
@@ -201,22 +190,6 @@ const loadPushConfig = Effect.fn("config.push.loadConfig")(function* (
   };
 });
 
-const mapPushBranchResolveError = mapHttpError({
-  networkError: ConfigPushBranchResolveNetworkError,
-  statusError: ConfigPushBranchResolveStatusError,
-  networkMessage: (cause) => `failed to resolve branch: ${cause}`,
-  statusMessage: unexpectedStatusMessage,
-});
-
-/** Wires `resolveConfigTarget` (shared with `config diff`/`config pull`) to `config push`'s own
- *  tagged error classes. */
-const configTargetErrors = configTargetErrorsFor({
-  notLinked: ConfigPushBranchNotLinkedError,
-  parentRefInvalid: ConfigPushParentRefInvalidError,
-  branchNotFound: ConfigPushBranchNotFoundError,
-  branchNotReady: ConfigPushBranchNotReadyError,
-});
-
 export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushFlags) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
@@ -252,13 +225,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // the resolved config load before its one schema decode, so a base document that's invalid without its
     // overlay must never be decoded on its own — this can cost a network round trip before a
     // malformed `config.toml` is caught.
-    const { ref, branch } = yield* resolveProjectTarget(
-      { remote: flags.remote, projectRef: flags.projectRef },
-      {
-        resolveRequested: (requested) =>
-          resolveConfigTarget(requested, configTargetErrors, mapPushBranchResolveError),
-      },
-    );
+    const { ref, branch, parentRef } = yield* resolveProjectTarget(flags, { detail: true });
     yield* Ref.set(resolvedRef, Option.some(ref));
     yield* Effect.annotateCurrentSpan({
       "project.ref": ref,
@@ -298,22 +265,14 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // silently push empty content over a real hosted customization.
     const authEmailContent = yield* loadAuthEmailContent(cliSettings.workdir, config.auth.email);
 
-    // 5. Determine the push target for the echo and the payload. `resolveConfigTarget` returns
-    // only the raw branch name, not its resolved parent, so a name target's parent is re-derived
-    // here via a second local-only read (env/cache/file, no network) of the same chain that just
-    // resolved.
-    let knownBranch: ConfigPushKnownBranch | undefined;
-    if (branch !== undefined) {
-      if (BRANCH_UUID_PATTERN.test(branch)) {
-        knownBranch = { kind: "uuid" };
-      } else {
-        const parent = yield* resolveLinkedParentRef();
-        knownBranch =
-          parent.kind === "resolved"
-            ? { kind: "name", branchName: branch, parentRef: parent.ref }
-            : { kind: "uuid" };
-      }
-    }
+    // 5. Determine the push target for the echo and the payload. A UUID carries no display name,
+    // so only a branch looked up by name under its parent is known well enough to skip the probe.
+    const knownBranch: ConfigPushKnownBranch | undefined =
+      branch === undefined
+        ? undefined
+        : !BRANCH_UUID_PATTERN.test(branch) && parentRef !== undefined
+          ? { kind: "name", branchName: branch, parentRef }
+          : { kind: "uuid" };
     const target = yield* resolveConfigPushTarget(ref, { knownBranch }).pipe(
       Effect.withSpan("config.push.probeTarget"),
     );

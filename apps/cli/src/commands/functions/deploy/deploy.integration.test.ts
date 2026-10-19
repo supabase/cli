@@ -23,6 +23,8 @@ import { TestClock } from "effect/testing";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { rootCommandForFeatures } from "../../../cli/root.ts";
+import { cliArgsLayer, prepareCliArgs } from "../../../shared/cli/run.ts";
 import { stripControlSequences } from "../../../shared/output/strip-control-sequences.ts";
 import {
   type ApiHandler,
@@ -470,11 +472,12 @@ describe("functions deploy", () => {
           api,
           cliSettings: mockCommandSettings({ workdir: tempRoot.current, projectId: Option.none() }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
-          cliArgs: args,
         }),
         commandRuntimeLayer(["functions", "deploy"]).pipe(Layer.provide(BunServices.layer)),
         approvedHostedMutation,
-        Stdio.layerTest({ args: Effect.succeed(args) }),
+        cliArgsLayer(prepareCliArgs(rootCommandForFeatures(), args)).pipe(
+          Layer.provideMerge(Stdio.layerTest({ args: Effect.succeed(args) })),
+        ),
       );
       const deployedTo = () =>
         api.requests

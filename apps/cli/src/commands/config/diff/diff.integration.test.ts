@@ -86,7 +86,7 @@ const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
   },
 };
 
-/** V1GetABranch body for the branch-name `--remote` lookup. */
+/** A branch row of the linked project's branch list, which every branch `--remote` is looked up in. */
 const BRANCH_BY_NAME = {
   id: BRANCH_UUID,
   name: "staging",
@@ -117,7 +117,7 @@ interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
   readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
   readonly v2?: { status: number; body: unknown } | "fail";
-  readonly branchByName?: { status: number; body: unknown };
+  readonly branchList?: { status: number; body: unknown };
   readonly branchByUuid?: { status: number; body: unknown };
   /** `false` simulates a directory with no linked project. */
   readonly linked?: boolean;
@@ -156,8 +156,8 @@ function setup(opts: SetupOpts = {}) {
         const b = opts.branchByUuid ?? { status: 200, body: BRANCH_CONFIG };
         return Effect.succeed(jsonResponse(request, b.status, b.body));
       }
-      if (url.includes("/branches/")) {
-        const b = opts.branchByName ?? { status: 200, body: BRANCH_BY_NAME };
+      if (url.endsWith("/branches")) {
+        const b = opts.branchList ?? { status: 200, body: [BRANCH_BY_NAME] };
         return Effect.succeed(jsonResponse(request, b.status, b.body));
       }
       return Effect.succeed(jsonResponse(request, 200, {}));
@@ -588,13 +588,11 @@ describe("config diff integration", () => {
         `Comparing against 'staging' (branch ${BRANCH_REF}) using base config`,
       );
       const urls = api.requests.map((request) => request.url);
-      expect(urls.some((url) => url.includes(`/v1/projects/${VALID_REF}/branches/staging`))).toBe(
-        true,
-      );
+      expect(urls.some((url) => url.endsWith(`/v1/projects/${VALID_REF}/branches`))).toBe(true);
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
       assertPermissionDrift({
         command: "config diff",
-        activeFlags: { remote: true },
+        activeFlags: { remote: "staging" },
         requests: api.requests,
       });
     }).pipe(Effect.provide(layer));
@@ -622,13 +620,11 @@ describe("config diff integration", () => {
         );
         yield* configDiff(remoteBranch("staging"));
         const urls = api.requests.map((request) => request.url);
-        expect(urls.some((url) => url.includes(`/v1/projects/${VALID_REF}/branches/staging`))).toBe(
-          true,
-        );
+        expect(urls.some((url) => url.endsWith(`/v1/projects/${VALID_REF}/branches`))).toBe(true);
         expect(urls.some((url) => url.includes(`/v1/projects/${BRANCH_REF}/`))).toBe(false);
         assertPermissionDrift({
           command: "config diff",
-          activeFlags: { remote: true },
+          activeFlags: { remote: "staging" },
           requests: api.requests,
         });
       }).pipe(Effect.provide(layer));
@@ -652,7 +648,7 @@ describe("config diff integration", () => {
       );
       assertPermissionDrift({
         command: "config diff",
-        activeFlags: { remote: true },
+        activeFlags: { remote: BRANCH_UUID },
         requests: api.requests,
       });
     }).pipe(Effect.provide(layer));
@@ -666,11 +662,11 @@ describe("config diff integration", () => {
     return Effect.gen(function* () {
       yield* configDiff(remoteRef(BRANCH_REF));
       const urls = api.requests.map((request) => request.url);
-      expect(urls.some((url) => url.includes("/branches/"))).toBe(false);
+      expect(urls.some((url) => url.includes("/branches"))).toBe(false);
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
       assertPermissionDrift({
         command: "config diff",
-        activeFlags: { remote: true },
+        activeFlags: { remote: BRANCH_REF },
         requests: api.requests,
         exact: true,
       });
@@ -682,7 +678,7 @@ describe("config diff integration", () => {
     return Effect.gen(function* () {
       yield* configDiff({ ...noFlags, remote: Option.some<RemoteValue>({ _tag: "Linked" }) });
       expect(out.stderrText).toContain(`Comparing against project ${VALID_REF} using base config`);
-      expect(api.requests.some((request) => request.url.includes("/branches/"))).toBe(false);
+      expect(api.requests.some((request) => request.url.includes("/branches"))).toBe(false);
       assertPermissionDrift({
         command: "config diff",
         activeFlags: { remote: true },
@@ -707,9 +703,7 @@ describe("config diff integration", () => {
         `Comparing against 'staging' (branch ${BRANCH_REF}) using base config`,
       );
       expect(
-        api.requests.some((request) =>
-          request.url.includes(`/v1/projects/${VALID_REF}/branches/staging`),
-        ),
+        api.requests.some((request) => request.url.endsWith(`/v1/projects/${VALID_REF}/branches`)),
       ).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -739,19 +733,20 @@ describe("config diff integration", () => {
     );
   });
 
-  it.effect("an unknown branch fails with a branches-list suggestion", () => {
+  it.effect("an unknown branch fails listing the available branches", () => {
     const { layer, telemetry, linkedProjectCache } = setup({
       toml: 'project_id = "test"\n',
-      branchByName: { status: 404, body: { message: "not found" } },
+      branchList: { status: 200, body: [BRANCH_BY_NAME] },
     });
     return Effect.gen(function* () {
       const exit = yield* configDiff(remoteBranch("ghost")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigDiffBranchNotFoundError");
-        expect(causeText).toContain('Branch "ghost" not found');
-        expect(causeText).toContain("supabase branches list");
+        expect(causeText).toContain("LinkBranchNotFoundError");
+        expect(causeText).toContain(
+          `Branch "ghost" not found for project ${VALID_REF}. Available branches: staging`,
+        );
       }
       // Telemetry still flushes on failure; the linked-project cache stays untouched since no
       // ref resolved.
@@ -763,13 +758,13 @@ describe("config diff integration", () => {
   it.effect("a non-404 branch lookup failure keeps its status error", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
-      branchByName: { status: 500, body: { message: "boom" } },
+      branchList: { status: 500, body: { message: "boom" } },
     });
     return Effect.gen(function* () {
       const exit = yield* configDiff(remoteBranch("staging")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("ConfigDiffBranchResolveStatusError");
+        expect(Cause.pretty(exit.cause)).toContain("LinkBranchListStatusError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1387,7 +1382,7 @@ describe("config diff integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigDiffBranchNotLinkedError");
+        expect(causeText).toContain("LinkBranchNotLinkedError");
         expect(causeText).toContain('"somebranch"');
       }
       expect(api.requests).toHaveLength(0);
@@ -1406,7 +1401,7 @@ describe("config diff integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigDiffParentRefInvalidError");
+        expect(causeText).toContain("LinkParentRefInvalidError");
         expect(causeText).toContain('"somebranch"');
         expect(causeText).toContain("Relink the parent project");
       }
@@ -1417,14 +1412,14 @@ describe("config diff integration", () => {
   it.effect("a resolved branch with no project ref yet fails with a not-ready error", () => {
     const { layer, api } = setup({
       toml: 'project_id = "test"\n',
-      branchByName: { status: 200, body: { ...BRANCH_BY_NAME, project_ref: "" } },
+      branchList: { status: 200, body: [{ ...BRANCH_BY_NAME, project_ref: "" }] },
     });
     return Effect.gen(function* () {
       const exit = yield* configDiff(remoteBranch("staging")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigDiffBranchNotReadyError");
+        expect(causeText).toContain("LinkBranchNotReadyError");
         expect(causeText).toContain("has no project ref yet");
       }
       expect(api.requests.some((request) => request.url.includes("/v2/projects/"))).toBe(false);

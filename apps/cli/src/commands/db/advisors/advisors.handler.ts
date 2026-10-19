@@ -202,13 +202,7 @@ const runAdvisors = Effect.fnUntraced(function* (
   flags: DbAdvisorsFlags,
   dnsResolver: "native" | "https",
 ) {
-  const target = yield* resolveTarget({
-    remote: flags.remote,
-    local: flags.local,
-    linked: flags.linked,
-    dbUrl: flags.dbUrl,
-    projectRef: flags.projectRef,
-  });
+  const target = yield* resolveTarget(flags);
 
   const advisorType = Option.getOrElse(flags.type, () => "all");
   const level = Option.getOrElse(flags.level, () => "warn");

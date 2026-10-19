@@ -8,7 +8,8 @@ import { projectRefSafeFlags } from "../../../command-internal/target/project-re
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { configPullRun } from "../../../command-internal/config-pull-run.ts";
-import { configTarget } from "../../../command-internal/project-target.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
@@ -76,7 +77,8 @@ export const configPullCommand = Command.make("pull", config).pipe(
   ]),
   withPermissions(
     compose(
-      configTarget,
+      branchResolution,
+      projectRefPicker,
       configPullRun,
       { operations: [], noApiEffectFlags: ["remote-label", "dry-run", "force"] },
       linkedProjectCache,

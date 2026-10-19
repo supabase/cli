@@ -43,7 +43,7 @@ export const vanitySubdomainsActivate = Effect.fn("vanity-subdomains.activate")(
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       // This check sits inside both `Effect.ensuring` wrappers so telemetry and the

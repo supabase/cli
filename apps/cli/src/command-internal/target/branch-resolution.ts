@@ -12,7 +12,9 @@ import {
   parentRefInvalidMessage,
   parentRefTypoHint,
   resolveLinkedParentRef,
+  type ParentRefResolution,
 } from "../parent-project-ref.ts";
+import { BRANCH_UUID_PATTERN } from "../ref-patterns.ts";
 import {
   LinkBranchListNetworkError,
   LinkBranchListStatusError,
@@ -27,22 +29,25 @@ export type ParentBranch = Branches[number];
 
 const MAX_LISTED_BRANCHES = 20;
 
-const BRANCH_LOOKUP_CONTEXT =
-  "the value is neither a 20-letter project ref nor a database URL (a branch name or UUID), or a bare --remote is followed by a word that could name a branch";
-
-/** The branch listing every branch-name lookup makes against the linked project. */
+/** The branch lookups every `--remote` value that names a branch makes. */
 export const branchResolution = block("branch-resolution", [
   {
     operationId: "v1-list-all-branches",
     kind: "required",
-    when: [{ flag: "remote", present: true }],
-    context: BRANCH_LOOKUP_CONTEXT,
+    when: [{ selector: ["branch"] }],
+    context: "a project is linked, or the value is a branch name",
+  },
+  {
+    operationId: "v1-get-a-branch-config",
+    kind: "required",
+    when: [{ selector: ["branch"] }],
+    context: "the value is a branch UUID and no project is linked",
   },
   {
     operationId: "v1-list-all-branches",
-    kind: "required",
-    when: [{ flag: "project-ref", present: true }],
-    context: BRANCH_LOOKUP_CONTEXT,
+    kind: "best-effort",
+    when: [{ selector: ["bare"] }],
+    context: "a word after the bare --remote could name a branch of the linked project",
   },
 ]);
 
@@ -88,16 +93,13 @@ export const findBranch = (branches: Branches, value: string): ParentBranch | un
     (branch) => branch.name === value || branch.id.toLowerCase() === value.toLowerCase(),
   );
 
-/** The linked parent project's ref, searched for a branch named `value`. */
-const resolveBranchParentRef = Effect.fnUntraced(function* (value: string) {
-  const parent = yield* resolveLinkedParentRef();
-  if (parent.kind === "absent") {
-    return yield* new LinkBranchNotLinkedError({ message: parentNotLinkedMessage(value) });
-  }
-  if (parent.kind === "invalid") {
-    return yield* new LinkParentRefInvalidError({ message: parentRefInvalidMessage(value) });
-  }
-  return parent.ref;
+const unresolvedParent = Effect.fnUntraced(function* (
+  parent: Exclude<ParentRefResolution, { readonly kind: "resolved" }>,
+  value: string,
+) {
+  return parent.kind === "absent"
+    ? yield* new LinkBranchNotLinkedError({ message: parentNotLinkedMessage(value) })
+    : yield* new LinkParentRefInvalidError({ message: parentRefInvalidMessage(value) });
 });
 
 /** The eager client when the command built one, else the lazy factory's, so a bare run never resolves a token. */
@@ -114,7 +116,7 @@ const acquireApi = Effect.fnUntraced(function* () {
 });
 
 /** A branch-lookup spinner, shown only on a terminal: a non-terminal text run writes task steps to stdout, which may carry the command's payload. */
-export const startBranchLookupTask = Effect.fnUntraced(function* (label: string) {
+const startBranchLookupTask = Effect.fnUntraced(function* (label: string) {
   const output = yield* Output;
   return output.format === "text" && output.interactive ? yield* output.task(label) : undefined;
 });
@@ -142,16 +144,7 @@ export const listParentBranches = Effect.fnUntraced(function* (parentRef: string
   return branches;
 });
 
-/**
- * Resolves a non-ref-shaped value to the branch's project ref by looking it up (by name or UUID)
- * against the linked parent project's branches. A ref-shaped value (20 lowercase letters) is
- * always a ref and never looked up as a branch name.
- *
- * Uses the list endpoint rather than a single-branch lookup so the full list can power the
- * available-branches error.
- */
-export const resolveLinkBranchRef = Effect.fn("Target.resolveBranch")(function* (value: string) {
-  const parentRef = yield* resolveBranchParentRef(value);
+const resolveInParent = Effect.fnUntraced(function* (value: string, parentRef: string) {
   const branches = yield* listParentBranches(parentRef, "Resolving branch...");
   yield* Effect.annotateCurrentSpan({
     "project.parent_ref": parentRef,
@@ -178,4 +171,60 @@ export const resolveLinkBranchRef = Effect.fn("Target.resolveBranch")(function* 
     branchName: found.name,
     parentRef,
   } satisfies BranchResolution;
+});
+
+/**
+ * Resolves a non-ref-shaped value to the branch's project ref by looking it up (by name or UUID)
+ * against the linked parent project's branches. A ref-shaped value (20 lowercase letters) is
+ * always a ref and never looked up as a branch name.
+ *
+ * Uses the list endpoint rather than a single-branch lookup so the full list can power the
+ * available-branches error.
+ */
+export const resolveLinkBranchRef = Effect.fn("Target.resolveBranch")(function* (value: string) {
+  const parent = yield* resolveLinkedParentRef();
+  if (parent.kind !== "resolved") return yield* unresolvedParent(parent, value);
+  return yield* resolveInParent(value, parent.ref);
+});
+
+const resolveBranchById = Effect.fnUntraced(function* (id: string) {
+  const api = yield* acquireApi();
+  const mapBranchGetError = mapHttpError({
+    networkError: LinkBranchListNetworkError,
+    statusError: LinkBranchListStatusError,
+    networkMessage: (cause) => `failed to look up branch: ${cause}`,
+    statusMessage: (status, body) =>
+      status === 404
+        ? `Branch "${sanitizeInlineName(id)}" not found. Run \`supabase branches list\` to see available branches.`
+        : `unexpected get branch status ${status}: ${body}`,
+  });
+
+  const task = yield* startBranchLookupTask("Resolving branch...");
+  const detail = yield* api.v1.getABranchConfig({ branch_id_or_ref: id }).pipe(
+    Effect.tapError(() => task?.fail() ?? Effect.void),
+    Effect.catch(mapBranchGetError),
+  );
+  yield* task?.clear ?? Effect.void;
+
+  if (!PROJECT_REF_PATTERN.test(detail.ref)) {
+    return yield* new LinkBranchNotReadyError({
+      branch: id,
+      status: detail.status,
+      message: `Branch "${sanitizeInlineName(id)}" has no project ref yet (status: ${detail.status}). Wait for it to finish provisioning, then retry.`,
+    });
+  }
+  return { projectRef: detail.ref, branchName: undefined, parentRef: undefined };
+});
+
+/**
+ * Resolves the branch a `--remote` value names: against the linked project's branches when a
+ * project is linked, and a UUID with no usable link through `GET /v1/branches/{id}`.
+ */
+export const resolveRemoteBranchRef = Effect.fn("Target.resolveRemoteBranch")(function* (
+  value: string,
+) {
+  const parent = yield* resolveLinkedParentRef();
+  if (parent.kind === "resolved") return yield* resolveInParent(value, parent.ref);
+  if (BRANCH_UUID_PATTERN.test(value)) return yield* resolveBranchById(value);
+  return yield* unresolvedParent(parent, value);
 });

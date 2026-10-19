@@ -68,7 +68,7 @@ export const ssoRemove = Effect.fn("sso.remove")(function* (flags: SsoRemoveFlag
   yield* Effect.gen(function* () {
     const providerId = yield* Effect.fromResult(validateUuid(flags.providerId));
 
-    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       yield* requireHostedMutationConsent({ action: `Remove SSO provider ${providerId}` });

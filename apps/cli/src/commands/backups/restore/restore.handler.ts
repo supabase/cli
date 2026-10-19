@@ -29,7 +29,7 @@ export const backupsRestore = Effect.fn("backups.restore")(function* (flags: Bac
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+  const ref = yield* resolveProjectTarget(flags);
   const recoveryTimeTargetUnix = Option.getOrElse(flags.timestamp, () => 0);
 
   yield* Effect.gen(function* () {

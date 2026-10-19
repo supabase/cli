@@ -268,13 +268,7 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     });
 
   yield* Effect.gen(function* () {
-    const target = yield* resolveTarget({
-      remote: flags.remote,
-      local: flags.local,
-      linked: flags.linked,
-      dbUrl: flags.dbUrl,
-      projectRef: flags.projectRef,
-    });
+    const target = yield* resolveTarget(flags);
     // Recorded now so the cache finalizer still fires if a later step fails.
     if (target.kind === "linked") yield* Ref.set(linkedRefForCache, target.ref);
 

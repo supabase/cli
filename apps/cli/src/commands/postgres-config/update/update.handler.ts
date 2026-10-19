@@ -39,7 +39,7 @@ export const postgresConfigUpdate = Effect.fn("postgres-config.update")(function
       nextOverrides[splits[0] ?? ""] = splits[1] ?? "";
     }
 
-    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       const startTask = Effect.suspend((): Effect.Effect<OutputTask | undefined> =>

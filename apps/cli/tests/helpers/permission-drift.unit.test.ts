@@ -193,6 +193,47 @@ describe("assertDriftAgainst", () => {
     ).toThrow(/"v1-run-a-query", which is declared for this command but whose `when` condition/);
   });
 
+  describe("selector conditions", () => {
+    const branchLookup = declared({
+      status: "mapped",
+      operations: [
+        { operationId: "v1-list-all-secrets", kind: "required" },
+        {
+          operationId: "v1-list-all-branches",
+          kind: "required",
+          when: [{ selector: ["branch"] }],
+        },
+      ],
+      noApiEffectFlags: [],
+    });
+    const listBranches = { method: "GET", url: `${API}/v1/projects/${REF}/branches` };
+
+    it("accepts the branch listing only when a selector flag names a branch", () => {
+      const check = (activeFlags: Record<string, string | boolean>) =>
+        assertDriftAgainst(branchLookup, {
+          command: "secrets list",
+          activeFlags,
+          requests: [listSecrets, listBranches],
+        });
+      expect(() => check({ remote: "feature-x" })).not.toThrow();
+      expect(() => check({ "project-ref": "feature-x" })).not.toThrow();
+      expect(() => check({ remote: REF })).toThrow(/"v1-list-all-branches", which is declared/);
+      expect(() => check({})).toThrow(/"v1-list-all-branches", which is declared/);
+    });
+
+    it("classifies every flag that can carry the selector", () => {
+      for (const flag of ["remote", "linked", "project-ref", "project-id", "db-url", "local"]) {
+        expect(() =>
+          assertDriftAgainst(branchLookup, {
+            command: "secrets list",
+            activeFlags: { [flag]: true },
+            requests: [],
+          }),
+        ).not.toThrow();
+      }
+    });
+  });
+
   describe("request qualifiers", () => {
     const apiKeys = `${API}/v1/projects/${REF}/api-keys`;
     const withReveal = declared({

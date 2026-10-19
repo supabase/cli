@@ -8,7 +8,8 @@ import {
   dbConfigLinked,
   dbConfigPoolerFallbackLinked,
 } from "../../command-internal/db-config.layer.ts";
-import { configTarget } from "../../command-internal/project-target.ts";
+import { projectRefPicker } from "../../config/project-ref.layer.ts";
+import { branchResolution } from "../../command-internal/target/branch-resolution.ts";
 import { projectRefSafeFlags } from "../../command-internal/target/project-ref-safe-flags.ts";
 import { functionsDownload } from "../../shared/functions/download.ts";
 import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
@@ -92,7 +93,8 @@ export const pullCommand = Command.make("pull", config).pipe(
   ]),
   withPermissions(
     compose(
-      configTarget,
+      branchResolution,
+      projectRefPicker,
       configPullRun,
       linkedProjectCache,
       {

@@ -96,7 +96,7 @@ export const backupsList = Effect.fn("backups.list")(function* (flags: BackupsLi
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+  const ref = yield* resolveProjectTarget(flags);
 
   yield* Effect.gen(function* () {
     // Spinner is text-mode only; in JSON/stream-json it would leave a dangling `[task] start:`

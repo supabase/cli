@@ -258,7 +258,7 @@ function v2Response(
   };
 }
 
-/** V1FindBranch body for the branch-name `--remote` lookup. */
+/** A branch row of the linked project's branch list, which every branch `--remote` is looked up in. */
 const BRANCH_BY_NAME = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "staging",
@@ -371,7 +371,7 @@ interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
   readonly outputFlag?: (typeof GLOBAL_OUTPUT_FORMATS)[number];
   readonly v2?: { status: number; body: unknown } | "fail" | "decode-fail";
-  readonly branchByName?: { status: number; body: unknown } | "fail";
+  readonly branchList?: { status: number; body: unknown } | "fail";
   readonly branchByUuid?: { status: number; body: unknown };
   /** `false` simulates a directory with no linked project. */
   readonly linked?: boolean;
@@ -444,11 +444,11 @@ function setup(opts: SetupOpts = {}) {
         const b = opts.branchByUuid ?? { status: 200, body: BRANCH_CONFIG };
         return Effect.succeed(jsonResponse(request, b.status, b.body));
       }
-      if (url.includes("/branches/")) {
-        if (opts.branchByName === "fail") {
+      if (url.endsWith("/branches")) {
+        if (opts.branchList === "fail") {
           return Effect.fail(transportFailure(request));
         }
-        const b = opts.branchByName ?? { status: 200, body: BRANCH_BY_NAME };
+        const b = opts.branchList ?? { status: 200, body: [BRANCH_BY_NAME] };
         return Effect.succeed(jsonResponse(request, b.status, b.body));
       }
       return Effect.succeed(jsonResponse(request, 200, {}));
@@ -1767,7 +1767,7 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       yield* configPull({ ...noFlags, remote: refRemote(BRANCH_REF) });
       expect(out.stderrText).toContain(`Pulling config from project ${BRANCH_REF}`);
-      expect(api.requests.some((request) => request.url.includes("/branches/"))).toBe(false);
+      expect(api.requests.some((request) => request.url.includes("/branches"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -1822,13 +1822,11 @@ describe("config pull integration", () => {
       yield* configPull({ ...noFlags, remote: branchRemote("staging") });
       expect(out.stderrText).toContain(`Pulling config from 'staging' (branch ${BRANCH_REF})`);
       const urls = api.requests.map((request) => request.url);
-      expect(urls.some((url) => url.includes(`/v1/projects/${VALID_REF}/branches/staging`))).toBe(
-        true,
-      );
+      expect(urls.some((url) => url.endsWith(`/v1/projects/${VALID_REF}/branches`))).toBe(true);
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
       assertPermissionDrift({
         command: "config pull",
-        activeFlags: { remote: true },
+        activeFlags: { remote: "staging" },
         requests: api.requests,
       });
     }).pipe(Effect.provide(layer));
@@ -1863,7 +1861,7 @@ describe("config pull integration", () => {
       expect(yield* readConfig).toContain(`[remotes.${BRANCH_REF}]`);
       assertPermissionDrift({
         command: "config pull",
-        activeFlags: { remote: true },
+        activeFlags: { remote: BRANCH_UUID },
         requests: api.requests,
       });
     }).pipe(Effect.provide(layer));
@@ -1878,11 +1876,11 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       yield* configPull({ ...noFlags, remote: refRemote(BRANCH_REF) });
       const urls = api.requests.map((request) => request.url);
-      expect(urls.some((url) => url.includes("/branches/"))).toBe(false);
+      expect(urls.some((url) => url.includes("/branches"))).toBe(false);
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
       assertPermissionDrift({
         command: "config pull",
-        activeFlags: { remote: true },
+        activeFlags: { remote: BRANCH_REF },
         requests: api.requests,
         exact: true,
       });
@@ -1904,7 +1902,7 @@ describe("config pull integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const causeText = Cause.pretty(exit.cause);
-          expect(causeText).toContain("ConfigPullBranchNotLinkedError");
+          expect(causeText).toContain("LinkBranchNotLinkedError");
           expect(causeText).toContain('"somebranch"');
         }
         expect(api.requests).toHaveLength(0);
@@ -1927,7 +1925,7 @@ describe("config pull integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigPullParentRefInvalidError");
+        expect(causeText).toContain("LinkParentRefInvalidError");
         expect(causeText).toContain('"somebranch"');
         expect(causeText).toContain("Relink the parent project");
       }
@@ -1935,10 +1933,10 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("an unknown branch fails with a branches-list suggestion", () => {
+  it.effect("an unknown branch fails listing the available branches", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
-      branchByName: { status: 404, body: { message: "not found" } },
+      branchList: { status: 200, body: [BRANCH_BY_NAME] },
     });
     return Effect.gen(function* () {
       const exit = yield* configPull({ ...noFlags, remote: branchRemote("ghost") }).pipe(
@@ -1947,9 +1945,10 @@ describe("config pull integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigPullBranchNotFoundError");
-        expect(causeText).toContain('Branch "ghost" not found');
-        expect(causeText).toContain("supabase branches list");
+        expect(causeText).toContain("LinkBranchNotFoundError");
+        expect(causeText).toContain(
+          `Branch "ghost" not found for project ${VALID_REF}. Available branches: staging`,
+        );
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1957,7 +1956,7 @@ describe("config pull integration", () => {
   it.effect("a resolved branch with no project ref yet fails with a not-ready error", () => {
     const { layer, api } = setup({
       toml: 'project_id = "test"\n',
-      branchByName: { status: 200, body: { ...BRANCH_BY_NAME, project_ref: "" } },
+      branchList: { status: 200, body: [{ ...BRANCH_BY_NAME, project_ref: "" }] },
     });
     return Effect.gen(function* () {
       const exit = yield* configPull({
@@ -1967,7 +1966,7 @@ describe("config pull integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigPullBranchNotReadyError");
+        expect(causeText).toContain("LinkBranchNotReadyError");
         expect(causeText).toContain("has no project ref yet");
       }
       expect(api.requests.some((request) => request.url.includes("/v2/projects/"))).toBe(false);
@@ -1977,7 +1976,7 @@ describe("config pull integration", () => {
   it.effect("a non-404 branch lookup failure keeps its status error", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
-      branchByName: { status: 500, body: { message: "boom" } },
+      branchList: { status: 500, body: { message: "boom" } },
     });
     return Effect.gen(function* () {
       const exit = yield* configPull({
@@ -1986,7 +1985,7 @@ describe("config pull integration", () => {
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("ConfigPullReadStatusError");
+        expect(Cause.pretty(exit.cause)).toContain("LinkBranchListStatusError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -2135,8 +2134,8 @@ describe("config pull integration", () => {
     },
   );
 
-  it.effect("a branch-lookup transport failure maps to the read network error", () => {
-    const { layer } = setup({ toml: 'project_id = "test"\n', branchByName: "fail" });
+  it.effect("a branch-lookup transport failure maps to the branch list network error", () => {
+    const { layer } = setup({ toml: 'project_id = "test"\n', branchList: "fail" });
     return Effect.gen(function* () {
       const exit = yield* configPull({
         ...noFlags,
@@ -2145,8 +2144,8 @@ describe("config pull integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigPullReadNetworkError");
-        expect(causeText).toContain("failed to resolve branch");
+        expect(causeText).toContain("LinkBranchListNetworkError");
+        expect(causeText).toContain("failed to list branches");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -2343,7 +2342,7 @@ describe("config pull integration", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',
       format: "json",
-      branchByName: { status: 404, body: { message: "not found" } },
+      branchList: { status: 200, body: [BRANCH_BY_NAME] },
     });
     return Effect.gen(function* () {
       const exit = yield* configPull({ ...noFlags, remote: branchRemote("ghost") }).pipe(
@@ -2351,7 +2350,7 @@ describe("config pull integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("ConfigPullBranchNotFoundError");
+        expect(Cause.pretty(exit.cause)).toContain("LinkBranchNotFoundError");
       }
     }).pipe(Effect.provide(layer));
   });

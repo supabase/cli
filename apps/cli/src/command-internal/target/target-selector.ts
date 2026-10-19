@@ -1,6 +1,7 @@
 import { Option, Result } from "effect";
 
 import { classifyNamedRemote, type RemoteValue } from "./remote-value.ts";
+import type { TargetFlagValues } from "./target-flags.ts";
 import {
   TargetEmptyValueError,
   TargetNeedsProjectError,
@@ -9,25 +10,24 @@ import {
   type TargetSelectorError,
 } from "./target.errors.ts";
 
-export interface TargetSelectorInput {
-  readonly remote: Option.Option<RemoteValue>;
-  readonly local: boolean;
-  readonly linked: boolean;
-  /** Absent for a command with no database connection, which rejects a database URL. */
-  readonly dbUrl?: Option.Option<string>;
-  readonly projectRef: Option.Option<string>;
-  /** `gen types` only: the deprecated alias of `--project-ref`. */
-  readonly projectId?: Option.Option<string>;
-}
+/** The decoded selector flags; `dbUrl` is absent for a command with no database connection, which rejects a database URL. */
+export type TargetSelectorInput = TargetFlagValues & {
+  readonly dbUrl?: Option.Option<string> | undefined;
+};
 
-type TargetSelection =
-  | { readonly explicit: "local" }
-  | { readonly explicit: "db-url"; readonly url: string }
-  | { readonly explicit: "linked"; readonly ref: Option.Option<string> }
-  | { readonly explicit: "branch"; readonly name: string }
-  | { readonly explicit: undefined };
+/** What the flags select: the default, the local stack, or a remote project, branch or database. */
+type TargetSelection = { readonly _tag: "Default" } | { readonly _tag: "Local" } | RemoteValue;
 
-export type RemoteAliasFlag = "--linked" | "--project-ref" | "--project-id" | "--db-url";
+/** Whether any selector flag, `--local` and the deprecated aliases included, was given. */
+export const hasExplicitSelector = (flags: TargetSelectorInput): boolean =>
+  flags.local ||
+  flags.linked ||
+  Option.isSome(flags.remote) ||
+  Option.isSome(flags.projectRef) ||
+  Option.isSome(flags.projectId ?? Option.none()) ||
+  Option.isSome(flags.dbUrl ?? Option.none());
+
+type RemoteAliasFlag = "--linked" | "--project-ref" | "--project-id" | "--db-url";
 
 /** A deprecated selector flag the run used, with the `--remote` form it maps to. */
 export type TargetDeprecation =
@@ -53,19 +53,6 @@ export const joinFlags = (flags: ReadonlyArray<string>): string =>
   flags.length <= 2
     ? flags.join(" and ")
     : `${flags.slice(0, -1).join(", ")} and ${flags[flags.length - 1]}`;
-
-const selectionOf = (remote: RemoteValue): TargetSelection => {
-  switch (remote._tag) {
-    case "Linked":
-      return { explicit: "linked", ref: Option.none() };
-    case "Ref":
-      return { explicit: "linked", ref: Option.some(remote.ref) };
-    case "DbUrl":
-      return { explicit: "db-url", url: remote.url };
-    case "Branch":
-      return { explicit: "branch", name: remote.name };
-  }
-};
 
 const emptyValueError = (flag: "--db-url" | "--project-ref" | "--project-id") =>
   new TargetEmptyValueError({
@@ -145,19 +132,18 @@ export const parseTargetSelector = (
     readonly selection: TargetSelection;
     readonly deprecations: ReadonlyArray<TargetDeprecation>;
   } => {
-    if (input.local) return { selection: { explicit: "local" }, deprecations: [{ kind: "local" }] };
+    if (input.local) return { selection: { _tag: "Local" }, deprecations: [{ kind: "local" }] };
     if (dbUrl !== undefined) {
+      const value: RemoteValue = { _tag: "DbUrl", url: dbUrl };
       return {
-        selection: { explicit: "db-url", url: dbUrl },
-        deprecations: [
-          { kind: "remote-alias", flags: ["--db-url"], remote: { _tag: "DbUrl", url: dbUrl } },
-        ],
+        selection: value,
+        deprecations: [{ kind: "remote-alias", flags: ["--db-url"], remote: value }],
       };
     }
     if (aliasValue !== undefined) {
       const value = classifyNamedRemote(aliasValue);
       return {
-        selection: selectionOf(value),
+        selection: value,
         deprecations: [
           {
             kind: "remote-alias",
@@ -170,15 +156,15 @@ export const parseTargetSelector = (
     if (input.linked) {
       const value: RemoteValue = { _tag: "Linked" };
       return {
-        selection: selectionOf(value),
+        selection: value,
         deprecations: [{ kind: "remote-alias", flags: ["--linked"], remote: value }],
       };
     }
-    if (remote !== undefined) return { selection: selectionOf(remote), deprecations: [] };
-    return { selection: { explicit: undefined }, deprecations: [] };
+    if (remote !== undefined) return { selection: remote, deprecations: [] };
+    return { selection: { _tag: "Default" }, deprecations: [] };
   })();
 
-  if (input.dbUrl === undefined && outcome.selection.explicit === "db-url") {
+  if (input.dbUrl === undefined && outcome.selection._tag === "DbUrl") {
     return Result.fail(
       new TargetNeedsProjectError({
         message: `${options.commandName ?? "This command"} needs a project, not a database URL.`,

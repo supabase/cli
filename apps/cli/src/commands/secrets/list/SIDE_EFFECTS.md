@@ -24,6 +24,7 @@
 | `GET`  | `/v1/projects/{ref}/secrets`     | Bearer token | none         | `[{name, value, updated_at?}]` (value is digest)                                                                                                                                                                                                         |
 | `GET`  | `/v1/projects`                   | Bearer token | none         | `[{id, ref, name, ...}]` — TTY-prompt fallback only                                                                                                                                                                                                      |
 | `GET`  | `/v1/projects/{parent}/branches` | Bearer token | none         | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>` (or the deprecated `--project-ref=<branch>`), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
+| `GET`  | `/v1/branches/{id}`              | Bearer token | none         | `{ref, status, …}` — only for `--remote=<branch UUID>` when no project is linked                                                                                                                                                                         |
 
 ## Environment Variables
 

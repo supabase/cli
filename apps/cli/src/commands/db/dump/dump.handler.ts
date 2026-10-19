@@ -134,13 +134,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     }
 
     // 3. Resolve the target (`--remote` or an alias, else local) and connect to it.
-    const target = yield* resolveTarget({
-      remote: flags.remote,
-      local: flags.local,
-      linked: flags.linked,
-      dbUrl: flags.dbUrl,
-      projectRef: flags.projectRef,
-    });
+    const target = yield* resolveTarget(flags);
     // The linked-project cache is refreshed unconditionally afterward, even on a
     // connection-resolution failure.
     if (target.kind === "linked") {

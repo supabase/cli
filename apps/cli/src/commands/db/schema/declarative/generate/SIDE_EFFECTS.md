@@ -124,8 +124,9 @@ deleted.` (default no); a decline, or no answer, prints `Skipped writing declara
 - Remote Supabase targets use the shared connection/TLS behavior. `--remote=<branch>`, and a bare
   `--remote` followed by a word that could name a branch, call
   `GET /v1/projects/{parent}/branches` to find the branch's project (`{parent}` is
-  `SUPABASE_PROJECT_ID`, else the linked project); the connection may also mint a temporary login
-  role through the Management API.
+  `SUPABASE_PROJECT_ID`, else the linked project; a branch UUID with no linked project uses
+  `GET /v1/branches/{id}`); the connection may also mint a temporary login role through the
+  Management API.
 - **Architecture:** the engine extracts and renders the target in-process.
 - **Stale local-container guard.** A local target inspects
   the running local `db` container's actual image and compares it against the

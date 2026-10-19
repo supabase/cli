@@ -21,7 +21,7 @@ export const ssoInfo = Effect.fn("sso.info")(function* (flags: SsoInfoFlags) {
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       const payload = buildInfoPayload(ref);

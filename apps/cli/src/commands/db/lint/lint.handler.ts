@@ -101,13 +101,7 @@ const runLint = Effect.fnUntraced(function* (flags: DbLintFlags, dnsResolver: "n
   const dbConn = yield* DbConnection;
   const processControl = yield* ProcessControl;
 
-  const target = yield* resolveTarget({
-    remote: flags.remote,
-    local: flags.local,
-    linked: flags.linked,
-    dbUrl: flags.dbUrl,
-    projectRef: flags.projectRef,
-  });
+  const target = yield* resolveTarget(flags);
 
   const level = Option.getOrElse(flags.level, () => "warning");
   const failOn = Option.getOrElse(flags.failOn, () => "none");

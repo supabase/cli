@@ -9,7 +9,7 @@ import { OPERATIONS } from "../../../tests/helpers/operation-table.ts";
 import { readPermissions } from "./command-permissions.annotation.ts";
 import { GLOBAL_NO_API_EFFECT_FLAGS } from "../../../tests/helpers/permission-global-flags.ts";
 import type { CommandPermissions, EntryCondition, OperationEntry } from "./model.ts";
-import { DB_TARGET_FLAGS } from "../../../tests/helpers/permission-registry.ts";
+import { DB_TARGET_FLAGS, SELECTOR_FLAGS } from "../../../tests/helpers/permission-registry.ts";
 import type { PermissionVariant } from "../../../tests/helpers/permission-registry.ts";
 
 /**
@@ -48,9 +48,11 @@ function rootGlobalFlagIds(): ReadonlySet<string> {
 
 function conditionFlagNames(entries: ReadonlyArray<OperationEntry>): ReadonlyArray<string> {
   return entries.flatMap((entry) =>
-    (entry.when ?? []).flatMap((cond: EntryCondition) =>
-      cond.dbTarget === undefined ? [cond.flag] : DB_TARGET_FLAGS,
-    ),
+    (entry.when ?? []).flatMap((cond: EntryCondition) => {
+      if (cond.dbTarget !== undefined) return DB_TARGET_FLAGS;
+      if (cond.selector !== undefined) return SELECTOR_FLAGS;
+      return [cond.flag];
+    }),
   );
 }
 
@@ -127,6 +129,17 @@ describe("command permission mapping completeness", () => {
                     `${where} names the "${target}" target, which --${target} can't select and isn't the default`,
                   ).toBe(true);
                 }
+                continue;
+              }
+              if (cond.selector !== undefined) {
+                expect(
+                  cond.selector.length,
+                  `"${path}"'s \`when\` condition on "${entry.operationId}" lists no selector shapes`,
+                ).toBeGreaterThan(0);
+                expect(
+                  cond.source !== undefined || SELECTOR_FLAGS.some((flag) => node.flags.has(flag)),
+                  `"${path}"'s \`when\` condition on "${entry.operationId}" checks the target selector, but the command accepts no selector flag`,
+                ).toBe(true);
                 continue;
               }
               // A condition a building block wrote (`cond.source` set) only has to name a real flag

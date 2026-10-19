@@ -52,14 +52,19 @@ import {
   withDebugConsole,
   withTraceExport,
 } from "../telemetry/trace-export.layer.ts";
-import { CliArgs } from "./cli-args.service.ts";
+import { CliArgs, type CliArgsShape } from "./cli-args.service.ts";
 import { GLOBAL_VALUE_FLAG_TOKENS } from "./flag-groups.ts";
 import {
   BOOLEAN_FLAG_VALUES,
   resolveAgentOutputFormatFromArgs,
   ROOT_BOOLEAN_FLAGS,
 } from "./agent-output.ts";
-import { joinRemoteOperands, remoteOperandCapacity, type RemoteArgvLeaf } from "./remote-argv.ts";
+import {
+  bareRemoteOperand,
+  joinRemoteOperands,
+  remoteOperandCapacity,
+  type RemoteArgvLeaf,
+} from "./remote-argv.ts";
 import { SuccessTrailer, successTrailerLayer } from "./success-trailer.ts";
 import type { CliErrorSuggestionContext } from "./subcommand-flag-suggestions.ts";
 import {
@@ -189,7 +194,7 @@ function valueTakingFlagTokenPredicateForArgv(
 }
 
 /** How the command `args` resolves to reads its operands, or `undefined` without `--remote` or when the command takes no `--remote`. */
-export function remoteArgvLeafFor(
+function remoteArgvLeafFor(
   rootCommand: Command.Command.Any,
   args: ReadonlyArray<string>,
 ): RemoteArgvLeaf | undefined {
@@ -211,14 +216,31 @@ export function remoteArgvLeafFor(
   };
 }
 
-/** `args` with a bare `--remote <word>` joined to `--remote=<word>` wherever the command's operands leave no other reading. */
-export function rewriteRemoteArgv(
+/**
+ * `rawArgs` with a bare `--remote <word>` joined to `--remote=<word>` wherever the command's
+ * operands leave no other reading, plus the word a bare `--remote` is still followed by.
+ */
+export function prepareCliArgs(
   rootCommand: Command.Command.Any,
-  args: ReadonlyArray<string>,
-): ReadonlyArray<string> {
-  const leaf = remoteArgvLeafFor(rootCommand, args);
-  return leaf === undefined ? args : joinRemoteOperands(args, leaf);
+  rawArgs: ReadonlyArray<string>,
+): CliArgsShape {
+  const leaf = remoteArgvLeafFor(rootCommand, rawArgs);
+  if (leaf === undefined) return { args: rawArgs };
+  const args = joinRemoteOperands(rawArgs, leaf);
+  return { args, bareRemoteOperand: bareRemoteOperand(args, leaf) };
 }
+
+/** `CliArgs` and a `Stdio` whose `args` is the same argv, so every reader of either sees the rewritten command line. */
+export const cliArgsLayer = (cliArgs: CliArgsShape) =>
+  Layer.mergeAll(
+    Layer.succeed(CliArgs, cliArgs),
+    Layer.effect(
+      Stdio.Stdio,
+      Effect.map(Stdio.Stdio, (stdio) =>
+        Stdio.make({ ...stdio, args: Effect.succeed(cliArgs.args) }),
+      ),
+    ),
+  );
 
 /** Whether `token` is an occurrence of the long or exact-short boolean flag `name`, bare or valued (`--help`, `--help=false`). */
 function isFlagOccurrence(token: string, name: string): boolean {
@@ -600,10 +622,11 @@ function cliProgramFor<
   BeforeParseError,
 >(
   rootCommand: Command.Command<Name, Input, ContextInput, E, R>,
-  args: ReadonlyArray<string>,
+  cliArgs: CliArgsShape,
   options: RunCliOptions<BeforeParseError>,
   outputFormat: OutputFormat,
 ) {
+  const { args } = cliArgs;
   const runtimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
   const fallbackCommandLayer = Layer.mergeAll(
     // Root command env inference leaks some subcommand-provided services; these stand-ins die
@@ -632,9 +655,7 @@ function cliProgramFor<
     Layer.provideMerge(projectLinkStateLayer),
     Layer.provideMerge(runtimeLayer),
     Layer.provideMerge(fallbackCommandLayer),
-    Layer.provideMerge(
-      Layer.succeed(CliArgs, { args, remoteLeaf: remoteArgvLeafFor(rootCommand, args) }),
-    ),
+    Layer.provideMerge(cliArgsLayer(cliArgs)),
     Layer.provideMerge(BunServices.layer),
   );
   return withoutParseErrorHelpDump(
@@ -674,7 +695,8 @@ export const runCli = Effect.fnUntraced(function* <
     const stdio = yield* Stdio.Stdio;
     return yield* stdio.args;
   }).pipe(Effect.provide(BunServices.layer));
-  const args = rewriteRemoteArgv(rootCommand, rawArgs);
+  const cliArgs = prepareCliArgs(rootCommand, rawArgs);
+  const { args } = cliArgs;
 
   // Same shape `formatterLayerFor` builds below, so `normalizeCause`'s fallback path can reuse
   // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the formatters would.
@@ -684,7 +706,7 @@ export const runCli = Effect.fnUntraced(function* <
     const aiTool = yield* AiTool;
     return resolveAgentOutputFormatFromArgs(args, aiTool.name, options.agentDefaultOutputFormat);
   }).pipe(Effect.provide(aiToolLayer));
-  const cliProgram = cliProgramFor(rootCommand, args, options, outputFormat);
+  const cliProgram = cliProgramFor(rootCommand, cliArgs, options, outputFormat);
 
   const signalAwareLayer = processControlLayer.pipe(
     Layer.provideMerge(runtimeInfoLayer),

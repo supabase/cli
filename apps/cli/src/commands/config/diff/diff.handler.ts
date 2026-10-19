@@ -15,15 +15,7 @@ import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { unsupportedOutputFlagMessage } from "../../../command-internal/output-formats.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
-import {
-  mapHttpError,
-  sanitizeErrorBody,
-  unexpectedStatusMessage,
-} from "../../../command-internal/http-errors.ts";
-import {
-  configTargetErrorsFor,
-  resolveConfigTarget,
-} from "../../../command-internal/project-target.ts";
+import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
 import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { configIsRecord } from "../config.paths.ts";
 import {
@@ -43,34 +35,13 @@ import {
   type ConfigDiffContext,
 } from "./diff.format.ts";
 import {
-  ConfigDiffBranchNotFoundError,
-  ConfigDiffBranchNotLinkedError,
-  ConfigDiffBranchNotReadyError,
-  ConfigDiffBranchResolveNetworkError,
-  ConfigDiffBranchResolveStatusError,
   ConfigDiffLoadConfigError,
   ConfigDiffOutputFlagUnsupportedError,
-  ConfigDiffParentRefInvalidError,
   ConfigDiffReadNetworkError,
   ConfigDiffReadStatusError,
   ConfigDiffWorkdirError,
 } from "./diff.errors.ts";
 import type { ConfigDiffFlags } from "./diff.command.ts";
-
-const mapBranchResolveError = mapHttpError({
-  networkError: ConfigDiffBranchResolveNetworkError,
-  statusError: ConfigDiffBranchResolveStatusError,
-  networkMessage: (cause) => `failed to resolve branch: ${cause}`,
-  statusMessage: unexpectedStatusMessage,
-});
-
-// Maps resolveConfigTarget's generic errors onto config diff's own tagged error classes.
-const configTargetErrors = configTargetErrorsFor({
-  notLinked: ConfigDiffBranchNotLinkedError,
-  parentRefInvalid: ConfigDiffParentRefInvalidError,
-  branchNotFound: ConfigDiffBranchNotFoundError,
-  branchNotReady: ConfigDiffBranchNotReadyError,
-});
 
 export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffFlags) {
   const output = yield* Output;
@@ -112,14 +83,7 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
       makeLoadError,
     );
 
-    // See resolveConfigTarget's doc comment for the target-resolution rules this preserves.
-    const { ref, branch } = yield* resolveProjectTarget(
-      { remote: flags.remote, projectRef: flags.projectRef },
-      {
-        resolveRequested: (requested) =>
-          resolveConfigTarget(requested, configTargetErrors, mapBranchResolveError),
-      },
-    );
+    const { ref, branch } = yield* resolveProjectTarget(flags, { detail: true });
     yield* Ref.set(resolvedRef, Option.some(ref));
     yield* Effect.annotateCurrentSpan({
       "project.ref": ref,

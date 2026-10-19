@@ -20,7 +20,7 @@ export const domainsReverify = Effect.fn("domains.reverify")(function* (
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+  const ref = yield* resolveProjectTarget(flags);
 
   yield* Effect.gen(function* () {
     const reverifying =

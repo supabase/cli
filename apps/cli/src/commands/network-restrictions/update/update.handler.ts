@@ -60,7 +60,7 @@ export const networkRestrictionsUpdate = Effect.fn("network-restrictions.update"
     }
     const { v4, v6 } = validation.success;
 
-    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       yield* requireHostedMutationConsent({

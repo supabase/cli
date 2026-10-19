@@ -54,7 +54,7 @@ export const notebooksPush = Effect.fn("notebooks.push")(function* (flags: Noteb
     // failing after the project has already changed.
     yield* rejectNotebooksEnvOutput();
 
-    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       const local = yield* listLocalNotebooks(workdir);

@@ -34,7 +34,7 @@ export const networkBansRemove = Effect.fn("network-bans.remove")(function* (
 
   yield* Effect.gen(function* () {
     // Resolves before validating --db-unban-ip, so a bad ref surfaces before a bad IP.
-    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       for (const ip of flags.dbUnbanIp) {

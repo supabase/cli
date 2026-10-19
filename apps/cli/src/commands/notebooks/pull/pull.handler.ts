@@ -55,7 +55,7 @@ export const notebooksPull = Effect.fn("notebooks.pull")(function* (flags: Noteb
     // and failing at emit time would mean failing after the files are written.
     yield* rejectNotebooksEnvOutput();
 
-    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       const pulled: Array<string> = [];

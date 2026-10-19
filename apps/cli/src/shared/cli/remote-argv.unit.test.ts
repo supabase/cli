@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { rootCommandForFeatures } from "../../cli/root.ts";
 import { bareRemoteOperand, joinRemoteOperands, type RemoteArgvLeaf } from "./remote-argv.ts";
-import { remoteArgvLeafFor, rewriteRemoteArgv } from "./run.ts";
+import { prepareCliArgs } from "./run.ts";
 
 const REF = "abcdefghijklmnopqrst";
 const URL = "postgresql://postgres:secret@db.example.com:5432/postgres";
@@ -199,7 +199,7 @@ describe("bareRemoteOperand", () => {
   });
 });
 
-describe("rewriteRemoteArgv", () => {
+describe("prepareCliArgs argv", () => {
   const root = rootCommandForFeatures();
   const cases: ReadonlyArray<{
     readonly name: string;
@@ -259,16 +259,13 @@ describe("rewriteRemoteArgv", () => {
   ];
 
   it.each(cases)("$name", ({ args, expected }) => {
-    expect(rewriteRemoteArgv(root, args)).toEqual(expected);
+    expect(prepareCliArgs(root, args).args).toEqual(expected);
   });
 });
 
-describe("bareRemoteOperand on the real command tree", () => {
+describe("prepareCliArgs bareRemoteOperand on the real command tree", () => {
   const root = rootCommandForFeatures();
-  const operandOf = (raw: ReadonlyArray<string>) => {
-    const args = rewriteRemoteArgv(root, raw);
-    return bareRemoteOperand(args, remoteArgvLeafFor(root, args));
-  };
+  const operandOf = (raw: ReadonlyArray<string>) => prepareCliArgs(root, raw).bareRemoteOperand;
 
   it.each([
     { name: "seed's subcommand", args: ["seed", "--remote", "buckets"] },

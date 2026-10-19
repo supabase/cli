@@ -280,8 +280,7 @@ interface SetupOptions {
   // unnamed project, and branch-lookup endpoints degrade to "not found"/empty rather than
   // hanging or decode-erroring. `"fail"` simulates a transport failure, distinct from a status.
   readonly project?: { status: number; body: unknown } | "fail";
-  readonly branchList?: { status: number; body: unknown };
-  readonly branchByName?: { status: number; body: unknown } | "fail";
+  readonly branchList?: { status: number; body: unknown } | "fail";
   readonly branchById?: { status: number; body: unknown };
   /**
    * `cliSettings.projectId` override — defaults to `Option.some(REF)`. Pass `Option.none()` so
@@ -308,7 +307,6 @@ type PushApiRoutes = Pick<
   | "authPatch"
   | "project"
   | "branchList"
-  | "branchByName"
   | "branchById"
 >;
 
@@ -397,14 +395,10 @@ function pushApiHandler(opts: PushApiRoutes): MockCommandPlatformApiOpts["handle
     // Branch resolution + the best-effort branch-name lookup — defaults degrade to
     // "not found"/empty rather than hanging.
     if (/^\/v1\/projects\/[a-z0-9-]+\/branches$/.test(pathname)) {
-      const b = opts.branchList ?? { status: 200, body: [] };
-      return Effect.succeed(jsonResponse(request, b.status, b.body));
-    }
-    if (/^\/v1\/projects\/[a-z0-9-]+\/branches\/[^/]+$/.test(pathname)) {
-      if (opts.branchByName === "fail") {
+      if (opts.branchList === "fail") {
         return Effect.fail(transportFailure(request));
       }
-      const b = opts.branchByName ?? { status: 404, body: {} };
+      const b = opts.branchList ?? { status: 200, body: [] };
       return Effect.succeed(jsonResponse(request, b.status, b.body));
     }
     if (/^\/v1\/branches\/[0-9a-f-]+$/.test(pathname)) {
@@ -3445,7 +3439,7 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
       const { layer, api } = setup({
         toml: BRANCH_PUSH_TOML,
         yes: true,
-        branchByName: { status: 200, body: BRANCH_BY_NAME },
+        branchList: { status: 200, body: [BRANCH_BY_NAME] },
         v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
       });
       return Effect.gen(function* () {
@@ -3459,7 +3453,7 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
         assertPermissionDrift({
           command: "config push",
           requests: api.requests,
-          activeFlags: { remote: true },
+          activeFlags: { remote: "staging" },
         });
       }).pipe(Effect.provide(layer));
     },
@@ -3469,7 +3463,7 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
     const { layer, out } = setup({
       toml: BRANCH_PUSH_TOML,
       yes: true,
-      branchByName: { status: 200, body: BRANCH_BY_NAME },
+      branchList: { status: 200, body: [BRANCH_BY_NAME] },
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
@@ -3483,7 +3477,7 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
       toml: BRANCH_PUSH_TOML,
       yes: true,
       format: "json",
-      branchByName: { status: 200, body: BRANCH_BY_NAME },
+      branchList: { status: 200, body: [BRANCH_BY_NAME] },
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
@@ -3517,7 +3511,7 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
       assertPermissionDrift({
         command: "config push",
         requests: api.requests,
-        activeFlags: { remote: true },
+        activeFlags: { remote: BRANCH_UUID },
       });
     }).pipe(Effect.provide(layer));
   });
@@ -3544,7 +3538,7 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
     const { layer, out } = setup({
       toml: BRANCH_PUSH_TOML,
       yes: true,
-      branchByName: { status: 200, body: BRANCH_BY_NAME },
+      branchList: { status: 200, body: [BRANCH_BY_NAME] },
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
       cliArgs: ["config", "push", "--project-ref", "staging"],
     });
@@ -3569,7 +3563,7 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
         remote: Option.some<RemoteValue>({ _tag: "Ref", ref: BRANCH_REF }),
         projectRef: Option.none(),
       });
-      expect(api.requests.some((r) => r.url.includes("/branches/"))).toBe(false);
+      expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(false);
       expect(api.requests.some((r) => r.url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(
         true,
       );
@@ -3601,20 +3595,21 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
     );
   });
 
-  it.effect("--remote=<unknown-branch-name> fails with a branches-list suggestion", () => {
+  it.effect("--remote=<unknown-branch-name> fails listing the available branches", () => {
     const { layer, api, telemetry, linkedProjectCache } = setup({
       toml: BRANCH_PUSH_TOML,
       yes: true,
-      branchByName: { status: 404, body: { message: "not found" } },
+      branchList: { status: 200, body: [BRANCH_BY_NAME] },
     });
     return Effect.gen(function* () {
       const exit = yield* configPush(pushRemoteBranch("ghost")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigPushBranchNotFoundError");
-        expect(causeText).toContain('Branch "ghost" not found');
-        expect(causeText).toContain("supabase branches list");
+        expect(causeText).toContain("LinkBranchNotFoundError");
+        expect(causeText).toContain(
+          `Branch "ghost" not found for project ${REF}. Available branches: staging`,
+        );
       }
       expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
       // Telemetry flushes even though ref resolution failed; the linked-project cache stays
@@ -3631,13 +3626,13 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
         toml: BRANCH_PUSH_TOML,
         yes: true,
         format: "json",
-        branchByName: { status: 404, body: { message: "not found" } },
+        branchList: { status: 200, body: [BRANCH_BY_NAME] },
       });
       return Effect.gen(function* () {
         const exit = yield* configPush(pushRemoteBranch("ghost")).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(Cause.pretty(exit.cause)).toContain("ConfigPushBranchNotFoundError");
+          expect(Cause.pretty(exit.cause)).toContain("LinkBranchNotFoundError");
         }
         expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
       }).pipe(Effect.provide(layer));
@@ -3655,7 +3650,7 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigPushBranchNotLinkedError");
+        expect(causeText).toContain("LinkBranchNotLinkedError");
         expect(causeText).toContain('"somebranch"');
       }
       expect(api.requests).toHaveLength(0);
@@ -3675,7 +3670,7 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigPushParentRefInvalidError");
+        expect(causeText).toContain("LinkParentRefInvalidError");
         expect(causeText).toContain('"somebranch"');
       }
       expect(api.requests).toHaveLength(0);
@@ -3688,14 +3683,14 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
     const { layer, api, telemetry, linkedProjectCache } = setup({
       toml: BRANCH_PUSH_TOML,
       yes: true,
-      branchByName: { status: 200, body: { ...BRANCH_BY_NAME, project_ref: "" } },
+      branchList: { status: 200, body: [{ ...BRANCH_BY_NAME, project_ref: "" }] },
     });
     return Effect.gen(function* () {
       const exit = yield* configPush(pushRemoteBranch("staging")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("ConfigPushBranchNotReadyError");
+        expect(causeText).toContain("LinkBranchNotReadyError");
         expect(causeText).toContain("has no project ref yet");
       }
       expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
@@ -3706,17 +3701,17 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("a transport failure resolving a branch name maps to the resolve network error", () => {
+  it.effect("a transport failure listing branches maps to the branch list network error", () => {
     const { layer, telemetry, linkedProjectCache } = setup({
       toml: BRANCH_PUSH_TOML,
       yes: true,
-      branchByName: "fail",
+      branchList: "fail",
     });
     return Effect.gen(function* () {
       const exit = yield* configPush(pushRemoteBranch("staging")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("ConfigPushBranchResolveNetworkError");
+        expect(Cause.pretty(exit.cause)).toContain("LinkBranchListNetworkError");
       }
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBeUndefined();
@@ -3727,13 +3722,13 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
     const { layer, telemetry, linkedProjectCache } = setup({
       toml: BRANCH_PUSH_TOML,
       yes: true,
-      branchByName: { status: 500, body: { message: "boom" } },
+      branchList: { status: 500, body: { message: "boom" } },
     });
     return Effect.gen(function* () {
       const exit = yield* configPush(pushRemoteBranch("staging")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("ConfigPushBranchResolveStatusError");
+        expect(Cause.pretty(exit.cause)).toContain("LinkBranchListStatusError");
       }
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBeUndefined();

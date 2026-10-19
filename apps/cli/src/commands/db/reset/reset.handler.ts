@@ -153,13 +153,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       resolvedVersion = versions[total - last - 1] ?? "-";
     }
 
-    const target = yield* resolveTarget({
-      remote: flags.remote,
-      local: flags.local,
-      linked: flags.linked,
-      dbUrl: flags.dbUrl,
-      projectRef: flags.projectRef,
-    });
+    const target = yield* resolveTarget(flags);
 
     // Recorded before the fallible connection resolution, so the post-run cache finalizer still
     // fires when it fails mid-way (merged config, temp-role mint, connection).

@@ -2,17 +2,9 @@ import { Effect, FileSystem, Option, Ref } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { pathHasUncommittedChanges } from "../../../command-internal/git-status.ts";
-import {
-  mapHttpError,
-  sanitizeInlineName,
-  unexpectedStatusMessage,
-} from "../../../command-internal/http-errors.ts";
-import {
-  configTargetErrorsFor,
-  resolveConfigTarget,
-  type ConfigTarget,
-} from "../../../command-internal/project-target.ts";
+import { sanitizeInlineName } from "../../../command-internal/http-errors.ts";
 import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
+import type { LinkedTarget } from "../../../command-internal/target/resolve-target.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -34,13 +26,7 @@ import { withAnnouncedTarget } from "../../../shared/output/command-target.servi
 import { configPullCreatedBlockLabel, configPullSummaryMessage } from "./pull.format.ts";
 import type { ConfigPullPlan } from "./pull.plan.ts";
 import {
-  ConfigPullBranchNotFoundError,
-  ConfigPullBranchNotLinkedError,
-  ConfigPullBranchNotReadyError,
   ConfigPullOutputFlagUnsupportedError,
-  ConfigPullParentRefInvalidError,
-  ConfigPullReadNetworkError,
-  ConfigPullReadStatusError,
   ConfigPullUncommittedChangesError,
   ConfigPullWorkdirError,
 } from "./pull.errors.ts";
@@ -57,25 +43,10 @@ import type { ConfigPullFlags } from "./pull.command.ts";
 export { openConfigPullSource };
 export type { ConfigPullSource };
 
-const mapBranchResolveError = mapHttpError({
-  networkError: ConfigPullReadNetworkError,
-  statusError: ConfigPullReadStatusError,
-  networkMessage: (cause) => `failed to resolve branch: ${cause}`,
-  statusMessage: unexpectedStatusMessage,
-});
-
-// Maps resolveConfigTarget's generic errors onto config pull's own tagged error classes.
-const configTargetErrors = configTargetErrorsFor({
-  notLinked: ConfigPullBranchNotLinkedError,
-  parentRefInvalid: ConfigPullParentRefInvalidError,
-  branchNotFound: ConfigPullBranchNotFoundError,
-  branchNotReady: ConfigPullBranchNotReadyError,
-});
-
 /** Everything `config pull` does once the target is known, reusable independently of the CLI
  *  flag surface. */
 export interface ConfigPullInput {
-  readonly target: ConfigTarget;
+  readonly target: Pick<LinkedTarget, "ref" | "branch">;
   /** `--remote-label`, already filtered so an empty value reads as absent. */
   readonly remoteLabel: string | undefined;
   readonly dryRun: boolean;
@@ -255,14 +226,7 @@ export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullF
     // and a malformed document doesn't burn a branch-resolution round trip.
     const source = yield* openConfigPullSource();
 
-    // Resolves the pull target via resolveConfigTarget, shared with config diff/config push.
-    const { ref, branch } = yield* resolveProjectTarget(
-      { remote: flags.remote, projectRef: flags.projectRef },
-      {
-        resolveRequested: (requested) =>
-          resolveConfigTarget(requested, configTargetErrors, mapBranchResolveError),
-      },
-    );
+    const { ref, branch } = yield* resolveProjectTarget(flags, { detail: true });
     yield* Ref.set(resolvedRef, Option.some(ref));
     yield* Effect.annotateCurrentSpan("config.target_is_branch", branch !== undefined);
 

@@ -102,7 +102,7 @@ export const snippetsList = Effect.fn("snippets.list")(function* (flags: Snippet
   //   write linked-project cache (needs `ref`)
   //   flush telemetry (no `ref` required)
   yield* Effect.gen(function* () {
-    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       if (Option.getOrUndefined(outputFlag) === "env") {

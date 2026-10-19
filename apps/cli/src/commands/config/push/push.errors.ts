@@ -5,7 +5,6 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
-import { mintConfigTargetErrors } from "../../../command-internal/project-target.ts";
 
 /**
  * Tagged errors for `supabase config push`.
@@ -63,55 +62,6 @@ export class ConfigPushWorkdirError extends Data.TaggedError(
 )<MessageOnlyArgs> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
-  }
-}
-
-// --remote accepts a project ref, or the name (or UUID) of one of its branches; mirrors
-// config diff's own error set under push's own names.
-const targetErrors = mintConfigTargetErrors("ConfigPush");
-
-/** `--remote` named a branch the parent project does not have. */
-export const ConfigPushBranchNotFoundError = targetErrors.BranchNotFoundError;
-export type ConfigPushBranchNotFoundError = InstanceType<typeof ConfigPushBranchNotFoundError>;
-
-/**
- * `--remote` named a branch (by name), but no project is linked to
- * search for branches under — none of `SUPABASE_PROJECT_ID`,
- * `supabase/.temp/linked-project.json`, or `supabase/.temp/project-ref`
- * yielded a candidate.
- */
-export const ConfigPushBranchNotLinkedError = targetErrors.BranchNotLinkedError;
-export type ConfigPushBranchNotLinkedError = InstanceType<typeof ConfigPushBranchNotLinkedError>;
-
-/**
- * `--remote` named a branch (by name), and a parent-project candidate
- * exists but is not ref-shaped — corrupt or stale linked state.
- */
-export const ConfigPushParentRefInvalidError = targetErrors.ParentRefInvalidError;
-export type ConfigPushParentRefInvalidError = InstanceType<typeof ConfigPushParentRefInvalidError>;
-
-/**
- * The resolved branch has no project ref yet (still provisioning) — guards
- * against an empty/placeholder ref reaching a push target.
- */
-export const ConfigPushBranchNotReadyError = targetErrors.BranchNotReadyError;
-export type ConfigPushBranchNotReadyError = InstanceType<typeof ConfigPushBranchNotReadyError>;
-
-export class ConfigPushBranchResolveNetworkError extends Data.TaggedError(
-  "ConfigPushBranchResolveNetworkError",
-)<DecodableNetworkErrorArgs> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return this.decode === true
-      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
-      : actionability.externalNetwork;
-  }
-}
-
-export class ConfigPushBranchResolveStatusError extends Data.TaggedError(
-  "ConfigPushBranchResolveStatusError",
-)<StatusErrorArgs> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
 

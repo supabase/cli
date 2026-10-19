@@ -55,7 +55,7 @@ export const secretsUnset = Effect.fn("secrets.unset")(function* (flags: Secrets
     });
   }
 
-  const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+  const ref = yield* resolveProjectTarget(flags);
 
   yield* Effect.gen(function* () {
     let names: ReadonlyArray<string> = flags.names;

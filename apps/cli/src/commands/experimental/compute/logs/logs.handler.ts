@@ -150,10 +150,7 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
   // checkout fails inside `resolve` after the command has already run. Only the
   // linked-project cache stays under the ref, since it has nothing to write without one.
   yield* Effect.gen(function* () {
-    const projectRef = yield* resolveProjectTarget({
-      remote: flags.remote,
-      projectRef: flags.projectRef,
-    });
+    const projectRef = yield* resolveProjectTarget(flags);
     const refSuffix = computeRemoteSuffix(flags, projectRef);
 
     yield* Effect.gen(function* () {

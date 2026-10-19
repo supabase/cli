@@ -43,12 +43,7 @@ export const seedBuckets = Effect.fn("seed.buckets")(function* (flags: BucketsFl
 
     // Resolved before the config load so the matching `[remotes.<name>]` override
     // (whose `project_id == ref`) is merged over the base config.
-    const target = yield* resolveTarget({
-      remote: flags.remote,
-      local: flags.local,
-      linked: flags.linked,
-      projectRef: flags.projectRef,
-    });
+    const target = yield* resolveTarget(flags);
     const projectRef = target.kind === "linked" ? target.ref : "";
     yield* Ref.set(linkedRef, projectRef);
 

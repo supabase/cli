@@ -127,6 +127,7 @@ at all, so nothing is cached for it.
 | DELETE | `/v1/projects/{ref}/network-bans`                   | Bearer | Unban during pooler login retry (only under `--yes`)                                                                                                                              |
 | GET    | `/v1/projects/{ref}`                                | Bearer | Linked-project cache (post-run)                                                                                                                                                   |
 | GET    | `/v1/projects/{parent}/branches`                    | Bearer | Branch lookup — only for `--remote=<branch>`, and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
+| GET    | `/v1/branches/{id}`                                 | Bearer | Branch lookup — only for `--remote=<branch UUID>` when no project is linked                                                                                                       |
 | SQL    | `SELECT version FROM …schema_migrations`            | —      | history reconciliation (remote)                                                                                                                                                   |
 | SQL    | `INSERT … ON CONFLICT … schema_migrations` (UPSERT) | —      | history update (after consent)                                                                                                                                                    |
 

@@ -24,7 +24,7 @@ export const domainsCreate = Effect.fn("domains.create")(function* (flags: Domai
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+  const ref = yield* resolveProjectTarget(flags);
 
   // Write the linked-project cache and persist the telemetry state file on
   // success and failure.

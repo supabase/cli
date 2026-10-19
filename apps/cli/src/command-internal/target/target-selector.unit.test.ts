@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { RemoteValue } from "./remote-value.ts";
 import {
+  hasExplicitSelector,
   parseTargetSelector,
   type TargetSelectorInput,
   type TargetSelectorOptions,
@@ -39,18 +40,18 @@ const failure = (overrides: Partial<TargetSelectorInput>, options?: TargetSelect
 
 describe("parseTargetSelector", () => {
   it("reports no explicit target and no deprecation when nothing is set", () => {
-    expect(success({})).toEqual({ selection: { explicit: undefined }, deprecations: [] });
+    expect(success({})).toEqual({ selection: { _tag: "Default" }, deprecations: [] });
   });
 
   describe("--remote", () => {
     it.each([
-      ["a bare --remote", { _tag: "Linked" }, { explicit: "linked", ref: Option.none() }],
-      ["a project ref", { _tag: "Ref", ref: REF }, { explicit: "linked", ref: Option.some(REF) }],
-      ["a database URL", { _tag: "DbUrl", url: URL }, { explicit: "db-url", url: URL }],
+      ["a bare --remote", { _tag: "Linked" }, { _tag: "Linked" }],
+      ["a project ref", { _tag: "Ref", ref: REF }, { _tag: "Ref", ref: REF }],
+      ["a database URL", { _tag: "DbUrl", url: URL }, { _tag: "DbUrl", url: URL }],
       [
         "a branch name",
         { _tag: "Branch", name: "feature-x" },
-        { explicit: "branch", name: "feature-x" },
+        { _tag: "Branch", name: "feature-x" },
       ],
     ] as const)(
       "selects the target named by %s without a deprecation",
@@ -63,21 +64,21 @@ describe("parseTargetSelector", () => {
   describe("deprecated aliases", () => {
     it("treats --local as the default and reports it", () => {
       expect(success({ local: true })).toEqual({
-        selection: { explicit: "local" },
+        selection: { _tag: "Local" },
         deprecations: [{ kind: "local" }],
       });
     });
 
     it("maps --linked to a bare --remote", () => {
       expect(success({ linked: true })).toEqual({
-        selection: { explicit: "linked", ref: Option.none() },
+        selection: { _tag: "Linked" },
         deprecations: [{ kind: "remote-alias", flags: ["--linked"], remote: { _tag: "Linked" } }],
       });
     });
 
     it("maps --db-url to --remote=<url>", () => {
       expect(success({ dbUrl: Option.some(URL) })).toEqual({
-        selection: { explicit: "db-url", url: URL },
+        selection: { _tag: "DbUrl", url: URL },
         deprecations: [
           { kind: "remote-alias", flags: ["--db-url"], remote: { _tag: "DbUrl", url: URL } },
         ],
@@ -92,7 +93,7 @@ describe("parseTargetSelector", () => {
             ? { projectRef: Option.some(REF) }
             : { projectId: Option.some(REF) };
         expect(success(overrides)).toEqual({
-          selection: { explicit: "linked", ref: Option.some(REF) },
+          selection: { _tag: "Ref", ref: REF },
           deprecations: [
             { kind: "remote-alias", flags: [flag], remote: { _tag: "Ref", ref: REF } },
           ],
@@ -102,7 +103,7 @@ describe("parseTargetSelector", () => {
 
     it("maps --project-ref with a branch name to --remote=<branch>", () => {
       expect(success({ projectRef: Option.some("feature-x") })).toEqual({
-        selection: { explicit: "branch", name: "feature-x" },
+        selection: { _tag: "Branch", name: "feature-x" },
         deprecations: [
           {
             kind: "remote-alias",
@@ -115,7 +116,7 @@ describe("parseTargetSelector", () => {
 
     it("folds --linked and --project-ref into one deprecation", () => {
       expect(success({ linked: true, projectRef: Option.some(REF) })).toEqual({
-        selection: { explicit: "linked", ref: Option.some(REF) },
+        selection: { _tag: "Ref", ref: REF },
         deprecations: [
           {
             kind: "remote-alias",
@@ -130,17 +131,17 @@ describe("parseTargetSelector", () => {
       expect(
         success({ ...remote({ _tag: "Linked" }), projectRef: Option.some(REF) }),
       ).toMatchObject({
-        selection: { explicit: "linked", ref: Option.some(REF) },
+        selection: { _tag: "Ref", ref: REF },
       });
     });
 
     it("treats false switches as absent", () => {
       expect(success({ local: false, linked: false })).toEqual({
-        selection: { explicit: undefined },
+        selection: { _tag: "Default" },
         deprecations: [],
       });
       expect(success({ linked: false, dbUrl: Option.some(URL) })).toMatchObject({
-        selection: { explicit: "db-url", url: URL },
+        selection: { _tag: "DbUrl", url: URL },
       });
     });
   });
@@ -268,12 +269,12 @@ describe("parseTargetSelector", () => {
     it("accepts a project ref and a branch", () => {
       expect(hosted(remote({ _tag: "Ref", ref: REF }))).toEqual(
         Result.succeed({
-          selection: { explicit: "linked", ref: Option.some(REF) },
+          selection: { _tag: "Ref", ref: REF },
           deprecations: [],
         }),
       );
       expect(hosted(remote({ _tag: "Branch", name: "feature-x" }))).toMatchObject({
-        success: { selection: { explicit: "branch", name: "feature-x" } },
+        success: { selection: { _tag: "Branch", name: "feature-x" } },
       });
     });
 
@@ -294,5 +295,27 @@ describe("parseTargetSelector", () => {
         failure: { message: "This command needs a project, not a database URL." },
       });
     });
+  });
+});
+
+describe("hasExplicitSelector", () => {
+  it("is false when no selector flag is given", () => {
+    expect(hasExplicitSelector(none)).toBe(false);
+  });
+
+  it.each<readonly [string, Partial<TargetSelectorInput>]>([
+    ["--remote", { remote: Option.some({ _tag: "Linked" }) }],
+    ["--linked", { linked: true }],
+    ["--local", { local: true }],
+    ["--db-url", { dbUrl: Option.some(URL) }],
+    ["--project-ref", { projectRef: Option.some(REF) }],
+    ["--project-id", { projectId: Option.some(REF) }],
+  ])("is true for %s", (_flag, overrides) => {
+    expect(hasExplicitSelector({ ...none, ...overrides })).toBe(true);
+  });
+
+  it("ignores a database URL flag a command does not declare", () => {
+    const { dbUrl: _dbUrl, ...withoutDbUrl } = none;
+    expect(hasExplicitSelector(withoutDbUrl)).toBe(false);
   });
 });

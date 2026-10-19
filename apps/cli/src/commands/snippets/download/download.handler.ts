@@ -125,7 +125,7 @@ export const snippetsDownload = Effect.fn("snippets.download")(function* (
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       const snippetId = yield* Effect.fromResult(parseSnippetUuid(flags.snippetId)).pipe(

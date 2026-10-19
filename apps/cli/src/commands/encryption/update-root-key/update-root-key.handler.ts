@@ -25,7 +25,7 @@ export const encryptionUpdateRootKey = Effect.fn("encryption.update-root-key")(f
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+  const ref = yield* resolveProjectTarget(flags);
 
   // In text mode, the piped-input path writes the prompt to stderr and echoes a
   // trailing newline to stdout after reading; on a TTY the masked prompt uses

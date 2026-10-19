@@ -1,102 +1,66 @@
-import { Effect, Option, Result } from "effect";
+import { Effect, Option } from "effect";
 
-import {
-  CommandRuntime,
-  getCommandRuntimeCommand,
-} from "../../shared/runtime/command-runtime.service.ts";
 import { resolveParentScopedProjectRef } from "../parent-project-ref.ts";
-import { resolveRemoteTarget } from "./resolve-target.ts";
-import { rejectAmbiguousRemote, warnTargetDeprecations } from "./remote-resolution.ts";
-import type { RemoteValue } from "./remote-value.ts";
-import { parseTargetSelector } from "./target-selector.ts";
+import { resolveHostedRemote, selectTarget } from "./remote-resolution.ts";
+import type { ProjectTargetFlagValues } from "./target-flags.ts";
 import { TargetNeedsProjectError } from "./target.errors.ts";
-
-export interface ProjectTargetInput {
-  readonly remote: Option.Option<RemoteValue>;
-  readonly projectRef: Option.Option<string>;
-}
 
 interface ParentProjectTargetOptions {
   /** A command that acts on a parent project, such as `branches *`: its `--remote` takes a ref, never a branch name. */
   readonly parent: true;
 }
 
-interface RequestedProjectTargetOptions<A, E, R> {
-  /** Resolves the ref or branch name `--remote` names with the caller's own lookup, for a command with no operands. */
-  readonly resolveRequested: (requested: Option.Option<string>) => Effect.Effect<A, E, R>;
+interface DetailedProjectTargetOptions {
+  /** Returns the resolved linked target, with the branch it was found through, instead of just its ref. */
+  readonly detail: true;
 }
 
-const selectProject = Effect.fnUntraced(function* (input: ProjectTargetInput) {
-  const runtime = yield* Effect.serviceOption(CommandRuntime);
-  const commandName = Option.isSome(runtime)
-    ? `\`supabase ${getCommandRuntimeCommand(runtime.value)}\``
-    : undefined;
-  const { selection, deprecations } = yield* Result.match(
-    parseTargetSelector(
-      { ...input, local: false, linked: false },
-      commandName === undefined ? {} : { commandName },
-    ),
-    { onFailure: Effect.fail, onSuccess: Effect.succeed },
-  );
-  yield* warnTargetDeprecations(deprecations);
-  return { selection, commandName: commandName ?? "This command" };
+const selectProject = Effect.fnUntraced(function* (flags: ProjectTargetFlagValues) {
+  return yield* selectTarget({
+    remote: flags.remote,
+    projectRef: flags.projectRef,
+    local: false,
+    linked: false,
+  });
 });
 
-const unreachableSelection = (explicit: "local" | "db-url") =>
-  Effect.die(new Error(`a project-only selector cannot select "${explicit}"`));
+const unreachableSelection = (tag: "Local" | "DbUrl") =>
+  Effect.die(new Error(`a project-only selector cannot select "${tag}"`));
 
-const resolveHosted = Effect.fn("Target.resolveProject")(function* (input: ProjectTargetInput) {
-  const { selection } = yield* selectProject(input);
-  switch (selection.explicit) {
-    case "branch":
-      return (yield* resolveRemoteTarget({ _tag: "Branch", name: selection.name })).ref;
-    case "linked": {
-      if (Option.isNone(selection.ref)) yield* rejectAmbiguousRemote(input.remote);
-      const remote: RemoteValue = Option.isSome(selection.ref)
-        ? { _tag: "Ref", ref: selection.ref.value }
-        : { _tag: "Linked" };
-      return (yield* resolveRemoteTarget(remote)).ref;
-    }
-    case undefined:
-      return (yield* resolveRemoteTarget({ _tag: "Linked" })).ref;
-    case "local":
-    case "db-url":
-      return yield* unreachableSelection(selection.explicit);
+const resolveHosted = Effect.fn("Target.resolveProject")(function* (
+  flags: ProjectTargetFlagValues,
+) {
+  const { selection } = yield* selectProject(flags);
+  switch (selection._tag) {
+    case "Local":
+    case "DbUrl":
+      return yield* unreachableSelection(selection._tag);
+    case "Default":
+      return yield* resolveHostedRemote({ _tag: "Linked" });
+    case "Linked":
+    case "Ref":
+    case "Branch":
+      return yield* resolveHostedRemote(selection);
   }
 });
 
-const resolveParent = Effect.fn("Target.resolveProject")(function* (input: ProjectTargetInput) {
-  const { selection, commandName } = yield* selectProject(input);
-  switch (selection.explicit) {
-    case "branch":
+const resolveParent = Effect.fn("Target.resolveProject")(function* (
+  flags: ProjectTargetFlagValues,
+) {
+  const { selection, commandName } = yield* selectProject(flags);
+  switch (selection._tag) {
+    case "Branch":
       return yield* new TargetNeedsProjectError({
         message: `${commandName} acts on a parent project, so --remote takes its project ref, not a branch name. Use --remote=<ref>.`,
       });
-    case "linked":
-      return yield* resolveParentScopedProjectRef(selection.ref);
-    case undefined:
+    case "Ref":
+      return yield* resolveParentScopedProjectRef(Option.some(selection.ref));
+    case "Linked":
+    case "Default":
       return yield* resolveParentScopedProjectRef(Option.none());
-    case "local":
-    case "db-url":
-      return yield* unreachableSelection(selection.explicit);
-  }
-});
-
-const resolveRequested = Effect.fn("Target.resolveProject")(function* <A, E, R>(
-  input: ProjectTargetInput,
-  resolve: (requested: Option.Option<string>) => Effect.Effect<A, E, R>,
-) {
-  const { selection } = yield* selectProject(input);
-  switch (selection.explicit) {
-    case "branch":
-      return yield* resolve(Option.some(selection.name));
-    case "linked":
-      return yield* resolve(selection.ref);
-    case undefined:
-      return yield* resolve(Option.none());
-    case "local":
-    case "db-url":
-      return yield* unreachableSelection(selection.explicit);
+    case "Local":
+    case "DbUrl":
+      return yield* unreachableSelection(selection._tag);
   }
 });
 
@@ -105,25 +69,25 @@ const resolveRequested = Effect.fn("Target.resolveProject")(function* <A, E, R>(
  * bare `--remote` or no selector falls through to the project-ref chain (`SUPABASE_PROJECT_ID`,
  * the link file, the picker).
  */
-export function resolveProjectTarget(input: ProjectTargetInput): ReturnType<typeof resolveHosted>;
 export function resolveProjectTarget(
-  input: ProjectTargetInput,
+  flags: ProjectTargetFlagValues,
+): Effect.Effect<
+  string,
+  Effect.Error<ReturnType<typeof resolveHosted>>,
+  Effect.Services<ReturnType<typeof resolveHosted>>
+>;
+export function resolveProjectTarget(
+  flags: ProjectTargetFlagValues,
   options: ParentProjectTargetOptions,
 ): ReturnType<typeof resolveParent>;
-export function resolveProjectTarget<A, E, R>(
-  input: ProjectTargetInput,
-  options: RequestedProjectTargetOptions<A, E, R>,
-): Effect.Effect<
-  A,
-  E | Effect.Error<ReturnType<typeof selectProject>>,
-  R | Effect.Services<ReturnType<typeof selectProject>>
->;
-export function resolveProjectTarget<A, E, R>(
-  input: ProjectTargetInput,
-  options?: ParentProjectTargetOptions | RequestedProjectTargetOptions<A, E, R>,
+export function resolveProjectTarget(
+  flags: ProjectTargetFlagValues,
+  options: DetailedProjectTargetOptions,
+): ReturnType<typeof resolveHosted>;
+export function resolveProjectTarget(
+  flags: ProjectTargetFlagValues,
+  options?: ParentProjectTargetOptions | DetailedProjectTargetOptions,
 ) {
-  if (options === undefined) return resolveHosted(input);
-  return "resolveRequested" in options
-    ? resolveRequested(input, options.resolveRequested)
-    : resolveParent(input);
+  if (options === undefined) return Effect.map(resolveHosted(flags), (target) => target.ref);
+  return "parent" in options ? resolveParent(flags) : resolveHosted(flags);
 }

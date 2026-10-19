@@ -547,11 +547,11 @@ function apiHandlerFor(opts: ApiOpts): ApiHandler {
     if (url.includes("/v1/branches/")) {
       return Effect.succeed(jsonResponse(request, 200, {}));
     }
-    if (url.includes("/branches/")) {
+    if (url.endsWith("/branches")) {
       if (opts.branchNetworkFails === true) {
         return Effect.fail(transportFailure(request));
       }
-      return Effect.succeed(jsonResponse(request, 200, BRANCH_BY_NAME));
+      return Effect.succeed(jsonResponse(request, 200, [BRANCH_BY_NAME]));
     }
     if (url.endsWith("/body")) {
       if (
@@ -1036,7 +1036,7 @@ describe("pull integration", () => {
         yield* seedLocalMigration("20260101000000");
         yield* runPull(pullFlags({ remote: branchRemote("staging") }));
 
-        const branchLookups = api.requests.filter((request) => request.url.includes("/branches/"));
+        const branchLookups = api.requests.filter((request) => request.url.endsWith("/branches"));
         expect(branchLookups).toHaveLength(1);
         const configLookups = api.requests.filter((request) => request.url.endsWith("/config"));
         expect(configLookups).toHaveLength(1);
@@ -1698,7 +1698,7 @@ describe("pull integration", () => {
         const exit = yield* Effect.exit(runPull(pullFlags({ remote: branchRemote("staging") })));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(Cause.pretty(exit.cause)).toContain("PullBranchResolveNetworkError");
+          expect(Cause.pretty(exit.cause)).toContain("LinkBranchListNetworkError");
         }
       }).pipe(Effect.provide(layer));
     },

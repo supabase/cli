@@ -103,10 +103,7 @@ export const computeList = Effect.fn("compute.list")(function* (flags: ComputeLi
   // Resolved here, outside the block below, since caching it is one of that
   // block's own finalizers — everything else that can fail belongs inside so
   // those failures still flush telemetry.
-  const projectRef = yield* resolveProjectTarget({
-    remote: flags.remote,
-    projectRef: flags.projectRef,
-  });
+  const projectRef = yield* resolveProjectTarget(flags);
 
   yield* Effect.gen(function* () {
     const project = yield* loadComputeProject;

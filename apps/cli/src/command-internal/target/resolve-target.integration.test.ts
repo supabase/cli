@@ -15,7 +15,7 @@ import { ProjectRefNotLinkedError } from "../../config/project-ref.errors.ts";
 import { ProjectRefResolver } from "../../config/project-ref.service.ts";
 import type { ProjectRefSource } from "../../config/project-ref.service.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
-import { remoteArgvLeafFor, rewriteRemoteArgv } from "../../shared/cli/run.ts";
+import { prepareCliArgs } from "../../shared/cli/run.ts";
 import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 import { announceTarget } from "../../shared/output/command-target.service.ts";
 import type { OutputFormat } from "../../shared/output/types.ts";
@@ -24,9 +24,9 @@ import { resolveTarget } from "./resolve-target.ts";
 import { renderLocalTarget } from "./target-identity.ts";
 import { TargetPolicy } from "./target-policy.ts";
 import type { TargetGroup } from "./target-policy.ts";
-import type { TargetSelectorInput } from "./target-selector.ts";
+import type { TargetFlagValuesWithDbUrl } from "./target-flags.ts";
 
-const none: TargetSelectorInput = {
+const none: TargetFlagValuesWithDbUrl = {
   remote: Option.none(),
   local: false,
   linked: false,
@@ -34,7 +34,7 @@ const none: TargetSelectorInput = {
   projectRef: Option.none(),
 };
 
-const remote = (value: RemoteValue): Partial<TargetSelectorInput> => ({
+const remote = (value: RemoteValue): Partial<TargetFlagValuesWithDbUrl> => ({
   remote: Option.some(value),
 });
 
@@ -58,11 +58,6 @@ const branchRow = (name: string, projectRef = BRANCH_REF) => ({
 });
 
 const root = rootCommandForFeatures();
-
-const cliArgsFor = (raw: ReadonlyArray<string>) => {
-  const args = rewriteRemoteArgv(root, raw);
-  return { args, remoteLeaf: remoteArgvLeafFor(root, args) };
-};
 
 const projectRefResolver = (options: { readonly linked: boolean }) => {
   const flags: Array<Option.Option<string>> = [];
@@ -89,14 +84,13 @@ const projectRefResolver = (options: { readonly linked: boolean }) => {
 
 const run = (
   group: TargetGroup,
-  input: TargetSelectorInput,
+  input: TargetFlagValuesWithDbUrl,
   options: {
     readonly linked?: boolean;
     readonly projectId?: Option.Option<string>;
     readonly savedRef?: string;
     readonly cache?: { readonly ref: string; readonly name?: string };
     readonly args?: ReadonlyArray<string>;
-    readonly cliArgs?: ReturnType<typeof cliArgsFor>;
     readonly format?: OutputFormat;
     readonly branches?: ReadonlyArray<ReturnType<typeof branchRow>> | "unavailable";
   } = {},
@@ -149,11 +143,9 @@ const run = (
             workdir: dir,
             projectId: options.projectId ?? Option.none(),
           }),
-          options.cliArgs !== undefined
-            ? Layer.succeed(CliArgs, options.cliArgs)
-            : options.args === undefined
-              ? Layer.empty
-              : Layer.succeed(CliArgs, { args: options.args }),
+          options.args === undefined
+            ? Layer.empty
+            : Layer.succeed(CliArgs, prepareCliArgs(root, options.args)),
         ),
       ),
       Effect.withTracer(tracer),
@@ -265,6 +257,8 @@ describe("resolveTarget", () => {
           ref: BRANCH_REF,
           source: "flag",
           matchesLinkedRef: false,
+          branch: "feature-x",
+          parentRef: FILE_REF,
         });
         expect(result.apiRequests).toEqual([`GET /v1/projects/${FILE_REF}/branches`]);
         expect(result.refFlags).toEqual([]);
@@ -310,7 +304,7 @@ describe("resolveTarget", () => {
   });
 
   describe("a bare --remote followed by a word", () => {
-    const args = ["db", "push", "--remote", "feature-x"];
+    const args = ["db", "pull", "--remote", "feature-x"];
     const bare = { ...none, ...remote({ _tag: "Linked" }) };
 
     it.effect("fails when the word is a branch of the linked project", () =>
@@ -376,7 +370,7 @@ describe("resolveTarget", () => {
     ])("does not look up the $name subcommand as a branch", ({ raw }) =>
       Effect.gen(function* () {
         const result = yield* run("selectable", bare, {
-          cliArgs: cliArgsFor(raw),
+          args: raw,
           savedRef: FILE_REF,
           branches: "unavailable",
         });
@@ -388,7 +382,7 @@ describe("resolveTarget", () => {
     it.effect("still fails for a branch the command would otherwise take as its operand", () =>
       Effect.gen(function* () {
         const result = yield* run("selectable", bare, {
-          cliArgs: cliArgsFor(["db", "pull", "--remote", "feature-x"]),
+          args: ["db", "pull", "--remote", "feature-x"],
           savedRef: FILE_REF,
           branches: [branchRow("feature-x")],
         });

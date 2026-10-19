@@ -57,7 +57,7 @@ export const projectsApiKeys = Effect.fn("projects.api-keys")(function* (
   const telemetryState = yield* TelemetryState;
 
   // `--project-ref` resolution prompts on a TTY and fails when unlinked.
-  const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: flags.projectRef });
+  const ref = yield* resolveProjectTarget(flags);
 
   yield* Effect.gen(function* () {
     const fetching =
