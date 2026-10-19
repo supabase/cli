@@ -636,7 +636,7 @@ export interface RunCliOptions<BeforeParseError = never> {
   ) => Effect.Effect<void, never, FileSystem.FileSystem | Path.Path | RuntimeInfo>;
 }
 
-function cliProgramFor<
+export function cliProgramFor<
   Name extends string,
   Input,
   ContextInput,
