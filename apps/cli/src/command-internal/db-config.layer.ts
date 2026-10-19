@@ -50,21 +50,22 @@ import { renderDbUrlTarget, renderLocalTarget } from "./target/target-identity.t
 import { isCheckoutLinked } from "../shared/config/temp-paths.ts";
 import { rejectTargetPassword } from "./target/target-password.ts";
 
-const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
-  {
-    operationId: "v1-create-login-role",
-    kind: "required",
-    when: [{ flag: "password", present: false }],
-    context:
-      "no database password supplied by the command (an empty one still mints a login role) or set in SUPABASE_DB_PASSWORD or the project .env (an ad-hoc project ref ignores the last two)",
-  },
-  {
-    operationId: "v1-get-pooler-config",
-    kind: "required",
-    when: [{ selector: ["ref", "branch"] }],
-    context:
-      "a project ref or branch names the target, the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
-  },
+const loginRoleEntry = {
+  operationId: "v1-create-login-role",
+  kind: "required",
+  when: [{ flag: "password", present: false }],
+  context:
+    "no database password supplied by the command (an empty one still mints a login role) or set in SUPABASE_DB_PASSWORD or the project .env (an ad-hoc project ref ignores the last two)",
+} as const satisfies Omit<OperationEntry, "source">;
+
+const poolerConfigEntry = {
+  operationId: "v1-get-pooler-config",
+  kind: "required",
+  context:
+    "a project ref or branch names the target, the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
+} as const satisfies Omit<OperationEntry, "source">;
+
+const networkBanEntries = [
   {
     operationId: "v1-list-all-network-bans",
     kind: "best-effort",
@@ -79,6 +80,12 @@ const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
     context:
       "after three failed attempts to connect through the pooler as the temporary login role",
   },
+] as const satisfies ReadonlyArray<Omit<OperationEntry, "source">>;
+
+const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
+  loginRoleEntry,
+  { ...poolerConfigEntry, when: [{ selector: ["ref", "branch"] }] },
+  ...networkBanEntries,
   ...projectRefPicker.operations,
 ];
 
@@ -87,6 +94,13 @@ const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
  * linked path some other way, such as `db diff --from linked`.
  */
 export const dbConfigLinked = block("db-config", linkedEntries);
+
+/** The calls {@link dbConfigLinked} makes for a project a non-selector flag names, such as `db diff --from=<ref>`. */
+export const dbConfigNamedProject = block("db-config", [
+  loginRoleEntry,
+  poolerConfigEntry,
+  ...networkBanEntries,
+]);
 
 /**
  * `DbConfigResolver` on the linked path; `--local` and `--db-url` make no API calls. Commands
@@ -565,7 +579,9 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
   if (Option.isNone(poolerConn)) {
     return yield* new Errors.DbConfigIpv6Error({
       message: "IPv6 is not supported on your current network",
-      suggestion: `Run supabase link --project-ref ${ref} to setup IPv4 connection.`,
+      suggestion: adHocProjectRef
+        ? "Pass the project's connection pooler URL with --remote=<pooler db-url> to connect over IPv4."
+        : `Run supabase link --project-ref ${ref} to setup IPv4 connection.`,
     });
   }
   return poolerConn.value;

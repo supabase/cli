@@ -692,7 +692,7 @@ describe("migration squash", () => {
           // The Finished/repair-suggestion output still runs on the no-op path.
           expect(stdout(s.out)).toContain("Finished supabase migration squash.");
           expect(stderr(s.out)).toContain(
-            "Run supabase migration repair --status applied to update your remote migration history table.",
+            "Run supabase migration repair --status applied --remote to update your remote migration history table.",
           );
         }).pipe(Effect.provide(s.layer));
       },
@@ -1157,7 +1157,7 @@ describe("migration squash", () => {
           yield* migrationSquash(flags());
           expect(stdout(s.out)).toContain("Finished supabase migration squash.");
           expect(stderr(s.out)).toContain(
-            "Run supabase migration repair --status applied to update your remote migration history table.",
+            "Run supabase migration repair --status applied --remote to update your remote migration history table.",
           );
           expect(s.out.promptConfirmCalls).toEqual([]);
         }).pipe(Effect.provide(s.layer));

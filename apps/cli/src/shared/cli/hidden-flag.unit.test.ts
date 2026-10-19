@@ -263,11 +263,11 @@ describe("hidden subcommands", () => {
           [["db", "branch", "list"], [], undefined],
           [["db", "remote", "changes"], ["--schema", "public", "--linked"], undefined],
           [["gen", "keys"], ["--project-ref", "abcdefghijklmnopqrst"], undefined],
-          [["db", "remote", "commit"], [], "Use `supabase db pull` instead."],
+          [["db", "remote", "commit"], [], "Use `supabase db pull --remote` instead."],
           [
             ["db", "remote", "commit"],
             ["--schema", "public", "--linked", "-p", "secret"],
-            "Use `supabase db pull` instead.",
+            "Use `supabase db pull --remote` instead.",
           ],
           [
             ["inspect", "db", "total-index-size"],

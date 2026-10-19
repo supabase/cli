@@ -71,8 +71,8 @@ Same structured `files` result delivered as an NDJSON `result` event.
 ## Prompts
 
 - When the migrations directory is non-empty, prompts
-  `Do you want to overwrite existing files in supabase/migrations directory?`
-  (default **YES**). Declining exits non-zero (`context canceled`). `--yes` or
+  `Overwrite local migrations with the history from <target>?`, where `<target>` is the
+  announced target (`Target: …`), e.g. `local stack (127.0.0.1:54322)` (default **YES**). Declining exits non-zero (`context canceled`). `--yes` or
   `SUPABASE_YES` (shell env or project `.env`) auto-confirms; a non-interactive /
   machine-output run takes the default (YES). An unrecognised answer declines. This is a
   prompt about local files, so a `SUPABASE_YES` in the project `.env` still answers it.

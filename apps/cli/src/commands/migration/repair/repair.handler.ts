@@ -20,9 +20,13 @@ import {
   resolveMigrationFile,
   TRUNCATE_VERSION_TABLE,
   UPSERT_MIGRATION_VERSION,
+  withTargetFlags,
 } from "../../../command-internal/migration-history.ts";
 import { parseMigrationVersion } from "../../../command-internal/migration-timestamp.format.ts";
-import type { TargetFlagValuesWithDbUrl } from "../../../command-internal/target/target-flags.ts";
+import {
+  flagsForTarget,
+  type TargetFlagValuesWithDbUrl,
+} from "../../../command-internal/target/target-flags.ts";
 import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -168,7 +172,7 @@ const runRepair = Effect.fnUntraced(function* (input: MigrationRepairInput) {
       // Success banner to stdout; follow-up suggestion to stderr.
       yield* output.raw(`Finished ${aqua("supabase migration repair")}.\n`);
       yield* emitSuccessTrailer(
-        `Run ${aqua("supabase migration list")} to show the updated migration history.\n`,
+        `Run ${aqua(withTargetFlags("supabase migration list", flagsForTarget(target)))} to show the updated migration history.\n`,
       );
     } else {
       yield* output.success("Migration history repaired", {

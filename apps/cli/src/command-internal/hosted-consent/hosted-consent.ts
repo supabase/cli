@@ -30,7 +30,8 @@ export interface HostedMutationRequest {
 const grant = (action: string, via: HostedMutationConsent["via"]): HostedMutationConsent =>
   ({ action, via }) as HostedMutationConsent;
 
-const announcedTarget = Effect.serviceOption(CommandTarget).pipe(
+/** The first announced target's banner text, or `None` before any announcement. */
+export const announcedTarget = Effect.serviceOption(CommandTarget).pipe(
   Effect.flatMap(
     Option.match({
       onNone: () => Effect.succeed(Option.none<string>()),

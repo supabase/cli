@@ -20,6 +20,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
@@ -47,6 +48,7 @@ import type {
 import { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { CommandTarget } from "../../../shared/output/command-target.service.ts";
 import {
   TargetProjectRefConflictError,
   TargetSelectorConflictError,
@@ -366,6 +368,43 @@ describe("migration fetch", () => {
       yield* migrationFetch(flags());
       expect(out.stderrText).toContain("[Y/n] y");
       expect(yield* listMigrations(tmp.current)).toContain("20240101000000_init.sql");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("names the announced target in the overwrite question", () => {
+    const { layer, out } = setup(tmp.current, {
+      yes: true,
+      rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
+    });
+    const announced = Layer.succeed(
+      CommandTarget,
+      CommandTarget.of({
+        announce: () => Effect.void,
+        hintLocal: () => Effect.void,
+        json: Effect.succeed(Option.none()),
+        text: Effect.succeed(Option.some("project my-app (flagflagflagflagflag) · production")),
+      }),
+    );
+    return Effect.gen(function* () {
+      yield* seedExistingMigration(tmp.current);
+      yield* migrationFetch(flags());
+      expect(stripAnsi(out.stderrText)).toContain(
+        "Overwrite local migrations with the history from project my-app (flagflagflagflagflag) · production? [Y/n] y",
+      );
+    }).pipe(Effect.provide(Layer.merge(layer, announced)));
+  });
+
+  it.effect("asks about the target database when no target was announced", () => {
+    const { layer, out } = setup(tmp.current, {
+      yes: true,
+      rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
+    });
+    return Effect.gen(function* () {
+      yield* seedExistingMigration(tmp.current);
+      yield* migrationFetch(flags());
+      expect(stripAnsi(out.stderrText)).toContain(
+        "Overwrite local migrations with the history from the target database? [Y/n] y",
+      );
     }).pipe(Effect.provide(layer));
   });
 

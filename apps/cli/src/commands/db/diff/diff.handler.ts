@@ -30,7 +30,6 @@ import {
   resolveRemoteTarget,
   warnTarget,
 } from "../../../command-internal/target/remote-resolution.ts";
-import { hasExplicitSelector } from "../../../command-internal/target/target-selector.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import { makeDir } from "../../../command-internal/make-dir.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
@@ -115,6 +114,25 @@ const declarativeBaselineNote = (displayPath: string, nextSteps: string) =>
 const declarativeFilesIgnoredNote = (displayPath: string, nextSteps: string) =>
   `Note: db diff compares supabase/migrations with the target database; declarative schema files in ${displayPath} are not read. ${nextSteps}\n`;
 
+const EXPLICIT_SIDE_FOR_SELECTOR = {
+  "--remote": "remote",
+  "--linked": "remote",
+  "--project-ref": "remote",
+  "--db-url": "<db-url>",
+  "--local": "local",
+} as const;
+
+const givenSelectorFlag = (
+  flags: DbDiffFlags,
+): keyof typeof EXPLICIT_SIDE_FOR_SELECTOR | undefined => {
+  if (Option.isSome(flags.remote)) return "--remote";
+  if (flags.linked) return "--linked";
+  if (Option.isSome(flags.projectRef)) return "--project-ref";
+  if (Option.isSome(flags.dbUrl)) return "--db-url";
+  if (flags.local) return "--local";
+  return undefined;
+};
+
 export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   if (Option.isSome(flags.usePgSchema)) {
     return yield* removedFlag("--use-pg-schema", "Use the default pg-delta engine or --use-migra.");
@@ -175,10 +193,17 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           message: "must set both --from and --to when using explicit diff mode",
         });
       }
-      // `mergedLinkedRef` tracks the linked ref resolved so far (preflight or cascade) so the
-      // config read below and a later `migrations` catalog export merge the matching
-      // `[remotes.<ref>]` override. Undefined until a linked ref resolves, so a `migrations` ref
-      // resolved before any linked ref uses base.
+      const selectorFlag = givenSelectorFlag(flags);
+      if (selectorFlag !== undefined) {
+        const side = EXPLICIT_SIDE_FOR_SELECTOR[selectorFlag];
+        return yield* new DbDiffExplicitFlagsError({
+          message: `${selectorFlag} doesn't apply with --from/--to; use --from=${side} or --to=${side}.`,
+        });
+      }
+      // `mergedLinkedRef` tracks the linked ref resolved so far so the config read below and a
+      // later `migrations` catalog export merge the matching `[remotes.<ref>]` override.
+      // Undefined until a linked ref resolves, so a `migrations` ref resolved before any linked
+      // ref uses base.
       let mergedLinkedRef: string | undefined;
       // The first migrations endpoint resolved wins: the engine provisions a single migrations
       // shadow/catalog, so only refs resolved before that point should influence it.
@@ -189,23 +214,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // Each hosted resolution mints a temporary login role that invalidates the previous one for
       // that project, so every ref to a project shares a single connection.
       const hostedEndpoints = new Map<string, PgDeltaDatabaseEndpoint>();
-      // A target flag validates the selection and, for a hosted project, merges
-      // `[remotes.<ref>]` so the explicit `local`/`migrations` refs below see that override.
-      if (hasExplicitSelector(flags)) {
-        const preflight = yield* resolveTarget(flags);
-        if (preflight.kind === "linked") {
-          linkedTarget = preflight;
-          yield* Ref.set(linkedRefForCache, Option.some(preflight.ref));
-          mergedLinkedRef = preflight.ref;
-        }
-      }
-      // Read config once, after the preflight: the `[remotes.<ref>]`-merged config
-      // when a target flag resolved a ref (so base config isn't validated
-      // before the merge), else the base config.
-      let cfg =
-        mergedLinkedRef !== undefined
-          ? yield* readDbToml(fs, path, cliSettings.workdir, mergedLinkedRef)
-          : yield* readDbToml(fs, path, cliSettings.workdir);
+      let cfg = yield* readDbToml(fs, path, cliSettings.workdir);
       const hostedTarget = Effect.fnUntraced(function* (
         remote: Exclude<RemoteValue, { readonly _tag: "DbUrl" }>,
       ) {

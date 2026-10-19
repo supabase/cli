@@ -99,8 +99,8 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 
 | Method | Path                                        | Auth   | Purpose                                                                                                                                                                                                                |
 | ------ | ------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| POST   | `/v1/projects/{ref}/cli/login-role`         | Bearer | Temp login role when no password                                                                                                                                                                                       |
-| GET    | `/v1/projects/{ref}/config/database/pooler` | Bearer | IPv4 pooler fallback                                                                                                                                                                                                   |
+| POST   | `/v1/projects/{ref}/cli/login-role`         | Bearer | Temp login role when no password; also for a `--from`/`--to` value naming a project ref or branch                                                                                                                      |
+| GET    | `/v1/projects/{ref}/config/database/pooler` | Bearer | IPv4 pooler fallback; also for a `--from`/`--to` value naming a project ref or branch                                                                                                                                  |
 | POST   | `/v1/projects/{ref}/network-bans/retrieve`  | Bearer | List bans during pooler login retry                                                                                                                                                                                    |
 | DELETE | `/v1/projects/{ref}/network-bans`           | Bearer | Unban during pooler login retry                                                                                                                                                                                        |
 | GET    | `/v1/projects/{ref}`                        | Bearer | Linked-project cache (post-run)                                                                                                                                                                                        |
@@ -149,7 +149,7 @@ migra/pg-delta-engine-specific).
 | Code | Condition                                                                                                                                                                                                                                                                                 |
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success; empty diff ("No schema changes found")                                                                                                                                                                                                                                           |
-| `1`  | `--from` without `--to`; engine-flag mutex; unknown explicit target; connection/shadow/engine failure; file IO error; local db not running (`--use-pgadmin`); differ container non-zero exit; unparseable `--json-diff` output                                                            |
+| `1`  | `--from` without `--to`; `--remote` or an alias combined with `--from`/`--to`; engine-flag mutex; unknown explicit target; connection/shadow/engine failure; file IO error; local db not running (`--use-pgadmin`); differ container non-zero exit; unparseable `--json-diff` output      |
 | `1`  | more than one of `--remote`/`--linked`/`--db-url`/`--local` (`TargetSelectorConflictError`); `--project-ref` with `--local`, `--db-url` or `--remote=<value>` (`TargetProjectRefConflictError`); `--remote=<branch>`, or a `--from`/`--to` branch, naming no branch of the parent project |
 | `1`  | `--use-pg-schema` passed at all (any value, including `=false`) — removed, see Notes                                                                                                                                                                                                      |
 
@@ -252,12 +252,15 @@ transaction metadata.
 - **Explicit `--from`/`--to`.** Each endpoint is one of `local`, `migrations`, `remote` (the
   linked project), a project ref, a Postgres URL, or a branch name or UUID of the linked project
   (classified like a `--remote` value, so a branch named like a keyword is reached by its ref or
-  UUID). `--from linked` / `--to linked` still work and warn `--from linked is deprecated and will
-be removed in v4. Use --from remote instead.` A `--remote` (or alias) selector given
-  alongside only validates the selection and merges the linked project's `[remotes.<ref>]`
-  override; the endpoints themselves come from the two values, and with no selector the default
-  `Target:` hint is not printed. The linked project resolves once, so `--from remote --to remote`
-  announces it once, and a branch or ref used on both sides shares one connection. A branch
+  UUID). In `--from`/`--to`, `remote` is always the linked project. `--from linked` / `--to linked`
+  still work and warn `--from linked is deprecated and will
+be removed in v4. Use --from remote instead.` A `--remote` selector (or an alias: `--linked`,
+  `--project-ref`, `--db-url`, `--local`) given alongside fails with `--remote doesn't apply with
+--from/--to; use --from=remote or --to=remote.` (the flag named is the one passed; `--db-url`
+  suggests `<db-url>` and `--local` suggests `local`), before any target resolves, and the default
+  `Target:` hint is not printed. The first hosted endpoint merges its `[remotes.<ref>]` override
+  into the config the later endpoints see. The linked project resolves once, so `--from remote
+--to remote` announces it once, and a branch or ref used on both sides shares one connection. A branch
   endpoint looks the name up in the branch list of `SUPABASE_PROJECT_ID`, else the linked
   project. `--use-pgadmin` honors the same selection (CLI-1968 — same target resolve);
   `--use-pg-schema` is removed and rejects before any target resolution happens (see Notes
