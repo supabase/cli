@@ -21,7 +21,11 @@ import {
   DEFAULT_LOCAL_JWT_SECRET,
   DEFAULT_POSTGRES_ROOT_KEY,
 } from "@supabase/stack/defaults";
-import { orioledbVersions, type ArtifactPin } from "@supabase/stack/internal/artifacts";
+import {
+  artifactServiceKinds,
+  orioledbVersions,
+  type ArtifactPin,
+} from "@supabase/stack/internal/artifacts";
 import {
   apiRoute,
   lockSelection,
@@ -2815,18 +2819,21 @@ describe("experimental stack start service lock", () => {
       const root = yield* lockProject();
       yield* lockedStart(root).run;
       const lock = yield* readProjectLock(root);
-      const { database } = lock.services;
-      expect(database.resolved.revision).toBeGreaterThan(0);
+      const kind = artifactServiceKinds().find(
+        (service) => lock.services[service].resolved.revision > 0,
+      );
+      if (kind === undefined) return expect.fail("no bundled pin has a revision above r0");
+      const entry = lock.services[kind];
       yield* writeLock(root, {
         ...lock,
         services: {
           ...lock.services,
-          database: {
-            ...database,
+          [kind]: {
+            ...entry,
             resolved: {
-              ...database.resolved,
+              ...entry.resolved,
               revision: 0,
-              image: database.resolved.image.replace(/-r\d+@/u, "-r0@"),
+              image: entry.resolved.image.replace(/-r\d+@/u, "-r0@"),
             },
           },
         },
@@ -2835,10 +2842,10 @@ describe("experimental stack start service lock", () => {
       const { output, run } = lockedStart(root, { existing: false });
       yield* run;
 
-      const { upstreamVersion, revision } = database.resolved;
+      const { upstreamVersion, revision } = entry.resolved;
       expect(output.messages).toContainEqual({
         type: "warn",
-        message: `This CLI bundles newer revisions of locked versions: database ${upstreamVersion}-r0 → ${upstreamVersion}-r${revision}. Run supabase stack outdated to review, supabase stack update to adopt them.`,
+        message: `This CLI bundles newer revisions of locked versions: ${kind} ${upstreamVersion}-r0 → ${upstreamVersion}-r${revision}. Run supabase stack outdated to review, supabase stack update to adopt them.`,
       });
     }).pipe(Effect.provide(BunServices.layer)),
   );
