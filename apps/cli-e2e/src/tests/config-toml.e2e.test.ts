@@ -46,7 +46,7 @@ describe("env-in-config-toml", () => {
       body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
     });
 
-    const result = await run(["secrets", "list", "--project-ref", PROJECT_REF], {
+    const result = await run(["secrets", "list", `--remote=${PROJECT_REF}`], {
       env: ENV_PORTS,
     });
 
