@@ -58,7 +58,7 @@ describe("supabase storage", () => {
           );
           expect(exitCode).toBe(1);
           expect(`${stdout}${stderr}`).toContain(
-            "Only one of --remote, --linked, --db-url and --local can be set; got --remote and --local.",
+            "Only one of --remote, --linked and --local can be set; got --remote and --local.",
           );
         }),
       ),

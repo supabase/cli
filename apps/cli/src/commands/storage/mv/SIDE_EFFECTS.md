@@ -119,7 +119,7 @@ backend — same roles as `storage ls`.
   `--linked is deprecated and will be removed in v4. Use --remote instead: supabase storage mv <src> <dst> --remote`
   and `--local isn't needed (local is the default) and will be removed in v4: supabase storage mv <src> <dst>`.
   Two selectors together fail
-  (`Only one of --remote, --linked, --db-url and --local can be set; got …`), `--project-ref` cannot
+  (`Only one of --remote, --linked and --local can be set; got …`), `--project-ref` cannot
   be combined with `--local` or `--remote=<value>`, an empty `--project-ref` is rejected, and
   `--linked=false` selects nothing.
 - **Target banner.** A remote project prints `Target: …` to stderr once its ref resolves; the local

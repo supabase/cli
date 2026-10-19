@@ -51,7 +51,7 @@ describe("supabase seed buckets", () => {
         );
         expect(exitCode).toBe(1);
         expect(`${stdout}${stderr}`).toContain(
-          "Only one of --remote, --linked, --db-url and --local can be set; got --remote and --local.",
+          "Only one of --remote, --linked and --local can be set; got --remote and --local.",
         );
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     E2E_TIMEOUT_MS,
@@ -88,7 +88,7 @@ describe("supabase seed buckets", () => {
         );
         expect(exitCode).toBe(1);
         expect(`${stdout}${stderr}`).toContain(
-          "Only one of --remote, --linked, --db-url and --local can be set; got --remote and --local.",
+          "Only one of --remote, --linked and --local can be set; got --remote and --local.",
         );
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     E2E_TIMEOUT_MS,
