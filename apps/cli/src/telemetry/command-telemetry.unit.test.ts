@@ -788,11 +788,15 @@ describe("withCommandTelemetry", () => {
     const analytics = mockContextualAnalytics();
 
     return withCommandTelemetry()(Effect.die(new StdoutClosedError())).pipe(
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) }),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
       Effect.exit,
       Effect.tap(() =>
         Effect.sync(() => {
