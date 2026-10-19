@@ -179,7 +179,11 @@ Not applicable.
   language flag (`swift-access-control`). Passing the selector together with any of them fails with
   `if any flags in the group [remote linked project-ref <flag>] are set none of the others can be; [<set flags, sorted>] were all set`,
   reporting the first violated group in that order. `--remote=<db-url>` and `--db-url` are not
-  members, so they accept all three.
+  members, so they accept all three. The target resolves first, ahead of these groups and the
+  language guards, so a selector error, a missing project or a bare `--remote <word>` that names a
+  branch fails before them. The command reads its own rewritten command line, so
+  `--remote <ref>` and `--remote <url>` mean `--remote=<ref>` and `--remote=<url>`, and the word is not
+  taken as the positional language.
 - With the local target, a missing `supabase/config.toml` uses the embedded config defaults plus
   shell and nested dotenv overrides, matching the CLI. The database password is the `[db].password`
   value (default `postgres`); `SUPABASE_DB_PASSWORD` has no effect, and the command has no

@@ -31,6 +31,8 @@ import {
 } from "effect";
 import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
 import { DnsResolverFlag, OutputFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { rootCommandForFeatures } from "../../../cli/root.ts";
+import { cliArgsLayer, prepareCliArgs } from "../../../shared/cli/run.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
@@ -545,7 +547,9 @@ const setup = Effect.fnUntraced(function* (
     runtime,
     BunServices.layer,
     child.layer,
-    Stdio.layerTest({ args: Effect.succeed(opts.args ?? ["gen", "types"]) }),
+    cliArgsLayer(prepareCliArgs(rootCommandForFeatures(), opts.args ?? ["gen", "types"])).pipe(
+      Layer.provideMerge(Stdio.layerTest({ args: Effect.succeed(opts.args ?? ["gen", "types"]) })),
+    ),
     Layer.succeed(OutputFlag, opts.outputFlag ?? Option.none()),
     Layer.succeed(DnsResolverFlag, "native" as const),
     Layer.succeed(YesFlag, false),
@@ -1148,6 +1152,45 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
+    it.effect("reads a bare --remote followed by a project ref as --remote=<ref>", () =>
+      Effect.gen(function* () {
+        const { layer, api } = yield* setup({
+          args: ["gen", "types", "--remote", BRANCH_PROJECT_REF],
+          projectTypes: "ok",
+        });
+        yield* genTypes(
+          defaultFlags({ remote: Option.some({ _tag: "Ref", ref: BRANCH_PROJECT_REF } as const) }),
+        ).pipe(Effect.provide(layer));
+
+        expect(api.requests).toEqual([
+          {
+            method: "generateTypescriptTypes",
+            input: { ref: BRANCH_PROJECT_REF, included_schemas: "public" },
+          },
+        ]);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("fails a bare --remote followed by a branch name before the language guard", () =>
+      Effect.gen(function* () {
+        const { layer, api, generator } = yield* setup({
+          args: ["gen", "types", "--remote", "feature-x"],
+          projectId: Option.some(VALID_REF),
+          branches: [branchRow("feature-x")],
+        });
+        const error = yield* genTypes(
+          defaultFlags({ remote: Option.some({ _tag: "Linked" } as const) }),
+        ).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "TargetRemoteAmbiguousError",
+          message: `feature-x is a branch of project ${VALID_REF}. Did you mean --remote=feature-x?`,
+        });
+        expect(api.requests.map(({ method }) => method)).toEqual(["listAllBranches"]);
+        expect(generator.calls).toHaveLength(0);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
     it.effect("fails with the branches that exist when --remote=<branch> matches none", () =>
       Effect.gen(function* () {
         const { layer, api, generator } = yield* setup({
@@ -1368,6 +1411,7 @@ describe("gen types", () => {
       Effect.gen(function* () {
         const { layer } = yield* setup({
           args: ["gen", "types", "--remote", "--swift-access-control", "public", "--lang", "swift"],
+          projectId: Option.some(VALID_REF),
         });
         const exit = yield* genTypes(
           defaultFlags({
@@ -1417,29 +1461,32 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.effect("rejects --postgrest-v9-compat without --db-url for project-ref generation", () =>
-      Effect.gen(function* () {
-        const { layer } = yield* setup({
-          args: ["gen", "types", "--project-ref", VALID_REF, "--postgrest-v9-compat"],
-        });
-        const exit = yield* genTypes(
-          defaultFlags({ projectRef: Option.some(VALID_REF), postgrestV9Compat: true }),
-        ).pipe(Effect.provide(layer), Effect.exit);
+    it.effect(
+      "rejects --postgrest-v9-compat without --db-url for project-ref generation, ahead of the mutex group",
+      () =>
+        Effect.gen(function* () {
+          const { layer } = yield* setup({
+            args: ["gen", "types", "--project-ref", VALID_REF, "--postgrest-v9-compat"],
+          });
+          const exit = yield* genTypes(
+            defaultFlags({ projectRef: Option.some(VALID_REF), postgrestV9Compat: true }),
+          ).pipe(Effect.provide(layer), Effect.exit);
 
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          // Established guard, including its "must used" typo — do not "fix" the grammar.
-          expect(String(exit.cause)).toContain(
-            "--postgrest-v9-compat must used together with --remote=<db-url>",
-          );
-          expect(
-            Option.exists(
-              Cause.findErrorOption(exit.cause),
-              Predicate.isTagged("GenTypesFlagUsageError"),
-            ),
-          ).toBe(true);
-        }
-      }).pipe(Effect.provide(BunServices.layer)),
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            // Established guard, including its "must used" typo — do not "fix" the grammar.
+            expect(String(exit.cause)).toContain(
+              "--postgrest-v9-compat must used together with --remote=<db-url>",
+            );
+            expect(String(exit.cause)).not.toContain("if any flags in the group");
+            expect(
+              Option.exists(
+                Cause.findErrorOption(exit.cause),
+                Predicate.isTagged("GenTypesFlagUsageError"),
+              ),
+            ).toBe(true);
+          }
+        }).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.effect("rejects --postgrest-v9-compat without --db-url for local generation", () =>
@@ -1599,33 +1646,14 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.effect("prefers the --postgrest-v9-compat guard over mutex group errors", () =>
-      Effect.gen(function* () {
-        const { layer } = yield* setup({
-          args: ["gen", "types", "--local", "--linked", "--postgrest-v9-compat"],
-        });
-        const exit = yield* genTypes(
-          defaultFlags({ local: true, linked: true, postgrestV9Compat: true }),
-        ).pipe(Effect.provide(layer), Effect.exit);
-
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(String(exit.cause)).toContain(
-            "--postgrest-v9-compat must used together with --remote=<db-url>",
-          );
-        }
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
-
     it.effect("prefers the positional language guard over mutex group errors", () =>
       Effect.gen(function* () {
         const { layer } = yield* setup({
-          args: ["gen", "types", "go", "--local", "--linked"],
+          args: ["gen", "types", "go", "--project-ref", VALID_REF, "--query-timeout", "20s"],
         });
-        const exit = yield* genTypes(defaultFlags({ local: true, linked: true })).pipe(
-          Effect.provide(layer),
-          Effect.exit,
-        );
+        const exit = yield* genTypes(
+          defaultFlags({ projectRef: Option.some(VALID_REF), queryTimeout: "20s" }),
+        ).pipe(Effect.provide(layer), Effect.exit);
 
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -1636,37 +1664,6 @@ describe("gen types", () => {
               Predicate.isTagged("GenTypesFlagUsageError"),
             ),
           ).toBe(true);
-        }
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
-
-    it.effect("reports mutex groups in sorted group-key order", () =>
-      Effect.gen(function* () {
-        const dbUrl = "postgresql://postgres:postgres@127.0.0.1:5432/postgres";
-        const { layer } = yield* setup({
-          args: [
-            "gen",
-            "types",
-            "--db-url",
-            dbUrl,
-            "--postgrest-v9-compat",
-            "--project-ref",
-            VALID_REF,
-          ],
-        });
-        const exit = yield* genTypes(
-          defaultFlags({
-            dbUrl: Option.some(dbUrl),
-            projectRef: Option.some(VALID_REF),
-            postgrestV9Compat: true,
-          }),
-        ).pipe(Effect.provide(layer), Effect.exit);
-
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(String(exit.cause)).toContain(
-            "if any flags in the group [remote linked project-ref postgrest-v9-compat] are set none of the others can be; [postgrest-v9-compat project-ref] were all set",
-          );
         }
       }).pipe(Effect.provide(BunServices.layer)),
     );

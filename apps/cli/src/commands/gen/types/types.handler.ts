@@ -114,14 +114,11 @@ function isPoolerHost(host: string, poolerHost: string): boolean {
 
 const GEN_TYPES_COMMAND_PATH = ["gen", "types"] as const;
 
-// The hosted-project selectors name one project, so they count as one member of a mutex group.
-const REMOTE_TARGET_FLAGS: ReadonlySet<string> = new Set(["remote", "linked", "project-ref"]);
-
-// Validation reports only the first violated group, in this listed order.
-const GEN_TYPES_MUTEX_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
-  ["remote", "linked", "project-ref", "postgrest-v9-compat"],
-  ["remote", "linked", "project-ref", "query-timeout"],
-  ...GEN_TYPES_LANGUAGE_FLAG_NAMES.map((name) => ["remote", "linked", "project-ref", name]),
+// A hosted project target excludes these flags; only the first one passed is reported, in this order.
+const HOSTED_EXCLUDED_FLAGS: ReadonlyArray<string> = [
+  "postgrest-v9-compat",
+  "query-timeout",
+  ...GEN_TYPES_LANGUAGE_FLAG_NAMES,
 ];
 
 const POSTGREST_V9_COMPAT_DEPRECATION_LINE =
@@ -573,6 +570,8 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       yield* output.raw(`${POSTGREST_V9_COMPAT_DEPRECATION_LINE}\n`, "stderr");
     }
 
+    const target = yield* resolveTarget(flags);
+
     const projectRefFlag = Option.orElse(flags.projectRef, () => flags.projectId);
     const remoteIsDatabase = Option.exists(flags.remote, (value) => value._tag === "DbUrl");
 
@@ -597,39 +596,24 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       });
     }
 
-    // `--linked=false` counts as absent; every other flag counts once passed, whatever its value.
-    const changedMutexFlags: Record<string, boolean> = {
-      remote: Option.isSome(flags.remote) && !remoteIsDatabase,
-      linked: flags.linked,
-      "project-ref": Option.isSome(projectRefFlag),
-      "postgrest-v9-compat": occurrences.has("postgrest-v9-compat"),
-      "query-timeout": occurrences.has("query-timeout"),
-      ...Object.fromEntries(
-        GEN_TYPES_LANGUAGE_FLAG_NAMES.map((name) => [name, occurrences.has(name)]),
-      ),
-    };
-    for (const group of GEN_TYPES_MUTEX_GROUPS) {
-      const set = group.filter((flagName) => changedMutexFlags[flagName]);
-      const members = new Set(
-        set.map((flagName) => (REMOTE_TARGET_FLAGS.has(flagName) ? "linked" : flagName)),
-      );
-      if (members.size > 1) {
+    if (target.kind === "linked") {
+      const excluded = HOSTED_EXCLUDED_FLAGS.find((name) => occurrences.has(name));
+      if (excluded !== undefined) {
+        const selectors = [
+          ...(Option.isSome(flags.remote) ? ["remote"] : []),
+          ...(flags.linked ? ["linked"] : []),
+          ...(Option.isSome(projectRefFlag) ? ["project-ref"] : []),
+        ];
         return yield* new GenTypesFlagUsageError({
-          message: mutuallyExclusiveFlagsMessage(group, set),
+          message: mutuallyExclusiveFlagsMessage(
+            ["remote", "linked", "project-ref", excluded],
+            [...selectors, excluded],
+          ),
         });
       }
     }
 
     yield* Effect.annotateCurrentSpan("typegen.lang", lang);
-
-    const target = yield* resolveTarget({
-      remote: flags.remote,
-      local: flags.local,
-      linked: flags.linked,
-      dbUrl: flags.dbUrl,
-      projectRef: flags.projectRef,
-      projectId: flags.projectId,
-    });
 
     if (target.kind === "local") {
       yield* Effect.annotateCurrentSpan({

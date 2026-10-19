@@ -174,19 +174,12 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
                 context:
                   "the ref names a preview branch and generating against its direct host fails with an IPv6 connectivity error",
               },
-              {
-                operationId: "v1-list-all-branches",
-                kind: "required",
-                when: [{ flag: "project-id", present: true }],
-                context:
-                  "--project-id names a branch (not a 20-letter project ref) of the linked project",
-              },
             ],
             noApiEffectFlags: ["schema", "query-timeout", ...GEN_TYPES_LANGUAGE_FLAG_NAMES],
           },
           withCondition(withContext(dbConfigLinked, notBranch), nonTypescript),
           withCondition(withContext(dbConfigPoolerFallbackLinked, notBranch), nonTypescript),
-          withCondition(projectRefPicker, { flag: "project-id", present: false }),
+          projectRefPicker,
           linkedProjectCache,
           branchResolution,
         ),
