@@ -6,10 +6,11 @@ platform view.
 Pg-delta runs in-process.
 Coverage gaps warn; `--strict-coverage` makes them fatal, and `PGDELTA_DEBUG`
 writes diagnostic JSON under `supabase/.temp/pgdelta/v2/debug/<id>/`.
-The command is `selectable` and never asks for hosted-mutation consent: the target is `--local`,
-`--linked`, `--project-ref <ref>` (implies linked), or `--db-url`, else the workspace `target`
-(`SUPABASE_TARGET`, then `config.toml`), which defaults to the local database. It never asks which
-database to use. A local target checks the local Postgres image, starts a stopped local database,
+The command is `selectable` and never asks for hosted-mutation consent: the target is `--remote`
+(the linked project), `--remote=<ref>`, `--remote=<branch>` (a branch of the linked project, by name
+or UUID) or `--remote=<url>`, else the local database; in a linked checkout the default `Target:`
+line adds `default; pass --remote for <project>`. It never asks which database to use.
+A local target checks the local Postgres image, starts a stopped local database,
 and resets it first only with `--reset`. When `[experimental].stack` is on, the local target
 connects to the running primary database in the project stack's composition. It does not launch a
 stopped database or choose a standalone shadow database.
@@ -22,13 +23,13 @@ formatting without disabling safe compaction.
 
 ## Files Read
 
-| Path                                           | Format     | When                                                                          |
-| ---------------------------------------------- | ---------- | ----------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`               | TOML       | always — pg-delta gate, workspace `target`, ports, format options             |
-| `<workdir>/supabase/.temp/postgres-version`    | plain text | a local target — the local Postgres image-currency check's version-pin lookup |
-| `<workdir>/supabase/.temp/project-ref`         | plain text | a linked target with no `--project-ref` and no `SUPABASE_PROJECT_ID`          |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON       | a linked target, for the `Target:` banner (no API call)                       |
-| `~/.supabase/access-token`                     | plain text | a linked target (token resolution)                                            |
+| Path                                           | Format     | When                                                                                                            |
+| ---------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`               | TOML       | always — pg-delta gate, ports, format options                                                                   |
+| `<workdir>/supabase/.temp/postgres-version`    | plain text | a local target — the local Postgres image-currency check's version-pin lookup                                   |
+| `<workdir>/supabase/.temp/project-ref`         | plain text | bare `--remote` with no `SUPABASE_PROJECT_ID`; with no selector, only to name the project in the `Target:` hint |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON       | a remote project, for the `Target:` banner (no API call)                                                        |
+| `~/.supabase/access-token`                     | plain text | a remote project or branch (token resolution)                                                                   |
 
 ## Files Written
 
@@ -48,10 +49,9 @@ formatting without disabling safe compaction.
 
 | Variable                     | Purpose                                                                                                                                                                                                                                                                                              | Required? |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_ACCESS_TOKEN`      | auth token for a linked target                                                                                                                                                                                                                                                                       | no        |
-| `SUPABASE_DB_PASSWORD`       | remote database password for a linked target (`--password`/`-p` overrides)                                                                                                                                                                                                                           |
-| `SUPABASE_PROJECT_ID`        | the project ref of a linked target when `--project-ref` is absent                                                                                                                                                                                                                                    |
-| `SUPABASE_TARGET`            | workspace target (`local` or `remote`) when no selector flag is given                                                                                                                                                                                                                                | no        |
+| `SUPABASE_ACCESS_TOKEN`      | auth token for a remote project or branch                                                                                                                                                                                                                                                            | no        |
+| `SUPABASE_DB_PASSWORD`       | remote database password for a remote project or branch (`--password`/`-p` overrides)                                                                                                                                                                                                                |
+| `SUPABASE_PROJECT_ID`        | the project ref of a bare `--remote` target, and the parent that `--remote=<branch>` is resolved against                                                                                                                                                                                             |
 | `SUPABASE_HOME`              | overrides the `~/.supabase` root (access token and other CLI state)                                                                                                                                                                                                                                  | no        |
 | `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                                                                                                                                                                                                                                       | no        |
 | `SUPABASE_SERVICES_HOSTNAME` | local DB host for a local target                                                                                                                                                                                                                                                                     | no        |
@@ -60,13 +60,14 @@ formatting without disabling safe compaction.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                           |
-| ---- | ------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success (files written, or skipped after a declined prompt)                                                         |
-| `1`  | pg-delta disabled (`[experimental.pgdelta] enabled = false` and no `--experimental`)                                |
-| `1`  | conflicting target flags (`--local`, `--linked`, `--db-url`), or `--project-ref` combined with `--local`/`--db-url` |
-| `1`  | `--password` combined with `--local` or `--db-url`                                                                  |
-| `1`  | local-database bring-up / pg-delta engine / export failure                                                          |
+| Code | Condition                                                                                                                                          |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success (files written, or skipped after a declined prompt)                                                                                        |
+| `1`  | pg-delta disabled (`[experimental.pgdelta] enabled = false` and no `--experimental`)                                                               |
+| `1`  | conflicting target flags (`--remote`, `--linked`, `--db-url`, `--local`), or `--project-ref` combined with `--local`/`--db-url`/`--remote=<value>` |
+| `1`  | `--password` combined with `--remote=<url>` or the local default                                                                                   |
+| `1`  | `--remote=<branch>` naming no branch of the linked project                                                                                         |
+| `1`  | local-database bring-up / pg-delta engine / export failure                                                                                         |
 
 The pg-delta gate and the selector checks are both raised before any side effects run,
 but the gate wins when both conditions apply simultaneously: the gate check runs
@@ -76,7 +77,7 @@ local Postgres image check and database start.
 
 ## Output
 
-Diagnostics (the `Target: …` banner, prompts, `Declarative schema written to <dir>`)
+Diagnostics (alias deprecation warnings, the `Target: …` banner, prompts, `Declarative schema written to <dir>`)
 always go to stderr, in every `--output-format`. On success:
 
 - `text` mode prints `Finished supabase db schema declarative generate.` to
@@ -90,20 +91,27 @@ always go to stderr, in every `--output-format`. On success:
 
 - Open by default. The gate closes only when `[experimental.pgdelta] enabled = false`
   and `--experimental` is omitted.
-- The target comes from `resolveTarget`: a selector flag wins, then the workspace `target`
-  (`SUPABASE_TARGET`, then `config.toml`), then local. With no selector the command exports
-  the local database; it neither prompts for a target nor fails in non-interactive mode.
-  `--project-ref` implies `--linked`; combining it with `--local` or `--db-url` is an error, as
-  is combining two of `--local`, `--linked` and `--db-url`. A `false` switch (`--linked=false`)
-  counts as absent.
+- The target comes from `resolveTarget`: `--remote` or one of its forms wins, else local. With no
+  selector the command exports the local database; it neither prompts for a target nor fails in
+  non-interactive mode.
+- **Target selection.** `--remote` is read as the linked project (bare), a project ref (20
+  lowercase letters), a Postgres URL, or else a branch of the linked project by name or UUID;
+  `--remote=false` and `--remote=` fail with `Leave out --remote to target the local database.` A
+  bare `--remote` followed by a word that is a branch of the linked project fails with a
+  `Did you mean --remote=<word>?` hint, since the word may have been meant as the flag's value.
+- **Deprecated aliases.** `--linked`, `--project-ref=<ref>`, `--db-url=<url>` and `--local` still
+  work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
+  warns that local is the default). They are mutually exclusive with each other and with
+  `--remote`; a `false` switch counts as absent. `--project-ref` with `--local`, `--db-url` or
+  `--remote=<value>` is a hard error.
 - `--reset` recreates the local database from the migrations before exporting; it has no effect
-  on a linked or `--db-url` target.
+  on a remote project, branch or `--remote=<url>` target.
 - Existing declarative files are overwritten only after the export succeeds: without
   `--overwrite`, a non-empty destination asks `Overwrite declarative schema? Existing files may be
 deleted.` (default no); a decline, or no answer, prints `Skipped writing declarative schema.`
   and exits `0`. `--yes` and `SUPABASE_YES` answer it.
-- A linked target caches the project in `supabase/.temp/linked-project.json` on success and
-  failure, like other linked commands.
+- A remote project or branch caches the project in `supabase/.temp/linked-project.json` on success and
+  failure, like other commands that target a remote project.
 - `--output-dir <dir>` selects a destination for this invocation without changing
   config or activating it for later syncs (deliberately not `--output`/`-o`, which
   the root command reserves for the global machine-format flag).
@@ -112,7 +120,11 @@ deleted.` (default no); a decline, or no answer, prints `Skipped writing declara
   or an export manifest, a WARNING on stderr explains the default move and how
   to keep the existing tree. Read-only probe; never changes behavior or exit
   codes.
-- Remote Supabase targets use the shared connection/TLS behavior.
+- Remote Supabase targets use the shared connection/TLS behavior. `--remote=<branch>`, and a bare
+  `--remote` followed by a word that could name a branch, call
+  `GET /v1/projects/{parent}/branches` to find the branch's project (`{parent}` is
+  `SUPABASE_PROJECT_ID`, else the linked project); the connection may also mint a temporary login
+  role through the Management API.
 - **Architecture:** the engine extracts and renders the target in-process.
 - **Stale local-container guard.** A local target inspects
   the running local `db` container's actual image and compares it against the
