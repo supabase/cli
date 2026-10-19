@@ -88,8 +88,8 @@ describe("new stack error telemetry", () => {
         cause: new StackError({ operation, message: "x", kind: "from-the-future" }),
       });
 
-    expect(classify(wrap("startComposition"))).toEqual({
-      error_fingerprint: "tag:ExperimentalStackStartError:unclassified_start_composition",
+    expect(classify(wrap("startService"))).toEqual({
+      error_fingerprint: "tag:ExperimentalStackStartError:unclassified_start_service",
       error_kind: "unknown",
       error_category: "unknown",
     });
