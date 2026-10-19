@@ -98,7 +98,7 @@ suppressed on stderr. `delete` ignores `-o`.
 ## Notes
 
 - Targets the linked project unless `--remote=<ref>` is given; a bare `--remote` also targets the linked project. `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked project (by name or UUID, resolved through `GET /v1/projects/{parent}/branches`), or `true|yes|on|1` for the linked project. A database URL is rejected (these commands take a project, not a database); `false|no|off|0`, `--no-remote` and an empty value fail with `Leave out --remote to use the linked project.`
-- A bare `--remote` followed by a word that is a branch of the linked project fails before any other work with a `Did you mean --remote=<word>?` hint, since the word may have been meant as the flag's value.
+- A word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes no operands.
 - The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
 - `--custom-hostname` is required for `create`.
 - `create` validates the CNAME via Cloudflare DNS-over-HTTPS (`https://1.1.1.1`, 10s timeout) before initializing; on failure it short-circuits before any POST.

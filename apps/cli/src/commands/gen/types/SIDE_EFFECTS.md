@@ -155,8 +155,10 @@ Not applicable.
   `postgresql://`), `true|yes|on|1` (the linked project), or otherwise the name of a branch of the
   linked project, which resolves to that branch's own project. `false|no|off|0`, `--no-remote` and
   an empty value fail with `Leave out --remote to target the local database.` A bare `--remote`
-  followed by a word that is a branch of the linked project fails with a
-  `Did you mean --remote=<word>?` hint, since the word may have been meant as the flag's value. The
+  followed by a word that exactly matches a branch of the linked project, is within a small edit
+  distance of one, or can't be checked because the branch listing failed stops the run with an error
+  that offers both readings: `--remote=<word>` for the branch, `<word> --remote` for the operand.
+  Any other word runs as the operand. The
   resolved target is announced on stderr (`Target: …`) in every output format.
 - **Deprecated selectors.** `--linked`, `--project-ref`, `--project-id`, `--db-url` and `--local`
   are hidden aliases that still select their target and print a warning on stderr naming the

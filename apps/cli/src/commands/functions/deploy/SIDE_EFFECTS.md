@@ -118,9 +118,10 @@ The `--output`/`-o` flag does not change deploy output.
   project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
   (`functions deploy` takes a project, not a database); `false|no|off|0`, `--no-remote` and an
   empty value fail with `Leave out --remote to use the linked project.`
-- A bare `--remote` followed by a word that is a branch of the linked project fails before any
-  other work with a `Did you mean --remote=<word>?` hint, since the word may have been meant as the
-  flag's value.
+- A bare `--remote` followed by a word that exactly matches a branch of the linked project, is
+  within a small edit distance of one, or can't be checked because the branch listing failed stops
+  the run before any other work with an error that offers both readings: `--remote=<word>` for the
+  branch, `<word> --remote` for the operand. Any other word runs as the operand.
 - The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning
   on stderr that names the replacement; it cannot be combined with `--remote=<value>`.
 - Bundles locally with Docker by default (`--use-docker` defaults to true and is hidden); `--use-api` selects server-side bundling, and a stopped Docker daemon falls back to it after a `WARNING: Docker is not running`.
