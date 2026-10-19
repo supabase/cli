@@ -61,16 +61,9 @@ const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
   {
     operationId: "v1-get-pooler-config",
     kind: "required",
-    when: [{ flag: "project-ref" }],
+    when: [{ selector: ["ref", "branch"] }],
     context:
-      "the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
-  },
-  {
-    operationId: "v1-get-pooler-config",
-    kind: "required",
-    when: [{ flag: "remote" }],
-    context:
-      "--remote names a project or branch other than the linked one, the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
+      "a project ref or branch names the target, the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
   },
   {
     operationId: "v1-list-all-network-bans",

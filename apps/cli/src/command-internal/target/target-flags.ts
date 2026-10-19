@@ -208,7 +208,18 @@ export const seedTargetGlobalFlags = {
   }),
   linked: GlobalFlag.Setting("linked")({ flag: linkedFlag() }),
   local: GlobalFlag.Setting("local")({ flag: localFlag() }),
+  projectRef: GlobalFlag.Setting("project-ref")({ flag: projectRefFlag() }),
 };
+
+/** The `seed` selector flags a leaf reads from the group's scoped globals. */
+export const readSeedTargetFlags = Effect.fnUntraced(function* () {
+  return {
+    remote: yield* seedTargetGlobalFlags.remote,
+    linked: yield* seedTargetGlobalFlags.linked,
+    local: yield* seedTargetGlobalFlags.local,
+    projectRef: yield* seedTargetGlobalFlags.projectRef,
+  } satisfies TargetFlagValuesWithoutDbUrl;
+});
 
 /** Hidden alias of `--remote=<ref>`, accepted only by `gen types`. */
 export const deprecatedProjectIdFlag = Flag.String("project-id").pipe(

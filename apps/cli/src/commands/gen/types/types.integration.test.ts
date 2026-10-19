@@ -3681,7 +3681,12 @@ describe("gen types permissions through the real layers", () => {
       ]);
       assertPermissionDrift({
         command: "gen types",
-        activeFlags: { ...DEFAULT_SWITCHES, linked: true, "project-id": true, lang: "typescript" },
+        activeFlags: {
+          ...DEFAULT_SWITCHES,
+          linked: true,
+          "project-id": VALID_REF,
+          lang: "typescript",
+        },
         requests: ctx.api.requests,
         exact: true,
       });
@@ -4003,7 +4008,7 @@ describe("gen types permissions through the real layers", () => {
         ...DEFAULT_SWITCHES,
         "postgrest-v9-compat": true,
         linked: true,
-        "project-id": true,
+        "project-id": VALID_REF,
         lang: "typescript",
       },
       generates: false,

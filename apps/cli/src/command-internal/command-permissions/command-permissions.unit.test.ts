@@ -31,6 +31,8 @@ const OPERATIONS_WITHOUT_FGA: ReadonlyMap<string, string> = new Map<string, stri
   ],
 ]);
 
+const BRANCH_RESOLUTION_SOURCE = "branch-resolution";
+
 const VARIANTS: ReadonlyArray<{ readonly name: string; readonly variant: PermissionVariant }> = [
   { name: "default backend", variant: undefined },
   {
@@ -204,6 +206,19 @@ describe("command permission mapping completeness", () => {
               `"${path}" declares "${entry.operationId}", which has no x-fga-permissions in the bundled spec — add it to OPERATIONS_WITHOUT_FGA with the reason`,
             ).toBe(true);
           }
+        }
+      });
+
+      it("composes branch resolution on every leaf that accepts --remote, except the branches that act on a parent project", () => {
+        for (const [path, node] of leaves) {
+          const permissions = declarationOf(node);
+          if (permissions?.status !== "mapped") continue;
+          if (!node.flags.has("remote") || path.startsWith("branches ")) continue;
+          if (permissions.noApiEffectFlags.includes("remote")) continue;
+          expect(
+            permissions.operations.some((entry) => entry.source === BRANCH_RESOLUTION_SOURCE),
+            `"${path}" accepts --remote=<branch> but does not compose branchResolution`,
+          ).toBe(true);
         }
       });
 

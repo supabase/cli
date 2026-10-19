@@ -1,57 +1,30 @@
-import { Effect, Layer, type Option } from "effect";
+import { Effect, Layer } from "effect";
 import { Command } from "effect/cli";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import {
-  compose,
-  withCondition,
-  withDbTarget,
-} from "../../../command-internal/command-permissions/model.ts";
-import { storageCredentials } from "../../../command-internal/storage-credentials.ts";
-import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
-import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
-import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
-import {
-  seedTargetGlobalFlags,
-  targetFlags,
+  readSeedTargetFlags,
   type TargetFlagValuesWithoutDbUrl,
 } from "../../../command-internal/target/target-flags.ts";
+import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
+import { STORAGE_PERMISSIONS } from "../../storage/storage.flags.ts";
 import { seedBuckets } from "./buckets.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
-const config = {
-  projectRef: targetFlags({ subject: "Storage API", dbUrl: false }).projectRef,
-};
-
-// `--remote`/`--linked`/`--local` are scoped globals on the `seed` group (`seedTargetGlobalFlags`).
 export type BucketsFlags = TargetFlagValuesWithoutDbUrl;
 
-export const bucketsCommand = Command.make("buckets", config).pipe(
+export const bucketsCommand = Command.make("buckets").pipe(
   Command.withDescription("Seed buckets declared in [storage.buckets]."),
   Command.withShortDescription("Seed buckets declared in [storage.buckets]"),
-  withPermissions(
-    withDbTarget(
-      compose(
-        { operations: [], noApiEffectFlags: [] },
-        withCondition(compose(storageCredentials, linkedProjectCache), { dbTarget: ["linked"] }),
-        branchResolution,
-      ),
-      { default: "local" },
-    ),
-  ),
-  Command.withHandler((leafFlags) =>
+  withPermissions(STORAGE_PERMISSIONS),
+  Command.withHandler(() =>
     Effect.gen(function* () {
-      const flags: BucketsFlags = {
-        remote: yield* seedTargetGlobalFlags.remote,
-        linked: yield* seedTargetGlobalFlags.linked,
-        local: yield* seedTargetGlobalFlags.local,
-        projectRef: leafFlags.projectRef,
-      };
+      const flags: BucketsFlags = yield* readSeedTargetFlags();
       return yield* seedBuckets(flags).pipe(
         withCommandTelemetry({
           flags: {
@@ -66,6 +39,6 @@ export const bucketsCommand = Command.make("buckets", config).pipe(
   ),
   Command.provide(Layer.mergeAll(storageGatewayRuntimeLayer(["seed", "buckets"]), stdinLayer)),
   Command.provide(cliConfigValuesLayer),
-  withCliConfigFlags(config),
+  withCliConfigFlags({}),
   withTargetPolicy({ group: "selectable", consent: "no" }),
 );

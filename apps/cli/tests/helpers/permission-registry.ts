@@ -56,6 +56,11 @@ function selectorShapeOf(activeFlags: ActiveFlags): SelectorShape {
   const dbUrl = given("db-url");
   if (dbUrl !== undefined) return "url";
   const alias = given("project-ref") ?? given("project-id");
+  if (alias === true) {
+    throw new Error(
+      "activeFlags gives --project-ref/--project-id as `true`; pass the value, since its shape picks the entries that apply",
+    );
+  }
   if (typeof alias === "string") return shapeOfNamedRemote(alias);
   if (given("linked") !== undefined) return "bare";
   const remote = given("remote");

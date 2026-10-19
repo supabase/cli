@@ -208,9 +208,9 @@ stdout and a terminal `result`/`error` event is emitted.
   `Leave out --remote to target the local Storage API.` A word after a bare `--remote` is read as
   its value, `--remote=<word>`, because the command takes no operands. The resolved target is
   announced on stderr (`Target: …`)
-  in every output format and, in JSON results, as a `target` object. `--remote`, `--linked` and
-  `--local` are scoped globals on the `seed` group, so they are also accepted before the subcommand
-  token.
+  in every output format and, in JSON results, as a `target` object. `--remote`, `--linked`,
+  `--local` and the deprecated `--project-ref` are scoped globals on the `seed` group, so they are
+  also accepted before the subcommand token.
 - **Deprecated selectors.** `--linked`, `--project-ref` and `--local` are hidden aliases that still
   select their target and print a warning on stderr naming the replacement, for example
   `--linked is deprecated and will be removed in v4. Use --remote instead: supabase seed buckets --remote`
