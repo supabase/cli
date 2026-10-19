@@ -57,7 +57,7 @@ variables, `.env` files, `[remotes.*]` blocks and `config.toml` combine. They di
   `db.seed.enabled` seeds nothing by default. `db push` still seeds only with `--include-seed`.
   The prompt before seeding into the matched project is superseded by the single hosted-mutation
   consent of [ADR 0033](0033-target-selection-and-hosted-mutation-consent.md): `db push` and
-  `db reset --linked` list the seed in their one question, and a non-interactive run needs `--yes`.
+  `db reset` against a remote target list the seed in their one question, and a non-interactive run needs `--yes`.
 - Local SMTP is on when `[auth.email.smtp]` sets `enabled`, or when the table is present and
   leaves it out. The schema default alone is off, so a partial table such as one holding only
   `pass = "env(SMTP_PASS)"` still loads. `resolveSmtpEnabled` implements the rule for every
@@ -72,9 +72,6 @@ variables, `.env` files, `[remotes.*]` blocks and `config.toml` combine. They di
     `SUPABASE_EXPERIMENTAL_PG_DELTA` is not read.
   - `db.password` has no env tier: the local database password lives in config, and the linked
     password is a separate key with its own env name, flag and scoping.
-  - The flag tier for `target` is the selector flags (`--local`, `--linked`, `--db-url` and
-    `--project-ref`), which are not `CLI_CONFIG_FLAGS` bindings. `target` applies to selectable
-    commands only ([ADR 0033](0033-target-selection-and-hosted-mutation-consent.md)).
   - Hosted-mutation consent reads `SUPABASE_YES` from the shell only. It has no project `.env*`
     tier, so a committed file cannot approve a production write. Local prompts keep the project
     `.env*` tier.
@@ -184,8 +181,8 @@ order stays the same for every key.
 
 - [ADR 0020](0020-config-naming-vocabulary.md): the config vocabulary this decision uses.
 - [ADR 0021](0021-projectconfig-convergence-semantics.md): the hosted subset that shares the schema.
-- [ADR 0033](0033-target-selection-and-hosted-mutation-consent.md): the `target` key, and the
-  hosted-mutation consent that supersedes the seed consent above.
+- [ADR 0033](0033-target-selection-and-hosted-mutation-consent.md): target selection with `--remote`,
+  and the hosted-mutation consent that supersedes the seed consent above.
 
 ## See Also
 
