@@ -2,10 +2,10 @@
 
 ## Files Read
 
-| Path                                   | Format                    | When                                                                    |
-| -------------------------------------- | ------------------------- | ----------------------------------------------------------------------- |
-| `~/.supabase/access-token`             | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable              |
-| `<workdir>/supabase/.temp/project-ref` | plain text (ref string)   | when `--project-ref` is not provided, to resolve the linked project ref |
+| Path                                   | Format                    | When                                                                                                                                                  |
+| -------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/access-token`             | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                            |
+| `<workdir>/supabase/.temp/project-ref` | plain text (ref string)   | when `--remote=<ref>` and `SUPABASE_PROJECT_ID` are not provided, to resolve the linked project ref, and as the linked parent for `--remote=<branch>` |
 
 ## Files Written
 
@@ -15,9 +15,10 @@
 
 ## API Routes
 
-| Method | Path                                        | Auth         | Request body | Response (used fields)                      |
-| ------ | ------------------------------------------- | ------------ | ------------ | ------------------------------------------- |
-| `GET`  | `/v1/projects/{ref}/api-keys[?reveal=true]` | Bearer token | none         | `[{name: string, api_key: string \| null}]` |
+| Method | Path                                        | Auth         | Request body | Response (used fields)                                                                                                                                                                                                                                   |
+| ------ | ------------------------------------------- | ------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/projects/{parent}/branches`            | Bearer token | none         | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>` (or the deprecated `--project-ref=<branch>`), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
+| `GET`  | `/v1/projects/{ref}/api-keys[?reveal=true]` | Bearer token | none         | `[{name: string, api_key: string \| null}]`                                                                                                                                                                                                              |
 
 The `reveal=true` query param is sent only when `--reveal` is passed; it instructs the
 Management API to return the full secret keys (`sb_secret_...`) in `api_key` instead of
@@ -32,26 +33,28 @@ Management API to return the full secret keys (`sb_secret_...`) in `api_key` ins
 
 ## Flags
 
-| Flag            | Type    | Required | Description                                                                 |
-| --------------- | ------- | -------- | --------------------------------------------------------------------------- |
-| `--project-ref` | string  | no       | Project ref of the Supabase project (resolved from linked config if absent) |
-| `--reveal`      | boolean | no       | Reveal the secret API keys in full (sends `reveal=true`); default redacted  |
+| Flag            | Type    | Required | Description                                                                                                                                                   |
+| --------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--remote`      | string  | no       | Project to read keys from: `--remote=<ref>`, `--remote=<branch>` of the linked project, or a bare `--remote` for the linked project (linked config if absent) |
+| `--project-ref` | string  | no       | Deprecated hidden alias of `--remote=<ref>`; prints a deprecation warning on stderr                                                                           |
+| `--reveal`      | boolean | no       | Reveal the secret API keys in full (sends `reveal=true`); default redacted                                                                                    |
 
 ## Exit Codes
 
-| Code | Condition                                                       |
-| ---- | --------------------------------------------------------------- |
-| `0`  | success — API keys printed to stdout                            |
-| `1`  | authentication error — no valid token found                     |
-| `1`  | API error — non-2xx response from `/v1/projects/{ref}/api-keys` |
-| `1`  | network / connection failure                                    |
-| `1`  | project ref not provided and no linked project found            |
+| Code | Condition                                                                                                                                                                                                      |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — API keys printed to stdout                                                                                                                                                                           |
+| `1`  | authentication error — no valid token found                                                                                                                                                                    |
+| `1`  | API error — non-2xx response from `/v1/projects/{ref}/api-keys`                                                                                                                                                |
+| `1`  | network / connection failure                                                                                                                                                                                   |
+| `1`  | project ref not provided and no linked project found                                                                                                                                                           |
+| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                                                                                            |
-| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` is telemetry-safe; `--reveal`'s boolean value is logged but never the key values) |
+| Event                  | When                                       | Notable properties / groups                                                                                                                                                                                       |
+| ---------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--remote` → `true` (bare), the ref, or `<redacted>`; `--project-ref` is recorded only when it is ref-shaped; `--reveal`'s boolean value is logged but never the key values) |
 
 ## Output
 
@@ -103,6 +106,16 @@ On failure, an `error` event is emitted instead:
   in the toml/env env map; the json/yaml encodings preserve the raw `null`. Passing
   `--reveal` makes the API return the secret values, so they print in full across all
   formats (issue #4775).
-- The `--project-ref` flag is optional when the CLI is linked to a project via `supabase link`.
-  When omitted, the ref is resolved flag → env → `.temp/project-ref` → prompt on a TTY,
-  failing with a not-linked error otherwise.
+- Requires `--remote=<ref|branch>`, `SUPABASE_PROJECT_ID`, a linked project (`supabase/.temp/project-ref`)
+  or, on an interactive terminal, the project picker; it fails with a not-linked error otherwise. A
+  bare `--remote` targets the linked project.
+- `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
+  project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
+  (`supabase projects api-keys` takes a project, not a database); `false|no|off|0`, `--no-remote` and an
+  empty value fail with `Leave out --remote to use the linked project.`
+- A bare `--remote` followed by a word that is a branch of the linked project fails before any
+  other work with a `Did you mean --remote=<word>?` hint, since the word may have been meant as
+  the flag's value.
+- The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
+  branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
+  be combined with `--remote=<value>`.

@@ -2,13 +2,13 @@
 
 ## Files Read
 
-| Path                                           | Format                    | When                                                                                          |
-| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
-| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile` |
-| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
-| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                |
-| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are unset                             |
+| Path                                           | Format                    | When                                                                                                            |
+| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile`                   |
+| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                                        |
+| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                                   |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                                  |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--remote=<ref>` and `SUPABASE_PROJECT_ID` env are unset, and as the linked parent for `--remote=<branch>` |
 
 ## Files Written
 
@@ -19,13 +19,14 @@
 
 ## API Routes
 
-| Method | Path                                           | Auth         | Request body | Response (used fields)                                                                                                                                                                                       |
-| ------ | ---------------------------------------------- | ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET`  | `/v1/projects`                                 | Bearer token | none         | project list for the interactive picker — only when no ref comes from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref` and stdin is a TTY with interactive output                               |
-| `GET`  | `/v1/projects/{ref}/config/auth/sso/providers` | Bearer token | none         | `{items: [{id, saml?, domains?, created_at?, updated_at?}]}`                                                                                                                                                 |
-| `GET`  | `/v1/projects/{ref}`                           | Bearer token | none         | `{organization_slug}` — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                                                                  |
-| `GET`  | `/v1/organizations/{slug}/entitlements`        | Bearer token | none         | `{entitlements[].feature.key, .hasAccess}` — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                                             |
-| `GET`  | `/v1/projects/{ref}`                           | Bearer token | none         | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available |
+| Method | Path                                           | Auth         | Request body | Response (used fields)                                                                                                                                                                                                                                   |
+| ------ | ---------------------------------------------- | ------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/projects`                                 | Bearer token | none         | project list for the interactive picker — only when no ref comes from `--remote=<ref>`, `SUPABASE_PROJECT_ID` or `.temp/project-ref` and stdin is a TTY with interactive output                                                                          |
+| `GET`  | `/v1/projects/{parent}/branches`               | Bearer token | none         | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>` (or the deprecated `--project-ref=<branch>`), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
+| `GET`  | `/v1/projects/{ref}/config/auth/sso/providers` | Bearer token | none         | `{items: [{id, saml?, domains?, created_at?, updated_at?}]}`                                                                                                                                                                                             |
+| `GET`  | `/v1/projects/{ref}`                           | Bearer token | none         | `{organization_slug}` — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                                                                                                              |
+| `GET`  | `/v1/organizations/{slug}/entitlements`        | Bearer token | none         | `{entitlements[].feature.key, .hasAccess}` — upgrade-gate side-call on a 4xx with no plan-gate error in the body                                                                                                                                         |
+| `GET`  | `/v1/projects/{ref}`                           | Bearer token | none         | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available                                             |
 
 ## Environment Variables
 
@@ -36,19 +37,20 @@
 
 ## Exit Codes
 
-| Code | Condition                                           |
-| ---- | --------------------------------------------------- |
-| `0`  | success                                             |
-| `1`  | `SsoListSamlDisabledError` — 404 from list endpoint |
-| `1`  | `SsoListUnexpectedStatusError` — other non-2xx      |
-| `1`  | `SsoListNetworkError` — transport-level failure     |
+| Code | Condition                                                                                                                                                                                                      |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                        |
+| `1`  | `SsoListSamlDisabledError` — 404 from list endpoint                                                                                                                                                            |
+| `1`  | `SsoListUnexpectedStatusError` — other non-2xx                                                                                                                                                                 |
+| `1`  | `SsoListNetworkError` — transport-level failure                                                                                                                                                                |
+| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
 
 ## Telemetry Events Fired
 
-| Event                   | When                                                 | Notable properties                                                     |
-| ----------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------- |
-| `cli_command_executed`  | post-run, success or failure (via wrapper)           | `exit_code`, `duration_ms`, `flags` (`--project-ref` allowed verbatim) |
-| `cli_upgrade_suggested` | 4xx response **and** `auth.saml_2` entitlement gated | `feature_key: "auth.saml_2"`, `org_slug`                               |
+| Event                   | When                                                 | Notable properties                                                                                                                                                      |
+| ----------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed`  | post-run, success or failure (via wrapper)           | `exit_code`, `duration_ms`, `flags` (`--remote` → `true` (bare), the ref, or `<redacted>`; `--project-ref` is recorded only when it is ref-shaped, never a branch name) |
+| `cli_upgrade_suggested` | 4xx response **and** `auth.saml_2` entitlement gated | `feature_key: "auth.saml_2"`, `org_slug`                                                                                                                                |
 
 ## Output
 
@@ -73,3 +75,15 @@ Single `success` event with `{providers: items}` as data.
 - The `SAML 2.0 EntityID` header label is rendered as plain text, without inline-code backticks.
 - Upgrade-gate side calls only fire on 4xx.
 - After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
+- Requires `--remote=<ref|branch>`, `SUPABASE_PROJECT_ID`, a linked project (`supabase/.temp/project-ref`)
+  or, on an interactive terminal, the project picker. A bare `--remote` targets the linked project.
+- `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
+  project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
+  (`supabase sso list` takes a project, not a database); `false|no|off|0`, `--no-remote` and an
+  empty value fail with `Leave out --remote to use the linked project.`
+- A bare `--remote` followed by a word that is a branch of the linked project fails before any
+  other work with a `Did you mean --remote=<word>?` hint, since the word may have been meant as
+  the flag's value.
+- The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
+  branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
+  be combined with `--remote=<value>`.

@@ -2,14 +2,14 @@
 
 ## Files Read
 
-| Path                                           | Format                    | When                                                                                          |
-| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
-| `/proc/sys/kernel/osrelease` (Linux)           | plain text                | once on layer init — disables keyring on WSL (`WSL` / `Microsoft` substring match)            |
-| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile` |
-| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
-| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
-| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset                                 |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | existence check before the cache fill (in `Effect.ensuring` after the project ref resolves)   |
+| Path                                           | Format                    | When                                                                                                             |
+| ---------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `/proc/sys/kernel/osrelease` (Linux)           | plain text                | once on layer init — disables keyring on WSL (`WSL` / `Microsoft` substring match)                               |
+| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `CommandSettings.profile`                    |
+| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                                         |
+| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                                    |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--remote=<ref>` and `SUPABASE_PROJECT_ID` are both unset, and as the linked parent for `--remote=<branch>` |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | existence check before the cache fill (in `Effect.ensuring` after the project ref resolves)                      |
 
 ## Files Written
 
@@ -20,12 +20,13 @@
 
 ## API Routes
 
-| Method   | Path                         | Auth         | Request body    | Response (used fields)                                                                                                                                                                        |
-| -------- | ---------------------------- | ------------ | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`    | `/v1/projects/{ref}/secrets` | Bearer token | none            | `[{name}]` — `--all` path only, filters `SUPABASE_` prefix                                                                                                                                    |
-| `DELETE` | `/v1/projects/{ref}/secrets` | Bearer token | `["NAME", ...]` | none (200 expected; not called with `--dry-run`)                                                                                                                                              |
-| `GET`    | `/v1/projects`               | Bearer token | none            | project picker — only when no ref comes from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref`, stdin is a TTY and output is interactive                                          |
-| `GET`    | `/v1/projects/{ref}`         | Bearer token | none            | linked-project cache fill — best-effort, only when `.temp/linked-project.json` is absent, `.temp/project-ref` is absent or names the same ref, and a token is available; failures are ignored |
+| Method   | Path                             | Auth         | Request body    | Response (used fields)                                                                                                                                                                                                                                   |
+| -------- | -------------------------------- | ------------ | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/v1/projects/{ref}/secrets`     | Bearer token | none            | `[{name}]` — `--all` path only, filters `SUPABASE_` prefix                                                                                                                                                                                               |
+| `DELETE` | `/v1/projects/{ref}/secrets`     | Bearer token | `["NAME", ...]` | none (200 expected; not called with `--dry-run`)                                                                                                                                                                                                         |
+| `GET`    | `/v1/projects`                   | Bearer token | none            | project picker — only when no ref comes from `--remote=<ref>`, `SUPABASE_PROJECT_ID` or `.temp/project-ref`, stdin is a TTY and output is interactive                                                                                                    |
+| `GET`    | `/v1/projects/{parent}/branches` | Bearer token | none            | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>` (or the deprecated `--project-ref=<branch>`), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
+| `GET`    | `/v1/projects/{ref}`             | Bearer token | none            | linked-project cache fill — best-effort, only when `.temp/linked-project.json` is absent, `.temp/project-ref` is absent or names the same ref, and a token is available; failures are ignored                                                            |
 
 ## Environment Variables
 
@@ -34,7 +35,7 @@
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                                                                                                                                                     | no (falls back to keyring → `~/.supabase/access-token`)                             |
 | `SUPABASE_PROFILE`      | selects API base URL: `supabase` → `api.supabase.com`, `supabase-staging` → `api.supabase.green`, `supabase-local` → `http://localhost:8080`. May alternatively be a filesystem path to a YAML profile with at least `api_url:` and optional `name:` (used by the cli-e2e test harness). | no (defaults to `supabase`)                                                         |
 | `SUPABASE_YES`          | confirms without a prompt, same as `--yes`; read from the shell only (a project `.env` value does not count)                                                                                                                                                                             | no                                                                                  |
-| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset                                                                                                                                                                                                                                       | no (also reads `<workdir>/supabase/.temp/project-ref` then prompts on TTY)          |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--remote=<ref>` is unset; also the parent project that `--remote=<branch>` is resolved against                                                                                                                                                                | no (also reads `<workdir>/supabase/.temp/project-ref` then prompts on TTY)          |
 | `SUPABASE_WORKDIR`      | base directory for the `.temp/project-ref` lookup                                                                                                                                                                                                                                        | no (walks up from CWD looking for `supabase/config.toml` or `supabase/config.json`) |
 
 ## Exit Codes
@@ -48,8 +49,9 @@
 | `1`  | `SecretsUnsetInputError` — names given together with `--all`; fails before the project ref resolves and before any API call                                                                                                                                          |
 | `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                                                                                                                                                                                                            |
 | `1`  | `InvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`                                                                                                                                                                                        |
-| `1`  | `ProjectRefNotLinkedError` — `--project-ref` unset, env/file empty, and stdin not a TTY                                                                                                                                                                              |
-| `1`  | `InvalidProjectRefError` — resolved ref violates `^[a-z]{20}$`                                                                                                                                                                                                       |
+| `1`  | `ProjectRefNotLinkedError` — `--remote=<ref>` unset, env/file empty, and stdin not a TTY                                                                                                                                                                             |
+| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`)                                                       |
+| `1`  | `InvalidProjectRefError` — a `SUPABASE_PROJECT_ID` or link-file ref violates `^[a-z]{20}$`                                                                                                                                                                           |
 | `1`  | `HostedMutationConsentRequiredError` — no `--yes`/shell `SUPABASE_YES` and stdin is not a TTY or output is not interactive text; nothing is unset. An explicit-name run makes no secrets request; `--all` has already listed the secrets (GET) to build the question |
 | `1`  | `SecretsListUnexpectedStatusError` — non-2xx response from GET (`--all` path)                                                                                                                                                                                        |
 | `1`  | `SecretsListNetworkError` — GET transport failure (`--all` path)                                                                                                                                                                                                     |
@@ -59,9 +61,9 @@
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                          |
-| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`) |
+| Event                  | When                                       | Notable properties / groups                                                                                                |
+| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--remote` → `true` (bare), the ref, or `<redacted>`; `--project-ref` → `<redacted>`) |
 
 ## Output
 
@@ -102,3 +104,15 @@ One `result` NDJSON event on success containing `{project_ref, count, names, dry
 - Without `--yes`, a run whose stdin is not a TTY, or whose output is not interactive text (`json`, `stream-json`), fails before any DELETE.
 - `--dry-run` never prompts, never calls DELETE, and works without `--yes` in every output mode. With `--all` it still calls GET to list the secrets.
 - Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers.
+- Requires `--remote=<ref|branch>`, `SUPABASE_PROJECT_ID`, a linked project (`supabase/.temp/project-ref`)
+  or, on an interactive terminal, the project picker. A bare `--remote` targets the linked project.
+- `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
+  project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
+  (`supabase secrets unset` takes a project, not a database); `false|no|off|0`, `--no-remote` and an
+  empty value fail with `Leave out --remote to use the linked project.`
+- A bare `--remote` followed by a word that is a branch of the linked project fails before any
+  other work with a `Did you mean --remote=<word>?` hint, since the word may have been meant as
+  the flag's value.
+- The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
+  branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
+  be combined with `--remote=<value>`.

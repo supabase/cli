@@ -2,11 +2,11 @@
 
 ## Files Read
 
-| Path                                           | Format                    | When                                                                                                                 |
-| ---------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                           |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always, after the project ref resolves — `linkedProjectCache` checks it exists to decide whether to write            |
-| `<workdir>/supabase/.temp/project-ref`         | plain text (project ref)  | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are both unset; also by `linkedProjectCache` on a cache miss |
+| Path                                           | Format                    | When                                                                                                                                                               |
+| ---------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                         |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always, after the project ref resolves — `linkedProjectCache` checks it exists to decide whether to write                                                          |
+| `<workdir>/supabase/.temp/project-ref`         | plain text (project ref)  | when `--remote=<ref>` and `SUPABASE_PROJECT_ID` env are both unset, and as the linked parent for `--remote=<branch>`; also by `linkedProjectCache` on a cache miss |
 
 ## Files Written
 
@@ -17,12 +17,13 @@
 
 ## API Routes
 
-| Method | Path                                          | Auth         | Request body                                                   | Response (used fields)                                                                                                                                                                                       |
-| ------ | --------------------------------------------- | ------------ | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET`  | `/v1/projects`                                | Bearer token | none                                                           | project list for the interactive picker — only when no ref comes from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref` and stdin is a TTY with interactive output                               |
-| `GET`  | `/v1/projects/{ref}/config/database/postgres` | Bearer token | none                                                           | full JSON object                                                                                                                                                                                             |
-| `PUT`  | `/v1/projects/{ref}/config/database/postgres` | Bearer token | full config object (conditional GET merge unless replace mode) | full JSON object                                                                                                                                                                                             |
-| `GET`  | `/v1/projects/{ref}`                          | Bearer token | none                                                           | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available |
+| Method | Path                                          | Auth         | Request body                                                   | Response (used fields)                                                                                                                                                                                                                                   |
+| ------ | --------------------------------------------- | ------------ | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/projects`                                | Bearer token | none                                                           | project list for the interactive picker — only when no ref comes from `--remote=<ref>`, `SUPABASE_PROJECT_ID` or `.temp/project-ref` and stdin is a TTY with interactive output                                                                          |
+| `GET`  | `/v1/projects/{parent}/branches`              | Bearer token | none                                                           | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>` (or the deprecated `--project-ref=<branch>`), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
+| `GET`  | `/v1/projects/{ref}/config/database/postgres` | Bearer token | none                                                           | full JSON object                                                                                                                                                                                                                                         |
+| `PUT`  | `/v1/projects/{ref}/config/database/postgres` | Bearer token | full config object (conditional GET merge unless replace mode) | full JSON object                                                                                                                                                                                                                                         |
+| `GET`  | `/v1/projects/{ref}`                          | Bearer token | none                                                           | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available                                             |
 
 The initial `GET` is skipped when `--replace-existing-overrides` is set. Otherwise the command fetches current overrides first, merges the new values locally, then sends the final merged object back via `PUT`.
 
@@ -30,13 +31,13 @@ The keys passed with `--config` (and `restart_database`) are validated locally a
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                               | Required?                                                                                     |
-| ----------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                  | no (falls back to keyring -> `~/.supabase/access-token`)                                      |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                               | no (falls back to `~/.supabase/profile` -> `supabase`)                                        |
-| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset                                                    | no (falls back to `supabase/.temp/project-ref`, then the interactive project picker on a TTY) |
-| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag                                              | no (pass `--experimental` instead; one of the two is required)                                |
-| `SUPABASE_YES`          | confirms the hosted mutation without asking; only the shell environment counts, never `supabase/.env` | no (falls back to the interactive prompt)                                                     |
+| Variable                | Purpose                                                                                                                   | Required?                                                                                     |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                      | no (falls back to keyring -> `~/.supabase/access-token`)                                      |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                                                   | no (falls back to `~/.supabase/profile` -> `supabase`)                                        |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--remote=<ref>` is unset; also the parent project that `--remote=<branch>` is resolved against | no (falls back to `supabase/.temp/project-ref`, then the interactive project picker on a TTY) |
+| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag                                                                  | no (pass `--experimental` instead; one of the two is required)                                |
+| `SUPABASE_YES`          | confirms the hosted mutation without asking; only the shell environment counts, never `supabase/.env`                     | no (falls back to the interactive prompt)                                                     |
 
 ## Exit Codes
 
@@ -46,7 +47,8 @@ The keys passed with `--config` (and `restart_database`) are validated locally a
 | `1`  | malformed CSV in a `--config` value — fails during flag parsing, before the `--experimental` gate, the handler, and telemetry, with the exact diagnostic text on stderr (e.g. `invalid argument "a\"b" for "--config" flag: parse error on line 1, column 2: bare " in non-quoted-field`; a blank-only value fails with `EOF`) — CLI-2005 |
 | `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) - checked before ref resolution/API/telemetry                                                                                                                                                                                                 |
 | `1`  | malformed `--config` (`PostgresConfigInvalidConfigValueError`)                                                                                                                                                                                                                                                                            |
-| `1`  | project ref unresolved (`ProjectRefNotLinkedError` / `InvalidProjectRefError`)                                                                                                                                                                                                                                                            |
+| `1`  | project ref unresolved (`ProjectRefNotLinkedError`; `InvalidProjectRefError` for a malformed `SUPABASE_PROJECT_ID` or link-file ref)                                                                                                                                                                                                      |
+| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`)                                                                                                                            |
 | `1`  | initial GET non-2xx (`PostgresConfigGetUnexpectedStatusError`)                                                                                                                                                                                                                                                                            |
 | `1`  | initial GET transport failure (`PostgresConfigGetNetworkError`)                                                                                                                                                                                                                                                                           |
 | `1`  | PUT non-2xx (`PostgresConfigUpdateUnexpectedStatusError`)                                                                                                                                                                                                                                                                                 |
@@ -58,9 +60,9 @@ The keys passed with `--config` (and `restart_database`) are validated locally a
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                           |
-| ---------------------- | ------------------------------------------ | --------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` -> `<redacted>`) |
+| Event                  | When                                       | Notable properties / groups                                                                                                |
+| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--remote` → `true` (bare), the ref, or `<redacted>`; `--project-ref` → `<redacted>`) |
 
 ## Output
 
@@ -106,7 +108,8 @@ One `result` event on success.
 
 - The `--output` flag wins over `--output-format` when both are provided.
 - Flags: `--config` (repeatable; each value must contain exactly one `=`, otherwise `PostgresConfigInvalidConfigValueError`), `--replace-existing-overrides`, `--no-restart`.
-- Requires `--project-ref`, `SUPABASE_PROJECT_ID`, a linked project (`supabase/.temp/project-ref`), or, on an interactive terminal, the project picker.
+- Requires `--remote=<ref|branch>`, `SUPABASE_PROJECT_ID`, a linked project (`supabase/.temp/project-ref`)
+  or, on an interactive terminal, the project picker. A bare `--remote` targets the linked project.
 - Integer-like values are coerced to integers, boolean-like values are coerced to booleans, and everything else stays stringly typed before the final JSON body is serialized.
 - Keys ending in `_timeout` are always stringified before the `PUT`.
 - `--no-restart` injects `restart_database = false` into the final request body.
@@ -119,3 +122,13 @@ One `result` event on success.
 - After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
 - Asks `Update the Postgres config overrides on <target>?` (default No) before the first write, after printing the overrides to set, whether all existing ones are replaced, and whether the restart is skipped. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.
 - The current overrides are fetched (a read) before the confirmation so the plan is known; the `PUT` happens only after it.
+- `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
+  project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
+  (`supabase postgres-config update` takes a project, not a database); `false|no|off|0`, `--no-remote` and an
+  empty value fail with `Leave out --remote to use the linked project.`
+- A bare `--remote` followed by a word that is a branch of the linked project fails before any
+  other work with a `Did you mean --remote=<word>?` hint, since the word may have been meant as
+  the flag's value.
+- The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
+  branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
+  be combined with `--remote=<value>`.

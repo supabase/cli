@@ -42,7 +42,7 @@ regardless of `-o`/`--output`:
 
 ```
 supabase gen keys was removed.
-Use `supabase projects api-keys --project-ref <ref>` to read a project's API keys.
+Use `supabase projects api-keys --remote=<ref>` to read a project's API keys.
 ```
 
 ### `--output-format json` / `stream-json`
@@ -60,4 +60,4 @@ One `cli_command_executed` event per invocation, with `exit_code: 1` and an
 
 - Unlisted (not shown in `supabase gen --help`), still reachable by exact name.
 - No flag value is read; the command fails identically regardless of
-  `--project-ref`/`--override-name`.
+  `--remote`/`--project-ref`/`--override-name`.
