@@ -5,6 +5,7 @@ import {
   getCommandRuntimeCommand,
   getCommandRuntimeSpanName,
 } from "../shared/runtime/command-runtime.service.ts";
+import { failureBesideClosedStdout } from "../shared/output/errors.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { GLOBAL_FLAGS, OutputFlag, globalFlagValues } from "../command-internal/global-flags.ts";
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
@@ -416,9 +417,13 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
         const processExitCode = yield* processControl.getExitCode;
         const isConfigDiffDriftSignal =
           Exit.isSuccess(exit) && command === "config diff" && processExitCode === 2;
+        // A closed stdout alone ends the command with exit 0, as `runCli` reports it.
+        const failureCause = Exit.isFailure(exit)
+          ? failureBesideClosedStdout(exit.cause)
+          : undefined;
         const recordedExitCode = isConfigDiffDriftSignal
           ? 2
-          : Exit.isFailure(exit) || (processExitCode !== undefined && processExitCode !== 0)
+          : failureCause !== undefined || (processExitCode !== undefined && processExitCode !== 0)
             ? 1
             : 0;
 
@@ -435,11 +440,12 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
           onNone: () => analyticsContext,
           onSome: (distinct_id) => ({ ...analyticsContext, distinct_id }),
         });
-        const failureMetadata = Exit.isFailure(exit)
-          ? failureTelemetryPropertiesForCause(exit.cause)
-          : recordedExitCode === 1
-            ? toFailureTelemetryProperties(processControlledFailureActionability(command))
-            : {};
+        const failureMetadata =
+          failureCause !== undefined
+            ? failureTelemetryPropertiesForCause(failureCause)
+            : recordedExitCode === 1
+              ? toFailureTelemetryProperties(processControlledFailureActionability(command))
+              : {};
 
         yield* analytics
           .capture(EventCommandExecuted, {

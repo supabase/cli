@@ -233,7 +233,10 @@ export interface FastForwardIo {
   listReviews(): Promise<PullRequestReview[]>;
   listCheckRuns(sha: string): Promise<CheckRun[]>;
   findOpenPullRequest(base: string, head: string): Promise<number | undefined>;
+  listComments(): Promise<{ user: { login: string } | null; body: string }[]>;
   comment(body: string): Promise<void>;
+  /** Dispatches `Sync branches` to let Claude resolve the `develop` → `next` merge again on this pull request. */
+  dispatchResync(): Promise<void>;
 }
 
 export interface FastForwardInput {
@@ -249,6 +252,7 @@ export type FastForwardOutcome =
   | { status: "fast-forwarded"; sha: string }
   | { status: "merged-after-resync"; sha: string }
   | { status: "resynced"; sha: string }
+  | { status: "resync-dispatched"; resyncs: number }
   | { status: "refused"; reason: string }
   | { status: "dry-run"; reason: string };
 
@@ -396,6 +400,11 @@ function pushSha(
   return result.status === 0 ? { ok: true } : { ok: false, stderr: result.stderr };
 }
 
+/** Resyncs Claude may run on one `develop` → `next` sync pull request after `next` moves. */
+const MAX_RESYNCS = 2;
+const RESYNC_MARKER = "<!-- fast-forward resync -->";
+const WORKFLOW_BOT_LOGIN = "github-actions[bot]";
+
 async function resyncSyncBranch(
   io: FastForwardIo,
   input: FastForwardInput,
@@ -421,6 +430,34 @@ async function resyncSyncBranch(
         .filter(Boolean)
         .map((file) => `- \`${file}\``)
         .join("\n");
+      if (promotion.source === "develop" && promotion.target === "next") {
+        const conflict = `\`${target}\` moved since approval and merging it into \`${syncBranch}\` conflicts:\n\n${list}`;
+        try {
+          // Counts this workflow's own resync comments, so a sync resolved by hand gets the same two resyncs.
+          const resyncs = (await io.listComments()).filter(
+            (comment) =>
+              comment.user?.login === WORKFLOW_BOT_LOGIN && comment.body.startsWith(RESYNC_MARKER),
+          ).length;
+          if (resyncs < MAX_RESYNCS) {
+            if (input.dryRun) {
+              return { status: "dry-run", reason: `would dispatch a resync of ${syncBranch}` };
+            }
+            // Posted before the dispatch, so a dispatch that fails still counts toward the limit.
+            await io.comment(
+              `${RESYNC_MARKER}\n${conflict}\n\nClaude is resolving the merge again on this pull request (resync ${resyncs + 1} of ${MAX_RESYNCS}).`,
+            );
+            await io.dispatchResync();
+            return { status: "resync-dispatched", resyncs: resyncs + 1 };
+          }
+        } catch (error) {
+          return refuse(
+            io,
+            input,
+            `Starting the resync of ${syncBranch} failed`,
+            `${conflict}\n\nStarting Claude's resync failed (${error instanceof Error ? error.message : String(error)}); resolve on the branch and re-approve.`,
+          );
+        }
+      }
       return refuse(
         io,
         input,
@@ -641,10 +678,37 @@ function makeIo(token: string, repository: string, prNumber: number): FastForwar
       );
       return pulls[0]?.number;
     },
+    async listComments() {
+      const comments: { user: { login: string } | null; body: string }[] = [];
+      for (let page = 1; ; page += 1) {
+        const batch = await githubRequest<typeof comments>(
+          token,
+          `/repos/${repository}/issues/${prNumber}/comments?per_page=100&page=${page}`,
+        );
+        comments.push(...batch);
+        if (batch.length < 100) {
+          return comments;
+        }
+      }
+    },
     async comment(body) {
       await githubRequest(token, `/repos/${repository}/issues/${prNumber}/comments`, {
         body,
       });
+    },
+    async dispatchResync() {
+      const { default_branch: ref } = await githubRequest<{ default_branch: string }>(
+        token,
+        `/repos/${repository}`,
+      );
+      await githubRequest(
+        token,
+        `/repos/${repository}/actions/workflows/sync-branches.yml/dispatches`,
+        {
+          ref,
+          inputs: { pair: "develop-into-next", resync_pr: String(prNumber) },
+        },
+      );
     },
   };
 }

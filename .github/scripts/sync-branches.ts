@@ -21,7 +21,8 @@ export type SyncOutcome =
   | { status: "skipped-open-pr"; pullRequest: number }
   | { status: "up-to-date" }
   | { status: "merged" }
-  | { status: "conflict-pr-opened"; pullRequest: number; files: string[] };
+  | { status: "conflict-pr-opened"; pullRequest: number; files: string[] }
+  | { status: "resync"; pullRequest: number };
 
 export interface PullRequestDraft {
   base: string;
@@ -35,6 +36,11 @@ export interface SyncIo {
   git: GitRunner;
   findOpenPullRequest(base: string, head: string): Promise<number | undefined>;
   createPullRequest(draft: PullRequestDraft): Promise<number>;
+  getPullRequest(number: number): Promise<{
+    state: string;
+    head: { ref: string; repo: { full_name: string } | null };
+    base: { ref: string; repo: { full_name: string } };
+  }>;
 }
 
 const BRANCH_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
@@ -107,7 +113,15 @@ function fetchBranches(git: GitRunner, pair: SyncPair): void {
   ]);
 }
 
-export async function syncBranches(io: SyncIo, pair: SyncPair): Promise<SyncOutcome> {
+/**
+ * Merges the source into the target, or opens a conflict pull request. With `resyncPr`, hands that open
+ * `develop` → `next` sync pull request back to Claude's resolution instead, after `next` moved and conflicts.
+ */
+export async function syncBranches(
+  io: SyncIo,
+  pair: SyncPair,
+  resyncPr?: number,
+): Promise<SyncOutcome> {
   const { git } = io;
   for (const branch of [pair.target, pair.source]) {
     if (!remoteBranchExists(git, branch)) {
@@ -116,6 +130,20 @@ export async function syncBranches(io: SyncIo, pair: SyncPair): Promise<SyncOutc
   }
 
   const syncBranch = syncBranchName(pair);
+  if (resyncPr !== undefined) {
+    const pullRequest = await io.getPullRequest(resyncPr);
+    if (
+      pair.source !== "develop" ||
+      pair.target !== "next" ||
+      pullRequest.state !== "open" ||
+      pullRequest.head.ref !== syncBranch ||
+      pullRequest.head.repo?.full_name !== pullRequest.base.repo.full_name ||
+      pullRequest.base.ref !== pair.target
+    ) {
+      throw new Error(`#${resyncPr} is not an open ${syncBranch} pull request into ${pair.target}`);
+    }
+    return { status: "resync", pullRequest: resyncPr };
+  }
   const openPullRequest = await io.findOpenPullRequest(pair.target, syncBranch);
   if (openPullRequest !== undefined) {
     return { status: "skipped-open-pr", pullRequest: openPullRequest };
@@ -197,6 +225,7 @@ function makeIo(token: string, repository: string): SyncIo {
       });
       return created.number;
     },
+    getPullRequest: (number) => githubRequest(token, `/repos/${repository}/pulls/${number}`),
   };
 }
 
@@ -209,9 +238,14 @@ async function main(): Promise<void> {
   if (!isAllowedSyncPair(pair.source, pair.target)) {
     throw new Error(`"${pairArgument}" is not a sync pair`);
   }
+  const resyncPr = process.env.RESYNC_PR ? Number(process.env.RESYNC_PR) : undefined;
+  if (resyncPr !== undefined && (!Number.isSafeInteger(resyncPr) || resyncPr <= 0)) {
+    throw new Error(`Invalid RESYNC_PR "${process.env.RESYNC_PR}"`);
+  }
   const outcome = await syncBranches(
     makeIo(requireEnv("GH_TOKEN"), requireEnv("REPOSITORY")),
     pair,
+    resyncPr,
   );
   switch (outcome.status) {
     case "skipped-missing-branch":
@@ -232,6 +266,10 @@ async function main(): Promise<void> {
       console.log(
         `::warning::Opened PR #${outcome.pullRequest} for conflicts in ${outcome.files.join(", ")}.`,
       );
+      appendOutput("conflict_pr", String(outcome.pullRequest));
+      break;
+    case "resync":
+      console.log(`Merging ${pair.target} into PR #${outcome.pullRequest} again.`);
       appendOutput("conflict_pr", String(outcome.pullRequest));
       break;
   }
