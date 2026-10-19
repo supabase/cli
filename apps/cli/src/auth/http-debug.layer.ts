@@ -3,7 +3,7 @@ import { FetchHttpClient } from "effect/http";
 import * as HttpClient from "effect/http/HttpClient";
 
 import { dohFetchLayer } from "../command-internal/http-dns.ts";
-import { DebugLogger } from "../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 
 /**
  * Query parameters that mean the URL *is* a credential.

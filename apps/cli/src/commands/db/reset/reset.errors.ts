@@ -62,6 +62,7 @@ export class DbResetMigrationFileError extends Data.TaggedError("DbResetMigratio
  */
 export class DbResetCancelledError extends Data.TaggedError("DbResetCancelledError")<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.cancelled;

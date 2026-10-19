@@ -15,15 +15,17 @@ import {
   CommandTelemetryAttributes,
   type CommandTelemetryAttributeValues,
 } from "../../../telemetry/command-telemetry-attributes.ts";
+import { withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
 const load = (projectRoot: string) =>
   loadStackConfig(projectRoot).pipe(
-    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer, cliConfigValuesTestLayer)),
   );
 
 const project = (contents: string, options: Parameters<typeof createStackConfigProject>[1] = {}) =>
   createStackConfigProject(contents, options).pipe(
-    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
+    Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer, cliConfigValuesTestLayer)),
   );
 
 const publicJwkSchema = Schema.Struct({
@@ -350,16 +352,6 @@ s3_secret_key = "env(S3_SECRET_KEY)"
       Effect.gen(function* () {
         const unpublished =
           "db.orioledb_version (or SUPABASE_DB_ORIOLEDB_VERSION) = 17.0.0.000 is not an OrioleDB build this CLI ships for the experimental stack; it ships:";
-        const orioledb = yield* project(`project_id = "stack-config-orioledb"
-[experimental]
-orioledb_version = "17.0.0.000"
-`);
-        const orioledbExit = yield* load(orioledb).pipe(Effect.exit);
-        expect(Exit.isFailure(orioledbExit)).toBe(true);
-        if (Exit.isFailure(orioledbExit)) expect(String(orioledbExit.cause)).toContain(unpublished);
-
-        // The same check applies to the canonical `[db]` location, not just the deprecated
-        // `[experimental]` alias.
         const orioledbCanonical = yield* project(`project_id = "stack-config-orioledb-db"
 [db]
 orioledb_version = "17.0.0.000"
@@ -390,6 +382,33 @@ s3_host = "s3.example.test"
             "experimental.s3_host is unsupported by the experimental stack",
           );
       }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("rejects the removed experimental.orioledb_version key and its env var", () =>
+    Effect.gen(function* () {
+      const removedKey = yield* project(`project_id = "stack-config-orioledb-removed"
+[experimental]
+orioledb_version = "17.0.0.000"
+`);
+      const keyExit = yield* load(removedKey).pipe(Effect.exit);
+      expect(Exit.isFailure(keyExit)).toBe(true);
+      if (Exit.isFailure(keyExit))
+        expect(String(keyExit.cause)).toContain(
+          "experimental.orioledb_version in supabase/config.toml is no longer supported. Use db.orioledb_version instead.",
+        );
+
+      const envRoot = yield* project('project_id = "stack-config-orioledb-env"\n');
+      const envExit = yield* withEnvVar(
+        "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
+        "17.0.0.000",
+        load(envRoot).pipe(Effect.exit),
+      );
+      expect(Exit.isFailure(envExit)).toBe(true);
+      if (Exit.isFailure(envExit))
+        expect(String(envExit.cause)).toContain(
+          "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION (set in the shell environment) is no longer supported. Use SUPABASE_DB_ORIOLEDB_VERSION instead.",
+        );
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("records OrioleDB selection on the command event before rejecting it", () =>
