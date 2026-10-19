@@ -28,7 +28,7 @@ export const projectsApiKeysCommand = Command.make("api-keys", config).pipe(
   Command.withShortDescription("List API keys"),
   Command.withExamples([
     {
-      command: "supabase projects api-keys --project-ref abcdefghijklmnopqrst",
+      command: "supabase projects api-keys --remote=abcdefghijklmnopqrst",
       description: "List all API keys for a project",
     },
     {

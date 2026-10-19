@@ -21,7 +21,7 @@ import { withTargetPolicy } from "../../../command-internal/target/target-policy
 
 const config = {
   includeAll: Flag.Boolean("include-all").pipe(
-    Flag.withDescription("Include all migrations not found on remote history table."),
+    Flag.withDescription("Include all migrations not found in the migration history table."),
     Flag.withDefault(false),
   ),
   includeRoles: Flag.Boolean("include-roles").pipe(
@@ -47,7 +47,7 @@ const config = {
     name: "password",
     alias: "p",
     description:
-      "Database password for the linked project (--linked/--project-ref). Not used with --local or --db-url.",
+      "Database password for the project selected with --remote. Not used for the local database or a database URL.",
   }),
 } as const;
 
@@ -55,9 +55,9 @@ export type DbPushFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const dbPushCommand = Command.make("push", config).pipe(
   Command.withDescription(
-    "Push new migrations to the remote database. Vault secrets from config.toml are updated before migrations unless --skip-vault is set.",
+    "Push new migrations to a database. Vault secrets from config.toml are updated before migrations unless --skip-vault is set.",
   ),
-  Command.withShortDescription("Push new migrations to the remote database"),
+  Command.withShortDescription("Push new migrations to a database"),
   withPermissions(
     withDbTarget(
       compose(

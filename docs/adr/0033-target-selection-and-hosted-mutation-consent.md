@@ -15,6 +15,8 @@ Three more problems sat next to it:
 
 - Each family parsed the target flags its own way. `--linked=false` still selected the linked
   project, and `--project-id` and `--project-ref` named the same thing on different commands.
+  `--project-ref` selected a project on one command and errored on the next, `--db-url` was missing
+  from some, and database commands took no branch names.
 - Project-ref resolution had several chains. Some commands opened a project picker when the checkout
   was unlinked, and database and storage commands failed.
 - Confirmation for a hosted mutation was inconsistent. `db push` defaulted to Yes and ran in JSON
@@ -37,57 +39,79 @@ truth for the default target and for the consent default.
 - `account`: `login`, `logout`, `whoami`, `orgs *`, `projects` (except `projects api-keys`),
   `bootstrap`, `feedback`. They act on the account or an organisation and have no default project.
 - `hosted`: `functions deploy`, `secrets *`, `config *`, `branches *`, `projects api-keys`, `link` and
-  the other platform resource commands. They act on the linked project and have no `--local`,
-  `--linked` or `--db-url`.
-- `sync`: `db push`, `db pull`, `migration fetch`. They default to the linked project; `--local` and
-  `--db-url` select another database.
-- `selectable`: `db reset`, `db query`, `db lint`, `db advisors`, `db dump`, `db diff`, `test db`,
-  `inspect *`, `migration list|up|down|squash|repair`, `gen types`, `storage *`, `seed buckets`,
-  `db schema declarative generate`. They follow the workspace target, which defaults to local.
+  the other platform resource commands. They have no local side, so they act on the linked project
+  by default and take `--remote=<ref|branch>` for another project.
+- `selectable`: `db push`, `db pull`, `migration fetch`, `db reset`, `db query`, `db lint`,
+  `db advisors`, `db dump`, `db diff`, `test db`, `inspect *`,
+  `migration list|up|down|squash|repair`, `gen types`, `storage *`, `seed buckets`,
+  `db schema declarative generate`. They run locally unless `--remote` is passed. This group
+  absorbs the former `sync` group (`db push`, `db pull`, `migration fetch`), which defaulted to the
+  linked project.
 - `removed`: `db branch *`, `db remote changes`, `db remote commit`. They exit 1 with replacement
   guidance.
 
-`db dump`, `migration list`, `migration repair`, `inspect`, `gen types` and `storage ls|cp|mv|rm`
-move from the linked project to the workspace target. `db schema declarative generate` stops asking
-which target to use.
+`db push`, `db pull`, `migration fetch`, `db dump`, `migration list`, `migration repair`,
+`inspect`, `gen types` and `storage ls|cp|mv|rm` move from the linked project to local.
+`db schema declarative generate` stops asking which target to use.
 
-### The workspace target
+### One flag: `--remote`
 
-`target = "local" | "remote"` is a `CliConfig` key. `remote` means the linked project, whether
-production or a branch. It resolves like every other config value (ADR 0032), with the selector
-flags as its flag tier:
+`--remote` selects the target on every command that can act on a hosted project. It is bare or
+takes a value, and there is no workspace-level switch: the `target` config key and
+`SUPABASE_TARGET` do not exist, so the intent is on the command line and nowhere else.
 
-1. `--local`, `--linked` or `--db-url`, or `--project-ref` (which implies linked)
-2. `SUPABASE_TARGET`
-3. `target` in `supabase/config.toml` or `config.json`
-4. `local`
+| You pass            | Target                                                                   |
+| ------------------- | ------------------------------------------------------------------------ |
+| nothing             | The local stack on `selectable` commands; the linked project on `hosted` |
+| `--remote`          | The linked project, production or a branch                               |
+| `--remote=<ref>`    | That project: 20 lowercase letters, never looked up as a branch          |
+| `--remote=<url>`    | That database: a `postgres://` or `postgresql://` URL                    |
+| `--remote=<branch>` | A branch of the linked project, by name or UUID                          |
 
-It applies to `selectable` commands only. `sync` commands default to linked and ignore it. It is not
-part of `ProjectConfig` and not valid in `[remotes.*]`. `SUPABASE_PROJECT_ID` alone never makes a
-`selectable` command remote; it is only a ref source once linked has been chosen. An unresolvable
-linked target fails. The CLI never falls back between local and remote.
+The value rule is the one `supabase link` uses, through its resolver; a value that matches no branch
+fails with link's error, which lists the branches. A URL applies only where the remote side is
+Postgres: `storage`, `seed buckets` and `hosted` commands need a project and reject one. `hosted`
+commands accept `--remote=<ref|branch>`, and bare `--remote` changes nothing for them. The linked
+project comes from `SUPABASE_PROJECT_ID`, then the link file. `SUPABASE_PROJECT_ID` alone never
+makes a `selectable` command remote; it is only a ref source once `--remote` is passed. An
+unresolvable remote target fails. The CLI never falls back between local and remote.
+
+`--remote=<value>` always parses. `--remote <value>` is rewritten to `--remote=<value>` before
+parsing when the command takes no positional, when the token is a ref or URL, or when the command
+already has more bare tokens than positionals. The one ambiguous shape, a bare `--remote` directly
+followed by a token the command took as a positional, is checked against the linked project's
+branches before anything runs: a match fails with a hint to use `--remote=<branch>`, and no match
+runs the command.
+
+### Deprecated aliases
+
+`--linked`, `--project-ref`, `--db-url` and `gen types --project-id` stay through v3 as hidden
+aliases. Each goes through the same resolver as the `--remote` form it maps to, prints a warning
+that names that form, and says v4 removes it. `--local` is still accepted and does nothing, because
+local is already the default; it warns the same way. v4 removes all of them, and `db diff`'s
+`linked` value for `--from` and `--to`, which `remote` replaces.
 
 ### Selector rules
 
-One parser (`parseTargetSelector`) backs every `sync` and `selectable` command:
+One parser (`parseTargetSelector`) backs every `selectable` command and maps the deprecated aliases
+onto `--remote`:
 
-- `--local`, `--linked` and `--db-url` are mutually exclusive. They are rejected together, never
-  resolved by precedence.
-- A `false` switch counts as absent, so `--linked=false` and `--no-linked` select nothing.
-- `--project-ref` implies linked. It is rejected with `--local` or `--db-url`.
-- An empty `--db-url` or `--project-ref` is rejected.
-- `--password` is rejected unless the target is the linked project.
+- `--remote` and the aliases are mutually exclusive. They are rejected together, never resolved by
+  precedence.
+- `--no-remote` and `--remote=false` fail with "omit `--remote` to target the local database".
+  `--remote yes`, `--remote 1`, `--remote true` and `--remote on` mean bare `--remote`.
+- An empty `--remote=` value is rejected.
+- `--password` is rejected unless the target is a project, meaning bare `--remote`, a ref or a
+  branch.
 
 ### One project-ref chain
 
-`ProjectRefResolver.resolveRef` is the only chain: `--project-ref`, then `SUPABASE_PROJECT_ID`, then
+`ProjectRefResolver.resolveRef` is the only chain: `--remote=<ref>`, then `SUPABASE_PROJECT_ID`, then
 `supabase/.temp/project-ref`, then the project picker (interactive terminals only), then a not-linked
 error. Database, storage and seed commands use it too. These scope adapters stay because their scope
 differs: `link` skips the ref file, `branches` derives the parent project, the `config` family also
 accepts branch names and UUIDs, `projects delete` prompts for the project, and `projects list` and
 `services` read the ref for display only.
-
-`gen types --project-id` is a hidden, deprecated alias of `--project-ref`.
 
 ### The target banner and JSON `target`
 
@@ -97,13 +121,17 @@ credentials.
 
 ```text
 Target: local stack (<host>:<port>)
-Target: local stack (<host>:<port>) · default; pass --linked for <name> (<ref>)
+Target: local stack (<host>:<port>) · default; pass --remote for <name> (<ref>)
 Target: custom Postgres (<host>:<port>)
 Target: project <name> (<ref>) · production
 Target: project <parent ref> · branch <name> (<ref>)
 Target: project <ref>
 Target: project <ref> (not the linked project)
 ```
+
+On `hosted` commands the banner is the notice that the command is talking to a remote project, and
+it names the linked project they default to. A bare `db push`, `db pull` or `migration fetch` in a
+linked checkout runs locally and prints the `default; pass --remote` hint.
 
 Project identity comes from `supabase/.temp/linked-project.json` with no API call. A cache that
 names the resolved ref itself is a production project. The cache can be stale or missing, so it
@@ -122,13 +150,25 @@ JSON results carry the same information as `target`:
 It is merged into plain-object results, the stream-json result event and error envelopes. Arrays,
 `-o json|yaml|toml|env` encodings and generated artifacts such as `gen types` output are unchanged.
 A `target` the handler already owns wins, so `config diff` and `pull` keep their richer objects. A
-command that announces two targets (`db diff --from linked --to <url>`) prints both and reports the
+command that announces two targets (`db diff --from remote --to <url>`) prints both and reports the
 first in JSON.
+
+### Help and docs
+
+Help states each command's target from the same policy declaration, so labels cannot drift from
+behaviour. A group's help labels each subcommand `[local or remote]` (`selectable`), `[local only]`
+or `[remote only]` (`hosted`); account commands carry no label. A command's own help has a `TARGET`
+section above `USAGE`, and its `remote` flag row reads `--remote[=<ref|branch|url>]` on `selectable`
+commands and `--remote[=<ref|branch>]` on `hosted` ones. JSON help carries the same information as
+`target`. Docs, examples, help and the deprecation warnings put `--remote` last, in the `=` form
+when it has a value (`db pull add_profiles --remote`, `db push --remote=<ref>`), so it cannot be
+read as anything else, and shell completion never offers a space-separated value for `--remote` on
+a command that has a positional.
 
 ### Hosted-mutation consent
 
-Every persistent mutation of a hosted resource in the `account`, `hosted`, `sync` and `selectable`
-groups needs consent. This includes writes through a non-local `--db-url`: a loopback host on the
+Every persistent mutation of a hosted resource in the `account`, `hosted` and `selectable` groups
+needs consent. This includes writes through a non-local `--remote=<url>`: a loopback host on the
 local or shadow database ports, or the local stack's endpoint, counts as local; anything else is
 hosted.
 
@@ -164,8 +204,8 @@ hosted.
   `supabase network-bans remove`. This applies to reads too.
 - **Reads never prompt.** `db query --read-only` is a read: it sends `read_only: true` to the
   Management API for a linked target, and runs the statement in a read-only transaction for a local
-  or `--db-url` target. It skips consent.
-- **Exemptions.** A leaf that never asks declares `consent: "none"`. A `sync` or `selectable` leaf
+  or database URL target. It skips consent.
+- **Exemptions.** A leaf that never asks declares `consent: "none"`. A `selectable` leaf
   must also give a `consentExemptReason`, enforced by the type of `withTargetPolicy` and by the tree
   test, because it can reach a hosted database: they are reads or write only local files (`db lint`,
   `db advisors`, `db dump`, `db diff`, `db schema declarative generate`, `gen types`, `storage ls`,
@@ -186,9 +226,11 @@ hosted.
 
 ## Rationale
 
-The default now follows what a command can target, not who wrote the handler. An unconfigured
-checkout reaches a hosted database through a `selectable` command only when the invocation says so,
-and a user who wants remote-first behaviour states it once with `target = "remote"`.
+The default now follows what a command can target, not who wrote the handler. A checkout reaches a
+hosted database through a `selectable` command only when the invocation says `--remote`. The intent
+is visible in the command line, so there is no per-checkout switch to forget or to inherit, and one
+flag means the same thing on every command. Keeping the old flags as aliases through v3 gives
+scripts, CI and agents the whole v3 line to move.
 
 Consent is a rule about the person running the command. Taking it from flags and the shell
 environment only, never from stdin or the checkout, means a script or an agent has to opt in
@@ -207,9 +249,12 @@ to No makes the Enter key safe.
 
 ### Negative
 
-- Breaking changes, all listed in the pull request: the flipped defaults, `--linked=false` and
-  `--local=false` meaning "not set", `--project-ref` implying linked, and the new `--yes`
-  requirement for unattended hosted writes.
+- Breaking changes in v3: the flipped defaults, including bare `db push`, `db pull` and
+  `migration fetch`, which most people run meaning the linked project, and the new `--yes`
+  requirement for unattended hosted writes. A bare run in a linked checkout prints a hint, and v2
+  warns ahead of time.
+- Anyone who followed the v2 warning and added `--linked` gets a second warning in v3 asking for
+  `--remote`. v4 removes the aliases.
 - `SUPABASE_YES` in `supabase/.env`, a piped `y` and `-o json` runs in a terminal no longer confirm
   hosted writes.
 - Reads that hit a network ban now fail instead of clearing it.
@@ -232,15 +277,15 @@ to No makes the Enter key safe.
 - `target-policy.unit.test.ts` walks the command tree for every backend variant and fails when:
   - a leaf has no policy;
   - a `local-only`, `account` or `hosted` leaf declares `--local`, `--linked` or `--db-url`;
-  - a `sync` or `selectable` leaf lacks `--local`, `--linked` or `--project-ref`;
+  - a `selectable` leaf lacks `--remote`;
   - a declared database-target default disagrees with the group;
   - a leaf with `consent: "none"` calls a non-GET operation outside the reviewed consent-free map;
   - a leaf named for a mutating verb has `consent: "none"` and no exemption reason;
-  - a `sync` or `selectable` leaf has `consent: "none"` and no exemption reason;
+  - a `selectable` leaf has `consent: "none"` and no exemption reason;
   - a leaf-scoped consent-free operation belongs to a leaf without an exemption reason.
 - `code-structure.unit.test.ts` fails when:
-  - `--local`, `--linked`, `--db-url` or `--project-id` is declared with a raw `Flag.*` outside the
-    shared target flags;
+  - `--remote`, `--local`, `--linked`, `--db-url` or `--project-id` is declared with a raw `Flag.*`
+    outside the shared target flags;
   - the old per-command resolvers and defaults return;
   - network-ban removal is called outside connection setup and `network-bans remove`;
   - a handler prints its own `Connecting to local|remote database` line.
@@ -254,21 +299,27 @@ to No makes the Enter key safe.
 1. **Per-command defaults for the target and for consent**: keep each handler's choice and document
    it. This is the current state, and users cannot predict it. The group annotation declares both
    once.
-2. **Default every `selectable` command to linked, or to local with no workspace key**: the first
-   reaches a hosted database from an unconfigured checkout. The second forces `--linked` on every
-   invocation of a remote-first workflow. The workspace `target` key covers both.
-3. **Honour `SUPABASE_YES` from the project `.env`**: convenient for CI, but a committed file would
+2. **Default every `selectable` command to linked**: it reaches a hosted database from an
+   unconfigured checkout.
+3. **A workspace `target = "local" | "remote"` key**: it covers remote-first workflows, but the same
+   command line then reaches different places in different checkouts, and every example needs a
+   caveat. `--remote` states the intent where it applies.
+4. **Keep `--linked`, `--db-url` and `--project-ref` as the flags**: three flags behave differently
+   per command and none takes a branch name. `--remote` replaces them with one rule.
+5. **Remove the old flags in v3**: it breaks working scripts in the same release that flips the
+   defaults. They warn through v3 and go in v4.
+6. **Honour `SUPABASE_YES` from the project `.env`**: convenient for CI, but a committed file would
    approve every collaborator's and agent's production writes. CI sets the variable in the shell.
-4. **Prompt before removing a network ban**: reads must never prompt, and removal clears the ban for
+7. **Prompt before removing a network ban**: reads must never prompt, and removal clears the ban for
    the whole project, not only the caller. The failure points at the command that does it on purpose.
-5. **Accept a piped `y` as consent**: a piped stream is not a decision by the person running the
+8. **Accept a piped `y` as consent**: a piped stream is not a decision by the person running the
    command. A script that means to approve says so with `--yes`.
 
 ## Related Decisions
 
 - [ADR 0004](0004-cli-design-goals-and-workflows.md): the safety model this decision amends.
-- [ADR 0032](0032-config-value-precedence.md): the precedence the `target` key follows. This ADR
-  supersedes its seed consent section.
+- [ADR 0032](0032-config-value-precedence.md): config value precedence. This ADR supersedes its
+  seed consent section.
 
 ## See Also
 

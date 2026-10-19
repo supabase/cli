@@ -79,7 +79,7 @@ export const functionsDeployCommand = Command.make("deploy", config).pipe(
       description: "Deploy a single function to the linked project",
     },
     {
-      command: "supabase functions deploy --project-ref abcdefghijklmnopqrst",
+      command: "supabase functions deploy --remote=abcdefghijklmnopqrst",
       description: "Deploy all local functions to a specific project",
     },
   ]),

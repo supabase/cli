@@ -20,7 +20,7 @@ import { withTargetPolicy } from "../../../command-internal/target/target-policy
 
 const config = {
   includeAll: Flag.Boolean("include-all").pipe(
-    Flag.withDescription("Include all migrations not found on remote history table."),
+    Flag.withDescription("Include all migrations not found in the migration history table."),
     Flag.withDefault(false),
   ),
   ...targetFlags({ subject: "database", dbUrl: true }),
@@ -29,8 +29,8 @@ const config = {
 export type MigrationUpFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const migrationUpCommand = Command.make("up", config).pipe(
-  Command.withDescription("Apply pending migrations to local database."),
-  Command.withShortDescription("Apply pending migrations to local database"),
+  Command.withDescription("Apply pending migrations to a database."),
+  Command.withShortDescription("Apply pending migrations to a database"),
   withPermissions(
     withDbTarget(
       compose(

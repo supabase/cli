@@ -37,7 +37,7 @@ export const domainsReverifyCommand = Command.make("reverify", config).pipe(
   Command.withShortDescription("Re-verify the custom hostname config"),
   Command.withExamples([
     {
-      command: "supabase domains reverify --project-ref abcdefghijklmnopqrst",
+      command: "supabase domains reverify --remote=abcdefghijklmnopqrst",
       description: "Re-verify the custom hostname for a project",
     },
   ]),

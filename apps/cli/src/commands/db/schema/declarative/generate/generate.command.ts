@@ -58,7 +58,7 @@ const config = {
     name: "password",
     alias: "p",
     description:
-      "Database password for the linked project (--linked/--project-ref). Not used with --local or --db-url.",
+      "Database password for the project selected with --remote. Not used for the local database or a database URL.",
   }),
 } as const;
 
@@ -71,7 +71,7 @@ export type DbSchemaDeclarativeGenerateFlags = CliCommand.Command.Config.Infer<t
 
 export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", config).pipe(
   Command.withDescription(
-    "Exports a live database into the complete declarative schema tree. This replaces declarative files only; it does not create migration files or update migration history. Use --output-dir to stage an export without changing the configured declarative path. Generates from the local database unless --linked, --project-ref, or --db-url is passed or the workspace target is remote.",
+    "Exports a live database into the complete declarative schema tree. This replaces declarative files only; it does not create migration files or update migration history. Use --output-dir to stage an export without changing the configured declarative path. Generates from the local database unless --remote selects another.",
   ),
   Command.withShortDescription("Generate declarative schema from a database"),
   withPermissions(

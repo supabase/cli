@@ -2,11 +2,9 @@ import type { DocsFlag } from "./docs-spec.ts";
 import { genTypesLanguageFlagDefaults } from "../commands/gen/types/types.languages.ts";
 
 /**
- * Static data for the docs spec generator — information the Effect command tree cannot
- * express structurally: docs-site section tags, `--experimental`-required leaves, deprecated
- * commands to exclude from the reference (though still shown in `--help`), and flag defaults
- * that `Flag.withDefault` only captures in a closure. `buildDocsSpec` validates every key here
- * against the walked tree and fails the build on stale entries.
+ * Static data the Effect command tree cannot express structurally: docs-site section tags,
+ * `--experimental`-required leaves, deprecated commands, and flag defaults that
+ * `Flag.withDefault` only captures in a closure. `buildDocsSpec` fails the build on stale keys.
  */
 
 export interface DocsInfoTag {
@@ -126,19 +124,10 @@ export const DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
   "supabase profile": "supabase",
   "supabase-db-advisors fail-on": "none",
   "supabase-db-advisors level": "warn",
-  "supabase-db-advisors local": "true",
   "supabase-db-advisors type": "all",
-  "supabase-db-diff local": "true",
-  "supabase-db-dump local": "true",
   "supabase-db-lint fail-on": "none",
   "supabase-db-lint level": "warning",
-  "supabase-db-lint local": "true",
   "supabase-db-pull diff-engine": "pg-delta",
-  "supabase-db-pull linked": "true",
-  "supabase-db-push linked": "true",
-  "supabase-db-query local": "true",
-  "supabase-db-reset local": "true",
-  "supabase-db-schema-declarative-generate local": "true",
   "supabase-db-schema-declarative-sync file": "declarative_sync",
   "supabase-functions-deploy jobs": "1",
   "supabase-functions-new auth": "apikey",
@@ -147,40 +136,13 @@ export const DOCS_DEFAULT_OVERRIDES: Readonly<Record<string, string>> = {
   "supabase-gen-bearer-jwt valid-for": "30m0s",
   "supabase-gen-signing-key algorithm": "ES256",
   "supabase-gen-types lang": "typescript",
-  "supabase-gen-types local": "true",
   "supabase-gen-types query-timeout": "15s",
-  "supabase-inspect-db-bloat local": "true",
-  "supabase-inspect-db-blocking local": "true",
-  "supabase-inspect-db-calls local": "true",
-  "supabase-inspect-db-db-stats local": "true",
-  "supabase-inspect-db-index-stats local": "true",
-  "supabase-inspect-db-locks local": "true",
-  "supabase-inspect-db-long-running-queries local": "true",
-  "supabase-inspect-db-outliers local": "true",
-  "supabase-inspect-db-replication-slots local": "true",
-  "supabase-inspect-db-role-stats local": "true",
-  "supabase-inspect-db-table-stats local": "true",
-  "supabase-inspect-db-traffic-profile local": "true",
-  "supabase-inspect-db-vacuum-stats local": "true",
-  "supabase-inspect-report local": "true",
   "supabase-inspect-report output-dir": ".",
   "supabase-login name": "built-in token name generator",
   "supabase-migration-down last": "1",
-  "supabase-migration-down local": "true",
-  "supabase-migration-fetch linked": "true",
-  "supabase-migration-list local": "true",
-  "supabase-migration-repair local": "true",
-  "supabase-migration-squash local": "true",
-  "supabase-migration-up local": "true",
-  "supabase-seed-buckets local": "true",
   "supabase-storage-cp cache-control": "max-age=3600",
   "supabase-storage-cp content-type": "auto-detect",
   "supabase-storage-cp jobs": "1",
-  "supabase-storage-cp local": "true",
-  "supabase-storage-ls local": "true",
-  "supabase-storage-mv local": "true",
-  "supabase-storage-rm local": "true",
-  "supabase-test-db local": "true",
   "supabase-test-new template": "pgtap",
 };
 

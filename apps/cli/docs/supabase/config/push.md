@@ -4,7 +4,7 @@ Updates the configurations of a linked Supabase project with the local `supabase
 
 This command allows you to manage project configuration as code by defining settings locally and then pushing them to your remote project.
 
-Pass `--project-ref` to push to a specific project, or the name (or UUID) of a branch of the currently linked project — values that are exactly 20 lowercase letters are always treated as project refs. Without it, the linked project is the target.
+Pass `--remote=<ref|branch>` to push to a specific project, or the name (or UUID) of a branch of the currently linked project — values that are exactly 20 lowercase letters are always treated as project refs. Without it, the linked project is the target. `--project-ref` still works in v3 but is deprecated and removed in v4; use `--remote`.
 
 Before anything is pushed, the command prints the `Target:` line for the project or branch it resolved (name, ref, and for a branch its parent project), then shows the exact diff for every resource that will change. It then asks once — a single question covering every changed resource, with a default answer of no — and sends nothing until you confirm. If a change enables a paid add-on, its price is printed before the question.
 

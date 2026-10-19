@@ -68,7 +68,7 @@ const config = {
     name: "password",
     alias: "p",
     description:
-      "Database password for the linked project (--linked/--project-ref). Not used with --local or --db-url.",
+      "Database password for the project selected with --remote. Not used for the local database or a database URL.",
   }),
 } as const;
 
@@ -106,9 +106,9 @@ const telemetryOptions = (flags: DbPullFlags) => ({
 
 export const dbPullCommand = Command.make("pull", config).pipe(
   Command.withDescription(
-    "Migration mode compares supabase/migrations with the selected live database (the linked project by default), writes the complete difference as migration files, and records them in that database's migration history; a hosted database asks for confirmation first, or needs --yes in a non-interactive run. --declarative instead replaces the declarative schema tree and does not create migrations or update migration history.",
+    "Migration mode compares supabase/migrations with the selected live database (the local database by default, or the one --remote selects), writes the complete difference as migration files, and records them in that database's migration history; a hosted database asks for confirmation first, or needs --yes in a non-interactive run. --declarative instead replaces the declarative schema tree and does not create migrations or update migration history.",
   ),
-  Command.withShortDescription("Pull schema from the remote database"),
+  Command.withShortDescription("Pull schema from a database"),
   withPermissions(
     withDbTarget(
       compose(

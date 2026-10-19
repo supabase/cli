@@ -12,8 +12,8 @@ import { targetFlags } from "./target/target-flags.ts";
 import { testDb } from "./test-db.handler.ts";
 
 /** Shared verbatim by both `test db` and its `db test` alias. */
-export const TEST_DB_DESCRIPTION = "Tests local database with pgTAP.";
-export const TEST_DB_SHORT = "Tests local database with pgTAP";
+export const TEST_DB_DESCRIPTION = "Tests a database with pgTAP.";
+export const TEST_DB_SHORT = "Tests a database with pgTAP";
 
 /**
  * `test db`'s entire output is the streamed pg_prove TAP on stdout. A run

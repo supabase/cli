@@ -25,7 +25,7 @@ const config = {
     name: "password",
     alias: "p",
     description:
-      "Database password for the linked project (--linked/--project-ref). Not used with --local or --db-url.",
+      "Database password for the project selected with --remote. Not used for the local database or a database URL.",
   }),
 } as const;
 

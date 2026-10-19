@@ -84,7 +84,7 @@ export const functionsDownloadCommand = Command.make("download", config).pipe(
       description: "Download a single function from the linked project",
     },
     {
-      command: "supabase functions download --project-ref abcdefghijklmnopqrst",
+      command: "supabase functions download --remote=abcdefghijklmnopqrst",
       description: "Download all functions from a specific project",
     },
   ]),

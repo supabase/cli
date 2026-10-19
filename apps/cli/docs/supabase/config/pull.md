@@ -2,7 +2,7 @@
 
 Writes the effective configuration of a remote project or branch into the local `supabase/config.toml`/`config.json` — the write side of `supabase config diff`. Every write is a surgical, format-preserving edit: comments, key ordering, and quoting elsewhere in the file are left untouched, and only the values that actually change are rewritten.
 
-Pass `--project-ref` to pull from a specific project, or the name (or UUID) of a branch of the currently linked project — values that are exactly 20 lowercase letters are always treated as project refs. Without it, the linked project is the target.
+Pass `--remote=<ref|branch>` to pull from a specific project, or the name (or UUID) of a branch of the currently linked project — values that are exactly 20 lowercase letters are always treated as project refs. Without it, the linked project is the target. `--project-ref` still works in v3 but is deprecated and removed in v4; use `--remote`.
 
 Where a pulled value lands depends on whether the target is already tracked by a `[remotes.*]` block, not on how you named it: if any block's `project_id` already matches the resolved ref, that block is reused — whatever its own label — and every value lands there. Otherwise, if the target was named as a branch, a new `[remotes.<branch-name>]` block is created (a branch resolved by UUID falls back to the project ref itself as its label). Only when neither applies — a bare `--project-ref` naming a project directly, or the linked project with no branch involved — do values land at the config root. `--remote-label` overrides the block config pull would otherwise reuse or create; naming a block that already tracks a different project, or naming nothing while a different block already tracks this exact ref, is an error rather than a silent overwrite. A `[remotes.*]` block whose `project_id` is an `env(...)` reference that merely _resolves_ to the target ref is never reused or rewritten — that is a hard error naming the variable, since a value written there would never actually take effect on the next load. Creating a new block always writes its `project_id`, even when every value it would otherwise carry already matches the local defaults — otherwise the block could never be reused on a later pull.
 
@@ -28,7 +28,7 @@ enabled = true
 max_rows = 1000
 ```
 
-`supabase config pull --project-ref staging`, where `staging` is a branch of the linked project and no existing `[remotes.*]` block already tracks it, creates a new block at the end of the file — `max_rows` lands under its own `[remotes.staging.api]` sub-table, the same way `[api]` itself is a sub-table of the document root, not a key directly under `[remotes.staging]`:
+`supabase config pull --remote=staging`, where `staging` is a branch of the linked project and no existing `[remotes.*]` block already tracks it, creates a new block at the end of the file — `max_rows` lands under its own `[remotes.staging.api]` sub-table, the same way `[api]` itself is a sub-table of the document root, not a key directly under `[remotes.staging]`:
 
 ```toml
 project_id = "abcdefghijklmnopqrst"

@@ -85,7 +85,7 @@ export const ssoUpdateCommand = Command.make("update", config).pipe(
   Command.withExamples([
     {
       command:
-        "supabase sso update b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz --add-domains example.com",
+        "supabase sso update b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --add-domains example.com --remote=mwjylndxudmiehsxhmmz",
       description: "Update an SSO provider's domains",
     },
   ]),

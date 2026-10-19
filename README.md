@@ -101,8 +101,8 @@ supabase functions deploy hello-world
 Generate TypeScript types from your local database or linked project:
 
 ```sh
-supabase gen types --local
-supabase gen types --linked
+supabase gen types
+supabase gen types --remote
 ```
 
 ## Reference
