@@ -267,6 +267,22 @@ describe("stack target resolver", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.effect("reports a stack registry that cannot be listed for an id prefix", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, home, resolve } = yield* workspace;
+      yield* fs.makeDirectory(home);
+      yield* fs.writeFileString(path.join(home, "stacks"), "not a directory");
+
+      const failure = yield* resolve({ projectRoot: root, id: "abcd", runtime: "auto" }).pipe(
+        Effect.flip,
+      );
+
+      expect(failure).toMatchObject({ reason: "invalid-config", targetIssue: "stack-discovery" });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("surfaces an unreadable saved stack that an id prefix selects", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
