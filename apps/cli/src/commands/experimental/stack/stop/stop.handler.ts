@@ -9,6 +9,7 @@ import {
   StackTargetResolver,
   rejectStackOutput,
   validateStackTarget,
+  mapTargetError,
 } from "../stack.shared.ts";
 import type { StackStopFlags } from "./stop.command.ts";
 import { StackCommandStopError } from "./stop.errors.ts";
@@ -20,6 +21,8 @@ const stopError = (cause: { readonly message: string }) =>
     cause,
   });
 
+const targetError = mapTargetError((props) => new StackCommandStopError(props));
+
 export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: StackStopFlags) {
   const telemetry = yield* TelemetryState;
   return yield* Effect.gen(function* () {
@@ -29,15 +32,7 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
     const api = yield* StackApi;
     const resolver = yield* StackTargetResolver;
     yield* rejectStackOutput(yield* Effect.serviceOption(OutputFlag)).pipe(
-      Effect.mapError(
-        (cause) =>
-          new StackCommandStopError({
-            reason: cause.reason,
-            message: cause.message,
-            ...(cause.suggestion === undefined ? {} : { suggestion: cause.suggestion }),
-            cause,
-          }),
-      ),
+      Effect.mapError(targetError),
     );
     if (Option.isSome(flags.all) && (Option.isSome(flags.stack) || Option.isSome(flags.stackId)))
       return yield* new StackCommandStopError({
@@ -47,17 +42,7 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new StackCommandStopError({
-            reason: cause.reason,
-            message: cause.message,
-            ...(cause.suggestion === undefined ? {} : { suggestion: cause.suggestion }),
-            cause,
-          }),
-      ),
-    );
+    }).pipe(Effect.mapError(targetError));
     const all = Option.getOrElse(flags.all, () => false);
     const target = all
       ? undefined
@@ -68,17 +53,7 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
             ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
             runtime: "auto",
           })
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new StackCommandStopError({
-                  reason: cause.reason,
-                  message: cause.message,
-                  ...(cause.suggestion === undefined ? {} : { suggestion: cause.suggestion }),
-                  cause,
-                }),
-            ),
-          );
+          .pipe(Effect.mapError(targetError));
     const locations = {
       stateRoot: path.join(settings.supabaseHome, "stacks"),
       cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),

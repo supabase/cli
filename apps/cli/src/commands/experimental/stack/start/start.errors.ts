@@ -6,6 +6,7 @@ import {
   ErrorActionabilityId,
   unclassifiedStackFailureActionability,
 } from "../../../../shared/telemetry/error-actionability.ts";
+import { type StackTargetIssue, stackTargetInvalidConfigActionability } from "../stack.shared.ts";
 
 /** The start check that rejected the project or saved stack configuration. */
 type StartConfigIssue =
@@ -36,6 +37,7 @@ export class StackCommandStartError extends Data.TaggedError("ExperimentalStackS
     | "lifecycle"
     | "seed"
     | "stack";
+  readonly targetIssue?: StackTargetIssue;
   readonly configIssue?: StartConfigIssue;
   readonly message: string;
   readonly detail?: string;
@@ -45,11 +47,12 @@ export class StackCommandStartError extends Data.TaggedError("ExperimentalStackS
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     switch (this.reason) {
       case "invalid-config":
-        return {
-          ...actionability.invalidConfig,
-          fingerprint_suffix:
-            this.configIssue === undefined ? "invalid_config" : configIssueSuffix[this.configIssue],
-        };
+        return this.configIssue === undefined
+          ? stackTargetInvalidConfigActionability(this.targetIssue)
+          : {
+              ...actionability.invalidConfig,
+              fingerprint_suffix: configIssueSuffix[this.configIssue],
+            };
       case "filesystem": {
         const declared = causeDeclaration(this.cause);
         return declared?.error_kind === "user_actionable"

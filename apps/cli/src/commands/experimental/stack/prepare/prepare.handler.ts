@@ -7,7 +7,7 @@ import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
 import {
   StackApi,
   stackCapabilityForService,
-  StackTargetError,
+  mapTargetError,
   rejectStackOutput,
   StackTargetResolver,
   validateStackTarget,
@@ -25,13 +25,7 @@ type PreparedCapability = {
   readonly outcome: "prepared";
 };
 
-const mapTargetError = (error: StackTargetError) =>
-  new StackCommandPrepareError({
-    reason: error.reason,
-    message: error.message,
-    ...(error.suggestion === undefined ? {} : { suggestion: error.suggestion }),
-    cause: error,
-  });
+const targetError = mapTargetError((props) => new StackCommandPrepareError(props));
 
 const render = (id: string, capabilities: ReadonlyArray<PreparedCapability>) => {
   const lines = [`Stack ${id} prepared.`];
@@ -57,11 +51,11 @@ export const stackPrepare = Effect.fn("experimental.stack.prepare")(function* (
     const resolver = yield* StackTargetResolver;
     const api = yield* StackApi;
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
-    yield* rejectStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
+    yield* rejectStackOutput(outputFlag).pipe(Effect.mapError(targetError));
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
-    }).pipe(Effect.mapError(mapTargetError));
+    }).pipe(Effect.mapError(targetError));
     const target = yield* resolver
       .resolve({
         projectRoot: settings.workdir,
@@ -69,7 +63,7 @@ export const stackPrepare = Effect.fn("experimental.stack.prepare")(function* (
         ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
         runtime: flags.runtime,
       })
-      .pipe(Effect.mapError(mapTargetError));
+      .pipe(Effect.mapError(targetError));
     const config = yield* loadStackConfig(target.projectRoot).pipe(
       Effect.mapError(
         (error) =>

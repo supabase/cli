@@ -10,6 +10,7 @@ import {
   failedOutcomesDetail,
   rejectStackOutput,
   validateStackTarget,
+  mapTargetError,
 } from "../stack.shared.ts";
 import { StackCommandRestartError } from "./restart.errors.ts";
 import type { StackRestartFlags } from "./restart.command.ts";
@@ -34,24 +35,14 @@ export const stackRestart = Effect.fn("experimental.stack.restart")(function* (
     const path = yield* Path.Path;
     const api = yield* StackApi;
     const resolver = yield* StackTargetResolver;
-    const mapTargetError = (cause: {
-      readonly reason: "flags" | "invalid-config";
-      readonly message: string;
-      readonly suggestion?: string;
-    }) =>
-      new StackCommandRestartError({
-        reason: cause.reason,
-        message: cause.message,
-        ...(cause.suggestion === undefined ? {} : { suggestion: cause.suggestion }),
-        cause,
-      });
+    const targetError = mapTargetError((props) => new StackCommandRestartError(props));
     yield* rejectStackOutput(yield* Effect.serviceOption(OutputFlag)).pipe(
-      Effect.mapError(mapTargetError),
+      Effect.mapError(targetError),
     );
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
-    }).pipe(Effect.mapError(mapTargetError));
+    }).pipe(Effect.mapError(targetError));
     const target = yield* resolver
       .resolve({
         projectRoot: settings.workdir,
@@ -59,7 +50,7 @@ export const stackRestart = Effect.fn("experimental.stack.restart")(function* (
         ...(Option.isSome(flags.stack) ? { name: flags.stack.value } : {}),
         ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
       })
-      .pipe(Effect.mapError(mapTargetError));
+      .pipe(Effect.mapError(targetError));
     if (target.id === undefined)
       return yield* new StackCommandRestartError({
         reason: "not-found",

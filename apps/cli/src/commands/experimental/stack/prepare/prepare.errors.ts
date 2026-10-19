@@ -7,9 +7,11 @@ import {
   ErrorActionabilityId,
   unclassifiedStackFailureActionability,
 } from "../../../../shared/telemetry/error-actionability.ts";
+import { type StackTargetIssue, stackTargetInvalidConfigActionability } from "../stack.shared.ts";
 
 export class StackCommandPrepareError extends Data.TaggedError("ExperimentalStackPrepareError")<{
   readonly reason: "flags" | "invalid-config" | "runtime" | "lifecycle" | "stack";
+  readonly targetIssue?: StackTargetIssue;
   readonly message: string;
   readonly suggestion?: string;
   readonly cause?: unknown;
@@ -19,7 +21,7 @@ export class StackCommandPrepareError extends Data.TaggedError("ExperimentalStac
       case "flags":
         return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
       case "invalid-config":
-        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
+        return stackTargetInvalidConfigActionability(this.targetIssue);
       case "runtime":
         return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
       case "lifecycle":

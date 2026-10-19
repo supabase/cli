@@ -228,7 +228,7 @@ describe("stack target resolver", () => {
       const failure = yield* resolve({ projectRoot: root, runtime: "auto" }).pipe(Effect.flip);
 
       expect(failure).toBeInstanceOf(StackTargetError);
-      expect(failure.reason).toBe("invalid-config");
+      expect(failure).toMatchObject({ reason: "invalid-config", targetIssue: "stack-lookup" });
       expect(failure.message).toContain(id);
     }).pipe(Effect.provide(BunServices.layer)),
   );
@@ -255,6 +255,8 @@ describe("stack target resolver", () => {
           runtime: "auto",
         }).pipe(Effect.flip);
 
+        expect(byProject.targetIssue).toBe("stack-lookup");
+        expect(byPrefix.targetIssue).toBe("unreadable-stack");
         for (const failure of [byProject, byPrefix]) {
           expect(failure.reason).toBe("invalid-config");
           expect(failure.message).toContain(`Stack ${id} could not be read`);
@@ -279,7 +281,7 @@ describe("stack target resolver", () => {
         runtime: "auto",
       }).pipe(Effect.flip);
 
-      expect(failure.reason).toBe("invalid-config");
+      expect(failure).toMatchObject({ reason: "invalid-config", targetIssue: "unreadable-stack" });
       expect(failure.message).toContain(`Stack ${id} could not be read`);
     }).pipe(Effect.provide(BunServices.layer)),
   );
