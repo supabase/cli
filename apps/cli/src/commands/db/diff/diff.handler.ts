@@ -320,6 +320,10 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
             case "Ref":
             case "Branch":
               return yield* hostedEndpoint(explicit);
+            case "KeywordDsn":
+              return yield* new DbDiffExplicitFlagsError({
+                message: `${flag} takes local, migrations, remote, a project ref, a branch name or a postgresql:// URL; convert a connection string to a postgresql:// URL and pass ${flag}=<url>.`,
+              });
             case "Migrations":
               // Preserve resolution order: the migrations shadow/catalog config must reflect
               // only refs resolved before this endpoint.

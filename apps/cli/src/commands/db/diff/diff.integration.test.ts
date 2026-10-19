@@ -1473,6 +1473,41 @@ describe("db diff", () => {
       });
     });
 
+    it.effect.each(
+      (["from", "to"] as const).map((side) => ({
+        side,
+        other: side === "from" ? "to" : "from",
+      })),
+    )(
+      "--$side <keyword dsn> is rejected without echoing the connection string",
+      ({ side, other }) => {
+        const branchApi = branchListApi();
+        const s = setup(tmp.current, {
+          isLocal: false,
+          projectId: Option.some(VALID_REF),
+          diffSql: "create table e ();\n",
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbDiff(
+            flags({ [side]: Option.some("host=h password=x"), [other]: Option.some("migrations") }),
+          ).pipe(Effect.provide(Layer.merge(s.layer, branchApi.layer)), Effect.exit);
+
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const error = Cause.squash(exit.cause);
+            expect(error).toMatchObject({
+              _tag: "DbDiffExplicitFlagsError",
+              message: expect.stringContaining(`pass --${side}=<url>`),
+            });
+            expect(Cause.pretty(exit.cause)).not.toContain("password=x");
+          }
+          expect(`${s.out.stdoutText}${s.out.stderrText}`).not.toContain("password=x");
+          expect(branchApi.requests).toEqual([]);
+          expect(s.resolverCalls).toEqual([]);
+        });
+      },
+    );
+
     it.effect("--from <branch> asks the linked project's branch list", () => {
       const branchApi = branchListApi();
       const s = setup(tmp.current, {

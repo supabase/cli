@@ -252,7 +252,9 @@ transaction metadata.
 - **Explicit `--from`/`--to`.** Each endpoint is one of `local`, `migrations`, `remote` (the
   linked project), a project ref, a Postgres URL, or a branch name or UUID of the linked project
   (classified like a `--remote` value, so a branch named like a keyword is reached by its ref or
-  UUID). In `--from`/`--to`, `remote` is always the linked project. `--from linked` / `--to linked`
+  UUID). A keyword connection string (`host=… password=…`) fails with `--from takes local, migrations,
+remote, a project ref, a branch name or a postgresql:// URL; convert a connection string to a
+postgresql:// URL and pass --from=<url>.` (`--to` likewise) and is never echoed. In `--from`/`--to`, `remote` is always the linked project. `--from linked` / `--to linked`
   still work and warn `--from linked is deprecated and will
 be removed in v4. Use --from remote instead.` A `--remote` selector (or an alias: `--linked`,
   `--project-ref`, `--db-url`, `--local`) given alongside fails with `--remote doesn't apply with

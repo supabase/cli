@@ -28,6 +28,13 @@ describe("classifyExplicitRef", () => {
     expect(classifyExplicitRef(value)).toEqual(expected);
   });
 
+  it.each(["host=h password=x", "dbname=postgres", "password=x"])(
+    "keeps the keyword connection string %s apart from a branch name",
+    (value) => {
+      expect(classifyExplicitRef(value)).toEqual({ _tag: "KeywordDsn" });
+    },
+  );
+
   it("reaches a branch named like a keyword through its UUID, not the keyword", () => {
     expect(classifyExplicitRef("Remote")).toEqual({ _tag: "Branch", name: "Remote" });
     expect(classifyExplicitRef(UUID)).toEqual({ _tag: "Branch", name: UUID });
