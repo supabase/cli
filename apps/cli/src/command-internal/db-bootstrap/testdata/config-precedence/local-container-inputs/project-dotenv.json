@@ -5,8 +5,8 @@
     "dbHealthTimeoutSeconds": 120,
     "majorVersion": 17,
     "orioledbVersion": null,
-    "postgresConfigImage": "supabase/postgres:17.11.0.005",
-    "postgresImage": "supabase/postgres:17.11.0.005",
+    "postgresConfigImage": "supabase/postgres:17.11.0.006",
+    "postgresImage": "supabase/postgres:17.11.0.006",
     "realtimeEnabledForSetup": false,
     "realtimeIpVersion": "IPv4",
     "realtimeMaxHeaderLength": 4096,
@@ -32,7 +32,7 @@
   "experimental": false,
   "networkId": "supabase_network_golden-shadow",
   "postgresSpecBase": {
-    "configImage": "supabase/postgres:17.11.0.005",
+    "configImage": "supabase/postgres:17.11.0.006",
     "db": {
       "health_timeout": "2m",
       "major_version": 17,
