@@ -219,7 +219,8 @@ resolved `target` object is merged into the payload.
   work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
   warns that local is the default). They are mutually exclusive with each other and with
   `--remote`; a `false` switch counts as absent. `--project-ref` with `--local`, `--db-url` or
-  `--remote=<value>` is a hard error. Unlike `SUPABASE_PROJECT_ID`, `--remote=<ref>` and
+  `--remote=<value>` is a hard error, and an empty `--db-url` or `--project-ref` fails with
+  `TargetEmptyValueError` instead of reading as absent. Unlike `SUPABASE_PROJECT_ID`, `--remote=<ref>` and
   `--project-ref` do not affect the shadow container's project id/labels.
 - Migration-style pulls always compare migrations with the live target;
   declarative files and `schema_paths` do not replace that baseline.

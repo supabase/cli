@@ -281,7 +281,8 @@ to those defaults (the usual outcome for an interactive terminal).
   work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
   warns that local is the default). They are mutually exclusive with each other and with
   `--remote`; a `false` switch counts as absent. `--project-ref` with `--local`, `--db-url` or
-  `--remote=<value>` is a hard error. Unlike `SUPABASE_PROJECT_ID`, `--remote=<ref>` and
+  `--remote=<value>` is a hard error, and an empty `--db-url` or `--project-ref` fails with
+  `TargetEmptyValueError` instead of reading as absent. Unlike `SUPABASE_PROJECT_ID`, `--remote=<ref>` and
   `--project-ref` do not affect the local container id.
 - **Target/local split** follows whether the resolved config points at the local
   stack, not the flag name: a `--remote=<url>` pointing at the local stack is treated

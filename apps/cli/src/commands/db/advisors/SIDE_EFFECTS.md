@@ -110,6 +110,7 @@ the process exits non-zero (no error envelope is written over the payload).
   work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
   warns that local is the default). They are mutually exclusive with each other and with
   `--remote`; a `false` switch counts as absent. `--project-ref` with `--local`, `--db-url` or
-  `--remote=<value>` is a hard error.
+  `--remote=<value>` is a hard error, and an empty `--db-url` or `--project-ref` fails with
+  `TargetEmptyValueError` instead of reading as absent.
 - Not-logged-in suggestion: `Run supabase login first.`
 - Telemetry: only the standard `cli_command_executed` event (no custom events).

@@ -187,7 +187,7 @@ Omit empty sections.
 
 | Case                                    | ❌                                         | ✅                                                                                                                               |
 | --------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| Feature `feat(db): --linked on db diff` | Added `--linked` flag (#4567)              | **`db diff` against your linked project, no Docker** — pass `--linked` to diff remote without a local stack; handy in CI (#4567) |
+| Feature `feat(db): --remote on db diff` | Added `--remote` flag (#4567)              | **`db diff` against your linked project, no Docker** — pass `--remote` to diff remote without a local stack; handy in CI (#4567) |
 | Bug + issue                             | Fixed nil pointer in config parser (#5012) | `supabase start` no longer crashes when optional sections like `[db.pooler]` are missing (#5012)                                 |
 | 3 PRs, one feature                      | Three `db lint --json` bullets             | **`db lint` machine-readable output** — `--json` for CI; empty array when clean (#4801, #4815, #4823)                            |
 | Port only                               | New native `db diff` implementation        | Under **TypeScript port progress** only — `db diff`; behavior unchanged (#5314)                                                  |

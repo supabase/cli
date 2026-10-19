@@ -118,8 +118,8 @@ existing SQL or creates an export manifest.
   image, starts a stopped local database and, when `supabase/migrations` holds migrations, asks
   `Reset local database to match migrations first? (local data will be lost)` (default no;
   `--yes` answers yes). It never asks which database to use, and `sync` has no target flags. Run
-  `supabase db schema declarative generate --linked` (or `--db-url`) first to start from a hosted
-  database.
+  `supabase db schema declarative generate --remote` (or `--remote=<db-url>`) first to start from a
+  hosted database.
 - The declarative directory is the complete desired state: omitted objects,
   including extensions, are removals. Use `generate --output-dir <staging-dir>`
   to review a next-compatible tree without changing config or activating it.

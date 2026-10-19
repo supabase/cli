@@ -243,7 +243,7 @@ without one. Declare the target flags only through `targetFlags` in
 - Never read stdin for consent. JSON, piped, and agent runs need `--yes` or a shell
   `SUPABASE_YES`; `supabase/.env` and a cwd `.env*` file do not count. Write the action as an
   imperative sentence-case phrase with no trailing period (`Delete project <ref>`).
-- A `sync` or `selectable` leaf with `consent: "none"` declares a `consentExemptReason`.
+- A `selectable` leaf with `consent: "none"` declares a `consentExemptReason`.
 - Every leaf with consent has a `describeHostedConsent("<command path>", …)` test from
   `tests/helpers/hosted-consent.ts`.
 

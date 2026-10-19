@@ -103,7 +103,8 @@ always go to stderr, in every `--output-format`. On success:
   work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
   warns that local is the default). They are mutually exclusive with each other and with
   `--remote`; a `false` switch counts as absent. `--project-ref` with `--local`, `--db-url` or
-  `--remote=<value>` is a hard error.
+  `--remote=<value>` is a hard error, and an empty `--db-url` or `--project-ref` fails with
+  `TargetEmptyValueError` instead of reading as absent.
 - `--reset` recreates the local database from the migrations before exporting; it has no effect
   on a remote project, branch or `--remote=<url>` target.
 - Existing declarative files are overwritten only after the export succeeds: without

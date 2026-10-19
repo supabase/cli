@@ -114,7 +114,8 @@ shell inherits the suppressing variables and is missed.
   work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
   warns that local is the default). They are mutually exclusive with each other and with
   `--remote`; a `false` switch counts as absent. `--project-ref` with `--local`, `--db-url` or
-  `--remote=<value>` is a hard error.
+  `--remote=<value>` is a hard error, and an empty `--db-url` or `--project-ref` fails with
+  `TargetEmptyValueError` instead of reading as absent.
 - **Container-level pooler fallback.** When a remote dump reaches the direct host
   from the host process but the `pg_dump` container fails over IPv6, the captured
   container stderr is classified (`isIPv6ConnectivityError`) and the dump is
