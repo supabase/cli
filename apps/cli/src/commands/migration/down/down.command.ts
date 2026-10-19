@@ -15,6 +15,7 @@ import { migrationDbRuntimeLayer } from "../migration.layers.ts";
 import { migrationDown } from "./down.handler.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
@@ -48,6 +49,7 @@ export const migrationDownCommand = Command.make("down", config).pipe(
         { operations: [], noApiEffectFlags: ["last"] },
         dbConfig,
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+        branchResolution,
       ),
       { default: "local" },
     ),

@@ -80,6 +80,8 @@ export interface SetupStorageOptions {
     type?: string | null;
     secret_jwt_template?: Record<string, unknown> | null;
   }>;
+  /** The linked project's branches, answering a `--remote=<branch>` lookup. */
+  readonly branches?: ReadonlyArray<Record<string, unknown>>;
   readonly linkedFails?: boolean;
   readonly explicitWorkdir?: boolean;
   readonly stackBackend?: boolean;
@@ -381,6 +383,22 @@ const STORAGE_TEST_API_KEYS = [
   },
 ];
 
+export const STORAGE_TEST_BRANCH_REF = "branchprojectrefabcd";
+
+/** A linked-project branch row for the `branches` option. */
+export const storageTestBranch = (name: string): Record<string, unknown> => ({
+  id: "11111111-2222-4333-8444-555555555555",
+  name,
+  project_ref: STORAGE_TEST_BRANCH_REF,
+  parent_project_ref: VALID_REF,
+  is_default: false,
+  persistent: false,
+  status: "MIGRATIONS_PASSED",
+  created_at: "2026-05-27T01:02:03Z",
+  updated_at: "2026-05-27T01:02:04Z",
+  with_data: true,
+});
+
 /** `describeHostedConsent` api option answering the api-keys lookup a hosted Storage run makes. */
 export const storageConsentApi = {
   byMethod: { GET: { status: 200, body: STORAGE_TEST_API_KEYS } },
@@ -451,6 +469,7 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
   const managementApi = mockCommandPlatformApiService({
     v1: {
       getProjectApiKeys: () => Effect.succeed(opts.apiKeys ?? STORAGE_TEST_API_KEYS),
+      listAllBranches: () => Effect.succeed(opts.branches ?? []),
     },
   });
 
@@ -527,5 +546,6 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     linkedCache,
     stackCalls: stackApi.stackCalls,
     managementRequests: recorded?.requests ?? [],
+    managementCalls: managementApi.requests,
   };
 }

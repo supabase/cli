@@ -129,7 +129,7 @@ const POSTGREST_V9_COMPAT_DEPRECATION_LINE =
 
 /**
  * Every value-taking flag `gen types` parses, telling `scanArgvFlags` which bare tokens
- * consume the next argv token as their value. Boolean flags (`--local`, `--linked`,
+ * consume the next argv token as their value. Boolean flags (`--remote`, `--local`, `--linked`,
  * `--postgrest-v9-compat`) are excluded since they never consume a following token.
  */
 const GEN_TYPES_SCAN_SPEC = {
@@ -254,7 +254,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   const languageOptions = languageOptionValues(flags);
 
   // `projectRef` is passed only for the linked path, so a matching `[remotes.*]` overlay is
-  // merged in the same load; omitted for the local and `--db-url` paths.
+  // merged in the same load; omitted for the local and `--remote=<url>` paths.
   const loadApiSchemas = (projectRef?: string) =>
     configValues
       .load({
@@ -303,7 +303,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         })
       : Effect.void;
 
-  // `--schema` skips the config load entirely, so a `--db-url --schema ...` invocation must not
+  // `--schema` skips the config load entirely, so a `--remote=<url> --schema ...` invocation must not
   // fail just because the workdir has no project config.
   const resolveIncludedSchemas = (projectRef?: string) =>
     schemas.length > 0

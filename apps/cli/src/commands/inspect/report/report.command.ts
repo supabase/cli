@@ -12,6 +12,7 @@ import { inspectReport } from "./report.handler.ts";
 import { inspectBaseLayer } from "../inspect.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
@@ -31,9 +32,10 @@ export const inspectReportCommand = Command.make("report", config).pipe(
   ),
   Command.withShortDescription("Generate a CSV output for all inspect commands"),
   withPermissions(
-    withDbTarget(compose({ operations: [], noApiEffectFlags: ["output-dir"] }, dbConfig), {
-      default: "local",
-    }),
+    withDbTarget(
+      compose({ operations: [], noApiEffectFlags: ["output-dir"] }, dbConfig, branchResolution),
+      { default: "local" },
+    ),
   ),
   Command.withHandler((flags) =>
     inspectReport(flags).pipe(

@@ -15,6 +15,7 @@ import { migrationDbRuntimeLayer } from "../migration.layers.ts";
 import { migrationFetch } from "./fetch.handler.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
@@ -31,6 +32,7 @@ export const migrationFetchCommand = Command.make("fetch", config).pipe(
         { operations: [], noApiEffectFlags: [] },
         dbConfig,
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+        branchResolution,
       ),
       { default: "local" },
     ),

@@ -16,6 +16,7 @@ import {
   VALID_REF,
   VALID_TOKEN,
   buildTestRuntime,
+  jsonResponse,
   mockCommandPlatformApi,
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -54,6 +55,22 @@ import { inspectDbLocks } from "./locks/locks.handler.ts";
 import { inspectDbRoleStats } from "./role-stats/role-stats.handler.ts";
 import { roleStatsSpec } from "./role-stats/role-stats.query.ts";
 import type { InspectConnectionFlags } from "./inspect-query.ts";
+
+const FLAG_REF = "flagflagflagflagflag";
+const BRANCH_REF = "branchprojectrefabcd";
+
+const branchRow = (name: string) => ({
+  id: "11111111-2222-4333-8444-555555555555",
+  name,
+  project_ref: BRANCH_REF,
+  parent_project_ref: VALID_REF,
+  is_default: false,
+  persistent: false,
+  status: "MIGRATIONS_PASSED",
+  created_at: "2026-05-27T01:02:03Z",
+  updated_at: "2026-05-27T01:02:04Z",
+  with_data: true,
+});
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -198,9 +215,12 @@ function setup(opts: SetupOpts = {}) {
   });
   const telemetry = mockTelemetryStateTracked();
   const workdir = opts.realLayers?.workdir ?? opts.workdir ?? "/tmp/inspect-db-test";
+  const api = mockCommandPlatformApi({
+    handler: (request) => Effect.succeed(jsonResponse(request, 200, [branchRow("feature-x")])),
+  });
   const runtime = buildTestRuntime({
     out,
-    api: mockCommandPlatformApi(),
+    api,
     cliSettings: mockCommandSettings({
       workdir,
       projectId: opts.projectId === undefined ? Option.none() : Option.some(opts.projectId),
@@ -229,7 +249,16 @@ function setup(opts: SetupOpts = {}) {
     ),
     configValuesLayer(),
   );
-  return { layer, out, resolver, connection, telemetry };
+  return {
+    layer,
+    out,
+    resolver,
+    connection,
+    telemetry,
+    branchRequests: api.requests,
+    warnings: () =>
+      out.messages.filter((message) => message.type === "warn").map((message) => message.message),
+  };
 }
 
 const flags = (over: Partial<InspectConnectionFlags> = {}): InspectConnectionFlags => ({
@@ -319,22 +348,15 @@ describe("inspect db query runner", () => {
       rows: [DB_STATS_ROW],
     });
     return Effect.gen(function* () {
-      yield* inspectDbDbStats(flags({ dbUrl: Option.some("postgres://x") }));
+      yield* inspectDbDbStats(
+        flags({ remote: Option.some({ _tag: "DbUrl", url: "postgres://x" } as const) }),
+      );
       const target = resolver.connectionInput?.target;
       expect(target?.kind).toBe("db-url");
       expect(target?.kind === "db-url" ? Redacted.value(target.url) : undefined).toBe(
         "postgres://x",
       );
       expect(connection.connectCalls[0]?.isLocal).toBe(false);
-      expect(out.stderrText).not.toContain("Connecting to");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("inspects the local database with --local", () => {
-    const { layer, resolver, out } = setup({ rows: [DB_STATS_ROW] });
-    return Effect.gen(function* () {
-      yield* inspectDbDbStats(flags({ local: true }));
-      expect(resolver.connectionInput?.target).toEqual({ kind: "local" });
       expect(out.stderrText).not.toContain("Connecting to");
     }).pipe(Effect.provide(layer));
   });
@@ -361,47 +383,134 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("--linked routes to the linked project and announces it", () => {
-    const { layer, resolver, out } = setup({ rows: [DB_STATS_ROW], projectId: VALID_REF });
+  it.effect("--remote=<ref> targets that project and announces it", () => {
+    const { layer, resolver, out, warnings } = setup({ rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {
-      yield* inspectDbDbStats(flags({ linked: true }));
-      expect(resolver.connectionInput?.target).toMatchObject({ kind: "linked", ref: VALID_REF });
-      expect(out.stderrText).toContain(unverifiedTargetBanner());
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--project-ref implies the linked project", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, resolver, out } = setup({ rows: [DB_STATS_ROW] });
-    return Effect.gen(function* () {
-      yield* inspectDbDbStats(flags({ projectRef: Option.some(FLAG_REF) }));
+      yield* inspectDbDbStats(
+        flags({ remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const) }),
+      );
       expect(resolver.connectionInput?.target).toMatchObject({
         kind: "linked",
         ref: FLAG_REF,
         source: "flag",
       });
       expect(out.stderrText).toContain(unverifiedTargetBanner(FLAG_REF));
+      expect(warnings()).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects conflicting target flags", () => {
+  it.effect("--remote=<branch> targets the project of the branch it names", () => {
+    const { layer, resolver, branchRequests, warnings } = setup({
+      rows: [DB_STATS_ROW],
+      projectId: VALID_REF,
+    });
+    return Effect.gen(function* () {
+      yield* inspectDbDbStats(
+        flags({ remote: Option.some({ _tag: "Branch", name: "feature-x" } as const) }),
+      );
+      expect(branchRequests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/branches`,
+      ]);
+      expect(resolver.connectionInput?.target).toMatchObject({
+        kind: "linked",
+        ref: BRANCH_REF,
+      });
+      expect(warnings()).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("--remote=<branch> fails with the branches that exist when none matches", () => {
+    const { layer, resolver } = setup({ rows: [DB_STATS_ROW], projectId: VALID_REF });
+    return Effect.gen(function* () {
+      const error = yield* inspectDbDbStats(
+        flags({ remote: Option.some({ _tag: "Branch", name: "feature-y" } as const) }),
+      ).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "LinkBranchNotFoundError",
+        message: expect.stringContaining("Available branches: feature-x"),
+      });
+      expect(resolver.connectionInput).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects --remote combined with --local", () => {
     const { layer, resolver } = setup();
     return Effect.gen(function* () {
-      const error = yield* inspectDbDbStats(flags({ linked: true, local: true })).pipe(Effect.flip);
+      const error = yield* inspectDbDbStats(
+        flags({ remote: Option.some({ _tag: "Linked" } as const), local: true }),
+      ).pipe(Effect.flip);
       expect(error).toBeInstanceOf(TargetSelectorConflictError);
       expect(resolver.connectionInput).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --project-ref combined with --local", () => {
-    const { layer, resolver } = setup();
-    return Effect.gen(function* () {
-      const error = yield* inspectDbDbStats(
-        flags({ local: true, projectRef: Option.some("flagflagflagflagflag") }),
-      ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(TargetProjectRefConflictError);
-      expect(resolver.connectionInput).toBeUndefined();
-    }).pipe(Effect.provide(layer));
+  describe("deprecated selectors", () => {
+    const DEPRECATED_DB_URL = "postgres://x";
+    const cases = [
+      {
+        alias: "--linked",
+        cliArgs: ["inspect", "db", "db-stats", "--linked"],
+        flags: { linked: true },
+        target: { kind: "linked", ref: VALID_REF },
+        warning:
+          "--linked is deprecated and will be removed in v4. Use --remote instead: supabase inspect db db-stats --remote",
+      },
+      {
+        alias: "--project-ref",
+        cliArgs: ["inspect", "db", "db-stats", "--project-ref", FLAG_REF],
+        flags: { projectRef: Option.some(FLAG_REF) },
+        target: { kind: "linked", ref: FLAG_REF, source: "flag" },
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase inspect db db-stats --remote=${FLAG_REF}`,
+      },
+      {
+        alias: "--db-url",
+        cliArgs: ["inspect", "db", "db-stats", "--db-url", DEPRECATED_DB_URL],
+        flags: { dbUrl: Option.some(DEPRECATED_DB_URL) },
+        target: { kind: "db-url" },
+        warning:
+          "--db-url is deprecated and will be removed in v4. Use --remote instead: supabase inspect db db-stats --remote=<db-url>",
+      },
+      {
+        alias: "--local",
+        cliArgs: ["inspect", "db", "db-stats", "--local"],
+        flags: { local: true },
+        target: { kind: "local" },
+        warning:
+          "--local isn't needed (local is the default) and will be removed in v4: supabase inspect db db-stats",
+      },
+    ] as const satisfies ReadonlyArray<{
+      readonly alias: string;
+      readonly cliArgs: ReadonlyArray<string>;
+      readonly flags: Partial<InspectConnectionFlags>;
+      readonly target: Record<string, string>;
+      readonly warning: string;
+    }>;
+
+    for (const testCase of cases) {
+      it.effect(`${testCase.alias} still selects its target and warns`, () => {
+        const { layer, resolver, warnings } = setup({
+          rows: [DB_STATS_ROW],
+          projectId: VALID_REF,
+          cliArgs: testCase.cliArgs,
+        });
+        return Effect.gen(function* () {
+          yield* inspectDbDbStats(flags(testCase.flags));
+          expect(resolver.connectionInput?.target).toMatchObject(testCase.target);
+          expect(warnings()).toEqual([testCase.warning]);
+        }).pipe(Effect.provide(layer));
+      });
+    }
+
+    it.effect("rejects --project-ref combined with --local", () => {
+      const { layer, resolver } = setup();
+      return Effect.gen(function* () {
+        const error = yield* inspectDbDbStats(
+          flags({ local: true, projectRef: Option.some(FLAG_REF) }),
+        ).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(TargetProjectRefConflictError);
+        expect(resolver.connectionInput).toBeUndefined();
+      }).pipe(Effect.provide(layer));
+    });
   });
 
   it.effect("passes network-ban removal only under --yes", () => {
@@ -410,8 +519,8 @@ describe("inspect db query runner", () => {
     const banRemoval = (input: DbConnectionInput | undefined) =>
       input === undefined ? undefined : Option.isSome(input.networkBanRemoval);
     return Effect.gen(function* () {
-      yield* inspectDbDbStats(flags({ local: true })).pipe(Effect.provide(withoutYes.layer));
-      yield* inspectDbDbStats(flags({ local: true })).pipe(Effect.provide(withYes.layer));
+      yield* inspectDbDbStats(flags()).pipe(Effect.provide(withoutYes.layer));
+      yield* inspectDbDbStats(flags()).pipe(Effect.provide(withYes.layer));
       expect(banRemoval(withoutYes.resolver.connectionInput)).toBe(false);
       expect(banRemoval(withYes.resolver.connectionInput)).toBe(true);
     });
@@ -481,7 +590,9 @@ describe("inspect db query runner", () => {
       dnsResolver: "https",
     });
     return Effect.gen(function* () {
-      yield* inspectDbDbStats(flags({ dbUrl: Option.some("postgres://x") }));
+      yield* inspectDbDbStats(
+        flags({ remote: Option.some({ _tag: "DbUrl", url: "postgres://x" } as const) }),
+      );
       expect(connection.connectCalls[0]?.dnsResolver).toBe("https");
     }).pipe(Effect.provide(layer));
   });
@@ -528,13 +639,15 @@ describe("inspect db through the real database-config resolver", () => {
     () => {
       const { layer, out, connection } = setup({
         rows: [DB_STATS_ROW],
-        cliArgs: ["inspect", "db", "db-stats", "--project-ref", VALID_REF],
+        cliArgs: ["inspect", "db", "db-stats", `--remote=${VALID_REF}`],
         realLayers: { workdir: tempRoot.current },
       });
       const requests: Array<StubbedRequest> = [];
       return Effect.gen(function* () {
         yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-        yield* inspectDbDbStats(flags({ projectRef: Option.some(VALID_REF) }));
+        yield* inspectDbDbStats(
+          flags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
+        );
         expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
         expect(connection.connectCalls[0]?.cfg.host).toBe("aws-0-us-east-1.pooler.supabase.com");
         expect(out.stdoutText).toContain("8192 kB");
@@ -543,7 +656,7 @@ describe("inspect db through the real database-config resolver", () => {
         for (const command of RUNNER_INSPECT_DB_LEAVES) {
           assertPermissionDrift({
             command,
-            activeFlags: { "project-ref": VALID_REF },
+            activeFlags: { remote: VALID_REF },
             requests: asRecordedRequests(requests),
             exact: true,
           });
@@ -551,7 +664,7 @@ describe("inspect db through the real database-config resolver", () => {
         for (const command of REMOVED_INSPECT_DB_LEAVES) {
           assertPermissionDrift({
             command,
-            activeFlags: { "project-ref": VALID_REF },
+            activeFlags: { remote: VALID_REF },
             requests: [],
             exact: true,
           });
@@ -609,21 +722,21 @@ describe("inspect db through the real database-config resolver", () => {
     );
   });
 
-  it.effect("makes no Management API request for --local", () => {
+  it.effect("makes no Management API request for the default local target", () => {
     const { layer, connection } = setup({
       rows: [DB_STATS_ROW],
-      cliArgs: ["inspect", "db", "db-stats", "--local"],
+      cliArgs: ["inspect", "db", "db-stats"],
       realLayers: { workdir: tempRoot.current },
     });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
       yield* stubManagementApi(requests, () => undefined);
-      yield* inspectDbDbStats(flags({ local: true }));
+      yield* inspectDbDbStats(flags());
       expect(connection.connectCalls).toHaveLength(1);
       expect(requests).toEqual([]);
       assertPermissionDrift({
         command: "inspect db db-stats",
-        activeFlags: { local: true },
+        activeFlags: {},
         requests: [],
         exact: true,
       });
@@ -634,22 +747,24 @@ describe("inspect db through the real database-config resolver", () => {
     );
   });
 
-  it.effect("makes no Management API request for --db-url", () => {
+  it.effect("makes no Management API request for --remote=<url>", () => {
     const DB_URL = "postgresql://postgres:postgres@127.0.0.1:5432/postgres";
     const { layer, connection } = setup({
       rows: [DB_STATS_ROW],
-      cliArgs: ["inspect", "db", "db-stats", "--db-url", DB_URL],
+      cliArgs: ["inspect", "db", "db-stats", `--remote=${DB_URL}`],
       realLayers: { workdir: tempRoot.current },
     });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
       yield* stubManagementApi(requests, () => undefined);
-      yield* inspectDbDbStats(flags({ dbUrl: Option.some(DB_URL) }));
+      yield* inspectDbDbStats(
+        flags({ remote: Option.some({ _tag: "DbUrl", url: DB_URL } as const) }),
+      );
       expect(connection.connectCalls).toHaveLength(1);
       expect(requests).toEqual([]);
       assertPermissionDrift({
         command: "inspect db db-stats",
-        activeFlags: { "db-url": true },
+        activeFlags: { remote: DB_URL },
         requests: [],
         exact: true,
       });

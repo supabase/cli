@@ -90,7 +90,7 @@ const localFlags = {
   remote: Option.none(),
   dbUrl: Option.none<string>(),
   linked: false,
-  local: true,
+  local: false,
   projectRef: Option.none<string>(),
 };
 

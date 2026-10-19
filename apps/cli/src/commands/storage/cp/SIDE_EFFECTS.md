@@ -3,9 +3,10 @@
 Copies objects between local paths and the Storage service. The scheme of `src`/`dst` selects the operation:
 `ss://`→local download, local→`ss://` upload, both `ss://` → error, both local → unsupported.
 
-With no target flag the command follows the workspace target (`SUPABASE_TARGET`, then `target` in
-`config.toml`, default `local`; see [ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md)). `--local` selects
-the local stack; `--linked` or `--project-ref` select the linked project. The local Storage gateway
+With no selector the command targets the local stack. `--remote` targets the linked project,
+`--remote=<ref>` another project and `--remote=<branch>` a branch of the linked project (see
+[ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md));
+`--local`, `--linked` and `--project-ref` are deprecated aliases. The local Storage gateway
 resolves through the `experimental.stack` feature flag, same `SUPABASE_EXPERIMENTAL_STACK=1|0` env
 precedence as [`docs/stack-commands.md`](../../../../docs/stack-commands.md); see Notes for the
 stack-backend endpoint, credential, capability-state, and error behavior.
@@ -15,45 +16,47 @@ stack-backend endpoint, credential, capability-state, and error behavior.
 | Path                                           | Format     | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ---------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.toml`               | TOML       | always (local creds; `[storage.buckets.*]` for bucket auto-create). With an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target, a missing project config is now a hard failure (`StorageMissingProjectConfigError`) rather than a fall-back to embedded defaults — the default `api.port` would otherwise point the operation at a different local stack; a REMOTE (`--project-ref`/`--linked`) target never hard-fails on this, since credential resolution there reads the Management API, not local config |
-| `~/.supabase/access-token`                     | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `<workdir>/supabase/.temp/project-ref`         | plain text | linked path, when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON       | linked path, existence check before the cache fill                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `~/.supabase/access-token`                     | plain text | remote project or branch lookup, when `SUPABASE_ACCESS_TOKEN` unset                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `<workdir>/supabase/.temp/project-ref`         | plain text | a remote project: resolves the ref (bare `--remote` with no `SUPABASE_PROJECT_ID`) and tells whether it is the linked project; with no selector, only to word the linked-checkout hint                                                                                                                                                                                                                                                                                                                               |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON       | the `Target:` banner and the linked-checkout hint, the parent project for `--remote=<branch>`, and the existence check before the cache fill                                                                                                                                                                                                                                                                                                                                                                         |
 | local Kong TLS cert/key                        | PEM        | legacy backend only, local + `api.enabled` + `api.tls.enabled`                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `<workdir>/supabase/.env*`, `<workdir>/.env*`  | dotenv     | local path: read on both backends for `env(VAR)` interpolation while loading `config.toml`; on the legacy backend also to resolve the `SUPABASE_API_*` overrides for the gateway URL/TLS (#6452) and `SUPABASE_AUTH_{JWT_SECRET,SERVICE_ROLE_KEY}` for the service-role key                                                                                                                                                                                                                                          |
 | upload source files                            | bytes      | upload: sniff (≤512 bytes) + streamed body                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ## Files Written
 
-| Path                                           | Format | When                                                                                                                                                                                  |
-| ---------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| download destination files                     | bytes  | download (single: O_EXCL `wx`; recursive: O_TRUNC `w`)                                                                                                                                |
-| download destination parent dirs               | dir    | recursive download (`mkdir -p`)                                                                                                                                                       |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | post-run, linked path (`--local` false) — only when no cached file exists, `.temp/project-ref` is absent or names the same ref, a token is available, and the project lookup succeeds |
-| `~/.supabase/telemetry.json`                   | JSON   | post-run (always)                                                                                                                                                                     |
+| Path                                           | Format | When                                                                                                                                                                   |
+| ---------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| download destination files                     | bytes  | download (single: O_EXCL `wx`; recursive: O_TRUNC `w`)                                                                                                                 |
+| download destination parent dirs               | dir    | recursive download (`mkdir -p`)                                                                                                                                        |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | post-run, remote project — only when no cached file exists, `.temp/project-ref` is absent or names the same ref, a token is available, and the project lookup succeeds |
+| `~/.supabase/telemetry.json`                   | JSON   | post-run (always)                                                                                                                                                      |
 
 ## API Routes
 
 Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-prefixed.
 
-| Method | Path                                      | Request body / headers                                                                                                                                                                                                          | Response                                              |
-| ------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `GET`  | `/storage/v1/object/{path}`               | — (download)                                                                                                                                                                                                                    | binary stream                                         |
-| `POST` | `/storage/v1/object/{path}`               | file stream; `Content-Type`, `Cache-Control`, `x-upsert` (recursive only)                                                                                                                                                       | —                                                     |
-| `POST` | `/storage/v1/object/list/{bucket}`        | `{prefix, search?, limit:100, offset?}` (recursive walk + dst detection)                                                                                                                                                        | `[{name, id?}]`                                       |
-| `GET`  | `/storage/v1/bucket`                      | — (recursive walk to bucket root)                                                                                                                                                                                               | `[{name, id}]`                                        |
-| `POST` | `/storage/v1/bucket`                      | `{name, public?, file_size_limit?, allowed_mime_types?}` (auto-create on 404)                                                                                                                                                   | `{name}`                                              |
-| `GET`  | `/v1/projects/{ref}/api-keys?reveal=true` | — (linked, Management API; skipped when `SUPABASE_AUTH_SERVICE_ROLE_KEY` is set to a non-empty value in the shell env)                                                                                                          | service-role key                                      |
-| `GET`  | `/v1/projects/{ref}`                      | — (linked, Management API; best-effort cache fill after the ref resolves, only when `.temp/linked-project.json` is absent, `.temp/project-ref` is absent or names the same ref, and a token is available; failures are ignored) | `ref`, `name`, `organization_id`, `organization_slug` |
+| Method | Path                                      | Request body / headers                                                                                                                                                                                                                  | Response                                              |
+| ------ | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `GET`  | `/storage/v1/object/{path}`               | — (download)                                                                                                                                                                                                                            | binary stream                                         |
+| `POST` | `/storage/v1/object/{path}`               | file stream; `Content-Type`, `Cache-Control`, `x-upsert` (recursive only)                                                                                                                                                               | —                                                     |
+| `POST` | `/storage/v1/object/list/{bucket}`        | `{prefix, search?, limit:100, offset?}` (recursive walk + dst detection)                                                                                                                                                                | `[{name, id?}]`                                       |
+| `GET`  | `/storage/v1/bucket`                      | — (recursive walk to bucket root)                                                                                                                                                                                                       | `[{name, id}]`                                        |
+| `POST` | `/storage/v1/bucket`                      | `{name, public?, file_size_limit?, allowed_mime_types?}` (auto-create on 404)                                                                                                                                                           | `{name}`                                              |
+| `GET`  | `/v1/projects`                            | — (Management API; project picker: bare `--remote` with no ref from `SUPABASE_PROJECT_ID` or `.temp/project-ref`, with stdin and stdout TTYs and a non-JSON output format)                                                              | `[{id, name, organization_slug, region}]`             |
+| `GET`  | `/v1/projects/{parent}/branches`          | — (Management API; only for `--remote=<branch>` (or the deprecated `--project-ref=<branch>`), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project)      | `[{id, name, project_ref, is_default}]`               |
+| `GET`  | `/v1/projects/{ref}/api-keys?reveal=true` | — (remote project, Management API; skipped when `SUPABASE_AUTH_SERVICE_ROLE_KEY` is set to a non-empty value in the shell env)                                                                                                          | service-role key                                      |
+| `GET`  | `/v1/projects/{ref}`                      | — (remote project, Management API; best-effort cache fill after the ref resolves, only when `.temp/linked-project.json` is absent, `.temp/project-ref` is absent or names the same ref, and a token is available; failures are ignored) | `ref`, `name`, `organization_id`, `organization_slug` |
 
 ## Environment Variables
 
 `SUPABASE_AUTH_JWT_SECRET`, `SUPABASE_SERVICES_HOSTNAME`, and the `SUPABASE_API_*`
 override family are legacy backend only. `SUPABASE_AUTH_SERVICE_ROLE_KEY` is legacy backend only
-for `--local`; on the linked path a non-empty shell value skips the api-keys call under either
+for the local target; on a remote project a non-empty shell value skips the api-keys call under either
 backend. `SUPABASE_ACCESS_TOKEN`,
 `SUPABASE_PROJECT_ID`, and `SUPABASE_EXPERIMENTAL_STACK` (backend selection) apply to either
 backend — same roles as `storage ls`.
-`SUPABASE_PROJECT_ID`'s linked-ref resolution is superseded by `--project-ref` when set.
+`SUPABASE_PROJECT_ID` supplies the ref for a bare `--remote` and the parent project for `--remote=<branch>`.
 
 `storage` is an experimental command: `cp` requires `--experimental`
 (or `SUPABASE_EXPERIMENTAL`), else it exits 1 with
@@ -61,16 +64,18 @@ backend — same roles as `storage ls`.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                            |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`  | success                                                                                                                                                                                                                              |
-| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`StorageWorkdirError`) — beats every other guard                                                                                                         |
-| `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target holds no project config (`StorageMissingProjectConfigError`)                                                                                                            |
-| `1`  | invalid/parse url, unsupported operation (local→local), copy-between-buckets, object-not-found (recursive download), file create/read failure, API non-2xx, network, auth, config parse                                              |
-| `1`  | `--local` with `--linked`, or `--project-ref` with `--local` (`TargetSelectorConflictError`, `TargetProjectRefConflictError`), after the experimental gate and the workdir check and before any Storage request                      |
-| `1`  | upload to a linked project without consent: a JSON, piped or non-interactive run without `--yes`/shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`), or a declined prompt (`HostedMutationDeclinedError`) — nothing is sent |
-| `1`  | stack backend: Storage disabled or its stack `failed`/`stopped` (`StackStorageCapabilityError`)                                                                                                                                      |
-| `1`  | stack backend: stack is not registered/ready, has no primary database, or the stack API is unavailable (`StackStorageUnavailableError`); a missing Storage endpoint is a capability failure (`StackStorageCapabilityError`)          |
+| Code | Condition                                                                                                                                                                                                                                               |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                                                 |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`StorageWorkdirError`) — beats every other guard                                                                                                                            |
+| `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target holds no project config (`StorageMissingProjectConfigError`)                                                                                                                               |
+| `1`  | invalid/parse url, unsupported operation (local→local), copy-between-buckets, object-not-found (recursive download), file create/read failure, API non-2xx, network, auth, config parse                                                                 |
+| `1`  | two of `--remote`, `--linked` and `--local`, or `--project-ref` with `--local` or `--remote=<value>` (`TargetSelectorConflictError`, `TargetProjectRefConflictError`), after the experimental gate and the workdir check and before any Storage request |
+| `1`  | `--remote=<db-url>` (`TargetNeedsProjectError`): the Storage API needs a project, not a database URL; no Storage request is sent                                                                                                                        |
+| `1`  | `--remote=<branch>` matches no branch of the linked project (`LinkBranchNotFoundError`, lists the branches that exist)                                                                                                                                  |
+| `1`  | upload to a remote project without consent: a JSON, piped or non-interactive run without `--yes`/shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`), or a declined prompt (`HostedMutationDeclinedError`) — nothing is sent                    |
+| `1`  | stack backend: Storage disabled or its stack `failed`/`stopped` (`StackStorageCapabilityError`)                                                                                                                                                         |
+| `1`  | stack backend: stack is not registered/ready, has no primary database, or the stack API is unavailable (`StackStorageUnavailableError`); a missing Storage endpoint is a capability failure (`StackStorageCapabilityError`)                             |
 
 ## Output
 
@@ -95,20 +100,35 @@ backend — same roles as `storage ls`.
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties                                                                            |
-| ---------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `flags` (recursive/cache-control/content-type/jobs/linked/local; non-boolean values redacted) |
+| Event                  | When                                       | Notable properties                                                                                   |
+| ---------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `flags` (recursive/cache-control/content-type/jobs/remote/linked/local; non-boolean values redacted) |
 
 ## Notes
 
-- **Target.** `--local`, `--linked` and `--project-ref` go through the shared target selector:
-  `--local` and `--linked` are mutually exclusive, `--project-ref` selects the linked project and
-  conflicts with `--local`, and a `false` switch counts as absent. `--project-ref` only supplies the
-  ref (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). With no selector the workspace target decides.
-- **Target banner.** A linked target prints `Target: …` to stderr once its ref resolves; the local
+- **Target.** With no selector the command runs against the local stack; when the directory is
+  linked the local `Target:` banner ends with `· default; pass --remote for <project>`. `--remote`
+  targets the linked project (`SUPABASE_PROJECT_ID`, else `.temp/project-ref`). `--remote=<value>`
+  is read as a project ref (20 lowercase letters), `true|yes|on|1` (the linked project), or
+  otherwise the name of a branch of the linked project, which resolves to that branch's own project.
+  A database URL (`--remote=<db-url>`) fails with a `needs a project, not a database URL` error and
+  sends no request. `false|no|off|0`, `--no-remote` and an empty value fail with
+  `Leave out --remote to target the local Storage API.` A bare `--remote` followed by a word that is
+  a branch of the linked project fails with a `Did you mean --remote=<word>?` hint, since the word
+  may have been meant as the flag's value. The resolved target is announced on stderr (`Target: …`)
+  in every output format and, in JSON results, as a `target` object.
+- **Deprecated selectors.** `--linked`, `--project-ref` and `--local` are hidden aliases that still
+  select their target and print a warning on stderr naming the replacement, for example
+  `--linked is deprecated and will be removed in v4. Use --remote instead: supabase storage cp --remote`
+  and `--local isn't needed (local is the default) and will be removed in v4: supabase storage cp`.
+  Two selectors together fail
+  (`Only one of --remote, --linked, --db-url and --local can be set; got …`), `--project-ref` cannot
+  be combined with `--local` or `--remote=<value>`, an empty `--project-ref` is rejected, and
+  `--linked=false` selects nothing.
+- **Target banner.** A remote project prints `Target: …` to stderr once its ref resolves; the local
   target prints `Target: local stack (<host>:<port>)` once the Storage endpoint is known. Both come
   before the first Storage request.
-- **Hosted consent.** Uploading to a linked project asks once, before any Storage request:
+- **Hosted consent.** Uploading to a remote project asks once, before any Storage request:
   `Upload <src> to <dst>?`, default No; a recursive upload adds a line saying existing objects
   under the destination are overwritten. `--yes` or a shell `SUPABASE_YES` grants it and echoes
   `Confirmed by --yes: …` to stderr; otherwise only an interactive text-mode terminal is asked, and
@@ -123,7 +143,7 @@ backend — same roles as `storage ls`.
 - `--jobs`/`-j` bounds upload/download concurrency (default 1).
 - The runtime default for `--content-type` is `""` (empty ⇒ auto-detect).
 - Relative local paths resolve against the original cwd.
-- **Stack backend (`--local`).** The Storage endpoint comes from the selected composition's
+- **Stack backend (local target).** The Storage endpoint comes from the selected composition's
   Storage member observation, and the service-role JWT is generated from the primary database's
   observed JWT secret. The stack is opened by project identity through the `@supabase/stack` API,
   which reads stack state under `SUPABASE_HOME`; `cp` opens saved state without launching

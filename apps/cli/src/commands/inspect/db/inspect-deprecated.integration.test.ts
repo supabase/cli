@@ -85,7 +85,7 @@ const flags: InspectConnectionFlags = {
   dbUrl: Option.none<string>(),
   remote: Option.none(),
   linked: false,
-  local: true,
+  local: false,
   projectRef: Option.none<string>(),
 };
 

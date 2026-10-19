@@ -29,8 +29,9 @@ and uses an automatically assigned port; `db.shadow_port` applies only to the le
 | `<workdir>/supabase/roles.sql`                                                                     | SQL                                                                                   | shadow `SetupDatabase` (custom-roles seed); missing file tolerated                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | managed snapshot key `<key>`                                                                       | backend                                                                               | warm stack-shadow baseline; managed retention may evict entries and snapshots survive stack destruction                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `<workdir>/supabase/.env`, `.env.local`, `SUPABASE_ENV`-selected dotenv                            | dotenv                                                                                | always (`--yes`/registry/network-id overrides)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `<workdir>/supabase/.temp/{project-ref,postgres-version,pooler-url}`                               | plain text                                                                            | linked target — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `~/.supabase/access-token`                                                                         | plain text                                                                            | linked target without `--password`/`SUPABASE_ACCESS_TOKEN`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `<workdir>/supabase/.temp/{project-ref,postgres-version,pooler-url}`                               | plain text                                                                            | a remote project: `project-ref` resolves the ref (bare `--remote` with no `SUPABASE_PROJECT_ID`) and tells whether it is the linked project; with no selector, `project-ref` only, to word the linked-checkout hint                                                                                                                                                                                                                                                                                                                                                      |
+| `<workdir>/supabase/.temp/linked-project.json`                                                     | JSON                                                                                  | to name the project in the `Target:` banner and the linked-checkout hint, and as the parent project for `--remote=<branch>`                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `~/.supabase/access-token`                                                                         | plain text                                                                            | a remote project without `--password`/`SUPABASE_ACCESS_TOKEN`, or when a branch is looked up                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `~/.docker/config.json` + Docker context store                                                     | JSON                                                                                  | resolving the Docker hostname for shadow/pg_dump containers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ## Files Written
@@ -40,7 +41,7 @@ and uses an automatically assigned port; `db.shadow_port` applies only to the le
 | `<workdir>/supabase/migrations/<target>.sql`       | SQL text | ≥2 migrations squash — **truncated** (0644) then rewritten as the full dump + separator + `auth`/`storage` line diff |
 | `<workdir>/supabase/migrations/<earlier>.sql` (×N) | —        | **deleted** — every earlier merged migration; a per-file failure is non-fatal (printed, not raised)                  |
 | scoped temp dir                                    | SQL      | shadow's `initSchema`/`ApplyApiPrivileges` SQL (PG≤14) — removed when the scope closes                               |
-| `<workdir>/supabase/.temp/linked-project.json`     | JSON     | linked target (post-run cache, even when the command itself fails or the confirmation is declined)                   |
+| `<workdir>/supabase/.temp/linked-project.json`     | JSON     | remote project (post-run cache, even when the command itself fails or the confirmation is declined)                  |
 | managed snapshot key `<key>`                       | backend  | stack-mode cold shadow baseline; managed retention may evict entries and snapshots survive stack destruction         |
 | `~/.supabase/telemetry.json`                       | JSON     | every invocation (post-run)                                                                                          |
 
@@ -75,17 +76,19 @@ live shadow available.
 
 ## API Routes
 
-| Method      | Path                                                                          | Auth   | Purpose                                                            |
-| ----------- | ----------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------ |
-| —           | —                                                                             | —      | local target: none                                                 |
-| POST        | `/v1/projects/{ref}/cli/login-role`                                           | Bearer | linked target: temp login role when no password                    |
-| GET         | `/v1/projects/{ref}/config/database/pooler`                                   | Bearer | linked target: IPv4 pooler fallback (IPv6-only network)            |
-| POST/DELETE | `/v1/projects/{ref}/network-bans/retrieve`, `/v1/projects/{ref}/network-bans` | Bearer | linked target: unban during pooler login retry, only under `--yes` |
-| GET         | `/v1/projects/{ref}`                                                          | Bearer | linked target: linked-project cache (post-run, unconditional)      |
+| Method      | Path                                                                          | Auth   | Purpose                                                                                                                                                                                                        |
+| ----------- | ----------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| —           | —                                                                             | —      | local target or database URL: none                                                                                                                                                                             |
+| GET         | `/v1/projects`                                                                | Bearer | project picker: bare `--remote` with no ref from `SUPABASE_PROJECT_ID` or `.temp/project-ref`, interactive terminal only                                                                                       |
+| GET         | `/v1/projects/{parent}/branches`                                              | Bearer | only for `--remote=<branch>` (or the deprecated `--project-ref=<branch>`), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
+| POST        | `/v1/projects/{ref}/cli/login-role`                                           | Bearer | remote project: temp login role when no password                                                                                                                                                               |
+| GET         | `/v1/projects/{ref}/config/database/pooler`                                   | Bearer | remote project: IPv4 pooler fallback (IPv6-only network), only when the ref came from `--remote=<ref>` or `--remote=<branch>`, or differs from the linked project                                              |
+| POST/DELETE | `/v1/projects/{ref}/network-bans/retrieve`, `/v1/projects/{ref}/network-bans` | Bearer | remote project: unban during pooler login retry, only under `--yes`                                                                                                                                            |
+| GET         | `/v1/projects/{ref}`                                                          | Bearer | remote project: linked-project cache (post-run, unconditional)                                                                                                                                                 |
 
 ## Environment Variables
 
-`SUPABASE_YES` (shell only; confirms a hosted run), `SUPABASE_TARGET`, `SUPABASE_DB_PASSWORD` (linked target only), `SUPABASE_ACCESS_TOKEN`, `SUPABASE_SERVICES_HOSTNAME`,
+`SUPABASE_YES` (shell only; confirms a hosted run), `SUPABASE_PROJECT_ID`, `SUPABASE_DB_PASSWORD` (remote project only), `SUPABASE_ACCESS_TOKEN`, `SUPABASE_SERVICES_HOSTNAME`,
 `DOCKER_HOST`/`DOCKER_CONTEXT`/`DOCKER_CONFIG`, `SUPABASE_NETWORK_ID`,
 `SUPABASE_INTERNAL_IMAGE_REGISTRY`, `SUPABASE_USE_SLIM_IMAGES` (current-pin shadow Postgres and PG15+ realtime/storage/auth migrate-job images → slim `ghcr.io/supabase/cli`; historical pins, PG14, OrioleDB tags the catalog does not pin, flag-off `15.8.1.085` stay on docker.io), `SUPABASE_PROJECT_ID`, `SUPABASE_DEBUG`,
 `SUPABASE_EXPERIMENTAL`, `SUPABASE_SHADOW_CACHE` (stack shadow baseline cache; on by default, falsy disables restore and publication).
@@ -96,7 +99,8 @@ live shadow available.
 | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`   | success — **including** the single-migration no-op                                                                                                                                                                                                                                |
 | `1`   | invalid `--version`; `--version` file not found; `version not found`; migrations-dir read failure; shadow create/health/setup/apply failure; `pg_dump` non-zero exit; migration-file open/write failure; baseline connect/batch failure; conflicting target selectors (see Notes) |
-| `1`   | `--password` with a target other than linked                                                                                                                                                                                                                                      |
+| `1`   | `--password` with a local target or `--remote=<db-url>`                                                                                                                                                                                                                           |
+| `1`   | `--remote=<branch>` matches no branch of the linked project (`LinkBranchNotFoundError`, lists the branches that exist)                                                                                                                                                            |
 | `1`   | hosted target without `--yes` in a run that cannot prompt (`HostedMutationConsentRequiredError`); hosted confirmation declined (`context canceled`) — nothing is changed                                                                                                          |
 | `130` | SIGINT                                                                                                                                                                                                                                                                            |
 
@@ -108,7 +112,7 @@ stderr, in order (path-dependent):
 
 ```
 Target: …                                           (the resolved target; local and custom Postgres lines come from the connection)
-Loading config override: [remotes.<ref>]          (only when a linked target resolves a [remotes.<ref>] block)
+Loading config override: [remotes.<ref>]          (only when a remote project resolves a [remotes.<ref>] block)
 Confirmed by --yes: Squash local migrations and update the remote migration history table on <target>   (hosted target under --yes)
 Initialising schema...
 Seeding globals from roles.sql...                  (unconditional — printed even when roles.sql is absent)
@@ -146,25 +150,42 @@ code or the rest of the payload.
 
 ## Notes
 
-- **Target.** With no selector the command follows the workspace target: the local database, or the
-  linked project when `target = "remote"` is set in `supabase/config.toml` (or `SUPABASE_TARGET=remote`
-  is exported). `--local`, `--linked` and `--db-url` are mutually exclusive and `--linked=false`
-  selects nothing. `--project-ref` implies `--linked` and is rejected with `--local` or `--db-url`;
-  an empty `--db-url` or `--project-ref` is rejected. The resolved target is announced on stderr
-  (`Target: …`) in every output format and, in JSON results, as a `target` object. The shadow database
-  is provisioned locally whatever the target; the target only decides whether the remote history
-  table is baselined.
-- **Consent.** A hosted target (the linked project or a non-local `--db-url`) needs one confirmation
+- **Target.** With no selector the command runs against the local database; when the directory is
+  linked the local `Target:` banner ends with `· default; pass --remote for <project>`. `--remote`
+  targets the linked project (`SUPABASE_PROJECT_ID`, else `.temp/project-ref`). `--remote=<value>`
+  is read as a project ref (20 lowercase letters), a database URL (`postgres://` or
+  `postgresql://`), `true|yes|on|1` (the linked project), or otherwise the name of a branch of the
+  linked project, which resolves to that branch's own project. `false|no|off|0`, `--no-remote` and
+  an empty value fail with `Leave out --remote to target the local database.` A bare `--remote`
+  followed by a word that is a branch of the linked project fails with a
+  `Did you mean --remote=<word>?` hint, since the word may have been meant as the flag's value. The
+  resolved target is announced on stderr (`Target: …`) in every output format and, in JSON results,
+  as a `target` object. The shadow database is provisioned locally whatever the target; the target
+  only decides whether the remote history table is baselined.
+- **Deprecated selectors.** `--linked`, `--project-ref`, `--db-url` and `--local` are hidden aliases
+  that still select their target and print a warning on stderr naming the replacement, for example
+  `--linked is deprecated and will be removed in v4. Use --remote instead: supabase migration squash --remote`
+  and
+  `--local isn't needed (local is the default) and will be removed in v4: supabase migration squash`;
+  a database URL is never echoed. Two selectors together fail
+  (`Only one of --remote, --linked, --db-url and --local can be set; got …`), `--project-ref` cannot
+  be combined with `--local`, `--db-url` or `--remote=<value>`, an empty `--db-url` or
+  `--project-ref` is rejected, and `--linked=false` selects nothing.
+- **Consent.** A hosted target (a remote project or a non-local database URL) needs one confirmation
   (default **NO**) because the local checkout rewrite precedes the remote history reset. Only `--yes`
   or an exported `SUPABASE_YES` approves a run that cannot prompt; a piped answer and a `SUPABASE_YES`
   in the project `.env` do not. A local target never prompts.
-- **`--password`** is rejected unless the target is the linked project: with `--db-url` the error is
-  `--password can't be used with --db-url. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres`,
-  and with a local target `--password only applies to a linked project. The local database uses [db].password from supabase/config.toml.`
-  (exit 1). For the linked project the password resolves as flag > shell `SUPABASE_DB_PASSWORD` > project
+- **`--password`** applies only to a remote project. With `--remote=<db-url>` (or `--db-url`) it
+  fails with
+  `--password can't be used with --remote=<db-url>. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres`;
+  with a local target it fails with
+  `--password only applies to a linked project. The local database uses [db].password from supabase/config.toml.`
+  followed by `To use the linked project instead, pass --remote.` when the directory is linked (exit
+  1). For a remote project the password resolves as flag > shell `SUPABASE_DB_PASSWORD` > project
   `.env*` > config; the env value is withheld when the target differs from `.temp/project-ref`
-  (stderr `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.`), and a
-  temporary login role is minted instead (ADR 0032).
+  (stderr
+  `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.`),
+  and a temporary login role is minted instead (ADR 0032).
 - The shadow gets `setupDatabase` only — **no** `CREATE DATABASE contrib_regression` (unlike
   `db diff`/`db pull`).
 - `--version` is compared **lexically** against zero-padded timestamps.
