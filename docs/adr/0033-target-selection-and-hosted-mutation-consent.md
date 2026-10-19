@@ -38,15 +38,14 @@ truth for the default target and for the consent default.
   the checkout and have no target flags.
 - `account`: `login`, `logout`, `whoami`, `orgs *`, `projects` (except `projects api-keys`),
   `bootstrap`, `feedback`. They act on the account or an organisation and have no default project.
-- `hosted`: `functions deploy`, `secrets *`, `config *`, `branches *`, `projects api-keys`, `link` and
-  the other platform resource commands. They have no local side, so they act on the linked project
-  by default and take `--remote=<ref|branch>` for another project.
+- `hosted`: `functions deploy`, `secrets *`, `config *`, `branches *`, `projects api-keys` and the
+  other platform resource commands. They have no local side, so they act on the linked project by
+  default and take `--remote=<ref|branch>` for another project. `link` is the one hosted command
+  without `--remote`: its target is the `[ref-or-branch]` argument, and `--project-ref` still works.
 - `selectable`: `db push`, `db pull`, `migration fetch`, `db reset`, `db query`, `db lint`,
   `db advisors`, `db dump`, `db diff`, `test db`, `inspect *`,
   `migration list|up|down|squash|repair`, `gen types`, `storage *`, `seed buckets`,
-  `db schema declarative generate`. They run locally unless `--remote` is passed. This group
-  absorbs the former `sync` group (`db push`, `db pull`, `migration fetch`), which defaulted to the
-  linked project.
+  `db schema declarative generate`. They run locally unless `--remote` is passed.
 - `removed`: `db branch *`, `db remote changes`, `db remote commit`. They exit 1 with replacement
   guidance.
 
@@ -56,9 +55,9 @@ truth for the default target and for the consent default.
 
 ### One flag: `--remote`
 
-`--remote` selects the target on every command that can act on a hosted project. It is bare or
-takes a value, and there is no workspace-level switch: the `target` config key and
-`SUPABASE_TARGET` do not exist, so the intent is on the command line and nowhere else.
+`--remote` selects the target on every command that can act on a hosted project, except `link`. It
+is bare or takes a value, and there is no workspace-level switch, so the intent is on the command
+line and nowhere else.
 
 | You pass            | Target                                                                   |
 | ------------------- | ------------------------------------------------------------------------ |
@@ -68,8 +67,9 @@ takes a value, and there is no workspace-level switch: the `target` config key a
 | `--remote=<url>`    | That database: a `postgres://` or `postgresql://` URL                    |
 | `--remote=<branch>` | A branch of the linked project, by name or UUID                          |
 
-The value rule is the one `supabase link` uses, through its resolver; a value that matches no branch
-fails with link's error, which lists the branches. A URL applies only where the remote side is
+Every command resolves a `--remote=<branch|uuid>` value with one resolver, the one `supabase link`
+uses. A value that matches no branch fails with link's error, which lists the branches. A branch
+UUID also resolves in a checkout with no linked project. A URL applies only where the remote side is
 Postgres: `storage`, `seed buckets` and `hosted` commands need a project and reject one. `hosted`
 commands accept `--remote=<ref|branch>`, and bare `--remote` changes nothing for them. The linked
 project comes from `SUPABASE_PROJECT_ID`, then the link file. `SUPABASE_PROJECT_ID` alone never
@@ -80,8 +80,10 @@ unresolvable remote target fails. The CLI never falls back between local and rem
 parsing when the command takes no positional, when the token is a ref or URL, or when the command
 already has more bare tokens than positionals. The one ambiguous shape, a bare `--remote` directly
 followed by a token the command took as a positional, is checked against the linked project's
-branches before anything runs: a match fails with a hint to use `--remote=<branch>`, and no match
-runs the command.
+branches before anything runs. A token that exactly matches a branch, is within a small edit
+distance of one, or can't be checked because the branch listing failed stops the run with an error
+that offers both readings: `--remote=<word>` for the branch, `<word> --remote` for the operand. Any
+other token runs as the command's operand.
 
 ### Deprecated aliases
 
@@ -91,14 +93,27 @@ that names that form, and says v4 removes it. `--local` is still accepted and do
 local is already the default; it warns the same way. v4 removes all of them, and `db diff`'s
 `linked` value for `--from` and `--to`, which `remote` replaces.
 
+A warning shows the command path, the command's operand placeholders and the `--remote`
+replacement, last. It never repeats the user's operands or other flags, because they can be secrets
+that a CI log would then keep:
+
+```text
+Warning: --project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase secrets set <NAME=VALUE>... --remote=<ref>
+```
+
 ### Selector rules
 
 One parser (`parseTargetSelector`) backs every `selectable` command and maps the deprecated aliases
 onto `--remote`:
 
-- `--remote` and the aliases are mutually exclusive. They are rejected together, never resolved by
-  precedence.
-- `--no-remote` and `--remote=false` fail with "omit `--remote` to target the local database".
+- `--remote` and the aliases name one target and are never resolved by precedence.
+  `--remote=<value>` together with an alias is an error, and so are two of `--remote`, `--linked`,
+  `--db-url` and `--local`, or `--project-ref` with `--local` or `--db-url`.
+- A bare `--remote` together with `--project-ref=<x>` is accepted, as `--linked --project-ref=<x>`
+  is: the alias's value wins and its warning prints.
+- `db diff` with `--remote` or an alias together with `--from` or `--to` is an error. In `--from`
+  and `--to`, `remote` always means the linked project.
+- `--no-remote` and `--remote=false` fail and tell the user to leave `--remote` out.
   `--remote yes`, `--remote 1`, `--remote true` and `--remote on` mean bare `--remote`.
 - An empty `--remote=` value is rejected.
 - `--password` is rejected unless the target is a project, meaning bare `--remote`, a ref or a
@@ -109,9 +124,9 @@ onto `--remote`:
 `ProjectRefResolver.resolveRef` is the only chain: `--remote=<ref>`, then `SUPABASE_PROJECT_ID`, then
 `supabase/.temp/project-ref`, then the project picker (interactive terminals only), then a not-linked
 error. Database, storage and seed commands use it too. These scope adapters stay because their scope
-differs: `link` skips the ref file, `branches` derives the parent project, the `config` family also
-accepts branch names and UUIDs, `projects delete` prompts for the project, and `projects list` and
-`services` read the ref for display only.
+differs: `link` skips the ref file, `branches` derives the parent project, `projects delete` prompts
+for the project, and `projects list` and `services` read the ref for display only. Branch names and
+UUIDs go through the one branch resolver on every command, the `config` family included.
 
 ### The target banner and JSON `target`
 
@@ -124,7 +139,7 @@ Target: local stack (<host>:<port>)
 Target: local stack (<host>:<port>) · default; pass --remote for <name> (<ref>)
 Target: custom Postgres (<host>:<port>)
 Target: project <name> (<ref>) · production
-Target: project <parent ref> · branch <name> (<ref>)
+Target: project <parent name> (<parent ref>) · branch <name> (<ref>)
 Target: project <ref>
 Target: project <ref> (not the linked project)
 ```
@@ -136,8 +151,14 @@ linked checkout runs locally and prints the `default; pass --remote` hint.
 Project identity comes from `supabase/.temp/linked-project.json` with no API call. A cache that
 names the resolved ref itself is a production project. The cache can be stale or missing, so it
 never proves a branch: "branch" is shown only on positive evidence (a branch lookup by name or
-UUID, or a live probe), and anything else is the bare ref, reported `unverified` in JSON. The full
-table and the JSON shape live in [the command target doc](../../apps/cli/docs/command-target.md).
+UUID, or a live probe), and anything else is the bare ref, reported `unverified` in JSON. The branch
+line names the parent project when the cache knows its name, and shows the parent ref otherwise.
+
+A project's default branch is production, not a preview branch. `--remote=<default branch>`, by name
+or UUID, resolves to the production project: the banner, the consent prompt and JSON
+`environment: "production"` all say so, so a script that checks `environment` to stay away from
+production sees it. The full table and the JSON shape live in
+[the command target doc](../../apps/cli/docs/command-target.md).
 
 JSON results carry the same information as `target`:
 
@@ -158,9 +179,9 @@ first in JSON.
 Help states each command's target from the same policy declaration, so labels cannot drift from
 behaviour. A group's help labels each subcommand `[local or remote]` (`selectable`), `[local only]`
 or `[remote only]` (`hosted`); account commands carry no label. A command's own help has a `TARGET`
-section above `USAGE`, and its `remote` flag row reads `--remote[=<ref|branch|url>]` on `selectable`
-commands and `--remote[=<ref|branch>]` on `hosted` ones. JSON help carries the same information as
-`target`. Docs, examples, help and the deprecation warnings put `--remote` last, in the `=` form
+section above `USAGE`, and its `remote` flag row reads `--remote[=<ref|branch|url>]` on a command
+that takes a database URL and `--remote[=<ref|branch>]` on one that does not (`hosted` commands,
+`storage`, `seed buckets`). JSON help carries the same information as `target`. Docs, examples, help and the deprecation warnings put `--remote` last, in the `=` form
 when it has a value (`db pull add_profiles --remote`, `db push --remote=<ref>`), so it cannot be
 read as anything else, and shell completion never offers a space-separated value for `--remote` on
 a command that has a positional.
@@ -243,7 +264,8 @@ to No makes the Enter key safe.
 
 - A command's default destination follows its group. The banner and the JSON `target` say where it
   went.
-- One selector parser, one ref chain and one consent service replace per-handler code.
+- One selector parser, one ref chain, one branch resolver and one consent service replace
+  per-handler code.
 - A hosted write cannot run before its confirmation, because consent is ordered before the first
   persistent effect and declining writes nothing.
 
