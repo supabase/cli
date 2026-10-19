@@ -68,6 +68,7 @@ const project = (config = requestedVersions()) =>
   });
 
 const lockPath = (root: string) => `${root}/supabase/supabase.lock`;
+const leasePath = (root: string) => `${root}/supabase/.supabase.lock.lease`;
 
 const install = (
   root: string,
@@ -167,6 +168,8 @@ describe("experimental stack install", () => {
       yield* install(root, host).run;
       const written = yield* fs.readFileString(lockPath(root));
       const cached = yield* cachedFiles(root);
+      const ignored = yield* fs.readFileString(`${root}/supabase/.gitignore`);
+      yield* fs.remove(leasePath(root));
       yield* fs.writeFileString(
         `${root}/supabase/config.toml`,
         `project_id = "stack-install"\n${requestedVersions((kind) => (kind === "rest" ? "v99.1.0" : UPSTREAM(kind)))}`,
@@ -179,8 +182,29 @@ describe("experimental stack install", () => {
       expect(error).toMatchObject({ reason: "lock" });
       expect(error.message).toContain("rest");
       expect(yield* fs.readFileString(lockPath(root))).toBe(written);
+      expect(yield* fs.readFileString(`${root}/supabase/.gitignore`)).toBe(ignored);
+      expect(yield* fs.exists(leasePath(root))).toBe(false);
       expect(yield* cachedFiles(root)).toEqual(cached);
       expect(archiveRequests(host)).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("installs under a frozen lock without taking the lease or writing into the project", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const host = yield* startReleaseFixture;
+      yield* publishAll(host);
+      const root = yield* project();
+      yield* install(root, host).run;
+      const written = yield* fs.readFileString(lockPath(root));
+      yield* fs.remove(`${root}/supabase/.gitignore`);
+      yield* fs.remove(leasePath(root));
+
+      yield* install(root, host, { frozen: true }).run;
+
+      expect(yield* fs.readFileString(lockPath(root))).toBe(written);
+      expect(yield* fs.exists(leasePath(root))).toBe(false);
+      expect(yield* fs.exists(`${root}/supabase/.gitignore`)).toBe(false);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -225,6 +249,49 @@ describe("experimental stack install", () => {
       expect(error.message).not.toContain("supabase.lock not found");
       expect(yield* fs.readFileString(lockPath(root))).toBe(written);
       expect(host.requests).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("fails a frozen install with a lock but no config.toml on the missing config", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const host = yield* startReleaseFixture;
+      yield* publishAll(host);
+      const root = yield* project();
+      yield* install(root, host).run;
+      const written = yield* fs.readFileString(lockPath(root));
+      yield* fs.remove(`${root}/supabase/config.toml`);
+      host.requests.length = 0;
+
+      const error = yield* install(root, host, { frozen: true }).run.pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(StackCommandInstallError);
+      expect(error).toMatchObject({
+        reason: "lock",
+        cause: { _tag: "LockResolutionError", reason: "frozen-missing" },
+      });
+      expect(error.message).toContain("supabase/config.toml not found");
+      expect(error.message).not.toContain("supabase.lock not found");
+      expect(yield* fs.readFileString(lockPath(root))).toBe(written);
+      expect(host.requests).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("ignores the lease file when it takes the lease for a lock that is already fresh", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const host = yield* startReleaseFixture;
+      yield* publishAll(host);
+      const root = yield* project();
+      yield* install(root, host).run;
+      const written = yield* fs.readFileString(lockPath(root));
+      yield* fs.writeFileString(`${root}/supabase/.gitignore`, "node_modules\n");
+
+      yield* install(root, host).run;
+
+      expect(yield* fs.readFileString(lockPath(root))).toBe(written);
+      const ignored = (yield* fs.readFileString(`${root}/supabase/.gitignore`)).split("\n");
+      expect(ignored).toEqual(expect.arrayContaining(["node_modules", ".supabase.lock.lease"]));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

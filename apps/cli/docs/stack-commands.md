@@ -190,7 +190,9 @@ unavailable. An invalid `SUPABASE_EXPERIMENTAL_STACK` value is still an error.
 For temporary selection, set `SUPABASE_EXPERIMENTAL_STACK=1` to select the new backend or
 `SUPABASE_EXPERIMENTAL_STACK=0` to select the legacy backend. This environment variable takes
 precedence over `experimental.stack`; an unset or empty value falls back to the file setting.
-Other values are rejected. The override is applied before reading the project configuration.
+Other values are rejected, including by `supabase link`, `supabase unlink` and `supabase projects
+delete`, which read or write the project link. The override is applied before reading the project
+configuration.
 
 `supabase services` follows the same backend selection. In stack mode it lists image versions and
 canonical `ghcr.io/supabase/cli/...` names, including Mailpit. The versions come from
@@ -350,8 +352,11 @@ targets another project or branch than the lock observed (run `supabase stack up
 this CLI bundles a newer revision of a locked version. A lock that is malformed, does not match the
 format, or comes from a newer CLI always fails the start. The lock's JSON Schema is published at
 `https://supabase.com/docs/cli/supabase-lock/v1.schema.json`. A database with initialized data keeps
-its build: changing its major or release line asks to destroy the stack, while a database that never
-initialized adopts the change. See the [`start` side
+its build: any change other than a new `-rN` revision of the same build (a different upstream build,
+release line or major) is refused. The refusal offers to keep the data by restoring the setting that selects the recorded
+version (`[local.services.database] version`, `[db] major_version` or `[db] orioledb_version`), or to run `supabase stack destroy` and recreate it. `supabase link`
+and `supabase stack update` warn when the versions they lock would be refused by an existing stack's
+data. A database that never initialized adopts the change. See the [`start` side
 effects](../src/commands/experimental/stack/start/SIDE_EFFECTS.md#service-versions-and-the-lock) for
 details.
 

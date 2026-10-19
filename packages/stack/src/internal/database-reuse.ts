@@ -1,10 +1,18 @@
-import { Effect, Schema } from "effect";
+import { Data, Effect, Schema } from "effect";
 import type { FileSystem, Path } from "effect";
-import { isOrioledbVersion, postgresMajor } from "../Artifacts.ts";
+import { isOrioledbVersion, orioledbConfigVersion, postgresMajor } from "../Artifacts.ts";
 
 /** Recovery for local database data a stack cannot reuse, worded like the CLI's saved-stack advice. */
 export const recreateStackAdvice = (stackId: string): string =>
   `run \`supabase stack destroy --stack-id ${stackId}\` to recreate the stack — this permanently deletes its local database data`;
+
+/** Recovery that keeps data created at `version` by pinning it again, before the destructive recreate. */
+export const keepOrRecreateAdvice = (stackId: string, service: string, version: string): string =>
+  `keep this data by pinning \`[local.services.${service}] version = "${version}"\` in supabase/config.toml, or ${recreateStackAdvice(stackId)}`;
+
+/** The runtimes a database runs under. */
+export const DatabaseRuntime = Schema.Literals(["native", "docker", "podman"]);
+export type DatabaseRuntime = typeof DatabaseRuntime.Type;
 
 /**
  * What initialized PostgreSQL data was created by: its release line, major and upstream build. Only
@@ -42,6 +50,30 @@ export class DatabaseIdentityMismatch extends Schema.TaggedError<DatabaseIdentit
 ) {}
 
 /**
+ * How to keep data `recorded` created. Pinning its build only works within one major and line, so
+ * otherwise the `[db]` settings that select them are put back.
+ */
+const keepDatabaseAdvice = (
+  stackId: string,
+  recorded: DatabaseIdentity,
+  requested: DatabaseIdentity,
+): string => {
+  const edits = [
+    ...(recorded.major === requested.major
+      ? []
+      : [`setting \`[db] major_version = ${recorded.major}\``]),
+    ...(recorded.line === "orioledb"
+      ? [`setting \`[db] orioledb_version = "${orioledbConfigVersion(recorded.build)}"\``]
+      : requested.line === "orioledb"
+        ? ["removing `[db] orioledb_version`"]
+        : []),
+  ];
+  return edits.length === 0
+    ? keepOrRecreateAdvice(stackId, "database", recorded.build)
+    : `keep this data by ${edits.join(" and ")} in supabase/config.toml, or ${recreateStackAdvice(stackId)}`;
+};
+
+/**
  * The failure to reuse existing database data for `version`, or `undefined` when it can serve it.
  * Data with no recorded identity cannot be verified, so it is refused.
  */
@@ -56,8 +88,12 @@ export const databaseIdentityMismatch = (
     recorded === undefined
       ? "PostgreSQL data has no recorded identity"
       : `PostgreSQL data was initialized by ${describeIdentity(recorded)}`;
+  const advice =
+    recorded === undefined
+      ? recreateStackAdvice(stackId)
+      : keepDatabaseAdvice(stackId, recorded, requested);
   return new DatabaseIdentityMismatch({
-    message: `${subject}, but ${describeIdentity(requested)} was requested; ${recreateStackAdvice(stackId)}`,
+    message: `${subject}, but ${describeIdentity(requested)} was requested; ${advice}`,
     ...(recorded === undefined ? {} : { recorded }),
     requested,
   });
@@ -65,6 +101,13 @@ export const databaseIdentityMismatch = (
 
 /** Written once a database's bootstrap completed; its presence marks initialized data. */
 export const databaseReadyMarkerFile = ".supabase-database-ready.json";
+
+/** The content of {@link databaseReadyMarkerFile}. */
+export const DatabaseReadyMarker = Schema.Struct({
+  runtime: DatabaseRuntime,
+  profile: Schema.Literal("supabase"),
+});
+export interface DatabaseReadyMarker extends Schema.Schema.Type<typeof DatabaseReadyMarker> {}
 
 const identityFile = ".supabase-database-identity.json";
 const IdentityJson = Schema.fromJsonString(DatabaseIdentity);
@@ -102,6 +145,50 @@ export const recordDatabaseIdentity = Effect.fn("Database.recordIdentity")(funct
   yield* fs.writeFileString(path.join(stage, "marker"), encoded, { mode: 0o600 });
   yield* fs.rename(path.join(stage, "marker"), path.join(instanceRoot, identityFile));
 }, Effect.scoped);
+
+/** What a start at one runtime finds under an instance root. */
+export type DatabaseDataState = Data.TaggedEnum<{
+  Fresh: {};
+  Initialized: {};
+  RuntimeMismatch: { readonly recorded: DatabaseRuntime };
+}>;
+export const DatabaseDataState = Data.taggedEnum<DatabaseDataState>();
+
+/**
+ * How a start at `runtime` treats what it found: a readiness marker means initialized data of the
+ * runtime that wrote it, and a bare `PG_VERSION` (an interrupted first start) counts only natively,
+ * since a Docker volume is invisible to the host and its storage is checked at launch.
+ */
+export const databaseDataState = (
+  runtime: DatabaseRuntime,
+  found: { readonly marker: DatabaseReadyMarker | undefined; readonly pgVersion: boolean },
+): DatabaseDataState => {
+  if (found.marker !== undefined)
+    return found.marker.runtime === runtime
+      ? DatabaseDataState.Initialized()
+      : DatabaseDataState.RuntimeMismatch({ recorded: found.marker.runtime });
+  return runtime === "native" && found.pgVersion
+    ? DatabaseDataState.Initialized()
+    : DatabaseDataState.Fresh();
+};
+
+/** The {@link databaseDataState} of the data under `instanceRoot`. */
+export const readDatabaseDataState = Effect.fn("Database.dataState")(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  instanceRoot: string,
+  runtime: DatabaseRuntime,
+) {
+  const markerPath = path.join(instanceRoot, databaseReadyMarkerFile);
+  const marker = (yield* fs.exists(markerPath))
+    ? yield* fs
+        .readFileString(markerPath)
+        .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DatabaseReadyMarker))))
+    : undefined;
+  const pgVersion =
+    marker === undefined && (yield* fs.exists(path.join(instanceRoot, "data", "PG_VERSION")));
+  return databaseDataState(runtime, { marker, pgVersion });
+});
 
 /**
  * Whether `instanceRoot` holds initialized database data: a readiness marker, or a PostgreSQL data

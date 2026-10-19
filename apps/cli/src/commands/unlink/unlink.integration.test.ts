@@ -36,7 +36,10 @@ import {
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
 import { writeProjectLink } from "../../command-internal/project-link.ts";
-import { projectStateModeLayer } from "../../command-internal/project-state-mode.ts";
+import {
+  projectStateMode,
+  projectStateModeLayer,
+} from "../../command-internal/project-state-mode.ts";
 import { unlink } from "./unlink.handler.ts";
 
 const tempRoot = useTempWorkdir("supabase-unlink-int-");
@@ -237,6 +240,34 @@ describe("unlink integration", () => {
       yield* unlink();
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ project_ref: VALID_REF });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails when SUPABASE_EXPERIMENTAL_STACK is not 0 or 1, removing nothing", () => {
+    const { layer, credentials, workdir } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const mode = yield* projectStateMode({
+        cwd: workdir,
+        env: { SUPABASE_EXPERIMENTAL_STACK: "maybe" },
+      }).pipe(Effect.exit);
+      yield* seedProjectRef(workdir, VALID_REF);
+      yield* writeProjectLink(workdir, {
+        project: { ref: VALID_REF },
+        active_branch: { ref: VALID_REF },
+        fetchedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      const error = yield* unlink().pipe(Effect.provide(projectStateModeLayer(mode)), Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "ExperimentalFeatureFlagError",
+        message: "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set",
+      });
+      expect(yield* tempDirExists(workdir)).toBe(true);
+      expect(yield* fs.exists(path.join(workdir, "supabase", ".link.json"))).toBe(true);
+      expect(credentials.deletedRefs).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 

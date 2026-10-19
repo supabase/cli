@@ -2609,6 +2609,7 @@ describe("experimental stack start", () => {
 });
 
 const lockPath = (root: string) => `${root}/supabase/supabase.lock`;
+const leasePath = (root: string) => `${root}/supabase/.supabase.lock.lease`;
 
 const REST_OVERRIDE = '[local.services.rest]\nversion = "v99.0.0"\n';
 
@@ -2946,14 +2947,17 @@ describe("experimental stack start service lock", () => {
       );
       expect(yield* fs.exists(lockPath(root))).toBe(false);
       expect(yield* fs.exists(`${root}/supabase/.gitignore`)).toBe(false);
+      expect(yield* fs.exists(leasePath(root))).toBe(false);
 
       const stack = fakeStack();
       yield* lockedStart(root, { stack }).run;
       const written = yield* lockText(root);
       const ignored = yield* fs.readFileString(`${root}/supabase/.gitignore`);
       yield* stack.stack.composition.stop;
+      yield* fs.remove(leasePath(root));
       yield* lockedStart(root, { stack, frozen: true }).run;
       expect(yield* lockText(root)).toBe(written);
+      expect(yield* fs.exists(leasePath(root))).toBe(false);
 
       yield* setConfig(root, REST_OVERRIDE);
       const composed = stack.composed;
@@ -2968,6 +2972,7 @@ describe("experimental stack start service lock", () => {
       );
       expect(yield* lockText(root)).toBe(written);
       expect(yield* fs.readFileString(`${root}/supabase/.gitignore`)).toBe(ignored);
+      expect(yield* fs.exists(leasePath(root))).toBe(false);
       expect(stack.composed).toBe(composed);
       expect(host.requests).toEqual([]);
     }).pipe(Effect.provide(BunServices.layer)),

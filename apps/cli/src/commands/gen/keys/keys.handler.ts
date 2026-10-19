@@ -6,7 +6,7 @@ import type { GenKeysFlags } from "./keys.command.ts";
 export const genKeys = Effect.fn("gen.keys")(function* (flags: GenKeysFlags) {
   const proxy = yield* GoProxy;
   const args: string[] = ["gen", "keys"];
-  const target = yield* goProjectTarget(flags.projectRef);
+  const target = yield* goProjectTarget(flags.projectRef, { picker: true });
   args.push(...target.args);
   for (const name of flags.overrideName) {
     args.push("--override-name", name);

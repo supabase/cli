@@ -178,5 +178,29 @@ describe("upgrade notice user-level cache", () => {
         ).toBe(false);
       }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer))),
     );
+
+    it.live(
+      "reads the mode from the success working directory, not the directory the command started in",
+      () =>
+        Effect.gen(function* () {
+          const ctx = yield* userCache;
+          const project = ctx.path.join(ctx.root, "bootstrapped-project");
+          yield* ctx.fs.makeDirectory(ctx.path.join(project, "supabase"), { recursive: true });
+          yield* ctx.fs.writeFileString(
+            ctx.path.join(project, "supabase", "config.toml"),
+            'project_id = "demo"\n\n[experimental]\nstack = true\n',
+          );
+          const runtime = yield* RuntimeInfo;
+
+          const { fetchCalls } = yield* runHook(ctx, "v99.99.100", {
+            stack: "config",
+            workingDirectory: project,
+          }).pipe(Effect.provideService(RuntimeInfo, { ...runtime, cwd: ctx.workdir }));
+
+          expect(fetchCalls).toBe(1);
+          expect(yield* ctx.fs.readFileString(ctx.cacheFile)).toBe("v99.99.100");
+          expect(yield* ctx.fs.exists(ctx.path.join(project, "supabase", ".temp"))).toBe(false);
+        }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer))),
+    );
   });
 });

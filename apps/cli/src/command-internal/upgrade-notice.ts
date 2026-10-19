@@ -480,7 +480,14 @@ export const upgradeNoticeHook = (
           currentVersion: CLI_VERSION,
           supabaseHome: resolveSupabaseHomeValue(path, supabaseHome, runtime.homeDir),
           /* An unreadable mode keeps the cache out of the project; a relative `--workdir` resolves against the process cwd. */
-          usesLegacyProjectState: projectStateMode({ args, cwd: runtime.cwd, env }).pipe(
+          usesLegacyProjectState: projectStateMode(
+            info.workingDirectory === undefined
+              ? { args, cwd: runtime.cwd, env }
+              : {
+                  cwd: info.workingDirectory,
+                  env: { SUPABASE_EXPERIMENTAL_STACK: env["SUPABASE_EXPERIMENTAL_STACK"] },
+                },
+          ).pipe(
             Effect.map((mode) => mode === "legacy"),
             Effect.orElseSucceed(() => false),
           ),

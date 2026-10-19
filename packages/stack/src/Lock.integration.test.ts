@@ -87,6 +87,20 @@ describe("lock", () => {
     ),
   );
 
+  it.live.skipIf(process.platform === "win32")(
+    "a written lock is readable by everyone, as a committed file",
+    () =>
+      inProject((projectRoot, lockFile) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+
+          yield* writeLock(projectRoot, lockOf(selection));
+
+          expect((yield* fs.stat(lockFile)).mode & 0o777).toBe(0o644 & ~process.umask());
+        }),
+      ),
+  );
+
   it.live("a lock with a newer lockfileVersion fails with an upgrade error", () =>
     inProject((projectRoot, lockFile) =>
       Effect.gen(function* () {

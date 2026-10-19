@@ -2,8 +2,9 @@
 
 The command is available when the experimental stack family is enabled. It re-resolves the named
 services of `supabase/supabase.lock`, or every service when none is named, and writes the lock. It
-creates, starts and registers no stack, downloads no artifact, and reads no stack state or database
-data, so it needs no stack selector.
+creates, starts and registers no stack and downloads no artifact, so it needs no stack selector. It
+reads saved stack state only to warn about database data a new pin would be refused by (see
+"Refused data").
 
 ## Service versions and the lock
 
@@ -28,27 +29,48 @@ in [`../start/SIDE_EFFECTS.md`](../start/SIDE_EFFECTS.md)), under the same proje
   `supabase start` or `supabase stack update <service>`.
 - A missing lock is resolved in full.
 
-Services that are not named keep their entries byte for byte. The lock is written, and
-`supabase/.gitignore` gains the lease and staged-write entries, only when an entry changed. The
-lease file is created on every run, including one that changes nothing. When nothing changed and no
-stale service was skipped, the command reports `supabase/supabase.lock is already up to date.`.
+Services that are not named keep their entries byte for byte. The lock is written only when an
+entry changed. The lease file is created on every run, including one that changes nothing, and
+`supabase/.gitignore` gains the lease and staged-write entries whenever the lease is taken. When
+nothing changed and no stale service was skipped, the command reports
+`supabase/supabase.lock is already up to date.`.
 
 `update` takes no `--frozen`, and `CI` does not freeze it: running it is the request to rewrite
 the lock. A project without `supabase/config.toml` fails with reason `invalid-config`. A service
 name that is not one of the twelve services fails with reason `flags` and lists the valid names;
 nothing is resolved or written.
 
+## Refused data
+
+When the command writes the lock and releases the project lease, it checks the new pins against
+the database data of every saved stack of this project, by the rules the next `supabase stack
+start` of that stack applies. The lock is written either way. Each stack whose data would be
+refused gets one warning, `stack <id>: the next supabase start refuses these pins:` followed by the
+failure that start reports: a database build other than a new `-rN` revision of the one that
+initialized the data, or a schema-owning service the stack runs against that database that is
+older than one that already migrated it. The failure names the recorded and refused versions and
+the remedies: restoring the setting in `supabase/config.toml` that selects the recorded version
+(`[local.services.<service>] version`, `[db] major_version` or `[db] orioledb_version`), or
+`supabase stack destroy --stack-id <id>`, which permanently deletes the stack's local database
+data. Data with no recorded identity offers only the destroy. The check is skipped when nothing was
+written, the span records `lock.data_conflict_count`, and saved state that cannot be read is logged
+at debug level without failing the command.
+
 ## Files read
 
 - `<workdir>/supabase/config.toml`, project dotenv files, supported `SUPABASE_*` overrides,
   `<workdir>/supabase/supabase.lock`, and `<workdir>/supabase/.link.json`.
 - Shared profile and telemetry state under `<SUPABASE_HOME or ~/.supabase>/`.
+- When the lock is written, after the lease is released: the saved stack definitions under
+  `<SUPABASE_HOME or ~/.supabase>/stacks/` and, in each database's data directory, its readiness
+  marker, `data/PG_VERSION`, and build and schema-writer records. No stack lease is taken, no owner
+  is probed, and a missing `stacks/` directory is not created.
 
 ## Files written
 
 - `<workdir>/supabase/supabase.lock` (JSON), only when an entry changed.
 - `<workdir>/supabase/.supabase.lock.lease` on every run, and `.supabase.lock.*.tmp` while the lock
-  is written; `supabase/.gitignore` gains both entries only when the lock is written.
+  is written; `supabase/.gitignore` gains both entries on every run, when the lease is taken.
 - Telemetry state after success or failure.
 
 ## Network and subprocesses

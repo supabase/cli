@@ -10,12 +10,13 @@ counterpart exists for this behavior.
 
 ## Files Read
 
-| Path                                 | Format              | When                                                                                                                                                                     |
-| ------------------------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `supabase/config.toml`               | TOML (`project_id`) | NOT read for ref resolution itself — read by `CommandSettings` for workdir/project-id discovery generally (`--workdir` resolution, `SUPABASE_PROJECT_ID` passthrough)    |
-| `supabase/.temp/linked-project.json` | JSON (`ref` field)  | only when the given `[ref-or-branch]`/`--project-ref` value is not ref-shaped, as the 2nd parent-project candidate for branch-name resolution (CLI-2167, TS-only)        |
-| `supabase/.temp/project-ref`         | plain text          | only when the given `[ref-or-branch]`/`--project-ref` value is not ref-shaped, as the 3rd (last) parent-project candidate for branch-name resolution (CLI-2167, TS-only) |
-| `~/.supabase/access-token`           | plain text          | when `SUPABASE_ACCESS_TOKEN` is unset and the keyring is unavailable                                                                                                     |
+| Path                                 | Format              | When                                                                                                                                                                                                                                                         |
+| ------------------------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `supabase/config.toml`               | TOML (`project_id`) | NOT read for ref resolution itself — read by `CommandSettings` for workdir/project-id discovery generally (`--workdir` resolution, `SUPABASE_PROJECT_ID` passthrough)                                                                                        |
+| `supabase/.temp/linked-project.json` | JSON (`ref` field)  | only when the given `[ref-or-branch]`/`--project-ref` value is not ref-shaped, as the 2nd parent-project candidate for branch-name resolution (CLI-2167, TS-only)                                                                                            |
+| `supabase/.temp/project-ref`         | plain text          | only when the given `[ref-or-branch]`/`--project-ref` value is not ref-shaped, as the 3rd (last) parent-project candidate for branch-name resolution (CLI-2167, TS-only)                                                                                     |
+| `~/.supabase/access-token`           | plain text          | when `SUPABASE_ACCESS_TOKEN` is unset and the keyring is unavailable                                                                                                                                                                                         |
+| `$SUPABASE_HOME/stacks/<id>/`        | JSON                | stack mode only, when the lock is written and the lease is released: saved stack state and database data records, to warn about data a new pin would be refused by; nothing is created, locked or probed (see "Hosted versions in `supabase/supabase.lock`") |
 
 > For resolving the final linked ref, the on-disk `supabase/.temp/project-ref` file is **not**
 > read — `link` never falls back to it there. It **is** read for the TS-only branch-name lookup above, which resolves
@@ -102,11 +103,12 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                                                                                                                                        |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `SUPABASE_PROJECT_ID`   | link-target resolution: `[ref-or-branch]` positional → `--project-ref` → env → TTY prompt (CLI-2167 adds the positional ahead of the flag). Also the 1st parent-project candidate for a TS-only branch-name lookup (CLI-2167). |
-| `SUPABASE_ACCESS_TOKEN` | Management API bearer auth (env → keyring → `~/.supabase/access-token`)                                                                                                                                                        |
-| `SUPABASE_DB_PASSWORD`  | **no-op** for `link`: neither this variable nor `--password` is read (the DB-connection path that would consume them is dead code in Go)                                                                                       |
+| Variable                      | Purpose                                                                                                                                                                                                                        |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SUPABASE_PROJECT_ID`         | link-target resolution: `[ref-or-branch]` positional → `--project-ref` → env → TTY prompt (CLI-2167 adds the positional ahead of the flag). Also the 1st parent-project candidate for a TS-only branch-name lookup (CLI-2167). |
+| `SUPABASE_ACCESS_TOKEN`       | Management API bearer auth (env → keyring → `~/.supabase/access-token`)                                                                                                                                                        |
+| `SUPABASE_DB_PASSWORD`        | **no-op** for `link`: neither this variable nor `--password` is read (the DB-connection path that would consume them is dead code in Go)                                                                                       |
+| `SUPABASE_EXPERIMENTAL_STACK` | `1` or `0` selects stack project-state mode over `[experimental] stack`; unset or empty uses the config. Any other value fails the command (see Exit Codes)                                                                    |
 
 ## Exit Codes
 
@@ -125,6 +127,7 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 | `1`  | branch name/UUID not found on the linked parent project (CLI-2167, TS-only)                                                                                                              |
 | `1`  | branch resolved but has no `project_ref` yet (still provisioning) (CLI-2167, TS-only)                                                                                                    |
 | `1`  | branch listing failure (network/status) during branch-name resolution (CLI-2167, TS-only)                                                                                                |
+| `1`  | `SUPABASE_EXPERIMENTAL_STACK` is set to a non-empty value other than `0` or `1` (`must be 0 or 1 when set`); nothing is written                                                          |
 
 > Best-effort service-link and telemetry errors never affect the exit code.
 
@@ -216,17 +219,35 @@ stays busy fails the link with `LockResolutionError` reason `lease-busy` before 
   Linking to another project or branch keeps nothing observed on the old remote. An explicit
   `<upstream>` or `<upstream>-r<N>` specifier that cannot be resolved fails the link, and a release
   integrity mismatch always does.
-- Writes the lock (sorted-key JSON, atomically) only when it differs from the stored one, ignoring
-  `linked.observedAt`, plus the `supabase/.gitignore` entries, then writes `.link.json` while still
-  holding the lease. It prints the hosted and locked version of each service and, when the lock
-  changed, `Updated supabase/supabase.lock[: now observing <remote>] (<n> version changes). Review and commit it.`, else
-  `supabase/supabase.lock is already up to date.`; the report is printed right after the lock
-  write, so it stands even if a later step fails. In JSON output it adds `lock` (`file`, `written`, `services` with
-  `service`, `hosted`, `locked`, `resolution`).
+- Once every entry has resolved, writes `.link.json`, then the lock (sorted-key JSON, atomically)
+  only when it differs from the stored one, ignoring `linked.observedAt`, all while holding the
+  lease; `supabase/.gitignore` gains its entries when the lease is taken. A resolution failure
+  writes neither. The link goes first so a lock never observes a remote the checkout does not
+  target: if the lock write fails, `.link.json` already targets the new remote while the lock still
+  observes the previous one, the next `start` warns that the lock observed another remote, and
+  `supabase stack update` or running `supabase link` again repairs it. The command then prints the
+  hosted and locked version of each service and, when the lock changed,
+  `Updated supabase/supabase.lock[: now observing <remote>] (<n> version changes). Review and commit it.`,
+  else `supabase/supabase.lock is already up to date.`; the report is printed after both writes,
+  still under the lease. In JSON output it adds `lock` (`file`, `written`, `services` with
+  `service`, `hosted`, `locked`, `resolution`). When the lock was written, the lease is then
+  released and the new pins are checked against the database data of every saved stack of this
+  project (the `StackLock.dataConflicts` span, which records `lock.data_conflict_count`), by the
+  rules the next `supabase stack start` of that stack applies. Each stack whose data would be
+  refused gets one warning, `stack <id>: the next supabase start refuses these pins:` followed by
+  the failure that start reports: a database build other than a new `-rN` revision of the one that
+  initialized the data, or a schema-owning service the stack runs against that database that is
+  older than one that already migrated it. The failure names the recorded and refused versions and
+  the remedies: restoring the setting in `supabase/config.toml` that selects the recorded version
+  (`[local.services.<service>] version`, `[db] major_version` or `[db] orioledb_version`), or
+  `supabase stack destroy --stack-id <id>`, which permanently deletes the stack's local database
+  data (data with no recorded identity offers only the destroy). The lock stays written, the link
+  never fails on this check, and saved state that cannot be read is logged at debug level and
+  warns of nothing.
 
 `--frozen`, or `CI` set (not empty, `false` or `0`) with an existing lock, makes `link` write only
-`.link.json`: the lock is untouched, and a warning lists the services whose hosted versions differ
-from it, advising `supabase stack update`. A missing lock is created even under `CI`. The probes
+`.link.json`: the lock is untouched, no data check runs, and a warning lists the services whose
+hosted versions differ from it, advising `supabase stack update`. A missing lock is created even under `CI`. The probes
 still run. In legacy mode the flag is accepted and does nothing. `supabase unlink` never touches the
 lock.
 

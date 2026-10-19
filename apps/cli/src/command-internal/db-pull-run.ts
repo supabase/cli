@@ -71,7 +71,7 @@ import {
 import { type PgDeltaContext, isPgDeltaDebugEnabled, resolvePgDeltaProjectId } from "./pgdelta.ts";
 import { prepareShadowSource } from "../commands/db/shared/shadow-source.ts";
 import { currentStackBackend, usesStackState } from "./stack-backend.ts";
-import { stackProjectSelection } from "./stack-project-selection.ts";
+import { selectionForRequest } from "./stack-project-selection.ts";
 import { stackRejectNativeDockerDiffEngine } from "./stack-local-database.ts";
 import { stackPrepareShadowSource, stackWithShadowDatabase } from "./stack-shadow.ts";
 import type { DbPullFlags } from "../commands/db/pull/pull.command.ts";
@@ -490,7 +490,13 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })),
           );
           const image = (yield* usesStackState)
-            ? (yield* stackProjectSelection(cliSettings.workdir)).database.image
+            ? (yield* selectionForRequest({
+                projectRoot: cliSettings.workdir,
+                majorVersion: toml.majorVersion,
+                orioledbVersion: Option.getOrUndefined(toml.orioledbVersion),
+                services: pullLocalInputs.context.config.local?.services,
+                appliedRemote: toml.appliedRemote,
+              })).database.image
             : (yield* resolveDbImage(
                 fs,
                 path,

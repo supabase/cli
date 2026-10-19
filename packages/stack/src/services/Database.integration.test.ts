@@ -214,7 +214,7 @@ describe("database component", { timeout: 180_000 }, () => {
           '{"runtime":"native","profile":"supabase"}',
         );
         expect((yield* Effect.flip(prepare(orioledbConfig))).message).toContain(
-          `PostgreSQL data was initialized by stock PostgreSQL build ${selection.database.upstreamVersion}, but OrioleDB build ${orioledb.upstreamVersion} was requested; ${recreate}`,
+          `PostgreSQL data was initialized by stock PostgreSQL build ${selection.database.upstreamVersion}, but OrioleDB build ${orioledb.upstreamVersion} was requested; keep this data by removing \`[db] orioledb_version\` in supabase/config.toml, or ${recreate}`,
         );
         expect(
           (yield* Effect.flip(
@@ -223,7 +223,9 @@ describe("database component", { timeout: 180_000 }, () => {
               pin: { ...selection.database, upstreamVersion: "17.99.0.001" },
             }),
           )).message,
-        ).toContain("stock PostgreSQL build 17.99.0.001 was requested");
+        ).toContain(
+          `stock PostgreSQL build 17.99.0.001 was requested; keep this data by pinning \`[local.services.database] version = "${selection.database.upstreamVersion}"\``,
+        );
 
         yield* fs.writeFileString(
           path.join(instanceRoot, ".supabase-database-ready.json"),

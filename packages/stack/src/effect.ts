@@ -42,6 +42,8 @@ import {
 } from "./composition/Supabase.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { failureKind, isStackFailureKind, type StackFailureKind } from "./FailureKind.ts";
+import type { ArtifactSelection } from "./Artifacts.ts";
+import { collectDataConflicts } from "./internal/data-conflicts.ts";
 import { initializedDatabaseIds } from "./internal/database-reuse.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import * as StackNamespace from "./StackNamespace.ts";
@@ -95,6 +97,7 @@ export {
   writeLock,
 } from "./Lock.ts";
 export type { StackFailureKind } from "./FailureKind.ts";
+export type { DataConflict } from "./internal/data-conflicts.ts";
 export type { ServiceCreation } from "./services/Catalog.ts";
 /** A service creation as `services.create` accepts it, before stack credentials fill its inputs. */
 export type ServiceCreationInput = CatalogServiceCreationInput;
@@ -1018,6 +1021,37 @@ export const discover = Effect.fn("Stack.discover")(
     );
   },
   Effect.mapError((cause) => failure("discover", cause)),
+);
+
+/**
+ * Lists the saved data of the stacks of `projectRoot` that a start at the `requested` pins would
+ * refuse. It reads their files without taking a lease or probing an owner, and creates nothing.
+ */
+export const findDataConflicts = Effect.fn("Stack.findDataConflicts")(
+  function* (
+    options: Pick<StackLocations, "stateRoot"> & {
+      readonly projectRoot: string;
+      readonly requested: Partial<ArtifactSelection>;
+    },
+  ) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    if (!(yield* fs.exists(options.stateRoot))) return [];
+    const projectRoot = yield* fs.realPath(options.projectRoot);
+    const stacks = (yield* (yield* stateFor(options.stateRoot)).list).filter(
+      ({ identity }) => identity.projectRoot === projectRoot,
+    );
+    const conflicts = yield* Effect.forEach(stacks, (saved) =>
+      collectDataConflicts(fs, path, {
+        saved,
+        dataRoot: path.join(options.stateRoot, saved.id, "data"),
+        requested: options.requested,
+      }),
+    );
+    yield* Effect.annotateCurrentSpan({ "data_conflicts.stack_count": stacks.length });
+    return conflicts.flat();
+  },
+  Effect.mapError((cause) => failure("findDataConflicts", cause)),
 );
 
 /** Selects a saved stack by id, or by the identity a project root and stack name derive. */

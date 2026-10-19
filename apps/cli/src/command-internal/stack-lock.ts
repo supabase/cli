@@ -15,6 +15,7 @@ import {
 } from "@supabase/stack/effect";
 import {
   artifactServiceKinds,
+  catalogPins,
   databaseArtifactPin,
   isOrioledbVersion,
   orioledbPostgresVersion,
@@ -43,7 +44,9 @@ import { FetchHttpClient } from "effect/http";
 import { ensureGitignore, readProjectLink } from "./project-link.ts";
 import { stackArtifactSelection } from "./stack-artifact-selection.ts";
 import { StackConfigError } from "./stack-config.ts";
+import { warnDataConflicts } from "./stack-data-conflicts.ts";
 import type { HostedObservation } from "./tenant-versions.ts";
+import type { CommandSettings } from "../config/command-settings.service.ts";
 import type { Output } from "../shared/output/output.service.ts";
 import {
   actionability,
@@ -270,6 +273,17 @@ const bundledPin = (kind: ServiceKind, majorVersion: number) =>
         Effect.mapError((error) => new StackConfigError({ message: error.message })),
       )
     : Effect.succeed(defaultArtifactSelection()[kind]);
+
+/**
+ * The pin this CLI bundles to compare a locked entry with. A locked database build is matched by
+ * its exact upstream version, stock or OrioleDB; one the catalog does not pin takes the major's pin.
+ */
+const bundledPinFor = (kind: ServiceKind, locked: ArtifactPin, majorVersion: number) =>
+  kind === "database"
+    ? databaseArtifactPin(locked.upstreamVersion).pipe(
+        Effect.catch(() => bundledPin(kind, majorVersion)),
+      )
+    : bundledPin(kind, majorVersion);
 
 type LinkedVersion = NonNullable<ServiceLock["linked"]>;
 type LinkedRemote = NonNullable<Lock["linked"]>;
@@ -640,6 +654,33 @@ export const readLockedPins = Effect.fn("StackLock.readPins")(function* (project
   return Option.map(lock, lockSelection);
 });
 
+const bundledPins = Effect.fnUntraced(function* (request: LockRequest, requests: ServiceRequests) {
+  const defaults = yield* stackArtifactSelection({
+    major_version: request.majorVersion,
+    orioledb_version: request.orioledbVersion,
+  }).pipe(Effect.mapError((error) => new StackConfigError({ message: error.message })));
+  const bundled = (kind: ServiceKind): ArtifactPin | undefined => {
+    const { parsed } = requests[kind];
+    return parsed.kind !== "release"
+      ? defaults[kind]
+      : catalogPins().find(
+          ({ service, pin }) =>
+            service === kind &&
+            pin.upstreamVersion === parsed.upstream &&
+            (parsed.revision === undefined || parsed.revision === pin.revision),
+        )?.pin;
+  };
+  return { defaults, bundled };
+});
+
+/** The pins this CLI bundles for a request; an explicit upstream version is honoured only when this CLI bundles it. */
+const bundledSelection = Effect.fn("StackLock.bundledSelection")(function* (request: LockRequest) {
+  const { defaults, bundled } = yield* bundledPins(request, yield* requestsOf(request));
+  if (artifactServiceKinds().some((kind) => bundled(kind) === undefined))
+    return yield* unusableLock(new Map(), undefined, "reader");
+  return Record.map(defaults, (pin, kind) => bundled(kind) ?? pin);
+});
+
 /**
  * The pins of a fresh lock, or the bundled ones when the project has no lock yet. Commands that
  * never resolve use this to run the versions `start` locked; a stale lock still fails.
@@ -652,10 +693,7 @@ export const readSelectionOrBundled = Effect.fn("StackLock.readOrBundled")(funct
   );
   if (previous === undefined) {
     yield* Effect.annotateCurrentSpan({ "lock.found": false });
-    return yield* stackArtifactSelection({
-      major_version: request.majorVersion,
-      orioledb_version: request.orioledbVersion,
-    }).pipe(Effect.mapError((error) => new StackConfigError({ message: error.message })));
+    return yield* bundledSelection(request);
   }
   const stale = staleServices(previous, yield* requestsOf(request), request.majorVersion);
   yield* Effect.annotateCurrentSpan({ "lock.found": true, "lock.stale_count": stale.size });
@@ -663,8 +701,38 @@ export const readSelectionOrBundled = Effect.fn("StackLock.readOrBundled")(funct
   return lockSelection(previous);
 });
 
+/**
+ * Like `readSelectionOrBundled`, but stale entries take the bundled pin while fresh ones keep
+ * their locked pin, for requests an applied `[remotes.<ref>]` block changed.
+ */
+export const readSelectionBundlingStale = Effect.fn("StackLock.readBundlingStale")(function* (
+  request: LockRequest,
+) {
+  const requests = yield* requestsOf(request);
+  const { previous, stale } = yield* inspectLock(request, requests);
+  if (previous === undefined) return yield* bundledSelection(request);
+  yield* Effect.annotateCurrentSpan({ "lock.stale_count": stale.size });
+  const locked = lockSelection(previous);
+  if (stale.size === 0) return locked;
+  const { bundled } = yield* bundledPins(request, requests);
+  const unbundled = new Map([...stale].filter(([kind]) => bundled(kind) === undefined));
+  if (unbundled.size > 0) return yield* unusableLock(unbundled, previous, "reader");
+  return Record.map(locked, (pin, kind) => (stale.has(kind) ? (bundled(kind) ?? pin) : pin));
+});
+
+/** Takes the project lease for the enclosing scope once git ignores the lease file. */
 const holdLease = Effect.fn("StackLock.lease")(function* (projectRoot: string) {
+  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  yield* ensureGitignore(fs, path, projectRoot).pipe(
+    Effect.mapError(
+      (error) =>
+        new LockResolutionError({
+          reason: "io",
+          message: `failed to update supabase/.gitignore: ${error.message}`,
+        }),
+    ),
+  );
   const started = yield* Clock.currentTimeMillis;
   yield* holdLock(path.join(projectRoot, "supabase", LEASE_FILE), LEASE_BUDGET, LOCK_FILE).pipe(
     Effect.mapError(leaseFailure),
@@ -681,21 +749,21 @@ export const withProjectLease = <A, E, R>(projectRoot: string, effect: Effect.Ef
 /**
  * Fails a project without `supabase/config.toml` that is frozen, explicitly or by `CI` with a
  * lock present: with no config the lock cannot be checked, so the bundled versions must not
- * silently stand in for it.
+ * silently stand in for it. An explicitly frozen project with no lock fails on the missing lock.
  */
 export const rejectFrozenWithoutConfig = Effect.fn("StackLock.rejectFrozenWithoutConfig")(
   function* (projectRoot: string, frozen: boolean) {
-    if (frozen)
-      return yield* new LockResolutionError({
-        reason: "frozen-missing",
-        message: `${LOCK_FILE} not found; run supabase start locally and commit it`,
-      });
-    if (!(yield* continuousIntegration)) return;
+    if (!frozen && !(yield* continuousIntegration)) return;
     const lock = yield* readLock(projectRoot).pipe(Effect.mapError(lockFailure));
     if (Option.isSome(lock))
       return yield* new LockResolutionError({
         reason: "frozen-missing",
-        message: `supabase/config.toml not found, so ${LOCK_FILE} cannot be checked in CI; commit supabase/config.toml next to it`,
+        message: `supabase/config.toml not found, so ${LOCK_FILE} cannot be checked; commit supabase/config.toml next to it`,
+      });
+    if (frozen)
+      return yield* new LockResolutionError({
+        reason: "frozen-missing",
+        message: `${LOCK_FILE} not found; run supabase start locally and commit it`,
       });
   },
 );
@@ -847,19 +915,8 @@ const assembleLock = (remote: LinkedRemote | undefined, services: Lock["services
   services,
 });
 
-/** Writes `lock` as the project lock, after making sure git ignores the lease and staged writes. */
+/** Writes `lock` as the project lock; the caller holds the project lease. */
 const publishLock = Effect.fn("StackLock.publish")(function* (request: LockRequest, lock: Lock) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  yield* ensureGitignore(fs, path, request.projectRoot).pipe(
-    Effect.mapError(
-      (error) =>
-        new LockResolutionError({
-          reason: "io",
-          message: `failed to update supabase/.gitignore: ${error.message}`,
-        }),
-    ),
-  );
   yield* writeLock(request.projectRoot, lock).pipe(Effect.mapError(lockFailure));
 });
 
@@ -903,7 +960,7 @@ const lockWarnings = Effect.fn("StackLock.warn")(function* (
       );
   }
   const newer = yield* Effect.forEach(artifactServiceKinds(), (kind) =>
-    bundledPin(kind, request.majorVersion).pipe(
+    bundledPinFor(kind, lock.services[kind].resolved, request.majorVersion).pipe(
       Effect.option,
       Effect.map((bundled) => {
         const locked = lock.services[kind].resolved;
@@ -930,8 +987,9 @@ const lockWarnings = Effect.fn("StackLock.warn")(function* (
 /**
  * Selects the pins a stack command runs from `supabase/supabase.lock`, under the project lease:
  * a fresh lock is used as-is; a missing or stale one is resolved and rewritten, unless frozen.
- * Frozen is explicit, or implied when `CI` is set and a lock exists. `linked` entries follow the
- * observations the lock stores, never a new probe.
+ * Frozen is explicit, or implied when `CI` is set and a lock exists, and reads the lock without
+ * the lease since lock writes are atomic. `linked` entries follow the observations the lock
+ * stores, never a new probe.
  */
 export const lockedResolution = (options: {
   readonly frozen: boolean;
@@ -948,8 +1006,10 @@ export const lockedResolution = (options: {
     const ci = yield* continuousIntegration;
 
     const { resolution, lock } = yield* Effect.gen(function* () {
-      yield* holdLease(request.projectRoot);
-      const { previous, stale } = yield* inspectLock(request, requests);
+      const unleased = yield* inspectLock(request, requests);
+      const frozenRead = options.frozen || (ci && unleased.previous !== undefined);
+      if (!frozenRead) yield* holdLease(request.projectRoot);
+      const { previous, stale } = frozenRead ? unleased : yield* inspectLock(request, requests);
       const frozen = options.frozen || (ci && previous !== undefined);
       yield* Effect.annotateCurrentSpan({
         "lock.found": previous !== undefined,
@@ -1038,7 +1098,8 @@ const linkedKinds = (requests: ServiceRequests) =>
  * this CLI's pin, an exact `<U>-rN` entry that still answers its request is kept, and `linked`
  * entries follow a fresh hosted probe when one is available, retrying fallbacks. The probe runs
  * only when a `linked` entry is re-resolved; without one the stored observations apply.
- * Frozen mode does not apply: asking for newer versions is the point.
+ * Frozen mode does not apply: asking for newer versions is the point. Once the lease is released,
+ * a written lock also warns about each saved stack whose data would refuse its pins.
  */
 export const updatedLock = <E, R>(options: {
   readonly services: ReadonlyArray<ServiceKind>;
@@ -1050,10 +1111,10 @@ export const updatedLock = <E, R>(options: {
   ): Effect.fn.Return<
     LockUpdate,
     StackConfigError | LockResolutionError | E,
-    FileSystem.FileSystem | Path.Path | Crypto.Crypto | R
+    FileSystem.FileSystem | Path.Path | Crypto.Crypto | CommandSettings | R
   > {
     const requests = yield* requestsOf(request);
-    return yield* Effect.gen(function* () {
+    const { update, published } = yield* Effect.gen(function* () {
       yield* holdLease(request.projectRoot);
       const { previous, stale } = yield* inspectLock(request, requests);
       const named = options.services.length === 0 ? artifactServiceKinds() : options.services;
@@ -1108,10 +1169,20 @@ export const updatedLock = <E, R>(options: {
         "lock.written": written,
       });
       yield* warnNotices(options.output, resolved.notices);
-      if (!written) return { written, changes, unchanged, stale: skipped };
+      const update: LockUpdate = { written, changes, unchanged, stale: skipped };
+      if (!written) return { update, published: undefined };
       yield* publishLock(request, lock);
-      return { written, changes, unchanged, stale: skipped };
+      return { update, published: lock };
     }).pipe(Effect.scoped);
+    if (published !== undefined)
+      yield* Effect.annotateCurrentSpan({
+        "lock.data_conflict_count": yield* warnDataConflicts({
+          projectRoot: request.projectRoot,
+          selection: lockSelection(published),
+          output: options.output,
+        }),
+      });
+    return update;
   });
 
 const updateReason = (parsed: Specifier) =>
@@ -1178,13 +1249,16 @@ const differences = (previous: Lock, probe: HostedProbe): ReadonlyArray<string> 
  * per-service observations, re-resolves every `linked` entry, and sets the lock's remote. The lock
  * is written only when something but the time of the observation changed. While frozen (explicit,
  * or `CI` with an existing lock) the lock is left untouched and a difference from the probe is
- * warned about. `commit` runs last, still under the lease, so the caller publishes what belongs
- * with the lock in the same mutation.
+ * warned about. Once the services resolve, `publishLink` runs before the lock is written, so a
+ * lock never observes a remote the checkout does not target; `report` runs last under the lease.
+ * Once the lease is released, a lock that changed also warns about each saved stack whose data
+ * would refuse its pins.
  */
 export const linkedLock = <E, R, E2, R2>(options: {
   readonly frozen: boolean;
   readonly probe: Effect.Effect<HostedProbe, E, R>;
-  readonly commit: (result: LinkedLock) => Effect.Effect<void, E2, R2>;
+  readonly publishLink: Effect.Effect<void, E2, R2>;
+  readonly report: (result: LinkedLock) => Effect.Effect<void>;
   readonly output: Output["Service"];
 }) =>
   Effect.fn("StackLock.link")(function* (
@@ -1192,12 +1266,12 @@ export const linkedLock = <E, R, E2, R2>(options: {
   ): Effect.fn.Return<
     LinkedLock,
     StackConfigError | LockResolutionError | E | E2,
-    FileSystem.FileSystem | Path.Path | Crypto.Crypto | R | R2
+    FileSystem.FileSystem | Path.Path | Crypto.Crypto | CommandSettings | R | R2
   > {
     const requests = yield* requestsOf(request);
     const ci = yield* continuousIntegration;
     const kinds = artifactServiceKinds();
-    return yield* Effect.gen(function* () {
+    const { linked, published } = yield* Effect.gen(function* () {
       yield* holdLease(request.projectRoot);
       const { previous, stale } = yield* inspectLock(request, requests);
       const probe = yield* options.probe;
@@ -1238,8 +1312,9 @@ export const linkedLock = <E, R, E2, R2>(options: {
           kept: [],
           observing: undefined,
         };
-        yield* options.commit(result);
-        return result;
+        yield* options.report(result);
+        yield* options.publishLink;
+        return { linked: result, published: undefined };
       }
 
       const observedAt = DateTime.formatIso(yield* DateTime.now);
@@ -1248,6 +1323,7 @@ export const linkedLock = <E, R, E2, R2>(options: {
       const resolved = yield* resolveServices(request, requests, previous, redo, source);
       const lock = assembleLock(source.remote, resolved.services);
       const written = previous === undefined || !sameLock(previous, lock);
+      yield* options.publishLink;
       if (written) yield* publishLock(request, lock);
       yield* warnNotices(options.output, resolved.notices);
       const result: LinkedLock = {
@@ -1259,9 +1335,18 @@ export const linkedLock = <E, R, E2, R2>(options: {
           ? remoteLabel(probe.remote.project, probe.remote.branch.ref)
           : undefined,
       };
-      yield* options.commit(result);
-      return result;
+      yield* options.report(result);
+      return { linked: result, published: written ? lock : undefined };
     }).pipe(Effect.scoped);
+    if (published !== undefined)
+      yield* Effect.annotateCurrentSpan({
+        "lock.data_conflict_count": yield* warnDataConflicts({
+          projectRoot: request.projectRoot,
+          selection: lockSelection(published),
+          output: options.output,
+        }),
+      });
+    return linked;
   });
 
 /** One locked service as `stack outdated` reports it. */
@@ -1300,7 +1385,7 @@ export const outdatedServices = Effect.fn("StackLock.outdated")(function* (reque
     const entry = lock.services[kind];
     const requested = requests[kind];
     const reason = stale.get(kind);
-    const bundled = yield* bundledPin(kind, request.majorVersion);
+    const bundled = yield* bundledPinFor(kind, entry.resolved, request.majorVersion);
     const locked = version(entry.resolved);
     const newest: Effect.Effect<
       ResolvedPin | undefined,

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option, Tracer } from "effect";
+import { Effect, Layer, Option } from "effect";
 
 import {
   VALID_REF,
@@ -131,6 +131,8 @@ describe("remoteTargetLayer in stack mode", () => {
   const ENV_REF = "zyxwvutsrqponmlkjihg";
   const BRANCH_REF = "branchbranchbranchbr";
   const POOLER_URL = `postgres://postgres.${BRANCH_REF}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`;
+  const LINKED_POOLER_URL = POOLER_URL.replace(BRANCH_REF, VALID_REF);
+  const RELINKED_POOLER_URL = POOLER_URL.replace(BRANCH_REF, ENV_REF);
 
   const linkWith = (activeBranch: { ref: string; name?: string; pooler_url?: string }) =>
     writeProjectLink(workdir.current, {
@@ -231,25 +233,22 @@ describe("remoteTargetLayer in stack mode", () => {
     }),
   );
 
-  it.effect("reads the link once for repeated resolution", () =>
-    Effect.gen(function* () {
-      yield* linkWith({ ref: VALID_REF });
-      const spans: Array<string> = [];
-      const tracer = Tracer.make({
-        span: (options) => {
-          spans.push(options.name);
-          return new Tracer.NativeSpan(options);
-        },
-      });
-      yield* inStackMode(
-        Effect.gen(function* () {
-          const remoteTarget = yield* RemoteTarget;
-          yield* remoteTarget.resolve(Option.none());
-          yield* remoteTarget.resolve(Option.none());
-        }),
-      ).pipe(Effect.withTracer(tracer), Effect.withTracerEnabled(true));
-      expect(spans.filter((name) => name === "RemoteTarget.resolve")).toHaveLength(1);
-      expect(spans.filter((name) => name === "LinkSnapshot.readStack")).toHaveLength(1);
-    }),
-  );
+  for (const entryPoint of ["resolve", "load"] as const) {
+    it.effect(`${entryPoint} returns its first result after the link changes mid-command`, () =>
+      Effect.gen(function* () {
+        yield* linkWith({ ref: VALID_REF, pooler_url: LINKED_POOLER_URL });
+        const { first, second } = yield* inStackMode(
+          Effect.gen(function* () {
+            const remoteTarget = yield* RemoteTarget;
+            const first = yield* remoteTarget[entryPoint](Option.none());
+            yield* linkWith({ ref: ENV_REF, pooler_url: RELINKED_POOLER_URL });
+            const second = yield* remoteTarget[entryPoint](Option.none());
+            return { first, second };
+          }),
+        );
+        expect(first).toEqual({ ref: VALID_REF, source: "link", poolerUrl: LINKED_POOLER_URL });
+        expect(second).toEqual(first);
+      }),
+    );
+  }
 });

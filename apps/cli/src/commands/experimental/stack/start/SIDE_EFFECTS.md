@@ -158,7 +158,9 @@ changed since the lock was written is resolved again, and the lock is rewritten 
 service versions` report. A changed `db.major_version` re-resolves the database. Services that are
 unchanged keep their pins, so starting never moves a pinned version on its own. The CLI adds
 `.supabase.lock.lease` and the lock's staged writes (`.supabase.lock.*.tmp`) to
-`supabase/.gitignore` whenever it writes the lock.
+`supabase/.gitignore` whenever it takes the project lease. A frozen start, explicit or implied by
+`CI` (see `--frozen` below), reads the lock without the lease and writes nothing in the project:
+lock writes are atomic renames, so a read never sees a partial lock.
 
 `supabase stack install` runs this same resolution under the same lease, then downloads what the lock
 pins without starting a stack; see [`../install/SIDE_EFFECTS.md`](../install/SIDE_EFFECTS.md).
@@ -178,30 +180,41 @@ Resolving a release specifier needs the network: a first start with an explicit 
 a bundled build) fetches the release manifests and fails when the host is unreachable, because a
 bare upstream version never takes a shortcut through the bundled catalog. A first start whose
 specifiers are all `linked` or `bundled` (the default) needs no network, unless the project was
-linked, when a `linked` service resolves its observed release from the release host. A failed resolution fails
-the start with reason `lock` and writes nothing; the cause is unpublished (`invalid_config`),
-transient (`network`) or an integrity mismatch (`asset_checksum`). A saved database whose pin comes
-from `[local.services]` reports its changes as `[local.services.database] version`.
+linked, when a `linked` service resolves its observed release from the release host. A `linked`
+service whose observed release cannot be fetched because the host is unreachable does not fail the
+start: it takes the bundled version, recorded as `unobserved` (or keeps its previous entry when
+nothing it depends on changed), and warns, naming `supabase link` and `supabase stack update` as
+the retries. Any other failed resolution fails the start with reason `lock` and writes nothing; the
+cause is unpublished (`invalid_config`) or transient (`network`) for an explicit `<upstream>` or
+`<upstream>-r<N>` specifier, or an integrity mismatch (`asset_checksum`) for any specifier. A saved
+database whose pin comes from `[local.services]` reports its changes as
+`[local.services.database] version`.
 
 `supabase db reset`, the database shadow of `supabase db diff`, `supabase functions serve` and the
-local services listing read the same lock without the lease or any resolution, and fall back to the
-versions bundled with the CLI when the project has no lock; a stale lock fails all but the
-services listing, which then lists the bundled versions.
+local services listing read the same lock without the lease or any resolution. When the project has
+no lock they fall back to the versions bundled with the CLI, honouring `[db] major_version` and
+`orioledb_version` and a `[local.services]` database version the CLI bundles; any other explicit
+upstream-version specifier fails with `supabase/supabase.lock not found; run supabase start to create
+it`. A stale lock fails with `is stale for: <service> (<reason>)`. The services listing instead lists
+the bundled versions in both cases.
 
-`--frozen` makes the start fail instead of resolving: a missing lock (or a project with no
-`supabase/config.toml`) fails with `supabase/supabase.lock not found`, and a stale one with `is stale for: <service> (<reason>)`, both
+`--frozen` makes the start fail instead of resolving: a missing lock fails with
+`supabase/supabase.lock not found`, and a stale one with `is stale for: <service> (<reason>)`, both
 advising to run `supabase start` locally and commit the lock. When the `CI` environment variable is
-set (not empty, `false` or `0`) and a lock exists, the start is frozen without the flag; a CI start
-with a lock but no `supabase/config.toml` fails with `supabase/config.toml not found`, since the lock
-cannot be checked, instead of using the bundled versions. A CI start
-with no lock resolves and writes it, then warns to commit it. A lock that is not valid JSON, does
+set (not empty, `false` or `0`) and a lock exists, the start is frozen without the flag. A frozen
+start, explicit or by `CI`, of a project with a lock but no `supabase/config.toml` fails with
+`supabase/config.toml not found`, since the lock cannot be checked, instead of using the bundled
+versions; with no lock and no config, `--frozen` fails with `supabase/supabase.lock not found`. A CI
+start with no lock resolves and writes it, then warns to commit it. A lock that is not valid JSON, does
 not match the format or is of a newer format version always fails, frozen or not; the first of
 these advises deleting the file and starting again.
 
 Initialized database data stays bound to its build. A stopped stack whose database holds no
 initialized data (no readiness marker and no PostgreSQL data directory) adopts a changed
-PostgreSQL major or release line; one with initialized data fails with `supabase stack destroy`
-advice (see below). `supabase stack status` reads the lock without the lease or any resolution; a
+PostgreSQL major or release line; one with initialized data fails, advising to keep the recorded
+build by pinning it under `[local.services]` or to run `supabase stack destroy` (see below).
+`supabase link` and `supabase stack update` warn when the versions they lock would be refused by
+the data of a saved stack of the project. `supabase stack status` reads the lock without the lease or any resolution; a
 missing or stale lock makes its configuration drift check unavailable.
 
 ## Service selection
@@ -281,15 +294,19 @@ Initialized database data is reused only by a slim-services revision of the buil
 it: the same release line, PostgreSQL major and upstream version, with any `-rN` revision. Every
 start that finds initialized data checks this before preparing or launching the database. A
 different line, major or upstream version fails the start, naming the recorded and requested builds
-and advising `supabase stack destroy`, which permanently deletes the stack's local database data. A
+and advising to keep the data by restoring the setting in `supabase/config.toml` that selects the
+recorded build (`[local.services.database] version = "<recorded build>"`, `[db] major_version` when
+the major differs, `[db] orioledb_version` when the line differs), or to run `supabase stack destroy`, which permanently deletes the
+stack's local database data; data with no recorded identity offers only the destroy. A
 first start records its identity in `.supabase-database-identity.json` before initializing data, so
 a first start interrupted before readiness resumes only on that build; initialized data with no
 recorded identity is never reused.
 Auth, Storage, Realtime, Analytics and the pooler own schemas in the database. The database
 instance root records the newest upstream version of each in `schema-writers.json`, raised under a
 per-database lock before a service or its one-shot initialization command migrates. A start whose
-selected upstream is older than the recorded one fails, naming the version and advising
-`supabase stack destroy` to recreate the stack. Versions order by their leading dotted number
+selected upstream is older than the recorded one fails, naming the version and advising to keep the
+data by pinning `[local.services.<service>] version = "<recorded version>"` in
+`supabase/config.toml`, or to run `supabase stack destroy` to recreate the stack. Versions order by their leading dotted number
 (`v2.196.0`, `2026.10.05-sha-...`, `17.6.1.054`); a suffix is ignored and an unparseable version
 sorts oldest. Services without schemas (REST, imgproxy, Functions, Studio, pg-meta, mail) accept any
 version change. A missing record means no schema owner has migrated yet. Saving a snapshot stores

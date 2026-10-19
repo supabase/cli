@@ -137,6 +137,67 @@ it.live(
 );
 
 it.live(
+  "leaves the composition database's record alone for a standalone schema writer on an external database",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "stack-schema-writers-standalone-",
+      });
+      const stateRoot = path.join(root, "state");
+      const stack = yield* create({
+        projectRoot: root,
+        stateRoot,
+        cacheRoot: testArtifactCacheRoot,
+        runtime: "native",
+      });
+      yield* Effect.acquireUseRelease(
+        Effect.succeed(stack),
+        (current) =>
+          Effect.gen(function* () {
+            const members = yield* current.composition.supabase([database, auth]);
+            const databaseId = members.find(({ service }) => service === "database")?.id;
+            if (databaseId === undefined) return yield* Effect.die("Composition has no database");
+            const instanceRoot = path.join(stateRoot, current.id, "data", databaseId);
+            const recorded = readSchemaWriters(fs, path, instanceRoot);
+            const record = (version: string) =>
+              fs
+                .makeDirectory(instanceRoot, { recursive: true })
+                .pipe(
+                  Effect.andThen(
+                    fs.writeFileString(
+                      path.join(instanceRoot, "schema-writers.json"),
+                      JSON.stringify({ auth: version }),
+                    ),
+                  ),
+                );
+            const startStandalone = Effect.gen(function* () {
+              const standalone = yield* current.services.create({
+                ...auth,
+                config: { ...auth.config, databaseUrl: unreachableDatabaseUrl },
+                endpoints: {},
+              });
+              return yield* Effect.flip(standalone.start);
+            });
+
+            yield* record("v999.0.0");
+            const newerRecord = yield* startStandalone;
+            expect(newerRecord.message).toContain("startup exited");
+            expect(newerRecord.message).not.toContain("older than");
+            expect(yield* recorded).toEqual({ auth: "v999.0.0" });
+
+            yield* record("v1.0.0");
+            yield* startStandalone;
+            expect(yield* recorded).toEqual({ auth: "v1.0.0" });
+          }),
+        destroyTestStack,
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  { timeout: 5 * 60_000 },
+);
+
+it.live(
   "keeps every service's version when schema-owning initializations run together",
   () =>
     Effect.gen(function* () {

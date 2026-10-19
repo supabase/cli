@@ -4,6 +4,7 @@ import { readLock } from "@supabase/stack/effect";
 import {
   artifactServiceKinds,
   catalogPins,
+  postgresMajor,
   type ServiceKind,
 } from "@supabase/stack/internal/artifacts";
 import { Effect, FileSystem, Layer, Option } from "effect";
@@ -22,7 +23,12 @@ import {
   startReleaseFixture,
   type ReleaseFixture,
 } from "../../../../../tests/helpers/release-fixture.ts";
-import { seedLock, unbundled } from "../../../../../tests/helpers/stack-lock.ts";
+import {
+  rebuilt,
+  seedLock,
+  seedProjectStack,
+  unbundled,
+} from "../../../../../tests/helpers/stack-lock.ts";
 import { ExperimentalFlag } from "../../../../command-internal/global-flags.ts";
 import { StackCommandUpdateError } from "./update.errors.ts";
 import { stackUpdate } from "./update.handler.ts";
@@ -323,6 +329,159 @@ describe("experimental stack update", () => {
       expect(error.message).toContain(artifactServiceKinds().join(", "));
       expect(yield* fs.readFileString(lockPath(root))).toBe(written);
       expect(host.requests).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+});
+
+describe("experimental stack update and saved stack data", () => {
+  const BUILT = selection.database.upstreamVersion;
+  const OLDER_BUILD = `${postgresMajor(BUILT)}.0.0.001`;
+
+  const stackWarnings = (output: ReturnType<typeof mockOutput>) =>
+    output.messages
+      .filter(({ type }) => type === "warn")
+      .map(({ message }) => message)
+      .filter((message) => message.startsWith("stack "));
+
+  const destroy = (stackId: string) =>
+    `run \`supabase stack destroy --stack-id ${stackId}\` to recreate the stack — this permanently deletes its local database data`;
+
+  const lockedAt =
+    (databaseUpstream: string, authUpstream?: string) =>
+    (services: Parameters<NonNullable<Parameters<typeof seedLock>[1]>>[0]) => ({
+      ...services,
+      database: {
+        ...services.database,
+        resolved: rebuilt(services.database.resolved, databaseUpstream),
+      },
+      auth: {
+        ...services.auth,
+        resolved:
+          authUpstream === undefined
+            ? services.auth.resolved
+            : rebuilt(services.auth.resolved, authUpstream),
+      },
+    });
+
+  it.live(
+    "offers pinning the recorded build when the bundled database moves to another build",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* startReleaseFixture;
+        const root = yield* project({});
+        yield* seed(root, host, lockedAt(OLDER_BUILD));
+        const stackId = yield* seedProjectStack({
+          projectRoot: root,
+          supabaseHome: `${root}/.supabase`,
+          built: OLDER_BUILD,
+        });
+
+        const { output, run } = update(root, host, []);
+        yield* run;
+
+        expect(stackWarnings(output)).toEqual([
+          `stack ${stackId}: the next supabase start refuses these pins: PostgreSQL data was initialized by stock PostgreSQL build ${OLDER_BUILD}, but stock PostgreSQL build ${BUILT} was requested; keep this data by pinning \`[local.services.database] version = "${OLDER_BUILD}"\` in supabase/config.toml, or ${destroy(stackId)}`,
+        ]);
+        expect((yield* readServices(root)).database.resolved.upstreamVersion).toBe(BUILT);
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("offers pinning the migrating version when a bundled schema writer moves below it", () =>
+    Effect.gen(function* () {
+      const host = yield* startReleaseFixture;
+      const root = yield* project({});
+      yield* seed(root, host, lockedAt(BUILT, "v99.5.0"));
+      const stackId = yield* seedProjectStack({
+        projectRoot: root,
+        supabaseHome: `${root}/.supabase`,
+        composed: ["auth"],
+        migrated: { auth: "v99.5.0" },
+      });
+
+      const { output, run } = update(root, host, ["auth"]);
+      yield* run;
+
+      expect(stackWarnings(output)).toEqual([
+        `stack ${stackId}: the next supabase start refuses these pins: auth ${selection.auth.upstreamVersion} is older than v99.5.0, which already migrated this database; downgrading does not restore the old schema, so keep this data by pinning \`[local.services.auth] version = "v99.5.0"\` in supabase/config.toml, or ${destroy(stackId)}`,
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("stays quiet about a schema writer the saved stack does not run", () =>
+    Effect.gen(function* () {
+      const host = yield* startReleaseFixture;
+      const root = yield* project({});
+      yield* seed(root, host, lockedAt(BUILT, "v99.5.0"));
+      yield* seedProjectStack({
+        projectRoot: root,
+        supabaseHome: `${root}/.supabase`,
+        migrated: { auth: "v99.5.0" },
+      });
+
+      const { output, run } = update(root, host, ["auth"]);
+      yield* run;
+
+      expect(stackWarnings(output)).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("stays quiet when only a revision of the build that initialized the data moves", () =>
+    Effect.gen(function* () {
+      const host = yield* startReleaseFixture;
+      const root = yield* project({});
+      yield* seed(root, host, (services) => ({
+        ...services,
+        database: { ...services.database, resolved: unbundled(services.database.resolved) },
+      }));
+      yield* seedProjectStack({
+        projectRoot: root,
+        supabaseHome: `${root}/.supabase`,
+        built: BUILT,
+      });
+
+      const { output, run } = update(root, host, []);
+      yield* run;
+
+      expect(stackWarnings(output)).toEqual([]);
+      expect((yield* readServices(root)).database.resolved.revision).toBe(
+        selection.database.revision,
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("stays quiet when the lock is already up to date", () =>
+    Effect.gen(function* () {
+      const host = yield* startReleaseFixture;
+      const root = yield* project({});
+      yield* seed(root, host);
+      yield* seedProjectStack({
+        projectRoot: root,
+        supabaseHome: `${root}/.supabase`,
+        built: OLDER_BUILD,
+      });
+
+      const { output, run } = update(root, host, []);
+      yield* run;
+
+      expect(output.stdoutText).toContain("already up to date");
+      expect(stackWarnings(output)).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("still updates the lock when the saved stacks cannot be read", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const host = yield* startReleaseFixture;
+      const root = yield* project({});
+      yield* seed(root, host, lockedAt(OLDER_BUILD));
+      yield* fs.makeDirectory(`${root}/.supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/.supabase/stacks`, "not a directory");
+
+      const { output, run } = update(root, host, []);
+      yield* run;
+
+      expect(stackWarnings(output)).toEqual([]);
+      expect((yield* readServices(root)).database.resolved.upstreamVersion).toBe(BUILT);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 });

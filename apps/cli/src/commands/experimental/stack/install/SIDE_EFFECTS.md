@@ -16,16 +16,19 @@ project lease `supabase/.supabase.lock.lease`:
   The `Resolved service versions` report lists the diff.
 - `--frozen`, or the `CI` environment variable (not empty, `false` or `0`) with an existing lock,
   fails instead of writing: a missing lock fails with `supabase/supabase.lock not found`, a stale one
-  with `is stale for: <service> (<reason>)`. Nothing is downloaded after a lock failure.
+  with `is stale for: <service> (<reason>)`. Nothing is downloaded after a lock failure. A frozen
+  run reads the lock without the lease and writes nothing in the project.
 - A `linked` service follows the hosted version `supabase link` recorded, resolved on the release
-  host only; install never calls the Management API or needs a login. A `.link.json` that targets
-  another remote than the lock observed, or a newer bundled revision of a locked version, prints a
-  warning (see `start`).
-- A project without `supabase/config.toml` uses the versions bundled with the CLI and writes no lock;
-  with `--frozen` it fails with `supabase/supabase.lock not found` instead, before anything is downloaded.
-  With `CI` set and an existing lock but no `supabase/config.toml`, the lock cannot be checked, so it
-  fails with `supabase/config.toml not found` rather than using the bundled versions; without a lock
-  `CI` changes nothing.
+  host only; install never calls the Management API or needs a login. When the release host cannot
+  be reached for it, the service takes the bundled version as `unobserved` and warns instead of
+  failing; only an explicit `<upstream>` specifier fails with transient (`network`). A `.link.json`
+  that targets another remote than the lock observed, or a newer bundled revision of a locked
+  version, prints a warning (see `start`).
+- A project without `supabase/config.toml` uses the versions bundled with the CLI and writes no lock.
+  Frozen, by `--frozen` or by `CI` with an existing lock, the lock cannot be checked, so it fails
+  with `supabase/config.toml not found` rather than using the bundled versions; `--frozen` without
+  a lock fails with `supabase/supabase.lock not found`. Both fail before anything is downloaded.
+  Without a lock `CI` changes nothing.
 
 To move a fresh entry to a newer release, use `supabase stack update`; `supabase stack outdated`
 reports which entries would move (see [`../update/SIDE_EFFECTS.md`](../update/SIDE_EFFECTS.md) and
@@ -58,7 +61,8 @@ and keeps the package's failure kind; archives that completed stay cached.
 
 - `<workdir>/supabase/supabase.lock` (JSON), only when it is missing or stale and not frozen.
 - `<workdir>/supabase/.supabase.lock.lease` and `.supabase.lock.*.tmp` while the lock is written;
-  `supabase/.gitignore` gains both entries whenever the lock is written.
+  `supabase/.gitignore` gains both entries whenever the project lease is taken. A frozen run takes
+  no lease and writes neither.
 - Native archives under `$SUPABASE_HOME/cache/stack`, keyed by content digest.
 - Container images in the selected engine's image store.
 - Telemetry state after success or failure.

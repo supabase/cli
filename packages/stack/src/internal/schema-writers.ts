@@ -1,17 +1,34 @@
 import { Effect, Schema } from "effect";
 import type { FileSystem, Path } from "effect";
+import type { CompositionConfig } from "../Orchestrator.ts";
 import { namespaceError, type NamespaceError } from "../namespace/Capabilities.ts";
 import { holdLock } from "../namespace/Lock.ts";
 import { publish } from "../namespace/Publication.ts";
-import { recreateStackAdvice } from "./database-reuse.ts";
+import { keepOrRecreateAdvice } from "./database-reuse.ts";
 
 /** The services whose migrations write schemas into the database. */
-const schemaWriterServices = ["auth", "storage", "realtime", "analytics", "pooler"] as const;
+export const schemaWriterServices = ["auth", "storage", "realtime", "analytics", "pooler"] as const;
 export const SchemaWriterService = Schema.Literals(schemaWriterServices);
 export type SchemaWriterService = typeof SchemaWriterService.Type;
 
 /** Whether `service` owns schemas in the database, so it can never run an older upstream than the record. */
 export const isSchemaWriter = Schema.is(SchemaWriterService);
+
+/**
+ * The database instance `instanceId` takes its `databaseUrl` from, or `undefined` when that URL is
+ * not bound to a local database. `serviceOf` names an instance's service kind.
+ */
+export const boundDatabaseId = (
+  dependencies: CompositionConfig["dependencies"],
+  serviceOf: (id: string) => string | undefined,
+  instanceId: string,
+): string | undefined =>
+  dependencies.find(
+    ({ from, to, bindings }) =>
+      to === instanceId &&
+      serviceOf(from) === "database" &&
+      bindings?.some(({ input }) => input === "databaseUrl") === true,
+  )?.from;
 
 /** The newest upstream version of each schema-owning service that migrated a database. */
 export const SchemaWriters = Schema.Struct({
@@ -56,7 +73,7 @@ export class SchemaWriterDowngrade extends Schema.TaggedError<SchemaWriterDowngr
 ) {}
 
 /** The failure to run `service` at `selected` against `writers`, or `undefined` when it may migrate. */
-const schemaWriterDowngrade = (
+export const schemaWriterDowngrade = (
   stackId: string,
   writers: SchemaWriters,
   service: SchemaWriterService,
@@ -65,7 +82,7 @@ const schemaWriterDowngrade = (
   const recorded = writers[service];
   if (recorded === undefined || compareUpstreamVersions(selected, recorded) >= 0) return undefined;
   return new SchemaWriterDowngrade({
-    message: `${service} ${selected} is older than ${recorded}, which already migrated this database; downgrading does not restore the old schema, so ${recreateStackAdvice(stackId)}`,
+    message: `${service} ${selected} is older than ${recorded}, which already migrated this database; downgrading does not restore the old schema, so ${keepOrRecreateAdvice(stackId, service, recorded)}`,
     service,
     selected,
     recorded,

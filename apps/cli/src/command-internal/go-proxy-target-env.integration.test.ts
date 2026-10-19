@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
-import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
+import { useTempWorkdir, VALID_TOKEN } from "../../tests/helpers/command-mocks.ts";
 import { isolatedHomeLayer } from "../../tests/helpers/command-mocks.ts";
 import {
   mockAnalytics,
@@ -10,9 +10,14 @@ import {
   mockTelemetryRuntime,
   mockTty,
 } from "../../tests/helpers/mocks.ts";
-import { provideEnv } from "../../tests/helpers/permission-real-layers.ts";
+import {
+  projectResponse,
+  provideEnv,
+  stubManagementApi,
+} from "../../tests/helpers/permission-real-layers.ts";
 import { dbRemoteChanges } from "../commands/db/remote/changes/changes.handler.ts";
 import { genKeys } from "../commands/gen/keys/keys.handler.ts";
+import { PROJECT_NOT_LINKED_MESSAGE } from "../config/remote-target.service.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import {
   DebugFlag,
@@ -26,15 +31,25 @@ import { projectStateModeLayer, type ProjectStateMode } from "./project-state-mo
 
 const LINKED_REF = "abcdefghijklmnopqrst";
 
-const setup = (workdir: string, mode: ProjectStateMode, profile = "supabase") => {
+const setup = (
+  workdir: string,
+  mode: ProjectStateMode,
+  profile = "supabase",
+  interactive?: { readonly chosenRef: string },
+) => {
   const calls: Array<{ readonly args: ReadonlyArray<string> }> = [];
   const poolerUrls: Array<string | undefined> = [];
   const layer = Layer.mergeAll(
     BunServices.layer,
-    isolatedHomeLayer(workdir),
+    isolatedHomeLayer(workdir, {
+      SUPABASE_NO_KEYRING: "1",
+      ...(interactive === undefined ? {} : { SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    }),
     projectStateModeLayer(mode),
-    mockTty(),
-    mockOutput().layer,
+    mockTty({ stdinIsTty: interactive !== undefined }),
+    mockOutput({
+      promptSelectResponses: interactive === undefined ? [] : [interactive.chosenRef],
+    }).layer,
     mockAnalytics().layer,
     mockTelemetryRuntime(),
     Layer.succeed(CliArgs, { args: [] }),
@@ -126,6 +141,50 @@ describe("Go-delegated linked target", () => {
       expect(calls).toEqual([{ args: ["gen", "keys", "--project-ref", LINKED_REF] }]);
     }).pipe(Effect.provide(layer), provideEnv(env));
   });
+
+  it.effect("prompts for a project in `gen keys` when stack mode has nothing linked", () => {
+    const { calls, layer } = setup(tmp.current, "stack", "supabase", { chosenRef: LINKED_REF });
+    const requests: Array<{ readonly method: string; readonly path: string }> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, (method, path) =>
+        method === "GET" && path === "/v1/projects"
+          ? Response.json([projectResponse(LINKED_REF)])
+          : undefined,
+      );
+      yield* genKeys({ projectRef: Option.none(), overrideName: [] });
+      expect(requests).toEqual([{ method: "GET", path: "/v1/projects" }]);
+      expect(calls).toEqual([{ args: ["gen", "keys", "--project-ref", LINKED_REF] }]);
+    }).pipe(Effect.scoped, Effect.provide(layer), provideEnv(env));
+  });
+
+  it.effect("keeps the link ahead of the picker in `gen keys`", () => {
+    const { calls, layer } = setup(tmp.current, "stack", "supabase", {
+      chosenRef: "zyxwvutsrqponmlkjihg",
+    });
+    return Effect.gen(function* () {
+      yield* writeStackLink(tmp.current);
+      yield* genKeys({ projectRef: Option.none(), overrideName: [] });
+      expect(calls).toEqual([{ args: ["gen", "keys", "--project-ref", LINKED_REF] }]);
+    }).pipe(Effect.provide(layer), provideEnv(env));
+  });
+
+  it.effect(
+    "fails `db remote changes` without prompting when stack mode has nothing linked",
+    () => {
+      const { calls, layer } = setup(tmp.current, "stack", "supabase", { chosenRef: LINKED_REF });
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      return Effect.gen(function* () {
+        yield* stubManagementApi(requests, () => undefined);
+        const error = yield* dbRemoteChanges(changesFlags()).pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "ProjectRefNotLinkedError",
+          message: PROJECT_NOT_LINKED_MESSAGE,
+        });
+        expect(requests).toEqual([]);
+        expect(calls).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(layer), provideEnv(env));
+    },
+  );
 
   it.effect("passes an explicit --project-ref to `gen keys` in stack mode", () => {
     const { calls, layer } = setup(tmp.current, "stack");

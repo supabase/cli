@@ -19,9 +19,7 @@ import type { SetupDatabaseOptions } from "./db-bootstrap/db-setup.ts";
 import { listLocalMigrationPaths } from "./migration-history.ts";
 import { applyMigrations } from "./migration-apply.ts";
 import { stackShadowCacheEntry, stackShadowCacheRoles } from "./stack-shadow-cache.ts";
-import { StackConfigError } from "./stack-config.ts";
-import { stackArtifactSelection } from "./stack-artifact-selection.ts";
-import { LockResolutionError, readSelectionOrBundled } from "./stack-lock.ts";
+import { selectionForRequest } from "./stack-project-selection.ts";
 
 export interface StackShadowAcquiredHandle {
   readonly stack: Stack;
@@ -230,35 +228,6 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
 });
 
 /**
- * The pins of the database the project's lock selects, so the shadow matches the local database.
- * A linked diff whose `[remotes.<ref>]` block makes the lock stale (a different major, OrioleDB
- * version, or service version) runs the bundled pin for the merged request instead, since the lock
- * records the local config.
- */
-const shadowSelection = Effect.fn("StackShadow.selection")(function* (
-  input: ShadowSetupInput<unknown>,
-) {
-  const request = {
-    projectRoot: input.workdir,
-    majorVersion: input.setup.majorVersion,
-    orioledbVersion: input.db.orioledb_version,
-    services: input.context?.config.local?.services,
-  };
-  const selected = readSelectionOrBundled(request);
-  if (input.context?.loaded?.appliedRemote === undefined) return yield* selected;
-  return yield* selected.pipe(
-    Effect.catchIf(
-      (error) => Schema.is(LockResolutionError)(error) && error.reason === "frozen-stale",
-      () =>
-        stackArtifactSelection({
-          major_version: request.majorVersion,
-          orioledb_version: request.orioledbVersion,
-        }).pipe(Effect.mapError((error) => new StackConfigError({ message: error.message }))),
-    ),
-  );
-});
-
-/**
  * Acquires a fresh shadow for callers whose enclosing scope owns its lifetime. The shadow is a
  * session stack, so its owner destroys it even when this process exits abruptly.
  */
@@ -267,7 +236,13 @@ export const stackAcquireShadowDatabase = Effect.fn("StackShadow.acquire")(funct
   opts: ShadowOptions = {},
 ) {
   const output = yield* Output;
-  const selection = yield* shadowSelection(input).pipe(
+  const selection = yield* selectionForRequest({
+    projectRoot: input.workdir,
+    majorVersion: input.setup.majorVersion,
+    orioledbVersion: input.db.orioledb_version,
+    services: input.context?.config.local?.services,
+    appliedRemote: input.context?.loaded?.appliedRemote,
+  }).pipe(
     Effect.mapError(
       (error) =>
         new ShadowDbError({

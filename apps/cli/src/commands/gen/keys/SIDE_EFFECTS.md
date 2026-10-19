@@ -51,5 +51,6 @@ Not applicable.
 
 - **Deprecated**: use `gen signing-key` instead.
 - `--project-ref` flag specifies the project ref.
+- In stack mode the project resolves from `--project-ref`, `SUPABASE_PROJECT_ID`, the link, then (on a TTY) an interactive project picker, and the resolved ref is passed to the delegated command.
 - `--override-name` overrides specific variable names in the output.
 - Experimental command for generating preview branch keys.

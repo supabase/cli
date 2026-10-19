@@ -1,4 +1,17 @@
-import { Config, Crypto, Effect, FileSystem, Option, Path, Ref, Schema, Scope } from "effect";
+import {
+  Config,
+  Context,
+  Crypto,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Ref,
+  Schema,
+  Scope,
+} from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem exposes no OS temp or home directory path for the shared roots.
 import { homedir, tmpdir, userInfo } from "node:os";
 import type { PlatformError } from "effect/PlatformError";
@@ -22,10 +35,24 @@ import {
   type Stack,
 } from "./PromiseClient.ts";
 import { StackError, stackError } from "./Rpc.ts";
+import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
+import {
+  DatabaseReadyMarker,
+  databaseIdentity,
+  databaseReadyMarkerFile,
+  recordDatabaseIdentity,
+} from "./internal/database-reuse.ts";
+import {
+  setSchemaWriters,
+  type SchemaWriters,
+  type SchemaWriterService,
+} from "./internal/schema-writers.ts";
 import {
   allowedEndpointNames,
+  ServiceCreation,
   ServiceCreationInput as CreationSchema,
 } from "./services/Catalog.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 
 /** Exposed for test fakes that need to reproduce the package's own saved-stack comparison. */
 export { planSupabaseComposition } from "./composition/Supabase.ts";
@@ -400,3 +427,103 @@ export const createTestStack = <
       [Symbol.asyncDispose]: client.close,
     };
   });
+
+/** What {@link seedSavedStack} saves for a project. */
+export interface SeedSavedStackOptions {
+  readonly projectRoot: string;
+  readonly stateRoot: string;
+  /** Defaults to the native runtime. */
+  readonly runtime?: StackEffect.CreateOptions["runtime"];
+  /** Marks the database initialized by this upstream build; without it the data was never initialized. */
+  readonly built?: string;
+  /** Leaves `built` as an interrupted first start does: a data directory, but no readiness marker. */
+  readonly interrupted?: boolean;
+  /** Leaves `built`'s data without its recorded build identity. */
+  readonly withoutIdentity?: boolean;
+  /** Schema-owning services the saved composition binds to the database. */
+  readonly composed?: ReadonlyArray<SchemaWriterService>;
+  /** The newest upstream version each service migrated the database with. */
+  readonly migrated?: SchemaWriters;
+}
+
+/**
+ * Saves a stack of `projectRoot` without starting anything and writes the database data a start
+ * left behind, with the package's own record writers.
+ */
+export const seedSavedStack = Effect.fn("TestStack.seedSavedStack")(
+  function* (options: SeedSavedStackOptions) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
+    const runtime = options.runtime ?? "native";
+    const pins = defaultArtifactSelection();
+    const identity = yield* resolveStackIdentity({ projectRoot: options.projectRoot });
+    const stackId = yield* deriveStackId(identity);
+    const databaseId = yield* crypto.randomUUIDv4;
+    const database: ServiceCreation = {
+      service: "database",
+      pin: pins.database,
+      config: {
+        databasePassword: Redacted.make("seeded-stack-password"),
+        jwtSecret: Redacted.make("seeded-stack-jwt-secret-with-at-least-32-chars"),
+        jwtExpiry: 3600,
+      },
+      endpoints: { sql: { port: "auto" } },
+    };
+    const writers = yield* Effect.forEach(options.composed ?? [], (service) =>
+      Effect.all({
+        id: crypto.randomUUIDv4,
+        creation: Schema.decodeUnknownEffect(ServiceCreation)({
+          service,
+          pin: pins[service],
+          config: service === "storage" ? { filePath: "storage" } : {},
+          endpoints: {},
+        }),
+      }),
+    );
+    const state = Context.get(
+      yield* Layer.build(StackNamespace.layer({ root: options.stateRoot })),
+      StackNamespace.Service,
+    );
+    yield* state.save({
+      id: stackId,
+      identity,
+      runtime,
+      lifetime: "detached",
+      instances: [{ id: databaseId, creation: database }, ...writers],
+      composition: {
+        members: [databaseId, ...writers.map(({ id }) => id)].map((id) => ({
+          id,
+          activation: "eager",
+        })),
+        dependencies: writers.map(({ id }) => ({
+          from: databaseId,
+          to: id,
+          bindings: [{ output: "databaseUrl", input: "databaseUrl" }],
+        })),
+      },
+    });
+    const instanceRoot = path.join(options.stateRoot, stackId, "data", databaseId);
+    yield* fs.makeDirectory(instanceRoot, { recursive: true });
+    if (options.built !== undefined) {
+      if (options.interrupted === true) {
+        yield* fs.makeDirectory(path.join(instanceRoot, "data"));
+        yield* fs.writeFileString(path.join(instanceRoot, "data", "PG_VERSION"), "17\n");
+      } else
+        yield* fs.writeFileString(
+          path.join(instanceRoot, databaseReadyMarkerFile),
+          yield* Schema.encodeEffect(Schema.fromJsonString(DatabaseReadyMarker))({
+            runtime,
+            profile: "supabase",
+          }),
+        );
+      if (options.withoutIdentity !== true)
+        yield* recordDatabaseIdentity(fs, path, instanceRoot, databaseIdentity(options.built));
+    }
+    if (options.migrated !== undefined)
+      yield* setSchemaWriters(fs, path, instanceRoot, options.migrated);
+    return { stackId, databaseId };
+  },
+  Effect.scoped,
+  Effect.mapError(testFailure("seed-saved-stack")),
+);

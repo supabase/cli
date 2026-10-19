@@ -2,8 +2,8 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { readLock, writeLock } from "@supabase/stack/effect";
-import { catalogPins, type ServiceKind } from "@supabase/stack/internal/artifacts";
-import { Effect, FileSystem, Layer, Option } from "effect";
+import { catalogPins, postgresMajor, type ServiceKind } from "@supabase/stack/internal/artifacts";
+import { Effect, FileSystem, Layer, Option, PlatformError } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
@@ -20,7 +20,7 @@ import {
 } from "../../../tests/helpers/command-mocks.ts";
 import { mockAnalytics, mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { selection } from "../../../tests/helpers/pins.ts";
-import { unbundled } from "../../../tests/helpers/stack-lock.ts";
+import { seedProjectStack, unbundled } from "../../../tests/helpers/stack-lock.ts";
 import {
   publishRelease,
   releaseHostEnv,
@@ -146,8 +146,8 @@ interface World {
   readonly host: ReleaseFixture;
   readonly tenant: Tenant;
   readonly workdir: string;
-  /** Switches the link target between the project and its feature branch. */
-  readonly target: { onBranch: boolean };
+  /** Switches the link target between the project and its feature branch, and sets the hosted database version. */
+  readonly target: { onBranch: boolean; database: string };
 }
 
 const startWorld = Effect.gen(function* () {
@@ -157,14 +157,28 @@ const startWorld = Effect.gen(function* () {
   const workdir = tempRoot.current;
   yield* fs.makeDirectory(`${workdir}/supabase`, { recursive: true });
   yield* fs.writeFileString(`${workdir}/supabase/config.toml`, 'project_id = "link-lock"\n');
-  return { host, tenant: hostedTenant(), workdir, target: { onBranch: false } } satisfies World;
+  return {
+    host,
+    tenant: hostedTenant(),
+    workdir,
+    target: { onBranch: false, database: PROJECT.database.version },
+  } satisfies World;
 });
 
-const layerFor = (world: World, out: ReturnType<typeof mockOutput>) => {
+const layerFor = (
+  world: World,
+  out: ReturnType<typeof mockOutput>,
+  fileSystem?: Layer.Layer<FileSystem.FileSystem>,
+) => {
   const apiMock = mockCommandPlatformApiService({
     v1: {
       getProject: () =>
-        world.target.onBranch ? Effect.fail(statusCodeFailure(404)) : Effect.succeed(PROJECT),
+        world.target.onBranch
+          ? Effect.fail(statusCodeFailure(404))
+          : Effect.succeed({
+              ...PROJECT,
+              database: { ...PROJECT.database, version: world.target.database },
+            }),
       getABranchConfig: () =>
         Effect.succeed({ postgres_version: "15.1.0.117", postgres_engine: "15" }),
       getProjectApiKeys: () => Effect.succeed(SERVICE_KEYS),
@@ -179,6 +193,7 @@ const layerFor = (world: World, out: ReturnType<typeof mockOutput>) => {
       cliSettings: mockCommandSettings({ workdir: world.workdir, projectId: Option.none() }),
       analytics: mockAnalytics(),
       telemetry: mockTelemetryStateTracked().layer,
+      ...(fileSystem === undefined ? {} : { fileSystem }),
     }),
     projectStateModeLayer("stack"),
     mockRuntimeInfo({ platform: "linux", arch: "x64" }),
@@ -216,6 +231,39 @@ const runLink = (
   return withConfigEnv(env(world), link(linkFlags)).pipe(
     Effect.provide(layerFor(world, out)),
     Effect.as(out),
+  );
+};
+
+const lockWriteFails = Layer.effect(
+  FileSystem.FileSystem,
+  Effect.map(
+    FileSystem.FileSystem,
+    (real) =>
+      new Proxy<FileSystem.FileSystem>(real, {
+        get(target, property, receiver) {
+          const value: unknown = Reflect.get(target, property, receiver);
+          if (property !== "rename" || typeof value !== "function") return value;
+          return (from: string, to: string) =>
+            to.endsWith("supabase/supabase.lock")
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "rename",
+                    description: `EACCES: permission denied, rename '${from}' -> '${to}'`,
+                    pathOrDescriptor: to,
+                  }),
+                )
+              : Reflect.apply(value, target, [from, to]);
+        },
+      }),
+  ),
+).pipe(Layer.provide(BunServices.layer));
+
+const runLinkWithLockWriteFailing = (world: World, linkFlags: LinkFlags) => {
+  const out = mockOutput({ format: "text" });
+  return withConfigEnv(env(world), link(linkFlags)).pipe(
+    Effect.provide(layerFor(world, out, lockWriteFails)),
   );
 };
 
@@ -434,6 +482,27 @@ describe("link records hosted versions in the stack lock", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live("targets the new remote in .link.json when the lock cannot be written", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const world = yield* startWorld;
+      yield* runLink(world);
+      const written = yield* lockText(world.workdir);
+
+      const error = yield* runLinkWithLockWriteFailing(world, toBranch(world)).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "LockResolutionError", reason: "io" });
+      const document = yield* fs.readFileString(`${world.workdir}/supabase/.link.json`);
+      expect(document).toContain(BRANCH_REF);
+      expect(yield* lockText(world.workdir)).toBe(written);
+
+      yield* runLink(world, toBranch(world));
+
+      const lock = yield* readLock(world.workdir).pipe(Effect.map(Option.getOrThrow));
+      expect(lock.linked?.branch.ref).toBe(BRANCH_REF);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("a frozen link records the target in .link.json and leaves the lock untouched", () =>
     Effect.gen(function* () {
       const world = yield* startWorld;
@@ -474,6 +543,163 @@ describe("stack update follows the recorded observations", () => {
         resolved: { upstreamVersion: "v99.1.0", revision: 0 },
       });
       expect(services.auth.resolved.upstreamVersion).toBe(HOSTED);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+});
+
+describe("link warns when a saved stack would refuse the versions it locks", () => {
+  const HOSTED_DATABASE = `${postgresMajor(selection.database.upstreamVersion)}.99.0.001`;
+  const BUILT = selection.database.upstreamVersion;
+
+  const seed = (
+    world: World,
+    data: Omit<Parameters<typeof seedProjectStack>[0], "projectRoot" | "supabaseHome">,
+  ) =>
+    seedProjectStack({
+      ...data,
+      projectRoot: world.workdir,
+      supabaseHome: `${world.workdir}/.supabase`,
+    });
+
+  const hostDatabase = (world: World) => {
+    publish(world.host, "database", HOSTED_DATABASE);
+    world.target.database = HOSTED_DATABASE;
+  };
+
+  const stackWarnings = (out: ReturnType<typeof mockOutput>) =>
+    warnings(out).filter((message) => message.startsWith("stack "));
+
+  const destroy = (stackId: string) =>
+    `run \`supabase stack destroy --stack-id ${stackId}\` to recreate the stack — this permanently deletes its local database data`;
+
+  it.live(
+    "offers pinning the recorded build when linking moves off the build that initialized the data",
+    () =>
+      Effect.gen(function* () {
+        const world = yield* startWorld;
+        hostDatabase(world);
+        const stackId = yield* seed(world, { built: BUILT });
+
+        const out = yield* runLink(world);
+
+        expect(stackWarnings(out)).toEqual([
+          `stack ${stackId}: the next supabase start refuses these pins: PostgreSQL data was initialized by stock PostgreSQL build ${BUILT}, but stock PostgreSQL build ${HOSTED_DATABASE} was requested; keep this data by pinning \`[local.services.database] version = "${BUILT}"\` in supabase/config.toml, or ${destroy(stackId)}`,
+        ]);
+        expect((yield* readServices(world.workdir)).database.resolved.upstreamVersion).toBe(
+          HOSTED_DATABASE,
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("says the data can only be recreated when it has no recorded build", () =>
+    Effect.gen(function* () {
+      const world = yield* startWorld;
+      hostDatabase(world);
+      const stackId = yield* seed(world, { built: BUILT, withoutIdentity: true });
+
+      const out = yield* runLink(world);
+
+      expect(stackWarnings(out)).toEqual([
+        `stack ${stackId}: the next supabase start refuses these pins: PostgreSQL data has no recorded identity, but stock PostgreSQL build ${HOSTED_DATABASE} was requested; ${destroy(stackId)}`,
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("offers pinning the migrating version when linking moves a schema writer below it", () =>
+    Effect.gen(function* () {
+      const world = yield* startWorld;
+      const stackId = yield* seed(world, { composed: ["auth"], migrated: { auth: "v99.1.0" } });
+
+      const out = yield* runLink(world);
+
+      expect(stackWarnings(out)).toEqual([
+        `stack ${stackId}: the next supabase start refuses these pins: auth ${HOSTED} is older than v99.1.0, which already migrated this database; downgrading does not restore the old schema, so keep this data by pinning \`[local.services.auth] version = "v99.1.0"\` in supabase/config.toml, or ${destroy(stackId)}`,
+      ]);
+      expect((yield* readServices(world.workdir)).auth.resolved.upstreamVersion).toBe(HOSTED);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("stays quiet about a schema writer the saved stack does not run", () =>
+    Effect.gen(function* () {
+      const world = yield* startWorld;
+      yield* seed(world, { migrated: { auth: "v99.1.0" } });
+
+      const out = yield* runLink(world);
+
+      expect(stackWarnings(out)).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("stays quiet when the data was built by the version the link locks", () =>
+    Effect.gen(function* () {
+      const world = yield* startWorld;
+      hostDatabase(world);
+      yield* seed(world, {
+        built: HOSTED_DATABASE,
+        composed: ["auth"],
+        migrated: { auth: HOSTED },
+      });
+
+      const out = yield* runLink(world);
+
+      expect(stackWarnings(out)).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("stays quiet when the database was never initialized", () =>
+    Effect.gen(function* () {
+      const world = yield* startWorld;
+      hostDatabase(world);
+      yield* seed(world, {});
+
+      const out = yield* runLink(world);
+
+      expect(stackWarnings(out)).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("stays quiet about the stack of another project", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const world = yield* startWorld;
+      hostDatabase(world);
+      const other = yield* fs.makeTempDirectoryScoped({ prefix: "link-lock-other-" });
+      yield* seedProjectStack({
+        projectRoot: other,
+        supabaseHome: `${world.workdir}/.supabase`,
+        built: BUILT,
+      });
+
+      const out = yield* runLink(world);
+
+      expect(stackWarnings(out)).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("leaves a frozen link silent about saved stacks", () =>
+    Effect.gen(function* () {
+      const world = yield* startWorld;
+      yield* runLink(world);
+      hostDatabase(world);
+      yield* seed(world, { built: BUILT });
+
+      const out = yield* runLink(world, flags({ frozen: true }));
+
+      expect(stackWarnings(out)).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("still links when the saved stacks cannot be read", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const world = yield* startWorld;
+      yield* fs.makeDirectory(`${world.workdir}/.supabase`, { recursive: true });
+      yield* fs.writeFileString(`${world.workdir}/.supabase/stacks`, "not a directory");
+
+      const out = yield* runLink(world);
+
+      expect(stackWarnings(out)).toEqual([]);
+      expect((yield* readServices(world.workdir)).auth.resolved.upstreamVersion).toBe(HOSTED);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 });

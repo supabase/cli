@@ -289,7 +289,7 @@ const renderLinkedLock = (result: LinkedLock) => {
 /**
  * Publishes a stack-mode link and records its hosted versions in `supabase/supabase.lock`: the
  * project config is validated first, then, under the project lease, the project or branch is
- * probed, the lock written, and `.link.json` published. `undefined` when the project has no
+ * probed, `.link.json` published, and the lock written. `undefined` when the project has no
  * `supabase/config.toml`, so there is no lock to keep and only `.link.json` is published.
  */
 const publishStackLink = Effect.fn("link.lock")(function* (input: {
@@ -331,10 +331,9 @@ const publishStackLink = Effect.fn("link.lock")(function* (input: {
       serviceKey: input.serviceKey,
       databaseVersion: input.databaseVersion,
     }).pipe(Effect.map((observations) => ({ remote: linkRemote(input.link), observations }))),
-    commit: (locked) =>
-      (output.format === "text" ? output.info(renderLinkedLock(locked)) : Effect.void).pipe(
-        Effect.andThen(publishLink),
-      ),
+    publishLink,
+    report: (locked) =>
+      output.format === "text" ? output.info(renderLinkedLock(locked)) : Effect.void,
     output,
   })(request);
   yield* Effect.annotateCurrentSpan({
@@ -453,8 +452,8 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
           workdir,
         }).pipe(Effect.as(Option.none<string>()));
 
-    // 4. Save the link (mandatory — a write failure fails the command). In stack mode the lock and
-    // the link are published together under the lock lease, the lock first.
+    // 4. Save the link (mandatory — a write failure fails the command). In stack mode the link
+    // and the lock are published together under the lock lease, the link first.
     let stackLock: LinkedLock | undefined;
     if (stackState) {
       const parent = Option.isSome(project)

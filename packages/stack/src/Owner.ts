@@ -20,6 +20,7 @@ import { ChildProcessSpawner } from "effect/process";
 import type { Rpc, RpcGroup } from "effect/rpc";
 import { failureMessage } from "./internal/failure-message.ts";
 import {
+  boundDatabaseId,
   checkSchemaWriter,
   holdSchemaWriter,
   isSchemaWriter,
@@ -60,6 +61,7 @@ import {
   withoutUnusedCredentials,
 } from "./host/Credentials.ts";
 import {
+  bindsDatabaseUrl,
   makeSupabaseComposition,
   type SupabaseCompositionOptions,
 } from "./composition/Supabase.ts";
@@ -487,12 +489,17 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       ),
     );
 
-  /** The composition's local database instance, or `undefined` when the stack uses an external one. */
-  const compositionDatabaseId = Effect.gen(function* () {
-    const { members } = yield* orchestrator.composition;
-    const entries = yield* Effect.forEach(members, ({ id }) => orchestrator.get(id));
-    return entries.find((entry) => entry.service === "database")?.id;
-  });
+  /** The composition database `instanceId` takes its `databaseUrl` from; `undefined` when the URL is not bound to one. */
+  const boundDatabase = (instanceId: string) =>
+    Effect.gen(function* () {
+      const { dependencies } = yield* orchestrator.composition;
+      const entries = yield* orchestrator.instances;
+      return boundDatabaseId(
+        dependencies,
+        (id) => entries.find((entry) => entry.id === id)?.service,
+        instanceId,
+      );
+    });
 
   const schemaWriterSelection = (
     databaseId: string,
@@ -501,19 +508,18 @@ const makeOwner = Effect.fn("Owner.make")(function* (
   ) => ({ stackId, instanceRoot: path.join(options.root, databaseId), service, version });
 
   /**
-   * Runs `launch` with the database's schema-writer lease held until the service first reports
-   * healthy, which is when its migrations have finished. A failed or interrupted check keeps the
-   * lease until the launch scope closes after the process is cleaned up, and a later successful
-   * probe releases it. A service on an external database has no local record and launches directly.
+   * Runs `launch` with the schema-writer lease of the local database the instance's `databaseUrl`
+   * is bound to held until the service first reports healthy, which is when its migrations have
+   * finished. A failed or interrupted check keeps the lease until the launch scope closes after
+   * the process is cleaned up, and a later successful probe releases it. A service that is not
+   * bound to a local database has no record and launches directly.
    */
   const launchAsSchemaWriter = Effect.fnUntraced(function* (
     context: ServiceLaunchContext<ServiceCreation>,
     launch: Effect.Effect<RuntimeSession, ServiceError | ServiceLaunchError>,
   ) {
     const { service, pin } = context.config;
-    const databaseId = isSchemaWriter(service)
-      ? yield* compositionDatabaseId.pipe(Effect.mapError(serviceError("launch")))
-      : undefined;
+    const databaseId = isSchemaWriter(service) ? yield* boundDatabase(context.id) : undefined;
     if (!isSchemaWriter(service) || databaseId === undefined) return yield* launch;
     const lease = yield* Scope.fork(context.scope, "sequential");
     yield* holdSchemaWriter(
@@ -715,15 +721,27 @@ const makeOwner = Effect.fn("Owner.make")(function* (
   const clearUnusedCredentials = updateState(withoutUnusedCredentials).pipe(
     Effect.catch((cause) => Effect.logWarning("Unused stack credentials were not cleared", cause)),
   );
-  /** Rejects a selection older than what already migrated the composition's database, before anything changes. */
+  /**
+   * Rejects a selection older than what already migrated the reused database that the requested
+   * schema writers bind to, before anything changes.
+   */
   const checkSchemaWriters = Effect.fn("Owner.checkSchemaWriters")(
-    function* (creations: ReadonlyArray<ServiceCreation>) {
-      const databaseId = yield* compositionDatabaseId;
+    function* (
+      creations: ReadonlyArray<ServiceCreation>,
+      reuseIds: ReadonlyArray<string> | undefined,
+    ) {
+      if (!creations.some(({ service }) => service === "database")) return;
+      const reused = yield* Effect.forEach(reuseIds ?? [], (id) =>
+        orchestrator.get(id).pipe(Effect.option),
+      );
+      const databaseId = reused
+        .flatMap((entry) => (Option.isSome(entry) ? [entry.value] : []))
+        .find(({ service }) => service === "database")?.id;
       if (databaseId === undefined) return;
       yield* Effect.forEach(
         creations,
         ({ service, pin }) =>
-          isSchemaWriter(service)
+          isSchemaWriter(service) && bindsDatabaseUrl(service)
             ? checkSchemaWriter(
                 fs,
                 path,
@@ -742,7 +760,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
     ) {
       yield* resolveStackCredentials(yield* credentialOverrides(inputs), compositionOptions.keys);
       const creations = yield* Effect.forEach(inputs, resolveCredentials);
-      yield* checkSchemaWriters(creations);
+      yield* checkSchemaWriters(creations, compositionOptions.reuseIds);
       return yield* makeSupabaseComposition<ComposeError>(
         {
           currentComposition: orchestrator.composition,

@@ -122,6 +122,13 @@ const managedBindings: ReadonlyArray<{
   },
 ];
 
+/** Whether a composition that includes the database binds `service`'s `databaseUrl` to it. */
+export const bindsDatabaseUrl = (service: ServiceCreation["service"]): boolean =>
+  managedBindings.some(
+    ({ sourceKind, targetKind, input }) =>
+      sourceKind === "database" && targetKind === service && input === "databaseUrl",
+  );
+
 /** Inputs the composition derives, each from its shared API endpoint or a sibling member kind. */
 const derivedInputs: Partial<
   Record<ServiceCreation["service"], Readonly<Record<string, "api" | ServiceCreation["service"]>>>

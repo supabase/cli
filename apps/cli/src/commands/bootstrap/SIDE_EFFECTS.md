@@ -135,7 +135,9 @@ project `groupIdentify` calls fire from bootstrap, since the linked-project cach
 in this mode. The mode comes from the new project directory and applies to every post-scaffold
 step, including the cache finalizer; an invalid `SUPABASE_EXPERIMENTAL_STACK` fails bootstrap
 before any project is created. A lease that stays busy fails bootstrap with `LockResolutionError`
-reason `lease-busy` and exit code `1`, with no link written. See `link`'s `SIDE_EFFECTS.md` for the format.
+reason `lease-busy` and exit code `1`, with no link written. `supabase/.gitignore` gains the lease
+and staged-write entries (`.supabase.lock.lease`, `.supabase.lock.*.tmp`) whenever bootstrap takes
+the project lease. See `link`'s `SIDE_EFFECTS.md` for the format.
 
 ## Notes
 

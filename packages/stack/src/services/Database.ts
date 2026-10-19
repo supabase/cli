@@ -90,9 +90,12 @@ import {
   type DockerDatabaseStorageError,
 } from "../storage/DockerDatabaseStorage.ts";
 import {
+  DatabaseDataState,
+  DatabaseReadyMarker,
   databaseIdentity,
   databaseIdentityMismatch,
   databaseReadyMarkerFile,
+  readDatabaseDataState,
   readDatabaseIdentity,
   recordDatabaseIdentity,
   recreateStackAdvice,
@@ -115,11 +118,6 @@ export const DatabaseConfig = Schema.Struct({
   settings: Schema.optionalKey(
     Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Finite, Schema.Boolean])),
   ),
-});
-
-const DatabaseReadyMarker = Schema.Struct({
-  runtime: Schema.Literals(["native", "docker", "podman"]),
-  profile: Schema.Literal("supabase"),
 });
 
 // Health reconciles role passwords as supabase_admin, including after a configured password change.
@@ -755,23 +753,15 @@ export const makeDatabase = (
      * invisible to the host, so Docker data without a readiness marker is checked by its storage.
      */
     const checkReuse = Effect.fn("Database.checkReuse")(function* (requested: string) {
-      const markerPath = path.join(instanceRoot, databaseReadyMarkerFile);
-      const ready = yield* fs.exists(markerPath);
-      if (ready) {
-        const marker = yield* fs
-          .readFileString(markerPath)
-          .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DatabaseReadyMarker))));
-        if (marker.runtime !== options.runtime) {
-          yield* Effect.annotateCurrentSpan({ "database.reuse.outcome": "runtime_mismatch" });
-          return yield* errorFor(
-            "prepare",
-            `Initialized database data is for the ${marker.runtime} runtime, but the ${options.runtime} runtime was requested; ${recreateStackAdvice(String(options.stackId))}`,
-          );
-        }
-      } else if (
-        options.runtime !== "native" ||
-        !(yield* fs.exists(path.join(instanceRoot, "data", "PG_VERSION")))
-      ) {
+      const state = yield* readDatabaseDataState(fs, path, instanceRoot, options.runtime);
+      if (DatabaseDataState.$is("RuntimeMismatch")(state)) {
+        yield* Effect.annotateCurrentSpan({ "database.reuse.outcome": "runtime_mismatch" });
+        return yield* errorFor(
+          "prepare",
+          `Initialized database data is for the ${state.recorded} runtime, but the ${options.runtime} runtime was requested; ${recreateStackAdvice(String(options.stackId))}`,
+        );
+      }
+      if (DatabaseDataState.$is("Fresh")(state)) {
         yield* Effect.annotateCurrentSpan({ "database.reuse.outcome": "fresh" });
         return;
       }

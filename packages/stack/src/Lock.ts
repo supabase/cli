@@ -209,7 +209,7 @@ export const writeLock = Effect.fn("Lock.write")(function* (projectRoot: string,
   const content = `${json}\n`;
   yield* Effect.gen(function* () {
     yield* fs.makeDirectory(path.dirname(file), { recursive: true });
-    yield* publish(fs, path, { target: file, content });
+    yield* publish(fs, path, { target: file, content, mode: 0o644 });
   }).pipe(
     Effect.mapError(
       (cause) =>
