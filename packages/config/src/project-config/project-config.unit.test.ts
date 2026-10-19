@@ -1018,10 +1018,9 @@ describe("fromApiProjectConfig — auth section", () => {
     expect(result.auth?.email?.enable_confirmations).toBe(false);
   });
 
-  test("sms_autoconfirm maps to auth.sms.enable_confirmations WITHOUT inverting", () => {
-    // Unlike mailer_autoconfirm/email.enable_confirmations, this key isn't inverted.
+  test("sms_autoconfirm inverts to auth.sms.enable_confirmations", () => {
     const result = fromApiProjectConfig({ auth: { sms_autoconfirm: true } });
-    expect(result.auth?.sms?.enable_confirmations).toBe(true);
+    expect(result.auth?.sms?.enable_confirmations).toBe(false);
   });
 
   test("rate_limit_otp renames to auth.rate_limit.sign_in_sign_ups", () => {
