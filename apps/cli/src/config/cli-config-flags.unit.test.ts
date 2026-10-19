@@ -235,10 +235,8 @@ describe("flag typing", () => {
 
   it("leaves CliConfigFlagInputs required until withCliConfigFlags provides it", () => {
     // @ts-expect-error -- the handler still requires CliConfigFlagInputs
-    requiresNothing(readInputs);
-    requiresNothing(readInputs.pipe(withCliConfigFlags(config)));
-
-    expect(true).toBe(true);
+    expect(requiresNothing(readInputs)).toBeDefined();
+    expect(requiresNothing(readInputs.pipe(withCliConfigFlags(config)))).toBeDefined();
   });
 });
 
