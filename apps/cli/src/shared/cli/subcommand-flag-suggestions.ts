@@ -1,6 +1,6 @@
 import { Option, Predicate } from "effect";
 import type { CliError, Command, HelpDoc, Param } from "effect/cli";
-import { unwrapToSingleParam } from "../../command-internal/param-introspection.ts";
+import { unwrapParam, unwrapToSingleParam } from "../../command-internal/param-introspection.ts";
 import { REMOTE_FLAG_NAME } from "../../command-internal/target/remote-vocabulary.ts";
 import { isRemoteFlag } from "../../command-internal/target/target-flags.ts";
 import { readTargetPolicy } from "../../command-internal/target/target-policy.ts";
@@ -58,13 +58,25 @@ export function helpDocFor(
   return hasHelpDoc(command) ? command.buildHelpDoc(commandPath) : undefined;
 }
 
+/** The operands a command takes, leaving out a hidden positional: it still parses but is never offered or counted. */
+export function visibleOperandsOf(
+  command: Command.Command.Any,
+): ReadonlyArray<{ readonly name: string; readonly variadic: boolean }> {
+  return commandInternals(command).config.arguments.flatMap((param) => {
+    const unwrapped = unwrapParam(param);
+    return unwrapped === undefined || unwrapped.single.hidden
+      ? []
+      : [{ name: unwrapped.single.name, variadic: unwrapped.isVariadic }];
+  });
+}
+
 /** The operand placeholders the command at `path` lists in its help, e.g. `<NAME=VALUE>...`. */
 export function operandPlaceholdersAt(
   rootCommand: Command.Command.Any,
   path: ReadonlyArray<string>,
 ): ReadonlyArray<string> {
   const command = findCommand(rootCommand, path.slice(1));
-  const operands = (command === undefined ? undefined : helpDocFor(command, path))?.args ?? [];
+  const operands = command === undefined ? [] : visibleOperandsOf(command);
   return operands.map((operand) => `<${operand.name}>${operand.variadic ? "..." : ""}`);
 }
 

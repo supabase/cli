@@ -4,7 +4,6 @@ import { getDomain } from "tldts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { announceTarget } from "../../../shared/output/command-target.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   mutuallyExclusiveFlagsMessage,
   PERSISTENT_VALUE_FLAG_NAMES,
@@ -590,13 +589,11 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       Option.isSome(positionalLang) &&
       positionalLang.value !== "typescript" &&
       !occurrences.has("lang");
-    const positionalLangError = () =>
-      new GenTypesFlagUsageError({ message: "use --lang flag to specify the typegen language" });
-    // The word after a bare `--remote` may be a branch name; the target's check rules on it first.
-    const cliArgs = Option.getOrUndefined(yield* Effect.serviceOption(CliArgs));
-    const deferPositionalLang =
-      unknownPositionalLang && positionalLang.value === cliArgs?.bareRemoteOperand;
-    if (unknownPositionalLang && !deferPositionalLang) return yield* positionalLangError();
+    if (unknownPositionalLang) {
+      return yield* new GenTypesFlagUsageError({
+        message: "use --lang flag to specify the typegen language",
+      });
+    }
 
     const selection = Result.getOrUndefined(parseTargetSelector(flags))?.selection;
     if (selection?._tag === "Linked" || selection?._tag === "Ref" || selection?._tag === "Branch") {
@@ -617,7 +614,6 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     }
 
     const target = yield* resolveTarget(flags);
-    if (deferPositionalLang) return yield* positionalLangError();
 
     yield* Effect.annotateCurrentSpan("typegen.lang", lang);
 

@@ -70,7 +70,7 @@ describe("deprecated target aliases", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("export type Database");
       expect(`${result.stdout}${result.stderr}`).toContain(
-        `--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase gen types <language> --remote=${projectRef}`,
+        `--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase gen types --remote=${projectRef}`,
       );
     },
   );

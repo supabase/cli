@@ -79,7 +79,8 @@ makes a `selectable` command remote; it is only a ref source once `--remote` is 
 alone is enough for the `default; pass --remote` hint. An unresolvable remote target fails. The CLI never falls back between local and remote.
 
 `--remote=<value>` always parses. `--remote <value>` is rewritten to `--remote=<value>` before
-parsing when the command takes no positional, when the token is a ref or URL, or when the command
+parsing when the command takes no positional (a hidden one, such as `gen types`'s legacy language,
+does not count), when the token is a ref or URL, or when the command
 already has more bare tokens than positionals. The one ambiguous shape, a bare `--remote` directly
 followed by a token the command took as a positional, is checked against the linked project's
 branches before anything runs. A token that exactly matches a branch, is within a small edit

@@ -10,7 +10,7 @@ import {
 import { isRemoteFlag } from "../../command-internal/target/target-flags.ts";
 import { commandInternals, userGlobalFlagParams } from "../../docs/docs-introspection.ts";
 import { BOOLEAN_FLAG_VALUES } from "./agent-output.ts";
-import { helpDocFor } from "./subcommand-flag-suggestions.ts";
+import { visibleOperandsOf } from "./subcommand-flag-suggestions.ts";
 
 export interface RemoteArgvLeaf {
   /** Command-path segments argv names ahead of the leaf's own operands. */
@@ -126,8 +126,9 @@ const declaresRemoteFlag = (command: Command.Command.Any): boolean =>
   });
 
 /**
- * The operand capacity of the command `path` resolves to, or `undefined` when it does not accept
- * `--remote` (as its own flag, or as a persistent flag of an ancestor such as `seed`).
+ * The operand capacity of the command `path` resolves to (a hidden positional counts for nothing),
+ * or `undefined` when it does not accept `--remote` (as its own flag, or as a persistent flag of an
+ * ancestor such as `seed`).
  */
 export function remoteOperandCapacity(
   rootCommand: Command.Command.Any,
@@ -145,6 +146,6 @@ export function remoteOperandCapacity(
   const leaf = commands[commands.length - 1];
   if (leaf === undefined) return undefined;
   if (!commands.some(declaresRemoteFlag)) return undefined;
-  const operands = helpDocFor(leaf, path)?.args ?? [];
+  const operands = visibleOperandsOf(leaf);
   return operands.some((operand) => operand.variadic) ? Infinity : operands.length;
 }

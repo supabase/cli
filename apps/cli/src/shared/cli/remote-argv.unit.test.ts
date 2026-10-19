@@ -247,14 +247,24 @@ describe("prepareCliArgs argv", () => {
       expected: ["seed", "--remote", "buckets"],
     },
     {
-      name: "leaves a branch-shaped word for gen types's legacy language operand",
+      name: "joins a branch-shaped word for gen types, whose legacy language operand is hidden",
       args: ["gen", "types", "--remote", "feature-x"],
-      expected: ["gen", "types", "--remote", "feature-x"],
+      expected: ["gen", "types", "--remote=feature-x"],
     },
     {
-      name: "joins a ref for gen types despite its legacy language operand",
+      name: "joins a ref for gen types",
       args: ["gen", "types", "--remote", REF],
       expected: ["gen", "types", `--remote=${REF}`],
+    },
+    {
+      name: "keeps gen types's legacy language written before a bare --remote",
+      args: ["gen", "types", "typescript", "--remote"],
+      expected: ["gen", "types", "typescript", "--remote"],
+    },
+    {
+      name: "joins a branch-shaped word after gen types's legacy language",
+      args: ["gen", "types", "typescript", "--remote", "feature-x"],
+      expected: ["gen", "types", "typescript", "--remote=feature-x"],
     },
     {
       name: "leaves commands without a remote flag alone",
@@ -288,14 +298,12 @@ describe("prepareCliArgs bareRemoteOperand on the real command tree", () => {
     expect(operandOf(["db", "pull", "--remote", "feature-x"])).toBe("feature-x");
   });
 
-  it("reads gen types's legacy language operand, which may be a branch", () => {
-    expect(operandOf(["gen", "types", "--remote", "feature-x"])).toBe("feature-x");
+  it("reads no operand from gen types, whose legacy language operand is hidden", () => {
+    expect(operandOf(["gen", "types", "--remote", "feature-x"])).toBeUndefined();
   });
 
-  it("lists gen types's legacy language operand among its placeholders", () => {
-    expect(prepareCliArgs(root, ["gen", "types", "--remote"]).operandPlaceholders?.()).toEqual([
-      "<language>",
-    ]);
+  it("leaves gen types's hidden legacy language operand out of its placeholders", () => {
+    expect(prepareCliArgs(root, ["gen", "types", "--remote"]).operandPlaceholders?.()).toEqual([]);
   });
 
   it("finds nothing once every word is joined into --remote=<word>", () => {

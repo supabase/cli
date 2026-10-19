@@ -39,18 +39,18 @@ The local target and `--remote=<db-url>` write no files.
 
 ## API Routes
 
-| Method   | Path                                        | Auth         | Request body                              | Response (used fields)                                                                                                                                                                                                                        |
-| -------- | ------------------------------------------- | ------------ | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`    | `/v1/projects/{ref}/types/typescript`       | Bearer token | none                                      | TypeScript type definitions text                                                                                                                                                                                                              |
-| `GET`    | `/v1/projects/{ref}`                        | Bearer token | none                                      | non-TypeScript lookup (`404` ⇒ branch ref); also the linked-project cache fill on every remote project                                                                                                                                        |
-| `GET`    | `/v1/branches/{branch_id_or_ref}`           | Bearer token | none                                      | `db_host`, `db_port`, `db_user`, `db_pass`                                                                                                                                                                                                    |
-| `POST`   | `/v1/projects/{ref}/cli/login-role`         | Bearer token | `{ read_only: false }`                    | temporary `role` and `password`                                                                                                                                                                                                               |
-| `GET`    | `/v1/projects/{ref}/config/database/pooler` | Bearer token | none                                      | primary pooler `connection_string`                                                                                                                                                                                                            |
-| `POST`   | `/v1/projects/{ref}/network-bans/retrieve`  | Bearer token | none                                      | `banned_ipv4_addresses`                                                                                                                                                                                                                       |
-| `DELETE` | `/v1/projects/{ref}/network-bans`           | Bearer token | `{ ipv4_addresses, requester_ip: false }` | none                                                                                                                                                                                                                                          |
-| `GET`    | `/v1/projects`                              | Bearer token | none                                      | project list for the ref prompt: bare `--remote` with no ref from `SUPABASE_PROJECT_ID` or `.temp/project-ref`, with stdin and stdout TTYs and a non-JSON output format                                                                       |
-| `GET`    | `/v1/projects/{parent}/branches`            | Bearer token | none                                      | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>` (or an alias given a branch name), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
-| `GET`    | `/v1/branches/{id}`                         | Bearer token | none                                      | `{ref, status, …}` — only for `--remote=<branch UUID>` when no project is linked                                                                                                                                                              |
+| Method   | Path                                        | Auth         | Request body                              | Response (used fields)                                                                                                                                                  |
+| -------- | ------------------------------------------- | ------------ | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/v1/projects/{ref}/types/typescript`       | Bearer token | none                                      | TypeScript type definitions text                                                                                                                                        |
+| `GET`    | `/v1/projects/{ref}`                        | Bearer token | none                                      | non-TypeScript lookup (`404` ⇒ branch ref); also the linked-project cache fill on every remote project                                                                  |
+| `GET`    | `/v1/branches/{branch_id_or_ref}`           | Bearer token | none                                      | `db_host`, `db_port`, `db_user`, `db_pass`                                                                                                                              |
+| `POST`   | `/v1/projects/{ref}/cli/login-role`         | Bearer token | `{ read_only: false }`                    | temporary `role` and `password`                                                                                                                                         |
+| `GET`    | `/v1/projects/{ref}/config/database/pooler` | Bearer token | none                                      | primary pooler `connection_string`                                                                                                                                      |
+| `POST`   | `/v1/projects/{ref}/network-bans/retrieve`  | Bearer token | none                                      | `banned_ipv4_addresses`                                                                                                                                                 |
+| `DELETE` | `/v1/projects/{ref}/network-bans`           | Bearer token | `{ ipv4_addresses, requester_ip: false }` | none                                                                                                                                                                    |
+| `GET`    | `/v1/projects`                              | Bearer token | none                                      | project list for the ref prompt: bare `--remote` with no ref from `SUPABASE_PROJECT_ID` or `.temp/project-ref`, with stdin and stdout TTYs and a non-JSON output format |
+| `GET`    | `/v1/projects/{parent}/branches`            | Bearer token | none                                      | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>` (or an alias given a branch name); `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project  |
+| `GET`    | `/v1/branches/{id}`                         | Bearer token | none                                      | `{ref, status, …}` — only for `--remote=<branch UUID>` when no project is linked                                                                                        |
 
 The TypeScript endpoint is called for a remote project (`--remote`, `--remote=<ref>`,
 `--remote=<branch>` or an alias) when `--lang=typescript`. For other languages on a remote project
@@ -107,7 +107,7 @@ way `--remote=<db-url>` does.
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success — types printed to stdout                                                                                                                                                                                                                                             |
 | `1`  | conflicting target flags (see Notes): two selectors, `--project-ref` or `--project-id` combined with `--local`, `--db-url` or `--remote=<value>`, or `--project-id` combined with `--project-ref` (`TargetSelectorConflictError`, `TargetProjectRefConflictError`)            |
-| `1`  | an empty `--db-url`, `--project-ref` or `--project-id` (`TargetEmptyValueError`), `--remote` switched off or given an empty value, or a bare `--remote` followed by a word that is a branch of the linked project (`TargetRemoteAmbiguousError`)                              |
+| `1`  | an empty `--db-url`, `--project-ref` or `--project-id` (`TargetEmptyValueError`), `--remote` switched off or given an empty value                                                                                                                                             |
 | `1`  | `--remote=<branch>` matches no branch of the linked project (`LinkBranchNotFoundError`, lists the branches that exist)                                                                                                                                                        |
 | `1`  | a remote project selector (`--remote`, `--remote=<ref>`, `--remote=<branch>`, `--linked`, `--project-ref` or `--project-id`) combined with `--postgrest-v9-compat`, `--query-timeout` or a language flag (`GenTypesFlagUsageError`); `--remote=<db-url>` is outside the group |
 | `1`  | `--postgrest-v9-compat` used without `--remote=<db-url>` or `--db-url` (`GenTypesFlagUsageError`)                                                                                                                                                                             |
@@ -135,7 +135,7 @@ linked directory the banner ends with `· default; pass --remote for <project>`.
 Compose stack the banner prints before the running check, so a stopped stack still shows the chosen
 target. In-process TypeScript also prints a stderr note that the output is unformatted.
 Each deprecated selector additionally prints its warning on stderr, for example
-`--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase gen types <language> --remote=<ref>`.
+`--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase gen types --remote=<ref>`.
 
 ### `--output-format json`
 
@@ -154,18 +154,16 @@ Not applicable.
   targets the linked project (`SUPABASE_PROJECT_ID`, else `.temp/project-ref`). `--remote=<value>`
   is read as a project ref (20 lowercase letters), a database URL (`postgres://` or
   `postgresql://`), `true|yes|on|1` (the linked project), or otherwise the name of a branch of the
-  linked project, which resolves to that branch's own project. `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to target the local database.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A bare `--remote`
-  followed by a word that exactly matches a branch of the linked project, is within a small edit
-  distance of one, or can't be checked because the branch listing failed stops the run with an error
-  that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project.
-  Any other word runs as the operand. The
+  linked project, which resolves to that branch's own project. `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to target the local database.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` `--remote <word>` is always read as
+  `--remote=<word>`: the legacy positional language is hidden and takes no part in that reading, so a
+  language goes before `--remote` (`gen types typescript --remote`). The
   resolved target is announced on stderr (`Target: …`) in every output format.
 - **Deprecated selectors.** `--linked`, `--project-ref`, `--project-id`, `--db-url` and `--local`
   are hidden aliases that still select their target and print a warning on stderr naming the
   replacement, for example
-  `--linked is deprecated and will be removed in v4. Use --remote instead: supabase gen types <language> --remote`,
-  `--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase gen types <language> --remote=<ref>`
-  and `--local isn't needed (local is the default) and will be removed in v4: supabase gen types <language>`; a
+  `--linked is deprecated and will be removed in v4. Use --remote instead: supabase gen types --remote`,
+  `--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase gen types --remote=<ref>`
+  and `--local isn't needed (local is the default) and will be removed in v4: supabase gen types`; a
   database URL is never echoed. Two selectors together fail
   (`Only one of --remote, --linked, --db-url and --local can be set; got …`), `--project-ref` and
   `--project-id` cannot be combined with `--local`, `--db-url` or `--remote=<value>`, an empty
@@ -181,11 +179,8 @@ Not applicable.
   members, so they accept all three. These groups and the other usage guards
   (`--postgrest-v9-compat` without a database target, a positional language other than
   `typescript` without `--lang`) run before the target resolves, so a usage error never costs a
-  network call or prints a `Target:` banner; the one exception is a positional language that is
-  also the word after a bare `--remote`, which the branch check rules on first. The command reads
-  its own rewritten command line, so
-  `--remote <ref>` and `--remote <url>` mean `--remote=<ref>` and `--remote=<url>`, and the word is not
-  taken as the positional language.
+  network call or prints a `Target:` banner. The command reads its own rewritten command line, so
+  `--remote <word>` means `--remote=<word>`, and the word is not taken as the positional language.
 - With the local target, a missing `supabase/config.toml` uses the embedded config defaults plus
   shell and nested dotenv overrides, matching the CLI. The database password is the `[db].password`
   value (default `postgres`); `SUPABASE_DB_PASSWORD` has no effect, and the command has no
