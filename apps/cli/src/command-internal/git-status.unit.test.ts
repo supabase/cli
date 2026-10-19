@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Option, PlatformError, Sink, Stream } from "effect";
+import { Deferred, Effect, Option, Path, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 
 import { pathHasUncommittedChanges } from "./git-status.ts";
@@ -26,14 +26,12 @@ function mockSpawner(
       spawned.push({ command: cmd, args, cwd });
 
       if (opts.spawnFails === true) {
-        return yield* Effect.fail(
-          PlatformError.systemError({
-            _tag: "NotFound",
-            module: "ChildProcess",
-            method: "spawn",
-            description: `${cmd} not found`,
-          }),
-        );
+        return yield* PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          description: `${cmd} not found`,
+        });
       }
 
       const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
@@ -71,6 +69,7 @@ describe("pathHasUncommittedChanges", () => {
     const mock = mockSpawner({ stdout: " M config.toml\n" });
     return pathHasUncommittedChanges("/repo/supabase/config.toml").pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+      Effect.provide(Path.layer),
       Effect.map((result) => {
         expect(Option.isSome(result)).toBe(true);
         if (Option.isSome(result)) expect(result.value).toBe(true);
@@ -82,6 +81,7 @@ describe("pathHasUncommittedChanges", () => {
     const mock = mockSpawner({ stdout: "" });
     return pathHasUncommittedChanges("/repo/supabase/config.toml").pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+      Effect.provide(Path.layer),
       Effect.map((result) => {
         expect(Option.isSome(result)).toBe(true);
         if (Option.isSome(result)) expect(result.value).toBe(false);
@@ -93,6 +93,7 @@ describe("pathHasUncommittedChanges", () => {
     const mock = mockSpawner({ exitCode: 128, stdout: "" });
     return pathHasUncommittedChanges("/repo/supabase/config.toml").pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+      Effect.provide(Path.layer),
       Effect.map((result) => {
         expect(Option.isNone(result)).toBe(true);
       }),
@@ -103,6 +104,7 @@ describe("pathHasUncommittedChanges", () => {
     const mock = mockSpawner({ spawnFails: true });
     return pathHasUncommittedChanges("/repo/supabase/config.toml").pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+      Effect.provide(Path.layer),
       Effect.map((result) => {
         expect(Option.isNone(result)).toBe(true);
       }),
@@ -115,6 +117,7 @@ describe("pathHasUncommittedChanges", () => {
       const mock = mockSpawner({ stdout: "" });
       return pathHasUncommittedChanges("/repo/supabase/config.toml").pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+        Effect.provide(Path.layer),
         Effect.map(() => {
           expect(mock.spawned).toEqual([
             {
@@ -134,6 +137,7 @@ describe("pathHasUncommittedChanges", () => {
       const mock = mockSpawner({ stdout: " M migrations/20260101000000_init.sql\n" });
       return pathHasUncommittedChanges("/repo/supabase/migrations").pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+        Effect.provide(Path.layer),
         Effect.map((result) => {
           expect(Option.isSome(result)).toBe(true);
           if (Option.isSome(result)) expect(result.value).toBe(true);

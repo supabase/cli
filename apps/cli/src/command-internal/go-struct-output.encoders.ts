@@ -1,3 +1,5 @@
+import { Data } from "effect";
+
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -996,11 +998,11 @@ function yamlBlockLiteral(s: string, indent: number): string {
  * `nullable.Nullable` field (`map[bool]T` has a non-string key type — observed
  * on `snippets list -o toml`) or a `nil` element inside an inline array.
  */
-export class GoTomlEncodeError extends Error {
+export class GoTomlEncodeError extends Data.Error<{ readonly message: string }> {
   static readonly [ErrorActionabilityFingerprintId] = "GoTomlEncodeError";
+  override readonly name = "GoTomlEncodeError";
   constructor(message = "toml: cannot encode a map with non-string key type") {
-    super(message);
-    this.name = "GoTomlEncodeError";
+    super({ message });
   }
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

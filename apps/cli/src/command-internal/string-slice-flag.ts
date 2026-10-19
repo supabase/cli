@@ -12,6 +12,7 @@ import {
  *
  * Whitespace is not trimmed and empty fields are not dropped.
  */
+import { Data } from "effect";
 import { Flag } from "effect/cli";
 
 const QUOTE = 0x22; // "
@@ -31,13 +32,14 @@ const lengthNL = (b: Uint8Array): number => (b.length > 0 && b[b.length - 1] ===
  * (with a `record on line N; ` prefix when the record started on an earlier
  * line), or the literal `EOF` when the value is only blank lines.
  */
-export class StringSliceFlagParseError extends Error {
-  static readonly [ErrorActionabilityFingerprintId] = "StringSliceFlagParseError";
+export class StringSliceFlagParseError extends Data.Error<{
   readonly value: string;
+  readonly message: string;
+}> {
+  static readonly [ErrorActionabilityFingerprintId] = "StringSliceFlagParseError";
+  override readonly name = "StringSliceFlagParseError";
   private constructor(value: string, message: string) {
-    super(message);
-    this.name = "StringSliceFlagParseError";
-    this.value = value;
+    super({ value, message });
   }
   /** Line/column are 1-based; column is a byte offset within the physical line. */
   static parse(

@@ -21,7 +21,7 @@ FROM postgrest/postgrest:v16.4 AS postgrest
 
 FROM supabase/postgres-meta:v0.100.0 AS pgmeta
 
-FROM supabase/studio:2026.10.12-sha-3699278 AS studio
+FROM supabase/studio:2026.10.19-sha-b375769 AS studio
 
 FROM darthsim/imgproxy:v3.26.0 AS imgproxy
 
@@ -33,7 +33,7 @@ FROM supabase/supavisor:2.9.13 AS supavisor
 
 FROM supabase/gotrue:v2.197.0 AS gotrue
 
-FROM supabase/realtime:v2.144.2 AS realtime
+FROM supabase/realtime:v2.145.3 AS realtime
 
 FROM supabase/storage-api:v1.83.5 AS storage
 

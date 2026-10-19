@@ -12,6 +12,7 @@ import {
   Redacted,
   Ref,
   Result,
+  Schema,
   Stream,
 } from "effect";
 import { FetchHttpClient } from "effect/http";
@@ -28,6 +29,7 @@ import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
 import { stackArtifactCacheRoot } from "../../tests/helpers/stack-artifacts.ts";
 
 const cacheRoot = stackArtifactCacheRoot;
+const decodeJson = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
 const jwtSecret = "stack-catalog-setup-integration-secret";
 
 describe("stack catalog setup", { timeout: 180_000 }, () => {
@@ -205,8 +207,8 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                       Effect.sync(() => errors.push(new TextDecoder().decode(bytes))),
                   });
                   expect(tenantJwksQuery.exitCode, errors.join("")).toBe(0);
-                  expect(JSON.parse(tenantJwks.join("").trim())).toEqual(
-                    JSON.parse(credentials.jwks),
+                  expect(decodeJson(tenantJwks.join("").trim())).toEqual(
+                    decodeJson(credentials.jwks),
                   );
 
                   const realtime = members.find((member) => member.service === "realtime");
