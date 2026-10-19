@@ -2,11 +2,15 @@ import type { ConfigChange } from "@supabase/config";
 
 import { formatNamedRef, sanitizeInlineName } from "../../../command-internal/http-errors.ts";
 import {
+  configEnvOriginList,
+  configEnvOriginPayload,
   configPlural,
   configRenderChangeLines,
   configRenderPath,
   configRenderValue,
   type ConfigApiScope,
+  type ConfigEnvOrigin,
+  type ConfigEnvOriginLookup,
 } from "../config.format.ts";
 import type { ConfigPushTarget } from "./push.branch-target.ts";
 import { comparePaths, pathIn } from "./push.paths.ts";
@@ -45,6 +49,12 @@ interface PushExtra {
 export interface PushForced {
   readonly path: ReadonlyArray<string>;
   readonly value: unknown;
+}
+
+/** A pushed path whose value an environment variable supplied. */
+export interface PushEnvSourced {
+  readonly path: ReadonlyArray<string>;
+  readonly origin: ConfigEnvOrigin;
 }
 
 const PUSH_UPDATING_PREFIX: Readonly<Record<PushResource, string>> = {
@@ -160,6 +170,7 @@ export interface PushUpdatingLineInput {
   readonly secretsEncoded: ReadonlyArray<ReadonlyArray<string>>;
   readonly extras: ReadonlyArray<PushExtra>;
   readonly forced: ReadonlyArray<PushForced>;
+  readonly originFor?: ConfigEnvOriginLookup;
 }
 
 /**
@@ -170,11 +181,19 @@ export interface PushUpdatingLineInput {
 export function pushUpdatingLine(input: PushUpdatingLineInput): string {
   return (
     `${PUSH_UPDATING_PREFIX[input.resource]}\n` +
-    configRenderChangeLines(input.changes) +
+    configRenderChangeLines(input.changes, input.originFor) +
     renderSecretBlocks(input.secrets, input.secretsEncoded) +
     renderExtraBlocks(input.extras) +
     renderForcedBlocks(input.forced)
   );
+}
+
+/** The one stderr line naming every value an environment variable supplied, printed even with `--yes`. */
+export function pushEnvSourcedLine(entries: ReadonlyArray<PushEnvSourced>): string {
+  const rendered = entries
+    .map((entry) => `${configRenderPath(entry.path)} (${configEnvOriginList(entry.origin)})`)
+    .join(", ");
+  return `Pushing ${configPlural(entries.length, "value", "values")} set by environment variables: ${rendered}\n`;
 }
 
 /** The `Remote <resource> config is up to date.` line — no pushable difference existed. */
@@ -300,6 +319,8 @@ export interface PushPayloadInput {
   readonly declinedAddons: ReadonlyArray<string>;
   readonly remoteOnly: number;
   readonly scope: ConfigApiScope;
+  /** Pushed paths an environment variable supplied; the payload omits the field when empty. */
+  readonly envSourced?: ReadonlyArray<PushEnvSourced>;
 }
 
 /**
@@ -416,6 +437,14 @@ export function pushPayload(input: PushPayloadInput): Record<string, unknown> {
     declined_addons: input.declinedAddons,
     remote_only: input.remoteOnly,
     scope: { present: input.scope.present, missing: input.scope.missing },
+    ...(input.envSourced === undefined || input.envSourced.length === 0
+      ? {}
+      : {
+          env_sourced: input.envSourced.map((entry) => ({
+            path: entry.path,
+            origin: configEnvOriginPayload(entry.origin),
+          })),
+        }),
   };
 }
 

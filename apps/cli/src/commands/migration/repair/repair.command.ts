@@ -8,10 +8,13 @@ import {
 } from "../../../command-internal/command-permissions/model.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { migrationDbRuntimeLayer } from "../migration.layers.ts";
 import { migrationRepair } from "./repair.handler.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 
 const config = {
   versions: Argument.String("version").pipe(
@@ -40,11 +43,12 @@ const config = {
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  password: Flag.String("password").pipe(
-    Flag.withAlias("p"),
-    Flag.withDescription("Password to your remote Postgres database."),
-    Flag.optional,
-  ),
+  password: CliConfigKeys.linkedDb.password.flag({
+    name: "password",
+    alias: "p",
+    description:
+      "Database password for the linked project (--linked/--project-ref). Not used with --local or --db-url.",
+  }),
 } as const;
 
 export const migrationRepairCommand = Command.make("repair", config).pipe(
@@ -89,4 +93,6 @@ export const migrationRepairCommand = Command.make("repair", config).pipe(
     ),
   ),
   Command.provide(migrationDbRuntimeLayer(["migration", "repair"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

@@ -4,6 +4,7 @@ import * as Net from "node:net";
 import { DebugFlag, NetworkIdFlag } from "./global-flags.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
+import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import { readDbToml } from "./db-config.toml-read.ts";
 import { getRegistryImageUrl } from "./docker-registry.ts";
 import { DockerRun } from "./docker-run.service.ts";
@@ -49,6 +50,7 @@ export const edgeRuntimeScriptLayer = Layer.effect(
     const debug = yield* DebugFlag;
     const networkIdFlag = yield* NetworkIdFlag;
     const runtimeInfo = yield* RuntimeInfo;
+    const configValues = yield* CliConfigValues;
     // The pg-delta container needs `host.docker.internal:host-gateway` on Linux only, so a
     // `host.docker.internal` local DB host (from SUPABASE_SERVICES_HOSTNAME) resolves inside the
     // container on Linux/dev-container; Docker Desktop already provides this on macOS/Windows.
@@ -79,6 +81,7 @@ export const edgeRuntimeScriptLayer = Layer.effect(
           const denoVersion =
             opts.denoVersion ??
             (yield* readDbToml(fs, path, workdir).pipe(
+              Effect.provideService(CliConfigValues, configValues),
               Effect.mapError((error) => new EdgeRuntimeScriptError({ message: error.message })),
             )).denoVersion;
           const registryImage = yield* getRegistryImageUrl(

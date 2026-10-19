@@ -52,6 +52,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
+import { configValuesLayer } from "../../../tests/helpers/config-values-layer.ts";
 import {
   buildTestRuntime,
   VALID_REF,
@@ -63,6 +64,7 @@ import {
   mockShadowContainerCliSpawner,
   mockTelemetryStateTracked,
   transportFailure,
+  withConfigEnv,
   shadowCacheDisabledLayer,
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
@@ -619,7 +621,7 @@ function withConfirmSideEffect(
 }
 
 interface SetupOpts {
-  readonly goOutput?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
+  readonly outputFlag?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
   readonly yes?: boolean;
   readonly stdinIsTty?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
@@ -639,7 +641,7 @@ interface SetupOpts {
   readonly confirmSideEffect?: Effect.Effect<void, PlatformError.PlatformError>;
   /** Overrides `cliSettings.workdir` — defaults to the temp project root. */
   readonly workdir?: string;
-  /** Overrides the ambient `--experimental`/`SUPABASE_EXPERIMENTAL` gate — defaults to `false`. */
+  /** Overrides the global `--experimental` flag — defaults to `false`. */
   readonly experimental?: boolean;
   /** Runs the real database config resolver and linked-project cache, so their Management API
    *  calls are recorded. The direct database host is unreachable unless a test opts in. */
@@ -715,6 +717,7 @@ function setupRuntime(
   });
 
   const layer = Layer.mergeAll(
+    configValuesLayer({ output: outputLayer }),
     buildTestRuntime({
       out: { layer: outputLayer },
       api,
@@ -732,7 +735,7 @@ function setupRuntime(
           : linkedProjectCache.layer,
       processControl: { layer: processControl.layer },
       analytics: { layer: analytics.layer },
-      goOutput: opts.goOutput ?? Option.none(),
+      outputFlag: opts.outputFlag ?? Option.none(),
     }),
     machineErrorContextLayer,
     commandRuntimeLayer(["pull"]).pipe(Layer.provide(BunServices.layer)),
@@ -1460,32 +1463,31 @@ describe("pull integration", () => {
   );
 
   it.effect(
-    "the db step stays in migration mode with the ambient --experimental gate on, never taking the declarative export path",
+    "the db step pulls migrations when --experimental or SUPABASE_EXPERIMENTAL is set",
     () => {
       const { layer, out } = setup({
         yes: true,
         experimental: true,
         remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
-        // A real diff, so the db step actually writes. If `pullDbStep` didn't forward
-        // `forceMigrationMode: true`, the ambient `--experimental` gate would route this to
-        // the declarative path instead, which the mocked `PgDeltaEngine.exportDeclarativeSchema`
-        // dies on.
         diffOutcome: () => ({
           changes: true,
           files: [{ name: "pull", sql: "alter table foo add column bar text;" }],
         }),
       });
-      return Effect.gen(function* () {
-        yield* TestClock.setTime(AFTER_SEEDED_MIGRATIONS);
-        yield* writeConfig();
-        yield* seedLocalMigration("20260101000000");
-        const exit = yield* Effect.exit(runPull(pullFlags()));
-        expect(Exit.isSuccess(exit)).toBe(true);
+      return withConfigEnv(
+        { SUPABASE_EXPERIMENTAL: "true" },
+        Effect.gen(function* () {
+          yield* TestClock.setTime(AFTER_SEEDED_MIGRATIONS);
+          yield* writeConfig();
+          yield* seedLocalMigration("20260101000000");
+          const exit = yield* Effect.exit(runPull(pullFlags()));
+          expect(Exit.isSuccess(exit)).toBe(true);
 
-        expect((yield* listMigrations).length).toBeGreaterThan(1);
-        expect(yield* projectFileExists("supabase", "schemas")).toBe(false);
-        expect(stepLine(out.stdoutText, "db")).toContain("changed");
-      }).pipe(Effect.provide(layer));
+          expect((yield* listMigrations).length).toBeGreaterThan(1);
+          expect(yield* projectFileExists("supabase", "schemas")).toBe(false);
+          expect(stepLine(out.stdoutText, "db")).toContain("changed");
+        }).pipe(Effect.provide(layer)),
+      );
     },
   );
 
@@ -1516,7 +1518,7 @@ describe("pull integration", () => {
   it.effect(
     "supabase pull -o json fails with a message pointing at --output-format, not a machine payload",
     () => {
-      const { layer, api } = setup({ goOutput: Option.some("json") });
+      const { layer, api } = setup({ outputFlag: Option.some("json") });
       return Effect.gen(function* () {
         yield* writeConfig();
         const exit = yield* Effect.exit(runPull(pullFlags()));

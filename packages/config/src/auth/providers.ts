@@ -118,12 +118,7 @@ const provider = (providerConfig: {
 
 const defaultExternal = {};
 
-/**
- * The deprecated `linkedin`/`slack` provider ids aren't modeled here — only
- * their `_oidc` replacements (`linkedin_oidc`, `slack_oidc`) are. `io.ts`'s
- * `normalizeDeprecatedExternalProviders` strips a config's `linkedin`/`slack`
- * table (warning on stderr if it was enabled) before this schema ever sees it.
- */
+/** OAuth providers. The removed `linkedin`/`slack` ids are rejected on load; use `linkedin_oidc`/`slack_oidc`. */
 export const external = Schema.Struct({
   apple: provider({
     id: "apple",
