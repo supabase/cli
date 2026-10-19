@@ -1,5 +1,8 @@
 import { Predicate } from "effect";
-import type { CliError, Command, HelpDoc } from "effect/cli";
+import type { CliError, Command, HelpDoc, Param } from "effect/cli";
+import { unwrapToSingleParam } from "../../command-internal/param-introspection.ts";
+import { REMOTE_FLAG_NAME } from "../../command-internal/target/remote-value.ts";
+import { commandInternals } from "../../docs/docs-introspection.ts";
 import { formatInvalidValueMessage } from "./invalid-value-message.ts";
 
 export interface CliErrorSuggestionContext {
@@ -27,10 +30,19 @@ interface CommandWithHelpDoc extends Command.Command.Any {
   readonly buildHelpDoc: (path: ReadonlyArray<string>) => HelpDoc.HelpDoc;
 }
 
+/** `"optional-value"` is a flag that is a switch bare and takes its value only through `=` (`--remote`). */
+type FlagArity = "switch" | "value" | "optional-value";
+
+interface CommandFlag {
+  readonly name: string;
+  readonly aliases: ReadonlyArray<string>;
+  readonly arity: FlagArity;
+}
+
 interface MatchingCommand {
   readonly command: Command.Command.Any;
   readonly commandPath: ReadonlyArray<string>;
-  readonly flag: HelpDoc.FlagDoc;
+  readonly flag: CommandFlag;
 }
 
 function hasHelpDoc(command: Command.Command.Any): command is CommandWithHelpDoc {
@@ -42,6 +54,26 @@ export function helpDocFor(
   commandPath: ReadonlyArray<string>,
 ): HelpDoc.HelpDoc | undefined {
   return hasHelpDoc(command) ? command.buildHelpDoc(commandPath) : undefined;
+}
+
+const flagArityOf = (single: Param.Single<Param.ParamKind, unknown>): FlagArity => {
+  if (single.primitiveType._tag !== "Boolean") return "value";
+  return single.name === REMOTE_FLAG_NAME ? "optional-value" : "switch";
+};
+
+/** Every flag the command parses, hidden aliases included: parsing consumes their values like any other flag's. */
+function commandFlagsFor(command: Command.Command.Any): ReadonlyArray<CommandFlag> {
+  return commandInternals(command).config.flags.flatMap((param) => {
+    const single = unwrapToSingleParam(param);
+    if (single === undefined) return [];
+    return [
+      {
+        name: single.name,
+        aliases: single.aliases.map((alias) => (alias.length === 1 ? `-${alias}` : `--${alias}`)),
+        arity: flagArityOf(single),
+      },
+    ];
+  });
 }
 
 function findCommand(
@@ -100,11 +132,8 @@ function collectDescendants(
         if (child.unlisted) continue;
 
         const childPath = [...path, child.name];
-        const helpDoc = helpDocFor(child, childPath);
-        if (helpDoc) {
-          for (const flag of helpDoc.flags) {
-            matches.push({ command: child, commandPath: childPath, flag });
-          }
+        for (const flag of commandFlagsFor(child)) {
+          matches.push({ command: child, commandPath: childPath, flag });
         }
         visit(child, childPath);
       }
@@ -126,10 +155,10 @@ function normalizeOption(option: string): string {
   return withoutValue;
 }
 
-function flagMatchesOption(flag: HelpDoc.FlagDoc, option: string): boolean {
+function flagMatchesOption(flag: CommandFlag, option: string): boolean {
   const optionName = normalizeOption(option);
   if (flag.name === optionName) return true;
-  if (flag.type === "boolean" && optionName === `no-${flag.name}`) return true;
+  if (flag.arity !== "value" && optionName === `no-${flag.name}`) return true;
   return flag.aliases.includes(option);
 }
 
@@ -146,16 +175,15 @@ export function flagAliasesFor(
 ): ReadonlyArray<string> {
   const command = findCommand(rootCommand, commandPath.slice(1));
   if (!command) return [];
-  const flag = helpDocFor(command, commandPath)?.flags.find(
-    (candidate) => candidate.name === option,
-  );
+  const flag = commandFlagsFor(command).find((candidate) => candidate.name === option);
   return flag?.aliases ?? [];
 }
 
 /**
  * Builds a lookup for whether an argv token (a canonical `--name` or an alias) at `commandPath`
- * belongs to a value-taking flag (any flag whose type isn't `"boolean"`), answering `false` for
- * every token when `commandPath` doesn't resolve to a real command. Used by `run.ts`'s
+ * belongs to a flag that takes the next token as its value, hidden deprecated aliases included
+ * and `--remote` excluded (its value comes only through `=`). Answers `false` for every token
+ * when `commandPath` doesn't resolve to a real command. Used by `run.ts`'s
  * `isMissingFlagTokenPresent` to detect when the token would have been consumed as a preceding
  * flag's value instead of treating it as its own occurrence.
  */
@@ -164,11 +192,10 @@ export function isValueTakingFlagTokenFor(
   commandPath: ReadonlyArray<string>,
 ): (token: string) => boolean {
   const command = findCommand(rootCommand, commandPath.slice(1));
-  const flags = command && helpDocFor(command, commandPath)?.flags;
-  if (!flags) return () => false;
+  if (!command) return () => false;
   const valueTakingTokens = new Set<string>();
-  for (const flag of flags) {
-    if (flag.type === "boolean") continue;
+  for (const flag of commandFlagsFor(command)) {
+    if (flag.arity !== "value") continue;
     valueTakingTokens.add(`--${flag.name}`);
     for (const alias of flag.aliases) valueTakingTokens.add(alias);
   }
@@ -218,9 +245,16 @@ function formatCommandList(matches: ReadonlyArray<MatchingCommand>): string {
   return `${commands.slice(0, -1).join(", ")}, and ${commands[commands.length - 1]}`;
 }
 
-function formatFlagUsage(option: string, flag: HelpDoc.FlagDoc): string {
+function formatFlagUsage(option: string, flag: CommandFlag): string {
   const flagToken = optionToken(option);
-  return flag.type === "boolean" ? flagToken : `${flagToken} <value>`;
+  switch (flag.arity) {
+    case "switch":
+      return flagToken;
+    case "optional-value":
+      return `${flagToken}[=<value>]`;
+    case "value":
+      return `${flagToken} <value>`;
+  }
 }
 
 function findValueAfterOption(args: ReadonlyArray<string>, option: string): string | undefined {
@@ -263,7 +297,7 @@ function buildSubcommandFlagHint(
     ? `, for example:\n    ${attempted.commandPath.join(" ")} ${formatFlagUsage(error.option, attempted.flag)}`
     : ".";
   const consumedValue =
-    attempted && attempted.flag.type !== "boolean"
+    attempted && attempted.flag.arity === "value"
       ? findValueAfterOption(context.args, error.option)
       : undefined;
 

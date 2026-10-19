@@ -2,11 +2,10 @@ import { CliError, Command } from "effect/cli";
 import { describe, expect, it } from "vitest";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { networkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
-import { ssoCommand } from "../../commands/sso/sso.command.ts";
 import { formatCliErrorsForDisplay } from "./subcommand-flag-suggestions.ts";
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([branchesCommand, networkRestrictionsCommand, ssoCommand]),
+  Command.withSubcommands([branchesCommand, networkRestrictionsCommand]),
 );
 
 describe("subcommand flag placement suggestions", () => {
@@ -14,32 +13,38 @@ describe("subcommand flag placement suggestions", () => {
     const errors = formatCliErrorsForDisplay(
       [
         new CliError.UnrecognizedOption({
-          option: "--attribute-mapping-file",
-          command: ["supabase", "sso"],
+          option: "--project-ref",
+          command: ["supabase", "network-restrictions"],
           suggestions: [],
         }),
         new CliError.UnknownSubcommand({
-          subcommand: "mapping.json",
-          parent: ["supabase", "sso"],
+          subcommand: "jacraenyzrorgjhsdvvf",
+          parent: ["supabase", "network-restrictions"],
           suggestions: [],
         }),
       ],
       {
         rootCommand: testRoot,
-        args: ["sso", "--attribute-mapping-file", "mapping.json", "add", "--experimental"],
+        args: [
+          "network-restrictions",
+          "--project-ref",
+          "jacraenyzrorgjhsdvvf",
+          "get",
+          "--experimental",
+        ],
       },
     );
 
     expect(errors.changed).toBe(true);
     expect(errors.errors).toHaveLength(1);
     expect(errors.errors[0]?.message).toContain(
-      "Unrecognized flag: --attribute-mapping-file in command supabase sso",
+      "Unrecognized flag: --project-ref in command supabase network-restrictions",
     );
     expect(errors.errors[0]?.message).toContain(
-      "Hint: --attribute-mapping-file is available on `supabase sso add` and `supabase sso update`.",
+      "Hint: --project-ref is available on `supabase network-restrictions get` and `supabase network-restrictions update`.",
     );
     expect(errors.errors[0]?.message).toContain(
-      "supabase sso add --attribute-mapping-file <value>",
+      "supabase network-restrictions get --project-ref <value>",
     );
     expect(errors.errors[0]?.message).not.toContain("Unknown subcommand");
   });
@@ -71,14 +76,19 @@ describe("subcommand flag placement suggestions", () => {
     const errors = formatCliErrorsForDisplay(
       [
         new CliError.UnrecognizedOption({
-          option: "--remote=abcdefghijklmnopqrst",
+          option: "--project-ref",
           command: ["supabase", "branches"],
+          suggestions: [],
+        }),
+        new CliError.UnknownSubcommand({
+          subcommand: "abcdefghijklmnopqrst",
+          parent: ["supabase", "branches"],
           suggestions: [],
         }),
       ],
       {
         rootCommand: testRoot,
-        args: ["branches", "--remote=abcdefghijklmnopqrst", "get"],
+        args: ["branches", "--project-ref", "abcdefghijklmnopqrst", "get"],
       },
     );
 
@@ -88,31 +98,77 @@ describe("subcommand flag placement suggestions", () => {
     expect(errors.errors[0]?.message).not.toContain("branches disable");
   });
 
-  it("normalizes assigned flags in placement examples", () => {
+  it("shows --remote as taking its value only through =", () => {
     const errors = formatCliErrorsForDisplay(
       [
         new CliError.UnrecognizedOption({
-          option: "--attribute-mapping-file=mapping.json",
-          command: ["supabase", "sso"],
+          option: "--remote",
+          command: ["supabase", "network-restrictions"],
           suggestions: [],
         }),
       ],
       {
         rootCommand: testRoot,
-        args: ["sso", "--attribute-mapping-file=mapping.json", "add"],
+        args: ["network-restrictions", "--remote", "get"],
       },
     );
 
     expect(errors.changed).toBe(true);
     expect(errors.errors[0]?.message).toContain(
-      "Hint: --attribute-mapping-file is available on `supabase sso add` and `supabase sso update`.",
+      "Hint: --remote is available on `supabase network-restrictions get` and `supabase network-restrictions update`.",
     );
     expect(errors.errors[0]?.message).toContain(
-      "supabase sso add --attribute-mapping-file <value>",
+      "supabase network-restrictions get --remote[=<value>]",
     );
-    expect(errors.errors[0]?.message).not.toContain(
-      "--attribute-mapping-file=mapping.json <value>",
+  });
+
+  it("keeps the subcommand after a misplaced --remote instead of reading it as the flag's value", () => {
+    const errors = formatCliErrorsForDisplay(
+      [
+        new CliError.UnrecognizedOption({
+          option: "--remote",
+          command: ["supabase", "network-restrictions"],
+          suggestions: [],
+        }),
+        new CliError.UnknownSubcommand({
+          subcommand: "get",
+          parent: ["supabase", "network-restrictions"],
+          suggestions: [],
+        }),
+      ],
+      {
+        rootCommand: testRoot,
+        args: ["network-restrictions", "--remote", "get"],
+      },
     );
+
+    expect(errors.errors).toHaveLength(2);
+    expect(errors.errors[1]?.message).toContain("Unknown subcommand");
+  });
+
+  it("normalizes assigned flags in placement examples", () => {
+    const errors = formatCliErrorsForDisplay(
+      [
+        new CliError.UnrecognizedOption({
+          option: "--project-ref=jacraenyzrorgjhsdvvf",
+          command: ["supabase", "network-restrictions"],
+          suggestions: [],
+        }),
+      ],
+      {
+        rootCommand: testRoot,
+        args: ["network-restrictions", "--project-ref=jacraenyzrorgjhsdvvf", "get"],
+      },
+    );
+
+    expect(errors.changed).toBe(true);
+    expect(errors.errors[0]?.message).toContain(
+      "Hint: --project-ref is available on `supabase network-restrictions get` and `supabase network-restrictions update`.",
+    );
+    expect(errors.errors[0]?.message).toContain(
+      "supabase network-restrictions get --project-ref <value>",
+    );
+    expect(errors.errors[0]?.message).not.toContain("--project-ref=jacraenyzrorgjhsdvvf <value>");
   });
 
   it("collapses the doubled 'Expected: Expected' prefix for an invalid choice flag value", () => {

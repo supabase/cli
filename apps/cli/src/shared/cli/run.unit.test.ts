@@ -248,7 +248,7 @@ describe("classifyParseErrorConsoleOutput", () => {
     expect(
       classifyParseErrorConsoleOutput(cause, {
         rootCommand: testRoot,
-        args: ["sso", "add", "--metadata-url", "--type"],
+        args: ["sso", "add", "--project-ref", "--type"],
       }),
     ).toBe("drop");
   });
@@ -278,7 +278,7 @@ describe("classifyParseErrorConsoleOutput", () => {
     expect(
       classifyParseErrorConsoleOutput(cause, {
         rootCommand: testRoot,
-        args: ["sso", "add", "--metadata-url", "--", "--type"],
+        args: ["sso", "add", "--project-ref", "--", "--type"],
       }),
     ).toBe("flush-help-doc-to-stderr");
   });
