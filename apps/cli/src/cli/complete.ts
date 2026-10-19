@@ -9,6 +9,7 @@ import {
   RESOURCE_OUTPUT_FORMATS,
 } from "../command-internal/output-formats.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
+import { commandInternals } from "../docs/docs-introspection.ts";
 import { isValidBase0Int64, parseUintBase0 } from "../shared/config/parse-uint.ts";
 import { parseStringSliceFlag } from "../command-internal/string-slice-flag.ts";
 import { withAnalyticsContext } from "../shared/telemetry/analytics-context.ts";
@@ -655,6 +656,26 @@ function outputFlagChoiceKeys(matchedPath: ReadonlyArray<string>): ReadonlyArray
 }
 
 /**
+ * `--remote` is tagged as a boolean so a bare `--remote` parses, yet `--remote=<value>` takes any
+ * text; the runtime rejects `false` and the empty value with a clear error of its own.
+ */
+const REMOTE_FLAG = "remote";
+
+/**
+ * Whether the token after a bare `--remote` is read as its value rather than a positional,
+ * mirroring the argv rewrite: always for a command with no positional, and for a token past the
+ * last positional slot. A variadic positional never runs out of slots.
+ */
+function remoteTakesNextToken(
+  finalCommand: Command.Command.Any,
+  leftoverArgs: ReadonlyArray<string>,
+): boolean {
+  const positionals = commandInternals(finalCommand).config.arguments;
+  if (positionals.some((param) => unwrapParam(param)?.isVariadic === true)) return false;
+  return leftoverArgs.length >= positionals.length;
+}
+
+/**
  * Validates a flag's value; an invalid value returns zero candidates with the Default
  * directive, exactly like an unresolved flag name. The command-dependent overrides
  * (`COMPLETION_UINT_FLAGS`, `COMPLETION_DURATION_FLAGS`, `COMPLETION_RFC3339_FLAGS`,
@@ -666,6 +687,7 @@ function isValidFlagValue(
   flag: FlagDescriptor,
   value: string,
 ): boolean {
+  if (flag.name === REMOTE_FLAG) return true;
   const key = `${matchedPath.join(" ")}:${flag.name}`;
   if (COMPLETION_UINT_FLAGS.has(key)) {
     return "value" in parseUintBase0(value);
@@ -801,6 +823,9 @@ function flagValueCompletion(
   matchedPath: ReadonlyArray<string>,
   flagName: string | undefined,
 ): CompletionResult {
+  if (flagName === REMOTE_FLAG) {
+    return { candidates: [], directive: CompletionDirective.NoFileComp };
+  }
   const key = flagName === undefined ? undefined : `${matchedPath.join(" ")}:${flagName}`;
   const extensions = key === undefined ? undefined : COMPLETION_FLAG_FILE_EXTENSIONS.get(key);
   if (extensions !== undefined) {
@@ -931,6 +956,9 @@ export function classifyCompletion(input: ClassifyCompletionInput): CompletionRe
         return { candidates: [], directive: CompletionDirective.Default };
       }
       if (!resolved.isBoolean) {
+        return flagValueCompletion(matchedPath, resolved.name);
+      }
+      if (resolved.name === REMOTE_FLAG && remoteTakesNextToken(finalCommand, leftoverArgs)) {
         return flagValueCompletion(matchedPath, resolved.name);
       }
       // A resolved boolean precedingToken falls through to Case 3, since it never

@@ -13,6 +13,12 @@ export const remoteFlag = Param.makeSingle({
   }),
 }).pipe(Flag.withDescription("Target a remote project."), Flag.optional);
 
+const positional = (kind: "required" | "optional" | "variadic", index: number) => {
+  const argument = Argument.String(`arg${index}`);
+  if (kind === "optional") return argument.pipe(Argument.optional);
+  return kind === "variadic" ? argument.pipe(Argument.variadic()) : argument;
+};
+
 const exempt = "fixture";
 
 const POLICIES = {
@@ -27,7 +33,7 @@ export type FixtureGroup = keyof typeof POLICIES;
 
 export interface FixtureLeafOptions {
   readonly withRemote?: boolean;
-  readonly positional?: boolean;
+  readonly positionals?: ReadonlyArray<"required" | "optional" | "variadic">;
   readonly description?: string;
 }
 
@@ -40,9 +46,9 @@ export const fixtureLeaf = (
   const config = {
     other: Flag.Boolean("other").pipe(Flag.withDescription("Another flag.")),
     ...(options.withRemote === false ? {} : { remote: remoteFlag }),
-    ...(options.positional === true
-      ? { target: Argument.String("target").pipe(Argument.optional) }
-      : {}),
+    ...Object.fromEntries(
+      (options.positionals ?? []).map((kind, index) => [`arg${index}`, positional(kind, index)]),
+    ),
   };
   return CommandApi.make(name, config, () => Effect.void).pipe(
     CommandApi.withDescription(options.description ?? `The ${name} command.`),
