@@ -14,6 +14,7 @@ import {
   unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -64,7 +65,11 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: Option.none<boolean>() };
+const baseFlags = {
+  remote: Option.none(),
+  projectRef: Option.none<string>(),
+  includeRawOutput: Option.none<boolean>(),
+};
 
 describe("domains delete integration", () => {
   it.effect("prints the success line to stderr in text mode", () => {
@@ -205,4 +210,9 @@ describe("domains delete integration", () => {
 describeHostedConsent("domains delete", {
   api: { response: { status: 200, body: {} } },
   invoke: () => ({ run: domainsDelete(baseFlags) }),
+});
+
+describeHostedTargetSelection("domains delete", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, {})),
+  run: (flags) => domainsDelete({ ...baseFlags, ...flags }),
 });

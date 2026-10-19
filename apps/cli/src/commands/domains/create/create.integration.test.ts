@@ -19,6 +19,7 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { DomainsCnameError } from "../domains.errors.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -125,6 +126,7 @@ function setup(opts: SetupOpts = {}) {
 
 function flags() {
   return {
+    remote: Option.none(),
     projectRef: Option.none<string>(),
     customHostname: CUSTOM_HOSTNAME,
     includeRawOutput: Option.none<boolean>(),
@@ -394,4 +396,14 @@ describe("domains create integration", () => {
 describeHostedConsent("domains create", {
   api: apiOptions({}),
   invoke: () => ({ run: domainsCreate(flags()) }),
+});
+
+describeHostedTargetSelection("domains create", {
+  respond: (request, ref) =>
+    Effect.succeed(
+      request.url.includes("1.1.1.1")
+        ? jsonResponse(request, 200, { Answer: [{ type: 5, data: `${ref}.supabase.co.` }] })
+        : jsonResponse(request, 201, HOSTNAME_RESPONSE),
+    ),
+  run: (selection) => domainsCreate({ ...flags(), ...selection }),
 });

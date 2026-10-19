@@ -313,7 +313,7 @@ describe("review fixes stay fixed", () => {
         `${command.id} publishes include-raw-output`,
       ).toBe(false);
     }
-    expect(byId.get("supabase-domains-get")?.flags.map((flag) => flag.id)).toContain("project-ref");
+    expect(byId.get("supabase-domains-get")?.flags.map((flag) => flag.id)).toContain("remote");
   });
 
   it("renders required variadic usage from the override table", () => {

@@ -76,19 +76,14 @@ describe("subcommand flag placement suggestions", () => {
     const errors = formatCliErrorsForDisplay(
       [
         new CliError.UnrecognizedOption({
-          option: "--project-ref",
+          option: "--remote=abcdefghijklmnopqrst",
           command: ["supabase", "branches"],
-          suggestions: [],
-        }),
-        new CliError.UnknownSubcommand({
-          subcommand: "abcdefghijklmnopqrst",
-          parent: ["supabase", "branches"],
           suggestions: [],
         }),
       ],
       {
         rootCommand: testRoot,
-        args: ["branches", "--project-ref", "abcdefghijklmnopqrst", "get"],
+        args: ["branches", "--remote=abcdefghijklmnopqrst", "get"],
       },
     );
 

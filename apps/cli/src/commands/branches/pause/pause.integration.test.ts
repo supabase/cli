@@ -168,6 +168,7 @@ function setupTracked(opts: SetupOpts = {}) {
 
 const baseFlags: BranchesPauseFlags = {
   name: Option.none(),
+  remote: Option.none(),
   projectRef: Option.none(),
 };
 

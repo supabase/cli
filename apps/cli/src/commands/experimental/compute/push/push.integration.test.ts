@@ -13,6 +13,7 @@ import {
 } from "../../../../../tests/helpers/compute.ts";
 import { configValuesLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 import { describeHostedConsent } from "../../../../../tests/helpers/hosted-consent.ts";
+import { describeComputeTargetSelection } from "../../../../../tests/helpers/compute-target-selection.ts";
 import { assertPermissionDrift } from "../../../../../tests/helpers/permission-drift.ts";
 import { projectResponse } from "../../../../../tests/helpers/permission-real-layers.ts";
 import { ProjectRefNotLinkedError } from "../../../../config/project-ref.errors.ts";
@@ -76,6 +77,7 @@ function flags(overrides: Partial<ComputePushFlags> = {}): ComputePushFlags {
     instances: Option.none(),
     exposure: Option.none(),
     noWait: false,
+    remote: Option.none(),
     projectRef: Option.none(),
     ...overrides,
   };
@@ -421,12 +423,12 @@ describe("compute push", () => {
         return yield* Effect.gen(function* () {
           const error = yield* push({
             names: [],
-            projectRef: Option.some(COMPUTE_PROJECT_REF),
+            remote: Option.some({ _tag: "Ref", ref: COMPUTE_PROJECT_REF }),
           }).pipe(Effect.flip);
           expect(error).toBeInstanceOf(MissingComputeExposureError);
           expect(error).toMatchObject({
             suggestion: expect.stringContaining(
-              `push web --exposure public --project-ref ${COMPUTE_PROJECT_REF}`,
+              `push web --exposure public --remote=${COMPUTE_PROJECT_REF}`,
             ),
           });
           expect(http.requests).toHaveLength(0);
@@ -933,14 +935,16 @@ describe("compute push", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  describe("carries an explicit --project-ref into its hints", () => {
+  describe("carries an explicit --remote=<ref> into its hints", () => {
     const unlinked = (repoDir: string, routeOverrides = {}) =>
       setupPush({
         workdir: repoDir,
         linked: false,
         routes: routes(routeOverrides),
       });
-    const withRef = { projectRef: Option.some(COMPUTE_PROJECT_REF) };
+    const withRef: Partial<ComputePushFlags> = {
+      remote: Option.some({ _tag: "Ref", ref: COMPUTE_PROJECT_REF }),
+    };
 
     it.effect("in the still-building trailer under --no-wait", () =>
       Effect.gen(function* () {
@@ -951,7 +955,7 @@ describe("compute push", () => {
           yield* push({ ...withRef, noWait: true });
 
           expect(out.stderrText).toContain(
-            `supabase compute status api --project-ref ${COMPUTE_PROJECT_REF}`,
+            `supabase compute status api --remote=${COMPUTE_PROJECT_REF}`,
           );
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
@@ -973,7 +977,7 @@ describe("compute push", () => {
           expect(error).toBeInstanceOf(ComputeBuildFailedError);
           expect(error).toMatchObject({
             suggestion: expect.stringContaining(
-              `supabase compute push api --project-ref ${COMPUTE_PROJECT_REF}`,
+              `supabase compute push api --remote=${COMPUTE_PROJECT_REF}`,
             ),
           });
         }).pipe(Effect.provide(layer));
@@ -998,7 +1002,7 @@ describe("compute push", () => {
           expect(error).toBeInstanceOf(ComputeBuildTimeoutError);
           expect(error).toMatchObject({
             suggestion: expect.stringContaining(
-              `supabase compute status api --project-ref ${COMPUTE_PROJECT_REF}`,
+              `supabase compute status api --remote=${COMPUTE_PROJECT_REF}`,
             ),
           });
         }).pipe(Effect.provide(layer));
@@ -1016,7 +1020,7 @@ describe("compute push", () => {
           yield* push({ noWait: true });
 
           expect(out.stderrText).toContain("supabase compute status api");
-          expect(out.stderrText).not.toContain("--project-ref");
+          expect(out.stderrText).not.toContain("--remote");
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     );
@@ -1784,7 +1788,7 @@ describe("compute push", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.effect("requires a linked project or an explicit --project-ref", () =>
+  it.effect("requires a linked project or an explicit --remote=<ref>", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupPush({ workdir: repo.dir, linked: false, routes: routes() });
@@ -2251,4 +2255,21 @@ describeHostedConsent("compute push", {
       mutations: () => http.requests.filter((request) => request.method !== "GET").length,
     };
   },
+});
+
+describeComputeTargetSelection("compute push", {
+  operands: ["api"],
+  files: {
+    "supabase/config.toml": `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "2gb"\n`,
+    "supabase/compute/api/index.js": "export default {};\n",
+  },
+  activeFlags: { "no-wait": true },
+  routes: (ref) =>
+    Object.fromEntries(
+      Object.entries(routes()).map(([route, handler]) => [
+        route.replace(COMPUTE_PROJECT_REF, ref),
+        handler,
+      ]),
+    ),
+  run: (selection) => push({ ...selection, noWait: true }),
 });

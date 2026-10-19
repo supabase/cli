@@ -95,6 +95,7 @@ function setup(opts: SetupOpts = {}) {
 
 const baseFlags: BranchesUnpauseFlags = {
   name: Option.none(),
+  remote: Option.none(),
   projectRef: Option.none(),
 };
 

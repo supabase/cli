@@ -180,6 +180,7 @@ function setupTracked(opts: SetupOpts = {}) {
 
 const baseFlags: BranchesUpdateFlags = {
   branchId: Option.none(),
+  remote: Option.none(),
   projectRef: Option.none(),
   name: Option.none(),
   gitBranch: Option.none(),

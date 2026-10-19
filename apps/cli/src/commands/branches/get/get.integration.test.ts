@@ -202,6 +202,7 @@ function setup(opts: SetupOpts = {}) {
 
 const baseFlags: BranchesGetFlags = {
   name: Option.none(),
+  remote: Option.none(),
   projectRef: Option.none(),
 };
 

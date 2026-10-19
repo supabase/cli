@@ -33,6 +33,7 @@ import {
   mockCommandSettings,
   VALID_TOKEN,
 } from "../../../../../tests/helpers/command-mocks.ts";
+import { describeComputeTargetSelection } from "../../../../../tests/helpers/compute-target-selection.ts";
 import { assertPermissionDrift } from "../../../../../tests/helpers/permission-drift.ts";
 import { projectResponse } from "../../../../../tests/helpers/permission-real-layers.ts";
 import {
@@ -81,6 +82,7 @@ function project() {
 function flags(overrides: Partial<Parameters<typeof computeLogs>[0]> = {}) {
   return {
     name: "api",
+    remote: Option.none(),
     projectRef: Option.none(),
     kind: Option.none(),
     tail: 100,
@@ -844,7 +846,7 @@ describe("compute logs", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.effect("uses the project ref from the flag and echoes it in suggestions", () =>
+  it.effect("uses the project ref from --remote and echoes it in suggestions", () =>
     Effect.gen(function* () {
       const repo = yield* project();
       const { layer } = setupCompute({
@@ -858,13 +860,13 @@ describe("compute logs", () => {
 
       return yield* Effect.gen(function* () {
         const error = yield* computeLogs(
-          flags({ projectRef: Option.some(COMPUTE_PROJECT_REF) }),
+          flags({ remote: Option.some({ _tag: "Ref", ref: COMPUTE_PROJECT_REF }) }),
         ).pipe(Effect.flip);
 
         // A copy-pasted suggestion must not silently re-resolve to whatever this
         // checkout happens to be linked to.
         const suggestion = error instanceof ComputeNotDeployedError ? error.suggestion : "";
-        expect(suggestion).toContain(`--project-ref ${COMPUTE_PROJECT_REF}`);
+        expect(suggestion).toContain(`--remote=${COMPUTE_PROJECT_REF}`);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -944,7 +946,13 @@ describe("compute logs", () => {
         Effect.withTracerEnabled(true),
       );
 
-      expect(spans.map((span) => span.name)).toEqual(["compute.logs", "v1GetProjectLogs", "GET"]);
+      expect(spans.map((span) => span.name)).toEqual([
+        "compute.logs",
+        "Target.resolveProject",
+        "Target.resolveRemote",
+        "v1GetProjectLogs",
+        "GET",
+      ]);
       expect(spans[0]?.attributes.get("poll.attempt_count")).toBe(4);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -1464,4 +1472,17 @@ describe("compute logs", () => {
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
+});
+
+describeComputeTargetSelection("compute logs", {
+  operands: ["api"],
+  activeFlags: { follow: false },
+  files: {
+    "supabase/config.toml": CONFIG,
+    "supabase/compute/api/index.js": "export default {};\n",
+  },
+  routes: (ref) => ({
+    [`GET /v1/projects/${ref}/analytics/endpoints/logs`]: logsResponse([computeLogRow({})]),
+  }),
+  run: (selection) => computeLogs(flags(selection)),
 });

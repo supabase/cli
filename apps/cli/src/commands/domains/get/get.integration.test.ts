@@ -14,6 +14,7 @@ import {
   useTempWorkdir,
   unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -88,7 +89,11 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: Option.none<boolean>() };
+const baseFlags = {
+  remote: Option.none(),
+  projectRef: Option.none<string>(),
+  includeRawOutput: Option.none<boolean>(),
+};
 
 describe("domains get integration", () => {
   it.effect("prints the hostname status to stderr in text mode", () => {
@@ -484,4 +489,9 @@ describe("domains get integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describeHostedTargetSelection("domains get", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, HOSTNAME_RESPONSE)),
+  run: (flags) => domainsGet({ ...baseFlags, ...flags }),
 });

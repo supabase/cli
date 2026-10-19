@@ -9,6 +9,7 @@ import {
   computeRoute,
   COMPUTE_PROJECT_REF,
 } from "../../../../../tests/helpers/compute.ts";
+import { describeComputeTargetSelection } from "../../../../../tests/helpers/compute-target-selection.ts";
 import { assertPermissionDrift } from "../../../../../tests/helpers/permission-drift.ts";
 import { projectResponse } from "../../../../../tests/helpers/permission-real-layers.ts";
 import {
@@ -64,6 +65,7 @@ describe("compute delete", () => {
       return yield* Effect.gen(function* () {
         yield* computeDelete({
           name: "api",
+          remote: Option.none(),
           projectRef: Option.none(),
         });
 
@@ -114,7 +116,7 @@ describe("compute delete", () => {
 
       return yield* Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        yield* computeDelete({ name: "api", projectRef: Option.none() });
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(http.routeKeys).toEqual([
           "GET /v1/projects",
@@ -156,7 +158,11 @@ describe("compute delete", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeDelete({ name: "api", projectRef: Option.some(otherRef) });
+        yield* computeDelete({
+          name: "api",
+          remote: Option.some({ _tag: "Ref", ref: otherRef }),
+          projectRef: Option.none(),
+        });
 
         expect(http.routeKeys).toContain(`DELETE /v2/projects/${otherRef}/compute/api`);
       }).pipe(Effect.provide(layer));
@@ -179,7 +185,7 @@ describe("compute delete", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeDelete({ name: "api", projectRef: Option.none() });
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
         assertPermissionDrift({
@@ -204,7 +210,7 @@ describe("compute delete", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeDelete({ name: "api", projectRef: Option.none() });
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stderrText).toContain('Permanently delete compute "api"');
         // No count is quoted: the read that would have supplied one was refused.
@@ -228,7 +234,7 @@ describe("compute delete", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeDelete({ name: "api", projectRef: Option.none() });
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("Deleted Compute");
         expect(out.stdoutText).not.toContain("nothing to delete");
@@ -255,6 +261,7 @@ describe("compute delete", () => {
       return yield* Effect.gen(function* () {
         const error = yield* computeDelete({
           name: "api",
+          remote: Option.none(),
           projectRef: Option.none(),
         }).pipe(Effect.flip);
 
@@ -270,7 +277,7 @@ describe("compute delete", () => {
       const { layer, out, http } = setupCompute({ workdir: repo.dir, routes, yes: true });
 
       return yield* Effect.gen(function* () {
-        yield* computeDelete({ name: "api", projectRef: Option.none() });
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
         expect(out.promptTextCalls).toEqual([]);
@@ -295,6 +302,7 @@ describe("compute delete", () => {
       return yield* Effect.gen(function* () {
         const error = yield* computeDelete({
           name: "api",
+          remote: Option.none(),
           projectRef: Option.none(),
         }).pipe(Effect.flip);
 
@@ -330,6 +338,7 @@ describe("compute delete", () => {
       return yield* Effect.gen(function* () {
         const error = yield* computeDelete({
           name: "api",
+          remote: Option.none(),
           projectRef: Option.none(),
         }).pipe(Effect.flip);
 
@@ -361,6 +370,7 @@ describe("compute delete", () => {
       return yield* Effect.gen(function* () {
         const error = yield* computeDelete({
           name: "api",
+          remote: Option.none(),
           projectRef: Option.none(),
         }).pipe(Effect.flip);
 
@@ -383,6 +393,7 @@ describe("compute delete", () => {
       return yield* Effect.gen(function* () {
         const error = yield* computeDelete({
           name: "api",
+          remote: Option.none(),
           projectRef: Option.none(),
         }).pipe(Effect.flip);
 
@@ -409,6 +420,7 @@ describe("compute delete", () => {
       return yield* Effect.gen(function* () {
         const error = yield* computeDelete({
           name: "api",
+          remote: Option.none(),
           projectRef: Option.none(),
         }).pipe(Effect.flip);
 
@@ -432,6 +444,7 @@ describe("compute delete", () => {
       return yield* Effect.gen(function* () {
         const error = yield* computeDelete({
           name: "api",
+          remote: Option.none(),
           projectRef: Option.none(),
         }).pipe(Effect.flip);
 
@@ -454,7 +467,7 @@ describe("compute delete", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeDelete({ name: "api", projectRef: Option.none() });
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         // Nothing to delete, so nothing is asked of the API beyond the lookup.
         expect(http.routeKeys).toEqual([getRoute]);
@@ -475,7 +488,7 @@ describe("compute delete", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeDelete({ name: "api", projectRef: Option.none() });
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         const parsed: unknown = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
           out.stdoutText,
@@ -500,7 +513,7 @@ describe("compute delete", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeDelete({ name: "api", projectRef: Option.none() });
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("Kept");
       }).pipe(Effect.provide(layer));
@@ -519,6 +532,7 @@ describe("compute delete", () => {
       return yield* Effect.gen(function* () {
         const error = yield* computeDelete({
           name: "api",
+          remote: Option.none(),
           projectRef: Option.none(),
         }).pipe(Effect.flip);
 
@@ -539,7 +553,7 @@ describe("compute delete", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeDelete({ name: "api", projectRef: Option.none() });
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         const success = out.messages.findLast(
           (message) => message.type === "success" && message.data !== undefined,
@@ -579,7 +593,7 @@ describe("compute delete", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeDelete({ name: "api", projectRef: Option.none() });
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stderrText).toContain("1 running instance will be terminated");
         expect(out.stderrText).not.toContain("3 running");
@@ -609,7 +623,7 @@ describe("compute delete", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeDelete({ name: "api", projectRef: Option.none() });
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stderrText).toContain("2 running instances will be terminated");
       }).pipe(Effect.provide(layer));
@@ -640,7 +654,7 @@ describe("compute delete", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeDelete({ name: "api", projectRef: Option.none() });
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stderrText).toContain('Permanently delete compute "api"');
         expect(out.stderrText).not.toContain("will be terminated");
@@ -667,7 +681,7 @@ describe("compute delete", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeDelete({ name: "stray", projectRef: Option.none() });
+        yield* computeDelete({ name: "stray", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("Deleted Compute");
         expect(out.stdoutText).not.toContain("Kept");
@@ -693,7 +707,7 @@ describe("compute delete", () => {
       });
 
       return yield* Effect.gen(function* () {
-        yield* computeDelete({ name: "root", projectRef: Option.none() });
+        yield* computeDelete({ name: "root", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("Deleted Compute");
       }).pipe(Effect.provide(layer));
@@ -714,7 +728,7 @@ describe("compute delete", () => {
       const { layer, out } = setupCompute({ workdir: repo.dir, routes, yes: true });
 
       return yield* Effect.gen(function* () {
-        yield* computeDelete({ name: "api", projectRef: Option.none() });
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(out.stdoutText).toContain("supabase/config.toml entry");
         expect(out.stdoutText).not.toContain("compute push api");
@@ -732,7 +746,7 @@ describe("compute delete", () => {
       const { layer, out, http } = setupCompute({ workdir: repo.dir, routes, yes: true });
 
       return yield* Effect.gen(function* () {
-        yield* computeDelete({ name: "api", projectRef: Option.none() });
+        yield* computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() });
 
         expect(http.routeKeys).toContain(deleteRoute);
         expect(out.stdoutText).toContain("Deleted Compute");
@@ -752,10 +766,22 @@ describeHostedConsent("compute delete", {
   invoke: ({ workdir }) => {
     const { http } = setupCompute({ workdir, routes });
     return {
-      run: computeDelete({ name: "api", projectRef: Option.none() }).pipe(
+      run: computeDelete({ name: "api", remote: Option.none(), projectRef: Option.none() }).pipe(
         Effect.provide(Layer.mergeAll(http.layer, configValuesLayer())),
       ),
       mutations: () => http.requests.filter((request) => request.method === "DELETE").length,
     };
   },
+});
+
+describeComputeTargetSelection("compute delete", {
+  operands: ["api"],
+  routes: (ref) => ({
+    [`GET /v2/projects/${ref}/compute/api`]: {
+      status: 200,
+      body: { data: computeResource({ name: "api", runtime: "node" }) },
+    },
+    [`DELETE /v2/projects/${ref}/compute/api`]: { status: 204 },
+  }),
+  run: (flags) => computeDelete({ name: "api", ...flags }),
 });

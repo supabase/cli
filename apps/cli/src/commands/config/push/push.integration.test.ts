@@ -48,6 +48,7 @@ import {
   HostedMutationConsentRequiredError,
   HostedMutationDeclinedError,
 } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
+import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { cliConfigProviderLayer } from "../../../shared/config/cli-config-provider.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -215,7 +216,7 @@ const BRANCH_LIST_ITEM = {
   with_data: false,
 };
 
-/** `V1GetABranch` body for a branch-name `--project-ref` lookup. */
+/** `V1GetABranch` body for a branch-name `--remote` lookup. */
 const BRANCH_BY_NAME = {
   id: BRANCH_UUID,
   name: "staging",
@@ -229,7 +230,7 @@ const BRANCH_BY_NAME = {
   with_data: false,
 };
 
-/** `V1GetABranchConfig` body for a UUID `--project-ref` lookup. */
+/** `V1GetABranchConfig` body for a UUID `--remote` lookup. */
 const BRANCH_CONFIG = {
   ref: UUID_TARGET_REF,
   postgres_version: "15",
@@ -292,6 +293,8 @@ interface SetupOptions {
   /** Answers the project picker with `REF` and writes the linked-project cache through the real
    *  cache layer. */
   readonly pickerAndRealCache?: boolean;
+  /** The argv the deprecation warnings render their replacement command from. */
+  readonly cliArgs?: ReadonlyArray<string>;
 }
 
 type PushApiRoutes = Pick<
@@ -453,6 +456,7 @@ function setup(opts: SetupOptions) {
           (opts.interactive ?? true),
       }),
       ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
+      ...(opts.cliArgs === undefined ? {} : { cliArgs: opts.cliArgs }),
     }),
     mockStdin(opts.stdinIsTty ?? true),
     Layer.succeed(YesFlag, opts.yes ?? false),
@@ -474,7 +478,9 @@ describe("config push integration", () => {
       postgrestPatch: { status: 500, body: { message: "boom" } },
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("ConfigPushApiUpdateStatusError");
@@ -491,7 +497,9 @@ describe("config push integration", () => {
       postgrestPatch: "fail",
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("ConfigPushApiUpdateNetworkError");
@@ -502,7 +510,7 @@ describe("config push integration", () => {
   it.effect("names supabase/config.toml on malformed config.toml, before any network call", () => {
     const { layer, api } = setup({ toml: "malformed", yes: true });
     return Effect.gen(function* () {
-      const message = yield* configPush({ projectRef: Option.none() }).pipe(
+      const message = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
         Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
       );
       expect(message).toContain("failed to parse supabase/config.toml:");
@@ -529,7 +537,7 @@ describe("config push integration", () => {
     );
     return Effect.gen(function* () {
       yield* writeWorkdirFile(["supabase", "config.json"], "{not valid json");
-      const message = yield* configPush({ projectRef: Option.none() }).pipe(
+      const message = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
         Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
       );
       expect(message).toContain("failed to parse supabase/config.json:");
@@ -561,7 +569,7 @@ schemas = ["public", "remote_schema"]
       },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stderrText).toContain("Loading config override: [remotes.staging]");
       expect(out.stderrText.indexOf("Loading config override: [remotes.staging]")).toBeLessThan(
         out.stderrText.indexOf("Comparison scope:"),
@@ -594,7 +602,7 @@ schemas = ["public"]
       "SUPABASE_API_SCHEMAS",
       "public,env_schema",
       Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const update = api.requests.find(
           (r) => r.method === "PATCH" && r.url.includes("/postgrest"),
         );
@@ -626,7 +634,7 @@ schemas = ["public"]
         "SUPABASE_API_SCHEMAS",
         "public,env_schema",
         Effect.gen(function* () {
-          yield* configPush({ projectRef: Option.none() });
+          yield* configPush({ remote: Option.none(), projectRef: Option.none() });
           expect(out.stderrText).toContain(
             "Pushing 1 value set by environment variables: api.schemas (SUPABASE_API_SCHEMAS)\n",
           );
@@ -640,7 +648,7 @@ schemas = ["public"]
     const { layer, out } = setup({ toml: schemasToml, yes: true, v2: remoteSchemas });
     return Effect.gen(function* () {
       yield* writeWorkdirFile(["supabase", ".env"], "SUPABASE_API_SCHEMAS=public,env_schema\n");
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stderrText).toContain(
         "Pushing 1 value set by environment variables: api.schemas (SUPABASE_API_SCHEMAS, supabase/.env)\n",
       );
@@ -655,7 +663,7 @@ schemas = ["public"]
       v2: remoteSchemas,
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stderrText).not.toContain("set by environment variables");
       expect(out.stderrText).not.toContain("(from SUPABASE_");
     }).pipe(Effect.provide(layer));
@@ -667,7 +675,7 @@ schemas = ["public"]
       "SUPABASE_API_SCHEMAS",
       "public",
       Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stderrText).not.toContain("set by environment variables");
       }),
     ).pipe(Effect.provide(layer));
@@ -684,7 +692,7 @@ schemas = ["public"]
       "SUPABASE_API_SCHEMAS",
       "public,env_schema",
       Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const success = out.messages.find((message) => message.type === "success");
         const data = yield* decodeJsonRecord(success?.data);
         expect(data["env_sourced"]).toEqual([
@@ -715,8 +723,8 @@ schemas = ["public", "remote_schema"]
         "SUPABASE_API_SCHEMAS",
         "public,env_schema",
         Effect.gen(function* () {
-          yield* configDiff({ projectRef: Option.none(), exitCode: false });
-          yield* configPush({ projectRef: Option.none() });
+          yield* configDiff({ remote: Option.none(), projectRef: Option.none(), exitCode: false });
+          yield* configPush({ remote: Option.none(), projectRef: Option.none() });
 
           const diff = out.messages.find(
             (message) => isJsonRecord(message.data) && "changes" in message.data,
@@ -762,7 +770,7 @@ schemas = ["public", "remote_schema"]
       "SUPABASE_REMOTES_STAGING_PROJECT_ID",
       REF,
       Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stderrText).toContain("Loading config override: [remotes.staging]");
         const update = api.requests.find(
           (r) => r.method === "PATCH" && r.url.includes("/postgrest"),
@@ -778,7 +786,7 @@ schemas = ["public", "remote_schema"]
       yes: true,
     });
     return Effect.gen(function* () {
-      const message = yield* configPush({ projectRef: Option.none() }).pipe(
+      const message = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
         Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
       );
       expect(message).toContain("duplicate project_id for [remotes.");
@@ -793,7 +801,9 @@ schemas = ["public", "remote_schema"]
       addons: { status: 503, body: {} },
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
 
       expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(false);
@@ -813,7 +823,7 @@ max_rows = 1000
       yes: true,
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       // The scope line prints on every run, not just when a block is missing.
       expect(out.stderrText).toContain(
         "Comparison scope: api, auth, database, pooler, realtime, storage",
@@ -843,7 +853,7 @@ max_rows = 1000
       },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stderrText).toContain("Remote API config is up to date.");
       expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
         false,
@@ -869,7 +879,7 @@ max_rows = 1000
       },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       const update = api.requests.find((r) => r.method === "PATCH" && r.url.includes("/postgrest"));
       expect(update).toBeDefined();
       expect(update?.body).toMatchObject({ db_schema: "public,graphql_public" });
@@ -882,7 +892,7 @@ max_rows = 1000
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       expect(out.promptConfirmCalls).toHaveLength(1);
       expect(out.promptConfirmCalls[0]?.message).toContain("Push config changes to API and Auth");
       expect(out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
@@ -896,7 +906,9 @@ max_rows = 1000
       confirm: [false],
     });
     return Effect.gen(function* () {
-      const error = yield* configPush({ projectRef: Option.none() }).pipe(Effect.flip);
+      const error = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.flip,
+      );
       expect(error).toBeInstanceOf(HostedMutationDeclinedError);
       expect(out.stderrText).toContain("api.max_rows [update]");
       expect(out.stderrText).toContain("auth.minimum_password_length [update]");
@@ -910,7 +922,7 @@ max_rows = 1000
       yes: true,
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stderrText).toContain(
         `Confirmed by --yes: Push config changes to API on project ${REF}`,
       );
@@ -927,7 +939,7 @@ max_rows = 1000
       stdinIsTty: false,
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       expect(out.promptConfirmCalls).toHaveLength(0);
       expect(api.requests.some((r) => r.method !== "GET")).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -944,7 +956,7 @@ max_rows = 1000
           workdir: sub,
           explicitWorkdir: true,
         });
-        const exit = yield* configPush({ projectRef: Option.none() }).pipe(
+        const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
           Effect.exit,
           Effect.provide(layer),
         );
@@ -981,7 +993,9 @@ max_rows = 1000
       cliConfigValuesTestLayer,
     );
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -1003,7 +1017,7 @@ max_rows = 1000
           workdir: missing,
           explicitWorkdir: true,
         });
-        const exit = yield* configPush({ projectRef: Option.none() }).pipe(
+        const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
           Effect.exit,
           Effect.provide(layer),
         );
@@ -1029,7 +1043,7 @@ max_rows = 1000
           workdir: notADirectory,
           explicitWorkdir: true,
         });
-        const exit = yield* configPush({ projectRef: Option.none() }).pipe(
+        const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
           Effect.exit,
           Effect.provide(layer),
         );
@@ -1052,7 +1066,7 @@ max_rows = 1000
       yes: true,
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       const data = yield* decodeJsonRecord(success?.data);
@@ -1092,7 +1106,7 @@ max_rows = 1000
       addons: { status: 503, body: {} },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(Effect.exit);
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -1116,9 +1130,11 @@ max_rows = 1000
       cliConfigValuesTestLayer,
     );
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
-      const message = yield* configPush({ projectRef: Option.none() }).pipe(
+      const message = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
         Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
       );
       expect(message).toBe(
@@ -1145,7 +1161,7 @@ max_rows = 1000
       },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       const update = api.requests.find((r) => r.method === "PATCH" && r.url.includes("/postgrest"));
       expect(update).toBeDefined();
       expect(update?.body).toEqual({
@@ -1192,7 +1208,7 @@ statement_timeout = "8s"
       },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       const put = api.requests.find(
         (r) => r.method === "PUT" && r.url.includes("/config/database/postgres"),
       );
@@ -1220,7 +1236,7 @@ max_frequency = "10s"
 `;
       const { layer, api } = setup({ toml, yes: true });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const update = api.requests.find(
           (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
         );
@@ -1247,7 +1263,7 @@ otp_expiry = 120
 `;
     const { layer, api } = setup({ toml, yes: true });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       const update = api.requests.find(
         (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
       );
@@ -1262,7 +1278,7 @@ otp_expiry = 120
       format: "json",
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stderrText).toContain(
         "Note: 1 declared property has no Management API field and was not pushed: db.pooler.pool_mode (change it from the dashboard).",
       );
@@ -1295,7 +1311,10 @@ otp_expiry = 120
             yes: true,
             v2: { status: testCase.status, body: { message: "boom" } },
           });
-          const message = yield* configPush({ projectRef: Option.none() }).pipe(
+          const message = yield* configPush({
+            remote: Option.none(),
+            projectRef: Option.none(),
+          }).pipe(
             Effect.catchTag("ConfigPushConfigReadStatusError", (error) =>
               Effect.succeed(error.message),
             ),
@@ -1312,7 +1331,9 @@ otp_expiry = 120
   it.effect("a config-read transport failure maps to the read network error", () => {
     const { layer, telemetry } = setup({ toml: `project_id = "test"\n`, yes: true, v2: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("ConfigPushConfigReadNetworkError");
@@ -1338,7 +1359,9 @@ otp_expiry = 120
         },
       });
       return Effect.gen(function* () {
-        const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+        const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.exit,
+        );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain("ProjectConfigParseError");
@@ -1363,7 +1386,9 @@ otp_expiry = 120
         v2: { status: 200, body: v2Response({ attributes: () => ({}) }) },
       });
       return Effect.gen(function* () {
-        const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+        const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.exit,
+        );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain("ConfigPushConfigEmptyError");
@@ -1412,7 +1437,7 @@ otp_expiry = 120
         },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stderrText).toContain(
           "Note: 1 declared property is not managed by config push and was not compared; run `supabase config diff` to list them.",
         );
@@ -1436,7 +1461,7 @@ otp_expiry = 120
         yes: true,
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const update = api.requests.find(
           (r) => r.method === "PATCH" && r.url.includes("/config/auth"),
         );
@@ -1469,7 +1494,7 @@ otp_expiry = 120
       },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stderrText).toContain(
         "Note: 1 remote property is not declared in supabase/config.toml and was left unchanged (config push no longer resets undeclared properties to their defaults; run `supabase config diff` to inspect).",
       );
@@ -1593,7 +1618,7 @@ content_path = "./templates/password_changed.html"
     return Effect.gen(function* () {
       yield* writeWorkdirFile(["templates", "invite.html"], "<h1>Invite</h1>");
       yield* writeWorkdirFile(["templates", "password_changed.html"], "<p>Password changed</p>");
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
       expect(update).toBeDefined();
       const input = yield* decodeJsonRecord(update?.input);
@@ -1620,7 +1645,9 @@ content_path = "./templates/missing.html"
       v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(apiMock.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
@@ -1644,7 +1671,9 @@ content_path = "./templates/invite.html"
         runtimeCwd: nestedCwd,
         v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
       });
-      yield* configPush({ projectRef: Option.none() }).pipe(Effect.provide(layer));
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.provide(layer),
+      );
       const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
       expect(update).toBeDefined();
       const input = yield* decodeJsonRecord(update?.input);
@@ -1667,7 +1696,7 @@ secret = "my-plaintext-secret"
         v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
         expect(update).toBeDefined();
         const input = yield* decodeJsonRecord(update?.input);
@@ -1699,7 +1728,7 @@ secret = "${DOTENVX_ENCRYPTED_VALUE}"
         "DOTENV_PRIVATE_KEY",
         DOTENVX_PRIVATE_KEY,
         Effect.gen(function* () {
-          yield* configPush({ projectRef: Option.none() });
+          yield* configPush({ remote: Option.none(), projectRef: Option.none() });
           const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
           expect(update).toBeDefined();
           const input = yield* decodeJsonRecord(update?.input);
@@ -1723,9 +1752,10 @@ secret = "${DOTENVX_ENCRYPTED_VALUE}"
         "DOTENV_PRIVATE_KEY",
         undefined,
         Effect.gen(function* () {
-          const message = yield* configPush({ projectRef: Option.none() }).pipe(
-            Effect.catchTag("CliConfigValueError", (error) => Effect.succeed(error.message)),
-          );
+          const message = yield* configPush({
+            remote: Option.none(),
+            projectRef: Option.none(),
+          }).pipe(Effect.catchTag("CliConfigValueError", (error) => Effect.succeed(error.message)));
           expect(message).toBe("failed to parse config: missing private key");
           expect(api.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer)),
@@ -1747,9 +1777,10 @@ openai_api_key = "${DOTENVX_ENCRYPTED_VALUE}"
         "DOTENV_PRIVATE_KEY",
         undefined,
         Effect.gen(function* () {
-          const message = yield* configPush({ projectRef: Option.none() }).pipe(
-            Effect.catchTag("CliConfigValueError", (error) => Effect.succeed(error.message)),
-          );
+          const message = yield* configPush({
+            remote: Option.none(),
+            projectRef: Option.none(),
+          }).pipe(Effect.catchTag("CliConfigValueError", (error) => Effect.succeed(error.message)));
           expect(message).toBe("failed to parse config: missing private key");
           expect(api.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer)),
@@ -1773,9 +1804,10 @@ secret = "env(CAPTCHA_SECRET_FROM_ROOT_ENV)"
           [".env"],
           `CAPTCHA_SECRET_FROM_ROOT_ENV="${DOTENVX_ENCRYPTED_VALUE}"\n`,
         );
-        const message = yield* configPush({ projectRef: Option.none() }).pipe(
-          Effect.catchTag("CliConfigValueError", (error) => Effect.succeed(error.message)),
-        );
+        const message = yield* configPush({
+          remote: Option.none(),
+          projectRef: Option.none(),
+        }).pipe(Effect.catchTag("CliConfigValueError", (error) => Effect.succeed(error.message)));
         expect(message).toBe("failed to parse config: missing private key");
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer)),
@@ -1792,7 +1824,10 @@ my_secret = "${DOTENVX_ENCRYPTED_VALUE}"
       "DOTENV_PRIVATE_KEY",
       undefined,
       Effect.gen(function* () {
-        const message = yield* configPush({ projectRef: Option.none() }).pipe(
+        const message = yield* configPush({
+          remote: Option.none(),
+          projectRef: Option.none(),
+        }).pipe(
           Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
         );
         expect(message).toBe("failed to parse config: missing private key");
@@ -1810,7 +1845,10 @@ secret = "${DOTENVX_ENCRYPTED_VALUE}"
 `;
       const { layer, api } = setup({ toml, yes: true });
       return Effect.gen(function* () {
-        const message = yield* configPush({ projectRef: Option.none() }).pipe(
+        const message = yield* configPush({
+          remote: Option.none(),
+          projectRef: Option.none(),
+        }).pipe(
           Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
         );
         expect(message).toBe(
@@ -1829,7 +1867,7 @@ secret = "${DOTENVX_ENCRYPTED_VALUE}"
       yes: true,
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       const update = api.requests.find(
         (r) => r.method === "PATCH" && r.url.includes("/config/storage"),
       );
@@ -1848,7 +1886,7 @@ allowed_cidrs_v6 = ["::1/128"]
 `;
     const { layer, api } = setup({ toml, yes: true });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       const apply = api.requests.find(
         (r) => r.method === "POST" && r.url.includes("/network-restrictions/apply"),
       );
@@ -1866,7 +1904,7 @@ allowed_cidrs_v6 = ["::1/128"]
       yes: true,
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       const update = api.requests.find(
         (r) => r.method === "PUT" && r.url.includes("/ssl-enforcement"),
       );
@@ -1881,7 +1919,7 @@ allowed_cidrs_v6 = ["::1/128"]
       yes: true,
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stderrText).toContain("Would enable webhooks for project:");
       expect(
         api.requests.some(
@@ -1907,7 +1945,7 @@ allowed_cidrs_v6 = ["::1/128"]
         const cachePath = yield* workdirPath("supabase", ".temp", "linked-project.json");
         expect(yield* fs.exists(cachePath)).toBe(false);
 
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
 
         expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
           `GET ${API}/v1/projects`,
@@ -1933,7 +1971,7 @@ allowed_cidrs_v6 = ["::1/128"]
       project: { status: 403, body: { message: "forbidden" } },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `GET ${API}/v1/projects/${REF}`,
         `GET ${API}/v1/projects/${REF}/billing/addons`,
@@ -1952,7 +1990,7 @@ allowed_cidrs_v6 = ["::1/128"]
       v1: {},
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       expect(methodsOf(apiMock)).not.toContain("updateSslEnforcementConfig");
       const success = out.messages.find((m) => m.type === "success");
       const data = yield* decodeJsonRecord(success?.data);
@@ -1973,7 +2011,9 @@ allowed_cidrs_v6 = ["::1/128"]
       v1: { enableDatabaseWebhook: () => Effect.fail(statusCodeFailure(500)) },
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("ConfigPushEnableWebhookStatusError");
@@ -1985,7 +2025,9 @@ allowed_cidrs_v6 = ["::1/128"]
     const toml = `${BASE_DISABLED}[experimental.webhooks]\nenabled = true\n`;
     const { layer, apiMock, out } = setupService({ toml, confirm: [false] });
     return Effect.gen(function* () {
-      const error = yield* configPush({ projectRef: Option.none() }).pipe(Effect.flip);
+      const error = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.flip,
+      );
       expect(error).toBeInstanceOf(HostedMutationDeclinedError);
       expect(out.stderrText).toContain("Would enable webhooks for project:");
       expect(out.promptConfirmCalls[0]?.message).toContain("Push config changes to Webhooks");
@@ -2003,7 +2045,7 @@ allowed_cidrs_v6 = ["::1/128"]
         format: "json",
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
         const success = out.messages.find((m) => m.type === "success");
         const data = yield* decodeJsonRecord(success?.data);
@@ -2026,7 +2068,7 @@ allowed_cidrs_v6 = ["::1/128"]
         format: "json",
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(methodsOf(apiMock)).not.toContain("updateStorageConfig");
         const success = out.messages.find((m) => m.type === "success");
         const data = yield* decodeJsonRecord(success?.data);
@@ -2076,7 +2118,7 @@ sender_name = "My Project"
         v1: { updateAuthServiceConfig: () => Effect.succeed(authWriteResponseFixture()) },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(methodsOf(apiMock)).toContain("updateAuthServiceConfig");
         const success = out.messages.find((m) => m.type === "success");
         const data = yield* decodeJsonRecord(success?.data);
@@ -2112,7 +2154,7 @@ sender_name = "My Project"
         },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
         const success = out.messages.find((m) => m.type === "success");
         const data = yield* decodeJsonRecord(success?.data);
@@ -2142,7 +2184,9 @@ sender_name = "My Project"
         v1: { updatePostgrestServiceConfig: () => Effect.succeed({}) },
       });
       return Effect.gen(function* () {
-        const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+        const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.exit,
+        );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain("ConfigPushConfigEmptyError");
@@ -2181,7 +2225,7 @@ secret = "same-secret"
       },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stderrText).toContain("Remote Auth config is up to date.");
       expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
     }).pipe(Effect.provide(layer));
@@ -2217,7 +2261,7 @@ secret = "new-secret"
       v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
       expect(update).toBeDefined();
       const input = yield* decodeJsonRecord(update?.input);
@@ -2245,7 +2289,7 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
       v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
       expect(update).toBeDefined();
       const input = yield* decodeJsonRecord(update?.input);
@@ -2277,7 +2321,7 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
         v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stderrText).toContain("Enabling Phone MFA will cost you $75.00/ month.\n");
         expect(out.promptConfirmCalls).toHaveLength(1);
       }).pipe(Effect.provide(layer));
@@ -2295,7 +2339,7 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
         v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
         expect(update).toBeDefined();
         const input = yield* decodeJsonRecord(update?.input);
@@ -2324,7 +2368,7 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
         v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stderrText).not.toContain("will cost you");
         const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
         expect(update).toBeDefined();
@@ -2343,7 +2387,9 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
       v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
     });
     return Effect.gen(function* () {
-      const error = yield* configPush({ projectRef: Option.none() }).pipe(Effect.flip);
+      const error = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.flip,
+      );
       expect(error).toBeInstanceOf(HostedMutationDeclinedError);
       expect(out.stderrText).toContain("Enabling Phone MFA will cost you $75.00/ month.\n");
       expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
@@ -2359,7 +2405,7 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
       v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
       const input = yield* decodeJsonRecord(update?.input);
       expect(input["mfa_phone_verify_enabled"]).toBe(true);
@@ -2374,7 +2420,9 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
       v1: { updatePostgresConfig: () => v1TransportFailure("boom") },
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -2387,7 +2435,9 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
       v1: { updateNetworkRestrictions: () => v1TransportFailure("boom") },
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -2400,7 +2450,9 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
       v1: { updateSslEnforcementConfig: () => v1TransportFailure("boom") },
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -2413,7 +2465,9 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
       v1: { updateAuthServiceConfig: () => v1TransportFailure("boom") },
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -2426,7 +2480,9 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
       v1: { updateStorageConfig: () => v1TransportFailure("boom") },
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -2439,7 +2495,9 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
       v1: { enableDatabaseWebhook: () => v1TransportFailure("ECONNRESET") },
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("ConfigPushEnableWebhookNetworkError");
@@ -2457,7 +2515,7 @@ allowed_cidrs_v6 = ["::/0"]
 `;
       const { layer, apiMock, out } = setupService({ toml, yes: true });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stderrText).toContain("Remote DB Network restrictions config is up to date.");
         expect(methodsOf(apiMock)).not.toContain("updateNetworkRestrictions");
       }).pipe(Effect.provide(layer));
@@ -2470,7 +2528,7 @@ allowed_cidrs_v6 = ["::/0"]
       const toml = `${BASE_DISABLED}[db.ssl_enforcement]\nenabled = false\n`;
       const { layer, apiMock, out } = setupService({ toml, yes: true });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stderrText).toContain("Remote DB SSL enforcement config is up to date.");
         expect(methodsOf(apiMock)).not.toContain("updateSslEnforcementConfig");
       }).pipe(Effect.provide(layer));
@@ -2510,7 +2568,7 @@ allowed_cidrs = ["9.9.9.9/32"]
         v1: { updateNetworkRestrictions: () => Effect.succeed({}) },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const update = apiMock.requests.find((r) => r.method === "updateNetworkRestrictions");
         expect(update).toBeDefined();
         const input = yield* decodeJsonRecord(update?.input);
@@ -2555,7 +2613,7 @@ max_buckets = 20
         v1: { updateStorageConfig: () => Effect.succeed({}) },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const update = apiMock.requests.find((r) => r.method === "updateStorageConfig");
         expect(update).toBeDefined();
         const input = yield* decodeJsonRecord(update?.input);
@@ -2593,7 +2651,7 @@ secret = "gh-secret"
       v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
       expect(update).toBeDefined();
       const input = yield* decodeJsonRecord(update?.input);
@@ -2630,7 +2688,7 @@ max_buckets = 99
         v1: { updateStorageConfig: () => Effect.succeed({}) },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const update = apiMock.requests.find((r) => r.method === "updateStorageConfig");
         expect(update).toBeDefined();
         const input = yield* decodeJsonRecord(update?.input);
@@ -2676,7 +2734,7 @@ secret = "super-secret"
         },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stderrText).toContain(
           "Comparison scope: api, database, pooler, realtime, storage (not returned: auth)",
         );
@@ -2724,7 +2782,7 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
       },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stderrText).not.toContain("credential value was not pushed");
       expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
       const success = out.messages.find((m) => m.type === "success");
@@ -2747,7 +2805,7 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
       const toml = `project_id = "test"\n[storage]\nfile_size_limit = "not-a-size"\n`;
       const { layer, apiMock, out } = setupService({ toml, format: "json" });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stderrText).toContain(
           "Remote Storage config has 1 difference config push cannot write (see notes below).",
         );
@@ -2782,7 +2840,9 @@ secret = "new-secret"
 `;
     const { layer, apiMock, out } = setupService({ toml, confirm: [false] });
     return Effect.gen(function* () {
-      const error = yield* configPush({ projectRef: Option.none() }).pipe(Effect.flip);
+      const error = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.flip,
+      );
       expect(error).toBeInstanceOf(HostedMutationDeclinedError);
       expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
       expect(out.stderrText).toContain("auth.captcha.secret [secret]");
@@ -2802,7 +2862,7 @@ secret = "irrelevant"
       v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       // Declaring `enabled = false` is itself a routed `local_only` change, so the write still
       // runs even though the gated secret must never ride along inside it.
       const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
@@ -2833,7 +2893,7 @@ secret = "irrelevant"
         yes: true,
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stderrText).toContain("Loading config override: [remotes.evil[31m red]");
         expect(out.stderrText).not.toContain("\u001b");
       }).pipe(Effect.provide(layer));
@@ -2855,7 +2915,7 @@ content_path = "./templates-content-only/invite.html"
       });
       return Effect.gen(function* () {
         yield* writeWorkdirFile(["templates-content-only", "invite.html"], "<h1>Invite</h1>");
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stderrText).toContain(
           "Would update Auth service with:\nauth.email.template.invite.content [content]\n  local:  (file content from content_path)\n  remote: (differs)\n\n",
         );
@@ -2893,7 +2953,7 @@ secret = "new-secret"
         v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const success = out.messages.find((m) => m.type === "success");
         const data = yield* decodeJsonRecord(success?.data);
         const services = yield* decodeJsonRecords(data["services"]);
@@ -2930,7 +2990,7 @@ secrets = "v1,whsec_abc"
         v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
         expect(update).toBeDefined();
         const input = yield* decodeJsonRecord(update?.input);
@@ -2956,7 +3016,9 @@ secrets = "v1,whsec_abc"
       v2: { status: 200, body: [] },
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("ConfigPushConfigReadNetworkError");
@@ -2974,7 +3036,9 @@ secrets = "v1,whsec_abc"
         v2: { status: 200, malformedJson: true },
       });
       return Effect.gen(function* () {
-        const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+        const exit = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.exit,
+        );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain("ConfigPushConfigReadNetworkError");
@@ -2993,7 +3057,7 @@ secrets = "v1,whsec_abc"
       yes: true,
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.message).toBe(`1 property pushed to ${REF}.`);
     }).pipe(Effect.provide(layer));
@@ -3010,7 +3074,7 @@ secrets = "v1,whsec_abc"
       v1: { enableDatabaseWebhook: () => Effect.succeed({}) },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.message).toBe(`1 property pushed to ${REF}.`);
       const data = yield* decodeJsonRecord(success?.data);
@@ -3063,7 +3127,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
     () => {
       const { layer, out, api } = setupLinkedBranchPush({ yes: true });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stderrText).toContain(`Target: project ${BRANCH_REF}\n`);
         expect(out.stderrText).not.toContain("· branch");
         expect(
@@ -3094,7 +3158,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
         v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const data = yield* decodeJsonRecord(out.messages.find((m) => m.type === "success")?.data);
         expect(data["target"]).toEqual({
           kind: "linked",
@@ -3121,7 +3185,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stderrText).not.toContain("· branch (");
       expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(false);
 
@@ -3136,7 +3200,9 @@ describe("config push branch/project target detection (CLI-2168)", () => {
         confirm: [false],
       });
       return Effect.gen(function* () {
-        const error = yield* configPush({ projectRef: Option.none() }).pipe(Effect.flip);
+        const error = yield* configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.flip,
+        );
         expect(error).toBeInstanceOf(HostedMutationDeclinedError);
         expect(out.promptConfirmCalls[0]?.message).toContain(`on project ${BRANCH_REF}?`);
         expect(api.requests.some((r) => ["PATCH", "PUT", "POST"].includes(r.method))).toBe(false);
@@ -3151,7 +3217,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
     () => {
       const { layer, out, api } = setupLinkedBranchPush({ yes: true });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stderrText).toContain(
           `Confirmed by --yes: Push config changes to API on project ${BRANCH_REF}`,
         );
@@ -3165,7 +3231,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
   it.effect("json output mode with --yes reports the branch target in the machine payload", () => {
     const { layer, out } = setupLinkedBranchPush({ format: "json", yes: true });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       const data = yield* decodeJsonRecord(success?.data);
       expect(data["project_ref"]).toBe(BRANCH_REF);
@@ -3194,7 +3260,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
         v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stderrText).not.toContain(PARENT_REF);
         expect(
           api.requests.some((r) => r.url.includes(`/v1/projects/${PARENT_REF}/branches`)),
@@ -3213,7 +3279,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stderrText).not.toContain("· branch (");
       expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -3229,7 +3295,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stderrText).not.toContain("not-a-real-ref");
       expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -3248,7 +3314,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
         v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stderrText).toContain(`Target: project ${PROBE_REF}`);
         expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(false);
         expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
@@ -3282,7 +3348,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
         v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(
           api.requests.some((r) => r.url.includes(`/v1/projects/${PARENT_REF}/branches`)),
         ).toBe(true);
@@ -3302,7 +3368,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
         v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stderrText).toContain(`Target: project ${PROBE_REF}`);
         expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
           true,
@@ -3325,7 +3391,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
         v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.none() });
+        yield* configPush({ remote: Option.none(), projectRef: Option.none() });
         const success = out.messages.find((m) => m.type === "success");
         const data = yield* decodeJsonRecord(success?.data);
         expect(data["project_ref"]).toBe(PROBE_REF);
@@ -3348,7 +3414,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       v2: { status: 200, body: v2Response({ ref: PROBE_REF }) },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      yield* configPush({ remote: Option.none(), projectRef: Option.none() });
       const data = yield* decodeJsonRecord(out.messages.find((m) => m.type === "success")?.data);
       expect(data["target"]).toEqual({
         kind: "linked",
@@ -3366,9 +3432,14 @@ describe("config push branch/project target detection (CLI-2168)", () => {
   // `FileSystem` fake.
 });
 
-describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () => {
+const pushRemoteBranch = (name: string) => ({
+  remote: Option.some<RemoteValue>({ _tag: "Branch", name }),
+  projectRef: Option.none<string>(),
+});
+
+describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
   it.effect(
-    "--project-ref <branch-name> resolves via the already-known parent, no extra live probe",
+    "--remote=<branch-name> resolves via the already-known parent, no extra live probe",
     () => {
       const { layer, api } = setup({
         toml: BRANCH_PUSH_TOML,
@@ -3377,7 +3448,7 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
         v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
       });
       return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.some("staging") });
+        yield* configPush(pushRemoteBranch("staging"));
         expect(
           api.requests.some(
             (r) => r.method === "GET" && new URL(r.url).pathname === `/v1/projects/${BRANCH_REF}`,
@@ -3387,13 +3458,13 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
         assertPermissionDrift({
           command: "config push",
           requests: api.requests,
-          activeFlags: { "project-ref": true },
+          activeFlags: { remote: true },
         });
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.effect("--project-ref <branch-name> announces the parent project and resolved branch", () => {
+  it.effect("--remote=<branch-name> announces the parent project and resolved branch", () => {
     const { layer, out } = setup({
       toml: BRANCH_PUSH_TOML,
       yes: true,
@@ -3401,90 +3472,144 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.some("staging") });
+      yield* configPush(pushRemoteBranch("staging"));
       expect(out.stderrText).toContain(`Target: project ${REF} · branch staging (${BRANCH_REF})\n`);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "--project-ref <branch-name> resolution works without a spinner in json output mode",
-    () => {
-      const { layer, out } = setup({
-        toml: BRANCH_PUSH_TOML,
-        yes: true,
-        format: "json",
-        branchByName: { status: 200, body: BRANCH_BY_NAME },
-        v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
+  it.effect("--remote=<branch-name> resolution works without a spinner in json output mode", () => {
+    const { layer, out } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: true,
+      format: "json",
+      branchByName: { status: 200, body: BRANCH_BY_NAME },
+      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
+    });
+    return Effect.gen(function* () {
+      yield* configPush(pushRemoteBranch("staging"));
+      const success = out.messages.find((m) => m.type === "success");
+      const data = yield* decodeJsonRecord(success?.data);
+      expect(data["is_branch"]).toBe(true);
+      expect(data["branch"]).toBe("staging");
+      expect(data["parent_project_ref"]).toBe(REF);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("--remote=<uuid> resolves without any linked project (CLI-2289 regression)", () => {
+    const { layer, out, api } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: true,
+      projectId: Option.none(),
+      project: { status: 404, body: {} },
+      branchById: { status: 200, body: BRANCH_CONFIG },
+      v2: { status: 200, body: v2Response({ ref: UUID_TARGET_REF }) },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* configPush(pushRemoteBranch(BRANCH_UUID)).pipe(Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain(`Target: branch ${UUID_TARGET_REF}\n`);
+      expect(out.stderrText).not.toContain(BRANCH_UUID);
+      const branchRequests = api.requests.filter((r) => r.url.includes("/branches"));
+      expect(branchRequests).toHaveLength(1);
+      expect(branchRequests[0]?.url).toContain(`/v1/branches/${BRANCH_UUID}`);
+
+      assertPermissionDrift({
+        command: "config push",
+        requests: api.requests,
+        activeFlags: { remote: true },
       });
-      return Effect.gen(function* () {
-        yield* configPush({ projectRef: Option.some("staging") });
-        const success = out.messages.find((m) => m.type === "success");
-        const data = yield* decodeJsonRecord(success?.data);
-        expect(data["is_branch"]).toBe(true);
-        expect(data["branch"]).toBe("staging");
-        expect(data["parent_project_ref"]).toBe(REF);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+    }).pipe(Effect.provide(layer));
+  });
 
-  it.effect(
-    "--project-ref <uuid> resolves without any linked project (CLI-2289 regression)",
-    () => {
-      const { layer, out, api } = setup({
-        toml: BRANCH_PUSH_TOML,
-        yes: true,
-        projectId: Option.none(),
-        project: { status: 404, body: {} },
-        branchById: { status: 200, body: BRANCH_CONFIG },
-        v2: { status: 200, body: v2Response({ ref: UUID_TARGET_REF }) },
+  it.effect("--remote=<uuid> is confirmed like any target: unattended without --yes fails", () => {
+    const { layer, out, api } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: false,
+      stdinIsTty: false,
+      projectId: Option.none(),
+      project: { status: 404, body: {} },
+      branchById: { status: 200, body: BRANCH_CONFIG },
+      v2: { status: 200, body: v2Response({ ref: UUID_TARGET_REF }) },
+    });
+    return Effect.gen(function* () {
+      const error = yield* configPush(pushRemoteBranch(BRANCH_UUID)).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
+      expect(out.stderrText).toContain(`Target: branch ${UUID_TARGET_REF}`);
+      expect(api.requests.some((r) => r.method === "PATCH")).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("--project-ref still resolves a branch name and warns to use --remote", () => {
+    const { layer, out } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: true,
+      branchByName: { status: 200, body: BRANCH_BY_NAME },
+      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
+      cliArgs: ["config", "push", "--project-ref", "staging"],
+    });
+    return Effect.gen(function* () {
+      yield* configPush({ remote: Option.none(), projectRef: Option.some("staging") });
+      expect(
+        out.messages.filter((message) => message.type === "warn").map(({ message }) => message),
+      ).toEqual([
+        "--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase config push --remote=staging",
+      ]);
+      expect(out.stderrText).toContain(`Target: project ${REF} · branch staging (${BRANCH_REF})\n`);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("--remote=<ref> pushes to that project without a branch lookup", () => {
+    const { layer, api } = setup({
+      toml: BRANCH_PUSH_TOML,
+      yes: true,
+      projectId: Option.none(),
+      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
+    });
+    return Effect.gen(function* () {
+      yield* configPush({
+        remote: Option.some<RemoteValue>({ _tag: "Ref", ref: BRANCH_REF }),
+        projectRef: Option.none(),
       });
-      return Effect.gen(function* () {
-        const exit = yield* configPush({ projectRef: Option.some(BRANCH_UUID) }).pipe(Effect.exit);
-        expect(Exit.isSuccess(exit)).toBe(true);
-        expect(out.stderrText).toContain(`Target: branch ${UUID_TARGET_REF}\n`);
-        expect(out.stderrText).not.toContain(BRANCH_UUID);
-        const branchRequests = api.requests.filter((r) => r.url.includes("/branches"));
-        expect(branchRequests).toHaveLength(1);
-        expect(branchRequests[0]?.url).toContain(`/v1/branches/${BRANCH_UUID}`);
+      expect(api.requests.some((r) => r.url.includes("/branches/"))).toBe(false);
+      expect(api.requests.some((r) => r.url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(
+        true,
+      );
+    }).pipe(Effect.provide(layer));
+  });
 
-        assertPermissionDrift({
-          command: "config push",
-          requests: api.requests,
-          activeFlags: { "project-ref": true },
-        });
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect(
-    "--project-ref <uuid> is confirmed like any target: unattended without --yes fails",
-    () => {
-      const { layer, out, api } = setup({
-        toml: BRANCH_PUSH_TOML,
-        yes: false,
-        stdinIsTty: false,
-        projectId: Option.none(),
-        project: { status: 404, body: {} },
-        branchById: { status: 200, body: BRANCH_CONFIG },
-        v2: { status: 200, body: v2Response({ ref: UUID_TARGET_REF }) },
+  it.effect("--remote=<url> is rejected before any request", () => {
+    const { layer, api } = setup({ toml: BRANCH_PUSH_TOML, yes: true });
+    return Effect.gen(function* () {
+      const error = yield* configPush({
+        remote: Option.some<RemoteValue>({
+          _tag: "DbUrl",
+          url: "postgresql://postgres:pw@db.example.com:5432/postgres",
+        }),
+        projectRef: Option.none(),
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "TargetNeedsProjectError",
+        message: "`supabase config push` needs a project, not a database URL.",
       });
-      return Effect.gen(function* () {
-        const error = yield* configPush({ projectRef: Option.some(BRANCH_UUID) }).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
-        expect(out.stderrText).toContain(`Target: branch ${UUID_TARGET_REF}`);
-        expect(api.requests.some((r) => r.method === "PATCH")).toBe(false);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      expect(api.requests).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          commandRuntimeLayer(["config", "push"]).pipe(Layer.provide(BunServices.layer)),
+        ),
+      ),
+    );
+  });
 
-  it.effect("--project-ref <unknown-branch-name> fails with a branches-list suggestion", () => {
+  it.effect("--remote=<unknown-branch-name> fails with a branches-list suggestion", () => {
     const { layer, api, telemetry, linkedProjectCache } = setup({
       toml: BRANCH_PUSH_TOML,
       yes: true,
       branchByName: { status: 404, body: { message: "not found" } },
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.some("ghost") }).pipe(Effect.exit);
+      const exit = yield* configPush(pushRemoteBranch("ghost")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -3510,7 +3635,7 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
         branchByName: { status: 404, body: { message: "not found" } },
       });
       return Effect.gen(function* () {
-        const exit = yield* configPush({ projectRef: Option.some("ghost") }).pipe(Effect.exit);
+        const exit = yield* configPush(pushRemoteBranch("ghost")).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain("ConfigPushBranchNotFoundError");
@@ -3520,14 +3645,14 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
     },
   );
 
-  it.effect("--project-ref <branch-name> in an unlinked directory fails naming the value", () => {
+  it.effect("--remote=<branch-name> in an unlinked directory fails naming the value", () => {
     const { layer, api, telemetry, linkedProjectCache } = setup({
       toml: BRANCH_PUSH_TOML,
       yes: true,
       projectId: Option.none(),
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.some("somebranch") }).pipe(Effect.exit);
+      const exit = yield* configPush(pushRemoteBranch("somebranch")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -3540,14 +3665,14 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("--project-ref <branch-name> with a corrupt linked ref reports it as invalid", () => {
+  it.effect("--remote=<branch-name> with a corrupt linked ref reports it as invalid", () => {
     const { layer, api, telemetry, linkedProjectCache } = setup({
       toml: BRANCH_PUSH_TOML,
       yes: true,
       projectId: Option.some("not-a-valid-ref"),
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.some("somebranch") }).pipe(Effect.exit);
+      const exit = yield* configPush(pushRemoteBranch("somebranch")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -3567,7 +3692,7 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
       branchByName: { status: 200, body: { ...BRANCH_BY_NAME, project_ref: "" } },
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.some("staging") }).pipe(Effect.exit);
+      const exit = yield* configPush(pushRemoteBranch("staging")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -3589,7 +3714,7 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
       branchByName: "fail",
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.some("staging") }).pipe(Effect.exit);
+      const exit = yield* configPush(pushRemoteBranch("staging")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("ConfigPushBranchResolveNetworkError");
@@ -3606,7 +3731,7 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
       branchByName: { status: 500, body: { message: "boom" } },
     });
     return Effect.gen(function* () {
-      const exit = yield* configPush({ projectRef: Option.some("staging") }).pipe(Effect.exit);
+      const exit = yield* configPush(pushRemoteBranch("staging")).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("ConfigPushBranchResolveStatusError");
@@ -3620,33 +3745,56 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
 describe("config push telemetry wiring", () => {
   // Drives the `Command.withHandler` wiring (`configPushHandler`), not the bare handler: the
   // safeFlags guard lives in the wiring, and nothing validates `--project-ref` before it fires.
-  const wiringLayer = (analytics: ReturnType<typeof mockAnalytics>, projectRef: string) =>
+  const wiringLayer = (analytics: ReturnType<typeof mockAnalytics>, args: ReadonlyArray<string>) =>
     Layer.mergeAll(
       setup({ toml: `project_id = "test"\n`, yes: true, analytics }).layer,
       commandRuntimeLayer(["config", "push"]).pipe(Layer.provide(BunServices.layer)),
-      Stdio.layerTest({
-        args: Effect.succeed(["config", "push", "--project-ref", projectRef]),
-      }),
+      Stdio.layerTest({ args: Effect.succeed(["config", "push", ...args]) }),
     );
+
+  const flagsOf = (analytics: ReturnType<typeof mockAnalytics>) =>
+    analytics.captured.find((c) => c.event === "cli_command_executed")?.properties["flags"];
+
+  it.effect("logs a ref-shaped --remote verbatim in cli_command_executed", () => {
+    const analytics = mockContextualAnalytics();
+    return Effect.gen(function* () {
+      yield* Effect.exit(
+        configPushHandler({
+          remote: Option.some<RemoteValue>({ _tag: "Ref", ref: REF }),
+          projectRef: Option.none(),
+        }),
+      );
+      expect(flagsOf(analytics)).toEqual({ remote: REF });
+    }).pipe(Effect.provide(wiringLayer(analytics, [`--remote=${REF}`])));
+  });
+
+  it.effect("redacts a branch-name --remote", () => {
+    const analytics = mockContextualAnalytics();
+    return Effect.gen(function* () {
+      yield* Effect.exit(configPushHandler(pushRemoteBranch("staging")));
+      expect(flagsOf(analytics)).toEqual({ remote: "<redacted>" });
+    }).pipe(Effect.provide(wiringLayer(analytics, ["--remote=staging"])));
+  });
 
   it.effect("logs a ref-shaped --project-ref verbatim in cli_command_executed", () => {
     const analytics = mockContextualAnalytics();
-    const ref = REF;
     return Effect.gen(function* () {
-      yield* Effect.exit(configPushHandler({ projectRef: Option.some(ref) }));
-      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-      expect(event?.properties["flags"]).toEqual({ "project-ref": ref });
-    }).pipe(Effect.provide(wiringLayer(analytics, ref)));
+      yield* Effect.exit(
+        configPushHandler({ remote: Option.none(), projectRef: Option.some(REF) }),
+      );
+      expect(flagsOf(analytics)).toEqual({ "project-ref": REF });
+    }).pipe(Effect.provide(wiringLayer(analytics, ["--project-ref", REF])));
   });
 
   it.effect("redacts a --project-ref value that is not ref-shaped", () => {
     const analytics = mockContextualAnalytics();
     const value = "s3cret-paste-mistake";
     return Effect.gen(function* () {
-      yield* Effect.exit(configPushHandler({ projectRef: Option.some(value) }));
-      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-      expect(event?.properties["flags"]).toEqual({ "project-ref": "<redacted>" });
-    }).pipe(Effect.provide(wiringLayer(analytics, value)));
+      yield* Effect.exit(
+        configPushHandler({ remote: Option.none(), projectRef: Option.some(value) }),
+      );
+      expect(flagsOf(analytics)).toEqual({ "project-ref": "<redacted>" });
+    }).pipe(Effect.provide(wiringLayer(analytics, ["--project-ref", value])));
   });
 });
 
@@ -3663,6 +3811,8 @@ describeHostedConsent("config push", {
       );
     }).pipe(Effect.provide(BunServices.layer)),
   invoke: () => ({
-    run: configPush({ projectRef: Option.none() }).pipe(Effect.provide(cliConfigValuesTestLayer)),
+    run: configPush({ remote: Option.none(), projectRef: Option.none() }).pipe(
+      Effect.provide(cliConfigValuesTestLayer),
+    ),
   }),
 });

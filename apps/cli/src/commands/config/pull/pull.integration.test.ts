@@ -46,6 +46,8 @@ import {
 import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { configPullRun } from "../../../command-internal/config-pull-run.ts";
 import { GLOBAL_OUTPUT_FORMATS, YesFlag } from "../../../command-internal/global-flags.ts";
+import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   configPull,
@@ -255,7 +257,7 @@ function v2Response(
   };
 }
 
-/** V1FindBranch body for the branch-name `--project-ref` lookup. */
+/** V1FindBranch body for the branch-name `--remote` lookup. */
 const BRANCH_BY_NAME = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "staging",
@@ -269,7 +271,7 @@ const BRANCH_BY_NAME = {
   with_data: false,
 };
 
-/** V1GetABranchConfig body for the UUID `--project-ref` lookup. */
+/** V1GetABranchConfig body for the UUID `--remote` lookup. */
 const BRANCH_CONFIG = {
   ref: BRANCH_REF,
   postgres_version: "15",
@@ -377,6 +379,8 @@ interface SetupOpts {
   /** Serves the project list and project lookup, answers the project picker with `VALID_REF`, and
    *  writes the linked-project cache through the real cache layer. */
   readonly pickerAndRealCache?: boolean;
+  /** The argv the deprecation warnings render their replacement command from. */
+  readonly cliArgs?: ReadonlyArray<string>;
   readonly yes?: boolean;
   readonly stdinIsTty?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
@@ -479,6 +483,7 @@ function setup(opts: SetupOpts = {}) {
       processControl,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
       outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
+      ...(opts.cliArgs === undefined ? {} : { cliArgs: opts.cliArgs }),
     }),
     mockStdin(opts.stdinIsTty ?? false),
     Layer.succeed(YesFlag, opts.yes ?? false),
@@ -492,11 +497,15 @@ function setup(opts: SetupOpts = {}) {
 }
 
 const noFlags: ConfigPullFlags = {
+  remote: Option.none<RemoteValue>(),
   projectRef: Option.none<string>(),
   remoteLabel: Option.none<string>(),
   dryRun: false,
   force: false,
 };
+
+const branchRemote = (name: string) => Option.some<RemoteValue>({ _tag: "Branch", name });
+const refRemote = (ref: string) => Option.some<RemoteValue>({ _tag: "Ref", ref });
 
 /** Number of lines that differ between two texts of equal line count. */
 function countChangedLines(before: string, after: string): number {
@@ -625,7 +634,7 @@ describe("config pull integration", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+      yield* configPull({ ...noFlags, remote: branchRemote("staging") });
       const after = yield* readConfig;
       expect(after.startsWith(before)).toBe(true);
       const remotesIndex = after.indexOf("[remotes.staging]");
@@ -884,7 +893,7 @@ describe("config pull integration", () => {
       ].join("\n");
       const { layer, out } = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
-        yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+        yield* configPull({ ...noFlags, remote: branchRemote("staging") });
         expect(out.stderrText).toContain("→ [remotes.prod]");
         expect(out.stderrText).not.toContain("[remotes.staging]");
         const after = yield* readConfig;
@@ -910,7 +919,7 @@ describe("config pull integration", () => {
       return Effect.gen(function* () {
         yield* configPull({
           ...noFlags,
-          projectRef: Option.some("staging"),
+          remote: branchRemote("staging"),
           remoteLabel: Option.some("prod"),
         });
         expect(out.stderrText).toContain("→ [remotes.prod]");
@@ -933,7 +942,7 @@ describe("config pull integration", () => {
       const { layer, out } = setup({ toml: before, stdinIsTty: true, confirm: [true] });
       return Effect.gen(function* () {
         const path = yield* Path.Path;
-        yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+        yield* configPull({ ...noFlags, remote: branchRemote("staging") });
         expect(out.promptConfirmCalls[0]?.message).toBe(
           `Apply 1 change(s) to ${path.join("supabase", "config.toml")} [remotes.prod]?`,
         );
@@ -1065,7 +1074,7 @@ describe("config pull integration", () => {
       return Effect.gen(function* () {
         const exit = yield* configPull({
           ...noFlags,
-          projectRef: Option.some("staging"),
+          remote: branchRemote("staging"),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -1385,7 +1394,7 @@ describe("config pull integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+        yield* configPull({ ...noFlags, remote: branchRemote("staging") });
         expect(out.stdoutText).not.toContain("Warnings:");
         expect(out.stdoutText).not.toContain("also configures the local stack");
         expect(yield* readConfig).toContain('site_url = "https://staging.example.com"');
@@ -1413,7 +1422,7 @@ describe("config pull integration", () => {
       ].join("\n");
       const { layer, out } = setup({ toml: before, yes: true });
       return Effect.gen(function* () {
-        yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+        yield* configPull({ ...noFlags, remote: branchRemote("staging") });
         expect(out.stdoutText).toContain(
           "api.max_rows already matches the config root's value — this remote block now carries a redundant copy.",
         );
@@ -1555,7 +1564,7 @@ describe("config pull integration", () => {
       return Effect.gen(function* () {
         const exit = yield* configPull({
           ...noFlags,
-          projectRef: Option.some("staging"),
+          remote: branchRemote("staging"),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -1579,7 +1588,7 @@ describe("config pull integration", () => {
       });
       return Effect.gen(function* () {
         const path = yield* Path.Path;
-        yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+        yield* configPull({ ...noFlags, remote: branchRemote("staging") });
         expect(first.out.promptConfirmCalls).toHaveLength(1);
         expect(first.out.promptConfirmCalls[0]?.message).toContain("Create [remotes.staging] in");
         expect(first.out.promptConfirmCalls[0]?.message).toContain(
@@ -1605,7 +1614,7 @@ describe("config pull integration", () => {
           format: "json",
           v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
         });
-        yield* configPull({ ...noFlags, projectRef: Option.some("staging") }).pipe(
+        yield* configPull({ ...noFlags, remote: branchRemote("staging") }).pipe(
           Effect.provide(second.layer),
         );
         const success = second.out.messages.find((message) => message.type === "success");
@@ -1641,7 +1650,7 @@ describe("config pull integration", () => {
       return Effect.gen(function* () {
         yield* configPull({
           ...noFlags,
-          projectRef: Option.some("staging"),
+          remote: branchRemote("staging"),
           dryRun: true,
         });
         expect(yield* readConfig).toBe(before);
@@ -1663,7 +1672,7 @@ describe("config pull integration", () => {
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
-      yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+      yield* configPull({ ...noFlags, remote: branchRemote("staging") });
       expect(yield* readConfig).toBe(before);
       expect(out.promptConfirmCalls).toHaveLength(1);
       expect(out.stdoutText).toContain("[remotes.staging] not created (declined).");
@@ -1747,6 +1756,63 @@ describe("config pull integration", () => {
     });
   });
 
+  it.effect("--remote=<ref> pulls from that project without a branch lookup", () => {
+    const { layer, api, out } = setup({
+      toml: 'project_id = "test"\n',
+      yes: true,
+      projectId: Option.none(),
+      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
+    });
+    return Effect.gen(function* () {
+      yield* configPull({ ...noFlags, remote: refRemote(BRANCH_REF) });
+      expect(out.stderrText).toContain(`Pulling config from project ${BRANCH_REF}`);
+      expect(api.requests.some((request) => request.url.includes("/branches/"))).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("--project-ref still resolves a branch name and warns to use --remote", () => {
+    const { layer, out } = setup({
+      toml: 'project_id = "test"\n',
+      yes: true,
+      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
+      cliArgs: ["config", "pull", "--project-ref", "staging"],
+    });
+    return Effect.gen(function* () {
+      yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+      expect(
+        out.messages.filter((message) => message.type === "warn").map(({ message }) => message),
+      ).toEqual([
+        "--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase config pull --remote=staging",
+      ]);
+      expect(out.stderrText).toContain(`Pulling config from 'staging' (branch ${BRANCH_REF})`);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("--remote=<url> is rejected before any request", () => {
+    const { layer, api } = setup({ toml: 'project_id = "test"\n', yes: true });
+    return Effect.gen(function* () {
+      const error = yield* configPull({
+        ...noFlags,
+        remote: Option.some<RemoteValue>({
+          _tag: "DbUrl",
+          url: "postgresql://postgres:pw@db.example.com:5432/postgres",
+        }),
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "TargetNeedsProjectError",
+        message: "`supabase config pull` needs a project, not a database URL.",
+      });
+      expect(api.requests).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layer,
+          commandRuntimeLayer(["config", "pull"]).pipe(Layer.provide(BunServices.layer)),
+        ),
+      ),
+    );
+  });
+
   it.effect("a branch-named target resolves via the linked parent project", () => {
     const { layer, api, out } = setup({
       toml: 'project_id = "test"\n',
@@ -1754,7 +1820,7 @@ describe("config pull integration", () => {
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
-      yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+      yield* configPull({ ...noFlags, remote: branchRemote("staging") });
       expect(out.stderrText).toContain(`Pulling config from 'staging' (branch ${BRANCH_REF})`);
       const urls = api.requests.map((request) => request.url);
       expect(urls.some((url) => url.includes(`/v1/projects/${VALID_REF}/branches/staging`))).toBe(
@@ -1763,7 +1829,7 @@ describe("config pull integration", () => {
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
       assertPermissionDrift({
         command: "config pull",
-        activeFlags: { "project-ref": true },
+        activeFlags: { remote: true },
         requests: api.requests,
       });
     }).pipe(Effect.provide(layer));
@@ -1786,7 +1852,7 @@ describe("config pull integration", () => {
       },
     });
     return Effect.gen(function* () {
-      yield* configPull({ ...noFlags, projectRef: Option.some(BRANCH_UUID) });
+      yield* configPull({ ...noFlags, remote: branchRemote(BRANCH_UUID) });
       const urls = api.requests.map((request) => request.url);
       expect(urls.some((url) => url.includes(`/v1/branches/${BRANCH_UUID}`))).toBe(true);
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
@@ -1798,7 +1864,7 @@ describe("config pull integration", () => {
       expect(yield* readConfig).toContain(`[remotes.${BRANCH_REF}]`);
       assertPermissionDrift({
         command: "config pull",
-        activeFlags: { "project-ref": true },
+        activeFlags: { remote: true },
         requests: api.requests,
       });
     }).pipe(Effect.provide(layer));
@@ -1811,13 +1877,13 @@ describe("config pull integration", () => {
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
-      yield* configPull({ ...noFlags, projectRef: Option.some(BRANCH_REF) });
+      yield* configPull({ ...noFlags, remote: refRemote(BRANCH_REF) });
       const urls = api.requests.map((request) => request.url);
       expect(urls.some((url) => url.includes("/branches/"))).toBe(false);
       expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
       assertPermissionDrift({
         command: "config pull",
-        activeFlags: { "project-ref": true },
+        activeFlags: { remote: true },
         requests: api.requests,
         exact: true,
       });
@@ -1834,7 +1900,7 @@ describe("config pull integration", () => {
       return Effect.gen(function* () {
         const exit = yield* configPull({
           ...noFlags,
-          projectRef: Option.some("somebranch"),
+          remote: branchRemote("somebranch"),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -1857,7 +1923,7 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPull({
         ...noFlags,
-        projectRef: Option.some("somebranch"),
+        remote: branchRemote("somebranch"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -1876,7 +1942,7 @@ describe("config pull integration", () => {
       branchByName: { status: 404, body: { message: "not found" } },
     });
     return Effect.gen(function* () {
-      const exit = yield* configPull({ ...noFlags, projectRef: Option.some("ghost") }).pipe(
+      const exit = yield* configPull({ ...noFlags, remote: branchRemote("ghost") }).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
@@ -1897,7 +1963,7 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPull({
         ...noFlags,
-        projectRef: Option.some("staging"),
+        remote: branchRemote("staging"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -1917,7 +1983,7 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPull({
         ...noFlags,
-        projectRef: Option.some("staging"),
+        remote: branchRemote("staging"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -1932,7 +1998,7 @@ describe("config pull integration", () => {
       const path = yield* Path.Path;
       const exit = yield* configPull({
         ...noFlags,
-        projectRef: Option.some("staging"),
+        remote: branchRemote("staging"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -2075,7 +2141,7 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPull({
         ...noFlags,
-        projectRef: Option.some("staging"),
+        remote: branchRemote("staging"),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -2268,7 +2334,7 @@ describe("config pull integration", () => {
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
     });
     return Effect.gen(function* () {
-      yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
+      yield* configPull({ ...noFlags, remote: branchRemote("staging") });
       const success = out.messages.find((message) => message.type === "success");
       expect(success?.data).toMatchObject({ target: { branch: "staging" } });
     }).pipe(Effect.provide(layer));
@@ -2281,7 +2347,7 @@ describe("config pull integration", () => {
       branchByName: { status: 404, body: { message: "not found" } },
     });
     return Effect.gen(function* () {
-      const exit = yield* configPull({ ...noFlags, projectRef: Option.some("ghost") }).pipe(
+      const exit = yield* configPull({ ...noFlags, remote: branchRemote("ghost") }).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
@@ -2777,7 +2843,7 @@ describe("config pull integration", () => {
         },
       });
       return Effect.gen(function* () {
-        yield* configPull({ ...noFlags, projectRef: Option.some(MERGE_CHECK_REF) });
+        yield* configPull({ ...noFlags, remote: refRemote(MERGE_CHECK_REF) });
         const after = yield* readConfig;
         expect(after).toContain("[remotes.staging.auth.sms.twilio]");
         expect(after).toContain("enabled = false");

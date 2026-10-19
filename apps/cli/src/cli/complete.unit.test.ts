@@ -579,12 +579,10 @@ describe("respondToComplete", () => {
         "restore",
         "--timestamp",
         "0x10",
-        "--p",
+        "--r",
       ]);
       expect(result?.directive).toBe(CompletionDirective.NoFileComp);
-      expect(result?.candidates.map((c) => c.name)).toEqual(
-        expect.arrayContaining(["--profile", "--project-ref"]),
-      );
+      expect(result?.candidates.map((c) => c.name)).toEqual(expect.arrayContaining(["--remote"]));
     });
 
     it("rejects a value one past int64 max for a plain (non-uint) integer flag", () => {

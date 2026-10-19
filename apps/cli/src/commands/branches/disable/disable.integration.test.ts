@@ -82,6 +82,7 @@ function setupTracked(opts: SetupOpts = {}) {
 }
 
 const baseFlags: BranchesDisableFlags = {
+  remote: Option.none(),
   projectRef: Option.none(),
 };
 

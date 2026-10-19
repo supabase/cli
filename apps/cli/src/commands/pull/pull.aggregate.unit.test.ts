@@ -408,33 +408,33 @@ describe("pullFailedStepResult", () => {
 describe("pullRetryHint", () => {
   const ref = "abcdefghijklmnopqrst";
 
-  it("names 'supabase config pull --project-ref <ref>' for the config step", () => {
+  it("names 'supabase config pull --remote=<ref>' for the config step", () => {
     expect(pullRetryHint("config", ref, undefined)).toBe(
-      "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst",
+      "To retry just this step, run: supabase config pull --remote=abcdefghijklmnopqrst",
     );
   });
 
   it("appends a shell-quoted --remote-label to the config hint when one was passed", () => {
     expect(pullRetryHint("config", ref, "staging-remote")).toBe(
-      "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst --remote-label 'staging-remote'",
+      "To retry just this step, run: supabase config pull --remote-label 'staging-remote' --remote=abcdefghijklmnopqrst",
     );
   });
 
   it("shell-quotes a --remote-label containing whitespace, so the suggested command stays copy-pasteable", () => {
     expect(pullRetryHint("config", ref, "staging remote")).toBe(
-      "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst --remote-label 'staging remote'",
+      "To retry just this step, run: supabase config pull --remote-label 'staging remote' --remote=abcdefghijklmnopqrst",
     );
   });
 
   it("escapes an embedded single quote in --remote-label using the POSIX '\"'\"' pattern", () => {
     expect(pullRetryHint("config", ref, "o'brien")).toBe(
-      "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst --remote-label 'o'\"'\"'brien'",
+      "To retry just this step, run: supabase config pull --remote-label 'o'\"'\"'brien' --remote=abcdefghijklmnopqrst",
     );
   });
 
   it("strips control characters from --remote-label before quoting it (CWE-117)", () => {
     expect(pullRetryHint("config", ref, "staging\r\nFAKE")).toBe(
-      "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst --remote-label 'staging FAKE'",
+      "To retry just this step, run: supabase config pull --remote-label 'staging FAKE' --remote=abcdefghijklmnopqrst",
     );
   });
 
@@ -450,9 +450,9 @@ describe("pullRetryHint", () => {
     );
   });
 
-  it("names 'supabase functions download --project-ref <ref>' for the functions step", () => {
+  it("names 'supabase functions download --remote=<ref>' for the functions step", () => {
     expect(pullRetryHint("functions", ref, undefined)).toBe(
-      "To retry just this step, run: supabase functions download --project-ref abcdefghijklmnopqrst",
+      "To retry just this step, run: supabase functions download --remote=abcdefghijklmnopqrst",
     );
   });
 
@@ -468,15 +468,15 @@ describe("pullRetryHint", () => {
 describe("pullWithMigrationHistoryCommand", () => {
   const ref = "abcdefghijklmnopqrst";
 
-  it("names the resolved --project-ref, so a blind rerun can never silently retarget the linked project", () => {
+  it("names the resolved --remote=<ref>, so a blind rerun can never silently retarget the linked project", () => {
     expect(pullWithMigrationHistoryCommand(ref, undefined)).toBe(
-      "supabase pull --with-migration-history --project-ref abcdefghijklmnopqrst",
+      "supabase pull --with-migration-history --remote=abcdefghijklmnopqrst",
     );
   });
 
   it("appends a shell-quoted --remote-label when one was passed, matching pullRetryHint's own rendering", () => {
     expect(pullWithMigrationHistoryCommand(ref, "staging remote")).toBe(
-      "supabase pull --with-migration-history --project-ref abcdefghijklmnopqrst --remote-label 'staging remote'",
+      "supabase pull --with-migration-history --remote-label 'staging remote' --remote=abcdefghijklmnopqrst",
     );
   });
 });

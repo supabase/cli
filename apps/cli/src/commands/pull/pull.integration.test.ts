@@ -88,6 +88,7 @@ import type {
   ResolvedDbConnection,
 } from "../../command-internal/db-config.types.ts";
 import { HostedMutationDeclinedError } from "../../command-internal/hosted-consent/hosted-consent.errors.ts";
+import type { RemoteValue } from "../../command-internal/target/remote-value.ts";
 import { TargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { DbConnection, type DbSession } from "../../command-internal/db-connection.service.ts";
 import { DbExecError } from "../../command-internal/db-connection.errors.ts";
@@ -222,8 +223,12 @@ function stepLine(text: string, step: string): string {
   return line === undefined ? "" : line.trim().replace(/\s+/g, " ");
 }
 
+const branchRemote = (name: string) => Option.some<RemoteValue>({ _tag: "Branch", name });
+const refRemote = (ref: string) => Option.some<RemoteValue>({ _tag: "Ref", ref });
+
 function pullFlags(overrides: Partial<PullFlags> = {}): PullFlags {
   return {
+    remote: overrides.remote ?? Option.none(),
     projectRef: overrides.projectRef ?? Option.none(),
     remoteLabel: overrides.remoteLabel ?? Option.none(),
     dryRun: overrides.dryRun ?? false,
@@ -518,7 +523,7 @@ interface ApiOpts {
   readonly configResponse?: unknown;
   readonly functionSlugs?: ReadonlyArray<string>;
   readonly functionsListStatus?: number;
-  /** A transport (not status-code) failure resolving a branch-name `--project-ref`. */
+  /** A transport (not status-code) failure resolving a branch-name `--remote`. */
   readonly branchNetworkFails?: boolean;
   /** Fails only this slug's `/body` download with a 500; every other slug still downloads
    *  normally, proving a partial functions-step download reports earlier slugs as written. */
@@ -661,6 +666,8 @@ interface SetupOpts {
   readonly projectId?: Option.Option<string>;
   /** Serves `GET /v1/projects` and answers the project picker with `VALID_REF`. */
   readonly picksProject?: boolean;
+  /** The argv the deprecation warnings render their replacement command from. */
+  readonly cliArgs?: ReadonlyArray<string>;
 }
 
 interface MachineSetupOpts extends SetupOpts {
@@ -804,7 +811,7 @@ function setupRuntime(
     }),
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
-    Layer.succeed(CliArgs, { args: [] }),
+    Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
     // Listed after `buildTestRuntime` so its spawner overrides the real one `BunServices.layer`
     // provides (last-wins).
     substrate.layer,
@@ -935,30 +942,27 @@ describe("pull integration", () => {
     },
   );
 
-  it.effect(
-    "a branch-name --project-ref reports the branch and its parent in the json target",
-    () => {
-      const { layer, capturingStdio } = setupMachine({
-        format: "json",
-        yes: true,
-        remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
-      });
-      return Effect.gen(function* () {
-        yield* writeConfig();
-        yield* seedLocalMigration("20260101000000");
-        yield* runPull(pullFlags({ projectRef: Option.some("staging") }));
+  it.effect("a branch-name --remote reports the branch and its parent in the json target", () => {
+    const { layer, capturingStdio } = setupMachine({
+      format: "json",
+      yes: true,
+      remoteMigrations: [{ version: "20260101000000", name: "init", statements: ["select 1;"] }],
+    });
+    return Effect.gen(function* () {
+      yield* writeConfig();
+      yield* seedLocalMigration("20260101000000");
+      yield* runPull(pullFlags({ remote: branchRemote("staging") }));
 
-        const payload = yield* Schema.decodeUnknownEffect(jsonEnvelope)(capturingStdio.stdout[0]);
-        expect(payload["target"]).toEqual({
-          kind: "linked",
-          project_ref: BRANCH_REF,
-          environment: "branch",
-          parent_project_ref: VALID_REF,
-          branch: "staging",
-        });
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      const payload = yield* Schema.decodeUnknownEffect(jsonEnvelope)(capturingStdio.stdout[0]);
+      expect(payload["target"]).toEqual({
+        kind: "linked",
+        project_ref: BRANCH_REF,
+        environment: "branch",
+        parent_project_ref: VALID_REF,
+        branch: "staging",
+      });
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect(
     "renders the config diff body (not 'No config differences found.') when the only diff is skipped as an env() reference",
@@ -979,8 +983,49 @@ describe("pull integration", () => {
     },
   );
 
+  it.effect("--project-ref still resolves a branch name and warns to use --remote", () => {
+    const { layer, out } = setup({
+      yes: true,
+      cliArgs: ["pull", "--project-ref", "staging"],
+    });
+    return Effect.gen(function* () {
+      yield* writeConfig();
+      yield* runPull(pullFlags({ projectRef: Option.some("staging"), dryRun: true }));
+      expect(
+        out.messages.filter((message) => message.type === "warn").map(({ message }) => message),
+      ).toEqual([
+        "--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase pull --remote=staging",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("--remote=<url> is rejected before any request", () => {
+    const { layer, api } = setup({ yes: true });
+    return Effect.gen(function* () {
+      yield* writeConfig();
+      const error = yield* runPull(
+        pullFlags({
+          remote: Option.some<RemoteValue>({
+            _tag: "DbUrl",
+            url: "postgresql://postgres:pw@db.example.com:5432/postgres",
+          }),
+          dryRun: true,
+        }),
+      ).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "TargetNeedsProjectError",
+        message: "`supabase pull` needs a project, not a database URL.",
+      });
+      expect(api.requests).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(layer, commandRuntimeLayer(["pull"]).pipe(Layer.provide(BunServices.layer))),
+      ),
+    );
+  });
+
   it.effect(
-    "a branch-name --project-ref resolves exactly once: one branch lookup, one config GET, no picker prompt",
+    "a branch-name --remote resolves exactly once: one branch lookup, one config GET, no picker prompt",
     () => {
       const { layer, out, api } = setup({
         yes: true,
@@ -990,7 +1035,7 @@ describe("pull integration", () => {
       return Effect.gen(function* () {
         yield* writeConfig();
         yield* seedLocalMigration("20260101000000");
-        yield* runPull(pullFlags({ projectRef: Option.some("staging") }));
+        yield* runPull(pullFlags({ remote: branchRemote("staging") }));
 
         const branchLookups = api.requests.filter((request) => request.url.includes("/branches/"));
         expect(branchLookups).toHaveLength(1);
@@ -999,7 +1044,7 @@ describe("pull integration", () => {
         expect(out.promptSelectCalls).toHaveLength(0);
         assertPermissionDrift({
           command: "pull",
-          activeFlags: { ...STEP_SWITCHES, "project-ref": "staging" },
+          activeFlags: { ...STEP_SWITCHES, remote: "staging" },
           requests: api.requests,
         });
       }).pipe(Effect.provide(layer));
@@ -1646,12 +1691,12 @@ describe("pull integration", () => {
   );
 
   it.effect(
-    "a network failure resolving a branch-name --project-ref fails with a network error, not a status error",
+    "a network failure resolving a branch-name --remote fails with a network error, not a status error",
     () => {
       const { layer } = setup({ api: { branchNetworkFails: true } });
       return Effect.gen(function* () {
         yield* writeConfig();
-        const exit = yield* Effect.exit(runPull(pullFlags({ projectRef: Option.some("staging") })));
+        const exit = yield* Effect.exit(runPull(pullFlags({ remote: branchRemote("staging") })));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain("PullBranchResolveNetworkError");
@@ -1780,7 +1825,7 @@ describe("pull integration", () => {
           expect(stepLine(out.stdoutText, "functions")).toContain("changed");
 
           expect(out.stdoutText).toContain(
-            `To retry just this step, run: supabase config pull --project-ref ${VALID_REF}`,
+            `To retry just this step, run: supabase config pull --remote=${VALID_REF}`,
           );
         }).pipe(Effect.provide(layer));
       },
@@ -1811,7 +1856,7 @@ describe("pull integration", () => {
           expect(stepLine(out.stdoutText, "config")).toContain("failed");
 
           expect(out.stdoutText).toContain(
-            `To retry just this step, run: supabase config pull --project-ref ${VALID_REF} --remote-label 'staging-remote'`,
+            `To retry just this step, run: supabase config pull --remote-label 'staging-remote' --remote=${VALID_REF}`,
           );
         }).pipe(Effect.provide(layer));
       },
@@ -1838,15 +1883,13 @@ describe("pull integration", () => {
         return Effect.gen(function* () {
           yield* writeConfig("[api]\nmax_rows = 500\n");
           yield* seedLocalMigration("20260101000000");
-          const exit = yield* Effect.exit(
-            runPull(pullFlags({ projectRef: Option.some("staging") })),
-          );
+          const exit = yield* Effect.exit(runPull(pullFlags({ remote: branchRemote("staging") })));
           expect(Exit.isFailure(exit)).toBe(true);
           expect(stepLine(out.stdoutText, "config")).toContain("failed");
           expect(yield* readConfigFile).not.toContain("[remotes.staging]");
 
           expect(out.stdoutText).toContain(
-            `To retry just this step, run: supabase config pull --project-ref ${BRANCH_REF} --remote-label 'staging'`,
+            `To retry just this step, run: supabase config pull --remote-label 'staging' --remote=${BRANCH_REF}`,
           );
         }).pipe(Effect.provide(layer));
       },
@@ -1995,7 +2038,7 @@ describe("pull integration", () => {
 
           const suggestion = envelope.steps.db.failure.suggestion;
           const migrationHistoryHintIndex = suggestion.indexOf(
-            `Alternatively, rerun \`supabase pull --with-migration-history --project-ref ${VALID_REF}\``,
+            `Alternatively, rerun \`supabase pull --with-migration-history --remote=${VALID_REF}\``,
           );
           const retryHintIndex = suggestion.indexOf(
             `To retry just this step, run: supabase db pull --experimental=false --remote=${VALID_REF}`,
@@ -2027,7 +2070,7 @@ describe("pull integration", () => {
             capturingStdio.stdout[0],
           );
           expect(envelope.steps.db.failure.suggestion).toContain(
-            `Alternatively, rerun \`supabase pull --with-migration-history --project-ref ${VALID_REF} --remote-label 'staging remote'\``,
+            `Alternatively, rerun \`supabase pull --with-migration-history --remote-label 'staging remote' --remote=${VALID_REF}\``,
           );
         }).pipe(Effect.provide(layer));
       },
@@ -2122,7 +2165,7 @@ describe("pull integration", () => {
           expect(stepLine(out.stdoutText, "functions")).toContain("failed");
           expect(out.stdoutText).toContain("500");
           expect(out.stdoutText).toContain(
-            `To retry just this step, run: supabase functions download --project-ref ${VALID_REF}`,
+            `To retry just this step, run: supabase functions download --remote=${VALID_REF}`,
           );
         }).pipe(Effect.provide(layer));
       },
@@ -2169,15 +2212,33 @@ describe("pull integration", () => {
   );
 });
 
-// The raw `--project-ref` value in `cli_command_executed`'s `flags` map is read from the
+// The raw `--remote`/`--project-ref` value in `cli_command_executed`'s `flags` map is read from the
 // literal argv (`Stdio.args`), a separate source from the `PullFlags` object the handler runs
 // on, so each case below overrides `Stdio.args` on top of `setup()`'s default.
 describe("pull telemetry wiring", () => {
-  const withProjectRefArgs = (base: ReturnType<typeof setup>["layer"], projectRef: string) =>
-    Layer.mergeAll(
-      base,
-      Stdio.layerTest({ args: Effect.succeed(["pull", "--project-ref", projectRef]) }),
-    );
+  const withArgs = (base: ReturnType<typeof setup>["layer"], args: ReadonlyArray<string>) =>
+    Layer.mergeAll(base, Stdio.layerTest({ args: Effect.succeed(["pull", ...args]) }));
+
+  it.effect("logs a ref-shaped --remote verbatim in cli_command_executed", () => {
+    const { layer, analytics } = setup({ yes: true });
+    return Effect.gen(function* () {
+      yield* writeConfig();
+      yield* runPull(pullFlags({ remote: refRemote(VALID_REF), dryRun: true }));
+      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
+      expect(event?.properties["flags"]).toEqual({ remote: VALID_REF });
+    }).pipe(Effect.provide(withArgs(layer, [`--remote=${VALID_REF}`])));
+  });
+
+  it.effect("redacts a branch-name --remote in cli_command_executed", () => {
+    // A user-created branch name must never reach PostHog verbatim.
+    const { layer, analytics } = setup({ yes: true });
+    return Effect.gen(function* () {
+      yield* writeConfig();
+      yield* runPull(pullFlags({ remote: branchRemote("staging"), dryRun: true }));
+      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
+      expect(event?.properties["flags"]).toEqual({ remote: "<redacted>" });
+    }).pipe(Effect.provide(withArgs(layer, ["--remote=staging"])));
+  });
 
   it.effect("logs a ref-shaped --project-ref verbatim in cli_command_executed", () => {
     const { layer, analytics } = setup({ yes: true });
@@ -2186,19 +2247,17 @@ describe("pull telemetry wiring", () => {
       yield* runPull(pullFlags({ projectRef: Option.some(VALID_REF), dryRun: true }));
       const event = analytics.captured.find((c) => c.event === "cli_command_executed");
       expect(event?.properties["flags"]).toEqual({ "project-ref": VALID_REF });
-    }).pipe(Effect.provide(withProjectRefArgs(layer, VALID_REF)));
+    }).pipe(Effect.provide(withArgs(layer, ["--project-ref", VALID_REF])));
   });
 
   it.effect("redacts a branch-name-shaped --project-ref in cli_command_executed", () => {
-    // `--project-ref` accepts branch names too; a user-created branch name must never reach
-    // PostHog verbatim.
     const { layer, analytics } = setup({ yes: true });
     return Effect.gen(function* () {
       yield* writeConfig();
       yield* runPull(pullFlags({ projectRef: Option.some("staging"), dryRun: true }));
       const event = analytics.captured.find((c) => c.event === "cli_command_executed");
       expect(event?.properties["flags"]).toEqual({ "project-ref": "<redacted>" });
-    }).pipe(Effect.provide(withProjectRefArgs(layer, "staging")));
+    }).pipe(Effect.provide(withArgs(layer, ["--project-ref", "staging"])));
   });
 });
 
@@ -2337,19 +2396,28 @@ describe("pull permissions through the real layers", () => {
 
   const REF_SCENARIOS: ReadonlyArray<{
     readonly name: string;
+    readonly remote: Option.Option<RemoteValue>;
     readonly projectRef: Option.Option<string>;
-    readonly flag: Readonly<Record<string, string>>;
+    readonly flag: Readonly<Record<string, string | boolean>>;
   }> = [
-    { name: "no --project-ref", projectRef: Option.none(), flag: {} },
+    { name: "no selector", remote: Option.none(), projectRef: Option.none(), flag: {} },
     {
-      name: "--project-ref with the ref",
-      projectRef: Option.some(VALID_REF),
-      flag: { "project-ref": VALID_REF },
+      name: "--remote=<ref>",
+      remote: refRemote(VALID_REF),
+      projectRef: Option.none(),
+      flag: { remote: VALID_REF },
     },
     {
-      name: "an empty --project-ref, which resolves from settings",
-      projectRef: Option.some(""),
-      flag: { "project-ref": "" },
+      name: "a bare --remote, which resolves from settings",
+      remote: Option.some<RemoteValue>({ _tag: "Linked" }),
+      projectRef: Option.none(),
+      flag: { remote: true },
+    },
+    {
+      name: "the deprecated --project-ref with the ref",
+      remote: Option.none(),
+      projectRef: Option.some(VALID_REF),
+      flag: { "project-ref": VALID_REF },
     },
   ];
 
@@ -2363,7 +2431,7 @@ describe("pull permissions through the real layers", () => {
           yield* TestClock.setTime(AFTER_SEEDED_MIGRATIONS);
           yield* stubManagementApi(stubbed, serveLinkedDatabase(VALID_REF));
           yield* writeConfig("[api]\nmax_rows = 500\n");
-          yield* runPull(pullFlags({ projectRef: scenario.projectRef }));
+          yield* runPull(pullFlags({ remote: scenario.remote, projectRef: scenario.projectRef }));
 
           expect(asLines(stubbed)).toEqual(FULL_RUN_SEQUENCE);
           expect(asApiLines(api.requests)).toEqual([
