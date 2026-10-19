@@ -29,6 +29,7 @@ import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-
 import {
   argvBoolValue,
   argvEnumValue,
+  argvRemoteValue,
   argvSliceValue,
   argvStringValue,
   resolveArgvProfile,
@@ -229,12 +230,13 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     // than the TS-parsed flags, since the scan consumes flag-shaped tokens as
     // values where the parser doesn't.
     const projectRef = argvStringValue(occurrences, "project-ref");
+    const remote = argvRemoteValue(occurrences);
     const metadataFile = argvStringValue(occurrences, "metadata-file");
     const metadataUrl = argvStringValue(occurrences, "metadata-url");
     const attributeMappingFile = argvStringValue(occurrences, "attribute-mapping-file");
     const domains = argvSliceValue(occurrences, "domains", flags.domains);
 
-    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef });
+    const ref = yield* resolveProjectTarget({ remote, projectRef });
 
     // Use the argv-reconciled profile's host when it disagreed with
     // `--profile`, otherwise the config layer's — applies to the POST and

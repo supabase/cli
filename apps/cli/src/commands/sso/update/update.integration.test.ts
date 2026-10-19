@@ -64,6 +64,13 @@ const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const tempRoot = useTempWorkdir("supabase-sso-update-int-");
 
+const OTHER_REF = "qrstuvwxyzabcdefghij";
+
+const providerRequestUrls = (requests: ReadonlyArray<{ readonly url: string }>) =>
+  requests
+    .map((request) => request.url)
+    .filter((url) => url.includes("/config/auth/sso/providers/"));
+
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
@@ -573,6 +580,38 @@ describe("sso update integration", () => {
         const putReq = api.requests.find((r) => r.method === "PUT");
         const { domains } = yield* decodePutDomains(putReq?.body);
         expect([...domains].sort()).toEqual(["--domains=x.com", "old1.com", "old2.com"]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("selects the project from a --remote the argv scan sees", () => {
+    const { layer, api } = setup({
+      cliArgs: ["sso", "update", VALID_PROVIDER_ID, `--remote=${OTHER_REF}`],
+    });
+    return Effect.gen(function* () {
+      yield* ssoUpdate(defaultFlags);
+      expect(providerRequestUrls(api.requests)).toEqual([
+        expect.stringContaining(`/v1/projects/${OTHER_REF}/`),
+        expect.stringContaining(`/v1/projects/${OTHER_REF}/`),
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "ignores a --remote token a bare --domains consumed as its value, as it does for --project-ref",
+    () => {
+      const { layer, api } = setup({
+        cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--domains", `--remote=${OTHER_REF}`],
+      });
+      return Effect.gen(function* () {
+        yield* ssoUpdate({
+          ...defaultFlags,
+          remote: Option.some({ _tag: "Ref", ref: OTHER_REF }),
+        });
+        expect(providerRequestUrls(api.requests)).toEqual([
+          expect.stringContaining(`/v1/projects/${VALID_REF}/`),
+          expect.stringContaining(`/v1/projects/${VALID_REF}/`),
+        ]);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1691,7 +1730,9 @@ describeHostedConsent("sso update", {
       remote: Option.some({ _tag: "Ref", ref: VALID_REF }),
     }).pipe(
       Effect.provide(
-        Stdio.layerTest({ args: Effect.succeed(["sso", "update", VALID_PROVIDER_ID]) }),
+        Stdio.layerTest({
+          args: Effect.succeed(["sso", "update", VALID_PROVIDER_ID, `--remote=${VALID_REF}`]),
+        }),
       ),
     ),
   }),

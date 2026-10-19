@@ -39,6 +39,8 @@ import { classifyCliCauseActionability } from "../../../shared/telemetry/error-a
 import type { SsoAddFlags } from "./add.command.ts";
 import { ssoAdd } from "./add.handler.ts";
 
+const OTHER_REF = "qrstuvwxyzabcdefghij";
+
 const RESPONSE_PROVIDER = {
   id: "b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8",
   saml: {
@@ -246,6 +248,33 @@ describe("sso add integration", () => {
       assertPermissionDrift({ command: "sso add", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("selects the project from a --remote the argv scan sees", () => {
+    const { layer, api } = setup({
+      cliArgs: ["sso", "add", "--type", "saml", `--remote=${OTHER_REF}`],
+    });
+    return Effect.gen(function* () {
+      yield* ssoAdd(defaultFlags);
+      expect(api.requests.find((r) => r.method === "POST")?.url).toContain(
+        `/v1/projects/${OTHER_REF}/config/auth/sso/providers`,
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "ignores a --remote token a bare --domains consumed as its value, as it does for --project-ref",
+    () => {
+      const { layer, api } = setup({
+        cliArgs: ["sso", "add", "--type", "saml", "--domains", `--remote=${OTHER_REF}`],
+      });
+      return Effect.gen(function* () {
+        yield* ssoAdd({ ...defaultFlags, remote: Option.some({ _tag: "Ref", ref: OTHER_REF }) });
+        expect(api.requests.find((r) => r.method === "POST")?.url).toContain(
+          `/v1/projects/${VALID_REF}/config/auth/sso/providers`,
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("lists the projects for the picker and fills the linked-project cache", () => {
     const out = mockOutput({ promptSelectResponses: [VALID_REF] });
@@ -1338,7 +1367,11 @@ describeHostedConsent("sso add", {
   api: { response: { status: 201, body: RESPONSE_PROVIDER } },
   invoke: () => ({
     run: ssoAdd({ ...defaultFlags, remote: Option.some({ _tag: "Ref", ref: VALID_REF }) }).pipe(
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["sso", "add", "--type", "saml"]) })),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["sso", "add", "--type", "saml", `--remote=${VALID_REF}`]),
+        }),
+      ),
     ),
   }),
 });

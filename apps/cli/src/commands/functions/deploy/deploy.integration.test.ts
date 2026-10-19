@@ -2453,7 +2453,7 @@ describe("functions deploy", () => {
             localConfigLoader: functionsLocalConfigLoader,
             rawArgs: ["functions", "deploy"],
             edgeRuntimeVersion: "1.69.12",
-            resolveProjectRef: () => Effect.succeed("abcdefghijklmnopqrst"),
+            resolveProjectRef: Effect.succeed("abcdefghijklmnopqrst"),
             styleEmphasis: (text) => `<sgr>${text}</sgr>`,
           },
         );
@@ -3063,7 +3063,7 @@ describe("functions deploy", () => {
             localConfigLoader: functionsLocalConfigLoader,
             rawArgs: ["functions", "deploy", "hello-world", "--use-api=false"],
             edgeRuntimeVersion: "1.69.12",
-            resolveProjectRef: () => Effect.succeed("abcdefghijklmnopqrst"),
+            resolveProjectRef: Effect.succeed("abcdefghijklmnopqrst"),
             styleWarning: (text) => `<warn>${text}</warn>`,
           },
         );

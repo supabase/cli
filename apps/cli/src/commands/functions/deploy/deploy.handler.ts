@@ -38,10 +38,9 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
     localConfigLoader: functionsLocalConfigLoader,
     rawArgs,
     edgeRuntimeVersion,
-    resolveProjectRef: () =>
-      resolveProjectTarget(flags).pipe(
-        Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref))),
-      ),
+    resolveProjectRef: resolveProjectTarget(flags).pipe(
+      Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref))),
+    ),
     // Written to stdout, so the TTY color gate must check stdout.
     styleIdentifier: (text) => aqua(text, process.stdout),
     // Written to stderr, matching `bold`'s default TTY gate.

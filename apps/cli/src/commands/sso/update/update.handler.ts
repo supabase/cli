@@ -30,6 +30,7 @@ import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-
 import {
   argvBoolValue,
   argvEnumValue,
+  argvRemoteValue,
   argvSliceValue,
   argvStringValue,
   resolveArgvProfile,
@@ -296,6 +297,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
     // Everything below reads values from the scan rather
     // than the TS-parsed flags — see `add.handler.ts` and `argv-flag-reconcile.ts`.
     const projectRefFlag = argvStringValue(occurrences, "project-ref");
+    const remote = argvRemoteValue(occurrences);
     const metadataFile = argvStringValue(occurrences, "metadata-file");
     const metadataUrl = argvStringValue(occurrences, "metadata-url");
     const attributeMappingFile = argvStringValue(occurrences, "attribute-mapping-file");
@@ -305,7 +307,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
 
     const providerId = yield* Effect.fromResult(validateUuid(flags.providerId));
 
-    const ref = yield* resolveProjectTarget({ remote: flags.remote, projectRef: projectRefFlag });
+    const ref = yield* resolveProjectTarget({ remote, projectRef: projectRefFlag });
 
     // Use the argv-reconciled profile's host when it disagreed with
     // `--profile`, otherwise the config layer's.

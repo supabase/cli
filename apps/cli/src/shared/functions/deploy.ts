@@ -107,7 +107,7 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
   readonly localConfigLoader: FunctionsLocalConfigLoader;
   readonly rawArgs: ReadonlyArray<string>;
   readonly edgeRuntimeVersion: string;
-  readonly resolveProjectRef: () => Effect.Effect<string, ResolveError, ResolveRequirements>;
+  readonly resolveProjectRef: Effect.Effect<string, ResolveError, ResolveRequirements>;
   /**
    * Optional shell-specific styling hooks. All default to identity (plain text); keeping them
    * injected keeps this shared module free of CLI-specific rendering.
@@ -2507,7 +2507,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
     });
   }
 
-  const projectRef = yield* dependencies.resolveProjectRef();
+  const projectRef = yield* dependencies.resolveProjectRef;
   // `@supabase/config` merges the matching `[remotes.*]` block over the base config, so this
   // already reflects any remote function/edge_runtime overrides, through the same
   // `Config.Validate`/dotenv/env-override pipeline `start`/`stop`/`status` use (see
