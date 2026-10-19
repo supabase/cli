@@ -6,12 +6,12 @@ additionally reads the new key from stdin.
 
 ## Files Read
 
-| Path                                           | Format                    | When                                                                                                                 |
-| ---------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                           |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always, after the project ref resolves — `linkedProjectCache` checks it exists to decide whether to write            |
-| `<workdir>/supabase/.temp/project-ref`         | plain text (project ref)  | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are both unset; also by `linkedProjectCache` on a cache miss |
-| stdin                                          | raw bytes / masked TTY    | `update-root-key` only — masked TTY input or piped bytes (the key)                                                   |
+| Path                                           | Format                    | When                                                                                                         |
+| ---------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                   |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always, after the project ref resolves — `linkedProjectCache` checks it exists to decide whether to write    |
+| `<workdir>/supabase/.temp/project-ref`         | plain text (project ref)  | when neither `--remote=<ref>` nor `SUPABASE_PROJECT_ID` is set; also by `linkedProjectCache` on a cache miss |
+| stdin                                          | raw bytes / masked TTY    | `update-root-key` only — masked TTY input or piped bytes (the key)                                           |
 
 ## Files Written
 
@@ -22,12 +22,13 @@ additionally reads the new key from stdin.
 
 ## API Routes
 
-| Method | Path                          | Auth         | Request body | Response (used fields)                                                                                                                                                                                       |
-| ------ | ----------------------------- | ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET`  | `/v1/projects`                | Bearer token | none         | project list for the interactive picker — only when no ref comes from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref` and stdin is a TTY with interactive output                               |
-| `GET`  | `/v1/projects/{ref}/pgsodium` | Bearer token | none         | `{root_key}`                                                                                                                                                                                                 |
-| `PUT`  | `/v1/projects/{ref}/pgsodium` | Bearer token | `{root_key}` | `{root_key}`                                                                                                                                                                                                 |
-| `GET`  | `/v1/projects/{ref}`          | Bearer token | none         | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available |
+| Method | Path                             | Auth         | Request body | Response (used fields)                                                                                                                                                                                                                                   |
+| ------ | -------------------------------- | ------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/projects`                   | Bearer token | none         | project list for the interactive picker — only when no ref comes from `--remote=<ref>`, `SUPABASE_PROJECT_ID` or `.temp/project-ref` and stdin is a TTY with interactive output                                                                          |
+| `GET`  | `/v1/projects/{ref}/pgsodium`    | Bearer token | none         | `{root_key}`                                                                                                                                                                                                                                             |
+| `PUT`  | `/v1/projects/{ref}/pgsodium`    | Bearer token | `{root_key}` | `{root_key}`                                                                                                                                                                                                                                             |
+| `GET`  | `/v1/projects/{ref}`             | Bearer token | none         | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available                                             |
+| `GET`  | `/v1/projects/{parent}/branches` | Bearer token | none         | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>` (or the deprecated `--project-ref=<branch>`), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
 
 `get-root-key` calls `GET`; `update-root-key` calls `PUT`.
 
@@ -36,7 +37,7 @@ additionally reads the new key from stdin.
 | Variable                | Purpose                                                                                               | Required?                                                                                     |
 | ----------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                  | no (falls back to keyring → `~/.supabase/access-token`)                                       |
-| `SUPABASE_PROJECT_ID`   | project ref (fallback when `--project-ref` unset)                                                     | no (falls back to `supabase/.temp/project-ref`, then the interactive project picker on a TTY) |
+| `SUPABASE_PROJECT_ID`   | project ref (fallback when `--remote=<ref>` is not given)                                             | no (falls back to `supabase/.temp/project-ref`, then the interactive project picker on a TTY) |
 | `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                               | no (falls back to `~/.supabase/profile` -> `supabase`)                                        |
 | `SUPABASE_YES`          | confirms the hosted mutation without asking; only the shell environment counts, never `supabase/.env` | no (falls back to the interactive prompt)                                                     |
 
@@ -53,9 +54,9 @@ additionally reads the new key from stdin.
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                                         |
-| ---------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` redacted — not telemetry-safe) |
+| Event                  | When                                       | Notable properties / groups                                                                                                                                                            |
+| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--remote=<ref>` → the ref, a bare `--remote` → `true`, any other `--remote` value → `<redacted>`; `--project-ref` redacted — not telemetry-safe) |
 
 No custom `phtelemetry.*` events in `internal/encryption/`.
 
@@ -81,7 +82,10 @@ One `result` event carrying `{root_key}` (both subcommands).
 
 ## Notes
 
-- Requires `--project-ref`, `SUPABASE_PROJECT_ID`, or a linked project.
+- Targets the linked project unless `--remote=<ref>` is given; a bare `--remote` also targets the linked project. `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked project (by name or UUID, resolved through `GET /v1/projects/{parent}/branches`), or `true|yes|on|1` for the linked project. A database URL is rejected (these commands take a project, not a database); `false|no|off|0`, `--no-remote` and an empty value fail with `Leave out --remote to use the linked project.`
+- A bare `--remote` followed by a word that is a branch of the linked project fails before any other work with a `Did you mean --remote=<word>?` hint, since the word may have been meant as the flag's value.
+- The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
+- Requires `--remote=<ref>`, `SUPABASE_PROJECT_ID`, or a linked project.
 - `update-root-key` reads the key from stdin: a real TTY is read with a masked
   prompt; piped stdin is decoded as UTF-8 and whitespace-trimmed. An empty or
   whitespace-only key sends an empty `root_key` (the TTY masked prompt also trims).
