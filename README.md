@@ -77,12 +77,14 @@ supabase link
 
 ## Manage Your Database
 
-Create migrations, compare schemas, and apply changes locally or to your linked project:
+Create migrations, compare schemas, and apply changes to your local database. Add `--remote` to act
+on your linked project instead:
 
 ```sh
 supabase migration new create_profiles
 supabase db diff
 supabase db push
+supabase db push --remote
 supabase db reset
 ```
 
