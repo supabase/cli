@@ -1,11 +1,15 @@
 import { Effect } from "effect";
 import type { Command } from "effect/cli";
 import { Argument, Command as CommandApi, Flag } from "effect/cli";
-import { targetFlags } from "../../src/command-internal/target/target-flags.ts";
+import { projectTargetFlags, targetFlags } from "../../src/command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../src/command-internal/target/target-policy.ts";
 import type { TargetPolicyDeclaration } from "../../src/command-internal/target/target-policy.ts";
 
 export const remoteFlag = targetFlags({ subject: "database", dbUrl: true }).remote.pipe(
+  Flag.withDescription("Target a remote project."),
+);
+
+export const hostedRemoteFlag = projectTargetFlags().remote.pipe(
   Flag.withDescription("Target a remote project."),
 );
 
@@ -33,7 +37,7 @@ export interface FixtureLeafOptions {
   readonly description?: string;
 }
 
-/** A leaf declaring `group`'s target policy, with a `--remote` flag unless `withRemote` is false. */
+/** A leaf declaring `group`'s target policy, with the `--remote` flag that group takes unless `withRemote` is false. */
 export const fixtureLeaf = (
   name: string,
   group: FixtureGroup,
@@ -41,7 +45,9 @@ export const fixtureLeaf = (
 ) => {
   const config = {
     other: Flag.Boolean("other").pipe(Flag.withDescription("Another flag.")),
-    ...(options.withRemote === false ? {} : { remote: remoteFlag }),
+    ...(options.withRemote === false
+      ? {}
+      : { remote: group === "hosted" ? hostedRemoteFlag : remoteFlag }),
     ...Object.fromEntries(
       (options.positionals ?? []).map((kind, index) => [`arg${index}`, positional(kind, index)]),
     ),

@@ -7,27 +7,23 @@ type TargetKind = "selectable" | "hosted" | "local-only";
 
 interface TargetCopy {
   readonly scope: string;
-  readonly summary: string;
-  /** The value `--remote` accepts on this kind of command; `undefined` when it takes none. */
-  readonly remoteValue: string | undefined;
+  /** The TARGET summary, given the value hint of the command's `--remote` flag. */
+  readonly summary: (hint: string) => string;
 }
 
 const TARGET_COPY: Readonly<Record<TargetKind, TargetCopy>> = {
   selectable: {
     scope: "local or remote",
-    summary:
-      "Local by default. Pass --remote for the linked project, or --remote=<ref|branch|url>.",
-    remoteValue: "<ref|branch|url>",
+    summary: (hint) =>
+      `Local by default. Pass --remote for the linked project, or --remote=${hint}.`,
   },
   hosted: {
     scope: "remote only",
-    summary: "Remote only. Uses the linked project; pass --remote=<ref|branch> for another.",
-    remoteValue: "<ref|branch>",
+    summary: (hint) => `Remote only. Uses the linked project; pass --remote=${hint} for another.`,
   },
   "local-only": {
     scope: "local only",
-    summary: "Local only. Runs against the local stack.",
-    remoteValue: undefined,
+    summary: () => "Local only. Runs against the local stack.",
   },
 };
 
@@ -51,37 +47,49 @@ const kindOf = (annotations: Context.Context<never>): TargetKind | undefined =>
     Option.getOrUndefined,
   );
 
-const declaresRemoteFlag = (doc: HelpDoc.HelpDoc): boolean =>
-  [...doc.flags, ...(doc.globalFlags ?? [])].some((flag) => flag.name === REMOTE_FLAG_NAME);
+const remoteFlagOf = (doc: HelpDoc.HelpDoc): HelpDoc.FlagDoc | undefined =>
+  [...doc.flags, ...(doc.globalFlags ?? [])].find((flag) => flag.name === REMOTE_FLAG_NAME);
 
 /** What a leaf's help says about its target; `undefined` for account, removed and group commands. */
 export function targetHelpFor(doc: HelpDoc.HelpDoc): TargetHelp | undefined {
   const kind = kindOf(doc.annotations);
   if (kind === undefined) return undefined;
   const { scope, summary } = TARGET_COPY[kind];
-  return {
-    scope,
-    summary: declaresRemoteFlag(doc) ? summary : summary.slice(0, summary.indexOf(".") + 1),
-  };
+  const flag = remoteFlagOf(doc);
+  const full = summary(flag?.type ?? "");
+  return { scope, summary: flag === undefined ? full.slice(0, full.indexOf(".") + 1) : full };
 }
 
-/** The value hint `--remote` takes on a command, e.g. `<ref|branch>`; `undefined` where it takes none. */
-export function remoteValueHint(annotations: Context.Context<never>): string | undefined {
-  const kind = kindOf(annotations);
-  return kind === undefined ? undefined : TARGET_COPY[kind].remoteValue;
-}
-
-/** The `--remote` flag rows show the value `remote` takes on this command: `--remote[=<ref|branch>]`. */
-export function withRemoteFlagUsage(doc: HelpDoc.HelpDoc): HelpDoc.HelpDoc {
-  const hint = remoteValueHint(doc.annotations);
-  if (hint === undefined || !declaresRemoteFlag(doc)) return doc;
-  const rename = (flag: HelpDoc.FlagDoc): HelpDoc.FlagDoc =>
-    flag.name === REMOTE_FLAG_NAME ? { ...flag, name: remoteFlagName(hint) } : flag;
+const mapRemoteFlag = (
+  doc: HelpDoc.HelpDoc,
+  transform: (flag: HelpDoc.FlagDoc) => HelpDoc.FlagDoc,
+): HelpDoc.HelpDoc => {
+  const apply = (flag: HelpDoc.FlagDoc) =>
+    flag.name === REMOTE_FLAG_NAME ? transform(flag) : flag;
   return {
     ...doc,
-    flags: doc.flags.map(rename),
-    ...(doc.globalFlags === undefined ? {} : { globalFlags: doc.globalFlags.map(rename) }),
+    flags: doc.flags.map(apply),
+    ...(doc.globalFlags === undefined ? {} : { globalFlags: doc.globalFlags.map(apply) }),
   };
+};
+
+/** Text help shows the `--remote` row as `--remote[=<hint>]`, with no separate type column. */
+export function withRemoteFlagUsage(doc: HelpDoc.HelpDoc): HelpDoc.HelpDoc {
+  return mapRemoteFlag(doc, (flag) => ({
+    ...flag,
+    name: remoteFlagName(flag.type),
+    type: "boolean",
+  }));
+}
+
+/** JSON help keeps the flag's name and says it takes an optional value: `value` is its hint. */
+export function withRemoteFlagValue(doc: HelpDoc.HelpDoc): HelpDoc.HelpDoc {
+  return mapRemoteFlag(doc, (flag) => ({
+    ...flag,
+    type: "string",
+    value: flag.type,
+    valueOptional: true,
+  }));
 }
 
 function findCommand(

@@ -540,7 +540,7 @@ describe("functions deploy", () => {
           `https://api.supabase.com/v1/projects/${OTHER_REF}/functions/deploy`,
         ]);
         expect(warnings()).toEqual([
-          `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase functions deploy hello-world --remote=${OTHER_REF}`,
+          `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase functions deploy <Function name>... --remote=${OTHER_REF}`,
         ]);
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
@@ -648,7 +648,7 @@ describe("functions deploy", () => {
 
         expect(error).toMatchObject({
           _tag: "TargetRemoteAmbiguousError",
-          message: `feature-x is a branch of project ${VALID_REF}. Did you mean --remote=feature-x?`,
+          message: `"feature-x" is a branch of project ${VALID_REF}. For the branch: supabase functions deploy --remote=feature-x. For the linked project: supabase functions deploy feature-x --remote`,
         });
         expect(deployedTo()).toEqual([]);
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));

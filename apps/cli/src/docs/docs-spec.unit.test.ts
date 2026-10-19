@@ -5,7 +5,7 @@ import { Command, Flag } from "effect/cli";
 import { describe, expect, it } from "vitest";
 
 import { ExperimentalFlag } from "../command-internal/global-flags.ts";
-import { remoteFlag } from "../../tests/helpers/remote-flag-fixture.ts";
+import { hostedRemoteFlag, remoteFlag } from "../../tests/helpers/remote-flag-fixture.ts";
 
 import { rootCommand } from "../cli/root.ts";
 import { readDocsContent } from "./docs-spec.content.ts";
@@ -79,15 +79,17 @@ describe("docsStripOverlayHeading", () => {
 });
 
 describe("docsFlagDoc", () => {
-  it("renders --remote with the value hint of the command's target group", () => {
-    const doc = docsFlagDoc(["supabase", "db", "push"], remoteFlag, "<ref|branch|url>");
+  it("renders --remote with the value hint its declaration carries", () => {
+    const doc = docsFlagDoc(["supabase", "db", "push"], remoteFlag);
 
     expect(doc?.name).toBe("--remote[=<ref|branch|url>]");
     expect(doc?.id).toBe("remote");
   });
 
-  it("renders --remote as a bare switch where the command takes no value hint", () => {
-    expect(docsFlagDoc(["supabase", "db", "push"], remoteFlag)?.name).toBe("--remote");
+  it("renders the narrower hint of a hosted command's --remote", () => {
+    expect(docsFlagDoc(["supabase", "functions", "deploy"], hostedRemoteFlag)?.name).toBe(
+      "--remote[=<ref|branch>]",
+    );
   });
 });
 

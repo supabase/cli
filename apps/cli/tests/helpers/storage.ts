@@ -15,6 +15,7 @@ import type {
 } from "@supabase/stack/effect";
 
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
+import { commandRuntimeLayer } from "../../src/shared/runtime/command-runtime.layer.ts";
 import { CommandPlatformApi } from "../../src/auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../src/auth/command-platform-api-factory.service.ts";
 import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts";
@@ -73,6 +74,7 @@ export interface SetupStorageOptions {
   readonly stdinIsTty?: boolean;
   readonly pipedAnswers?: ReadonlyArray<string>;
   readonly cliArgs?: ReadonlyArray<string>;
+  readonly commandPath?: ReadonlyArray<string>;
   readonly projectRef?: string;
   readonly apiKeys?: ReadonlyArray<{
     name: string;
@@ -526,6 +528,9 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     mockRuntimeInfo({ cwd: workdir }),
     // `resolveYes` scans the raw argv for an explicit `--yes=false`.
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
+    opts.commandPath === undefined
+      ? Layer.empty
+      : commandRuntimeLayer(opts.commandPath).pipe(Layer.provide(BunServices.layer)),
     unusedStackServices,
     stackApi.layer,
     ...(opts.stackBackend === true ? [stackBackendLayer("stack")] : []),

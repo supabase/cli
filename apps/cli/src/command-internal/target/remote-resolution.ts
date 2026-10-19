@@ -11,11 +11,20 @@ import {
   getCommandRuntimeCommand,
 } from "../../shared/runtime/command-runtime.service.ts";
 import { yellow } from "../colors.ts";
-import { resolveLinkedParentRef } from "../parent-project-ref.ts";
+import { formatNamedRef, sanitizeInlineName } from "../http-errors.ts";
+import { readCachedLinkedProject, resolveLinkedParentRef } from "../parent-project-ref.ts";
 import { findBranch, listParentBranches, resolveRemoteBranchRef } from "./branch-resolution.ts";
+import { LinkBranchListStatusError } from "./branch-resolution.errors.ts";
+import { closestByName } from "./closest-branch.ts";
 import type { RemoteValue } from "./remote-value.ts";
+import { stripUserinfo } from "./remote-vocabulary.ts";
 import type { LinkedTarget } from "./resolve-target.ts";
-import { deprecationMessages, remoteFlagText } from "./target-deprecation.ts";
+import {
+  type DeprecationCommand,
+  deprecationMessages,
+  remoteFlagText,
+  shellQuote,
+} from "./target-deprecation.ts";
 import { renderBranchTarget } from "./target-identity.ts";
 import {
   parseTargetSelector,
@@ -33,16 +42,24 @@ export const warnTarget = Effect.fnUntraced(function* (message: string) {
   yield* output.raw(`${yellow(`Warning: ${message}`)}\n`, "stderr");
 });
 
-/** Prints one warning per deprecated selector flag the run used, rebuilt from the real command line when it is known. */
+const currentCommand = Effect.fnUntraced(function* () {
+  const runtime = yield* Effect.serviceOption(CommandRuntime);
+  if (Option.isNone(runtime)) return undefined;
+  const cliArgs = Option.getOrUndefined(yield* Effect.serviceOption(CliArgs));
+  return {
+    path: getCommandRuntimeCommand(runtime.value),
+    operands: cliArgs?.operandPlaceholders?.() ?? [],
+  } satisfies DeprecationCommand;
+});
+
+/** Prints one warning per deprecated selector flag the run used, naming the command, its operand placeholders and the `--remote` replacement. */
 export const warnTargetDeprecations = Effect.fnUntraced(function* (
   deprecations: ReadonlyArray<TargetDeprecation>,
 ) {
   if (deprecations.length === 0) return;
   const { projectHost } = yield* CommandSettings;
-  const argv = Option.getOrUndefined(
-    Option.map(yield* Effect.serviceOption(CliArgs), (cli) => cli.args),
-  );
-  for (const message of deprecationMessages(deprecations, { argv, projectHost })) {
+  const command = yield* currentCommand();
+  for (const message of deprecationMessages(deprecations, { command, projectHost })) {
     yield* warnTarget(message);
   }
 });
@@ -51,35 +68,74 @@ export const warnTargetDeprecations = Effect.fnUntraced(function* (
  * Parses the selector flags, prints the deprecation warnings, and names the command for the
  * errors that need it.
  */
-export const selectTarget = Effect.fnUntraced(function* (flags: TargetSelectorInput) {
+export const selectTarget = Effect.fnUntraced(function* (
+  flags: TargetSelectorInput,
+  options: { readonly valueHint?: string } = {},
+) {
   const runtime = yield* Effect.serviceOption(CommandRuntime);
   const commandName = Option.isSome(runtime)
     ? `\`supabase ${getCommandRuntimeCommand(runtime.value)}\``
     : "This command";
   const { selection, deprecations } = yield* Result.match(
-    parseTargetSelector(flags, { commandName }),
+    parseTargetSelector(flags, { commandName, ...options }),
     { onFailure: Effect.fail, onSuccess: Effect.succeed },
   );
   yield* warnTargetDeprecations(deprecations);
   return { selection, commandName };
 });
 
-const checkRemoteOperand = Effect.fn("Target.checkRemoteOperand")(function* (operand: string) {
+const linkedProjectName = Effect.fnUntraced(function* (ref: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const { workdir } = yield* CommandSettings;
+  const cache = Option.getOrUndefined(yield* readCachedLinkedProject(fs, path, workdir));
+  return cache?.ref === ref ? cache.name : undefined;
+});
+
+const LOGIN_SUGGESTION =
+  "Run `supabase login` with an account that can list this project's branches.";
+
+const listingFailure = (error: unknown) => {
+  const status = error instanceof LinkBranchListStatusError ? error.status : undefined;
+  return {
+    status,
+    reason: status === undefined ? "" : ` with HTTP ${status}`,
+    suggestion: status === 401 || status === 403 ? LOGIN_SUGGESTION : undefined,
+  };
+};
+
+const checkRemoteOperand = Effect.fn("Target.checkRemoteOperand")(function* (rawOperand: string) {
   const parent = yield* resolveLinkedParentRef();
   if (parent.kind !== "resolved") return;
 
-  const hint = `Did you mean ${remoteFlagText({ _tag: "Branch", name: operand })}?`;
-  const branches = yield* listParentBranches(parent.ref, "Checking branches...").pipe(
-    Effect.option,
-  );
-  if (Option.isNone(branches)) {
+  const operand = stripUserinfo(rawOperand);
+  const runtime = yield* Effect.serviceOption(CommandRuntime);
+  const usage = `supabase ${Option.isSome(runtime) ? getCommandRuntimeCommand(runtime.value) : "<command>"}`;
+  const options = `For the branch: ${usage} ${remoteFlagText({ _tag: "Branch", name: operand })}. For the linked project: ${usage} ${shellQuote(operand)} --remote`;
+
+  const listed = yield* listParentBranches(parent.ref, "Checking branches...").pipe(Effect.result);
+  if (Result.isFailure(listed)) {
+    const { status, reason, suggestion } = listingFailure(listed.failure);
     return yield* new TargetRemoteAmbiguousError({
-      message: `Could not list the branches of project ${parent.ref} to tell whether ${operand} names one. ${hint}`,
+      message: `Can't tell whether "${operand}" is a branch (listing the branches of project ${parent.ref} failed${reason}). ${options}`,
+      ...(suggestion === undefined ? {} : { suggestion }),
+      ...(status === undefined ? {} : { status }),
+      cause: listed.failure,
     });
   }
-  if (findBranch(branches.value, operand) !== undefined) {
+  const branches = listed.success;
+  if (findBranch(branches, operand) !== undefined) {
+    const name = yield* linkedProjectName(parent.ref);
+    const project = name === undefined ? `project ${parent.ref}` : formatNamedRef(name, parent.ref);
     return yield* new TargetRemoteAmbiguousError({
-      message: `${operand} is a branch of project ${parent.ref}. ${hint}`,
+      message: `"${operand}" is a branch of ${project}. ${options}`,
+    });
+  }
+  const closest = closestByName(branches, operand);
+  if (closest !== undefined) {
+    const closestName = sanitizeInlineName(closest.name);
+    return yield* new TargetRemoteAmbiguousError({
+      message: `"${operand}" isn't a branch, but "${closestName}" is. For the branch: ${usage} ${remoteFlagText({ _tag: "Branch", name: closestName })}. For the linked project: ${usage} ${shellQuote(operand)} --remote`,
     });
   }
 });
@@ -106,11 +162,14 @@ const resolveRemoteBranch = Effect.fnUntraced(function* (name: string) {
   const found = yield* resolveRemoteBranchRef(name);
   const cell = yield* Effect.serviceOption(CommandTarget);
   if (Option.isSome(cell)) {
+    const nameOwner = found.isDefault ? found.projectRef : found.parentRef;
     yield* cell.value.announce(
       renderBranchTarget({
         branch: Option.fromNullishOr(found.branchName),
         ref: found.projectRef,
         parentRef: Option.fromNullishOr(found.parentRef),
+        parentName: nameOwner === undefined ? undefined : yield* linkedProjectName(nameOwner),
+        isDefault: found.isDefault,
       }),
     );
   }

@@ -90,7 +90,6 @@ export function describeTargetSelectionMatrix<R>(
   matrix: TargetSelectionMatrix<R>,
 ): void {
   const words = path.split(" ");
-  const commandLine = [...words, ...matrix.operands].join(" ");
   const commandName = `\`supabase ${path}\``;
   const extraFlags = matrix.activeFlags ?? {};
   const driftVariant = matrix.variant === undefined ? {} : { variant: matrix.variant };
@@ -155,7 +154,7 @@ export function describeTargetSelectionMatrix<R>(
 
         expectActedOn(run, OTHER_REF);
         expect(run.warnings()).toEqual([
-          `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase ${commandLine} --remote=${OTHER_REF}`,
+          `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase ${path} --remote=${OTHER_REF}`,
         ]);
       }).pipe(Effect.provide(run.layer));
     });

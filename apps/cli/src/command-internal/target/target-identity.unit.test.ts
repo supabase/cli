@@ -173,4 +173,39 @@ describe("renderBranchTarget", () => {
       json: { kind: "linked", project_ref: OTHER_REF, environment: "branch" },
     });
   });
+
+  it("names the parent project when its name is known", () => {
+    const target = renderBranchTarget({
+      branch: Option.some("feature-x"),
+      ref: OTHER_REF,
+      parentRef: Option.some(REF),
+      parentName: "alpha",
+    });
+    expect(target.text).toBe(`project alpha (${REF}) · branch feature-x (${OTHER_REF})`);
+  });
+
+  it("renders the default branch as the production project", () => {
+    const target = renderBranchTarget({
+      branch: Option.some("main"),
+      ref: REF,
+      parentRef: Option.some(REF),
+      parentName: "alpha",
+      isDefault: true,
+    });
+    expect(target).toEqual({
+      text: `project alpha (${REF}) · production`,
+      json: { kind: "linked", project_ref: REF, project_name: "alpha", environment: "production" },
+    });
+  });
+
+  it("renders an unnamed default branch by its ref", () => {
+    const target = renderBranchTarget({
+      branch: Option.some("main"),
+      ref: REF,
+      parentRef: Option.some(REF),
+      isDefault: true,
+    });
+    expect(target.text).toBe(`project ${REF} · production`);
+    expect(target.json).toEqual({ kind: "linked", project_ref: REF, environment: "production" });
+  });
 });

@@ -1,6 +1,6 @@
 export const REMOTE_FLAG_NAME = "remote";
 
-export const DB_URL_PATTERN = /^postgres(ql)?:\/\//;
+export const DB_URL_PATTERN = /^postgres(ql)?:\/\//i;
 
 /** The spellings of a bare `--remote`, in any case. */
 export const LINKED_LITERAL = /^(true|yes|on|1)$/i;
@@ -21,3 +21,7 @@ const NOT_A_BRANCH_NAME: ReadonlyArray<RegExp> = [
 /** Whether a word reads as a branch name rather than a path, URL, number or sentence. */
 export const couldNameBranch = (word: string): boolean =>
   word !== "" && !NOT_A_BRANCH_NAME.some((pattern) => pattern.test(word));
+
+/** Removes `user:pass@` from a value before it appears in an error or a warning. */
+export const stripUserinfo = (value: string): string =>
+  value.replace(/\/\/[^\s/@]*@/g, "//").replace(/[^\s/@:]+:[^\s/@]*@/g, "");

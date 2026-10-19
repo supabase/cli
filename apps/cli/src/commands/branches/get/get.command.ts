@@ -51,7 +51,7 @@ const config = {
     Argument.withDescription("Branch name or ID."),
     Argument.optional,
   ),
-  ...projectTargetFlags(),
+  ...projectTargetFlags({ parent: true }),
 } as const;
 
 export type BranchesGetFlags = CliCommand.Command.Config.Infer<typeof config>;

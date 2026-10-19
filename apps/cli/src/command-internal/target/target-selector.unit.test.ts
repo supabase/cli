@@ -146,6 +146,57 @@ describe("parseTargetSelector", () => {
     });
   });
 
+  describe("alias values", () => {
+    it.each([
+      { flag: "--project-ref", overrides: { projectRef: Option.some("https://example.com") } },
+      { flag: "--project-id", overrides: { projectId: Option.some("https://example.com") } },
+    ] as const)("rejects a URL given to $flag", ({ flag, overrides }) => {
+      expect(failure(overrides)).toMatchObject({
+        _tag: "TargetInvalidValueError",
+        flag,
+        message: `${flag} takes a project ref or a branch name, not a URL.`,
+        suggestion:
+          "Pass a project ref or a branch name, for example --remote=abcdefghijklmnopqrst",
+      });
+    });
+
+    it("suggests the ref a project URL already names", () => {
+      expect(failure({ projectRef: Option.some(`https://${REF}.supabase.co`) })).toMatchObject({
+        _tag: "TargetInvalidValueError",
+        suggestion: `Use --remote=${REF}.`,
+      });
+    });
+
+    it("trims an alias value before it is classified", () => {
+      expect(success({ projectRef: Option.some(` ${REF} `) }).selection).toEqual({
+        _tag: "Ref",
+        ref: REF,
+      });
+    });
+
+    it.each(["true", "False", "YES", "off", "1", "0"])(
+      "keeps looking up a branch named %s through --project-ref",
+      (name) => {
+        expect(success({ projectRef: Option.some(name) }).selection).toEqual({
+          _tag: "Branch",
+          name,
+        });
+      },
+    );
+
+    it("keeps a keyword connection string given to --db-url working", () => {
+      const dsn = "host=db.example.com user=postgres password=pw";
+      expect(success({ dbUrl: Option.some(dsn) }).selection).toEqual({ _tag: "DbUrl", url: dsn });
+    });
+
+    it("treats a postgres URL in any case as a database", () => {
+      expect(success({ projectRef: Option.some("POSTGRESQL://h/db") }).selection).toEqual({
+        _tag: "DbUrl",
+        url: "POSTGRESQL://h/db",
+      });
+    });
+  });
+
   describe("conflicts", () => {
     it.each([
       ["--linked", { linked: true }, ["--remote", "--linked"]],
@@ -196,13 +247,66 @@ describe("parseTargetSelector", () => {
       [
         "--remote=<ref>",
         remote({ _tag: "Ref", ref: REF }),
-        "--project-ref cannot be combined with --remote=<value>; use --remote=<ref> alone.",
+        "--project-ref cannot be combined with --remote=<value>.",
       ],
     ] as const)("rejects --project-ref with %s", (_flag, overrides, message) => {
       expect(failure({ ...overrides, projectRef: Option.some(REF) })).toMatchObject({
         _tag: "TargetProjectRefConflictError",
         message,
       });
+    });
+
+    it.each([
+      ["--local", { local: true }, "Use --remote=<ref> for the project, or leave both out"],
+      [
+        "--db-url",
+        { dbUrl: Option.some(URL) },
+        "Use --remote=<ref> for the project or --remote=<url> for the database, not both.",
+      ],
+      ["--remote=<ref>", remote({ _tag: "Ref", ref: REF }), "Use --remote=<ref> alone."],
+    ] as const)(
+      "suggests the --remote form when --project-ref meets %s",
+      (_flag, overrides, hint) => {
+        expect(failure({ ...overrides, projectRef: Option.some(REF) })).toMatchObject({
+          suggestion: expect.stringContaining(hint),
+        });
+      },
+    );
+
+    it("suggests --remote=<ref> when --project-id meets --project-ref", () => {
+      expect(failure({ projectRef: Option.some(REF), projectId: Option.some(REF) })).toMatchObject({
+        message: "--project-id is a deprecated alias of --project-ref; pass only one of them.",
+        suggestion: "Use --remote=<ref> instead.",
+      });
+    });
+
+    it("suggests the --remote form for a selector conflict", () => {
+      expect(failure({ ...remote({ _tag: "Linked" }), linked: true })).toMatchObject({
+        suggestion: "Use --remote or --remote=<ref|branch|url> on its own.",
+      });
+    });
+
+    it("lists only the selectors a command without a database connection has", () => {
+      const result = parseTargetSelector({
+        remote: Option.some({ _tag: "Linked" }),
+        local: true,
+        linked: false,
+        projectRef: Option.none(),
+      });
+      expect(result).toMatchObject({
+        failure: {
+          _tag: "TargetSelectorConflictError",
+          message:
+            "Only one of --remote, --linked and --local can be set; got --remote and --local.",
+          suggestion: "Use --remote or --remote=<ref|branch> on its own.",
+        },
+      });
+    });
+
+    it("suggests the parent-scoped hint when the command passes one", () => {
+      expect(
+        failure({ ...remote({ _tag: "Linked" }), linked: true }, { valueHint: "<ref>" }),
+      ).toMatchObject({ suggestion: "Use --remote or --remote=<ref> on its own." });
     });
 
     it("rejects --project-id with --project-ref", () => {
@@ -221,11 +325,7 @@ describe("parseTargetSelector", () => {
 
   describe("empty values", () => {
     it.each([
-      [
-        "--db-url",
-        { dbUrl: Option.some("") },
-        "Pass a connection string, for example --remote=postgresql://postgres:postgres@127.0.0.1:54322/postgres",
-      ],
+      ["--db-url", { dbUrl: Option.some("") }, "Pass a connection string as --remote=<db-url>."],
       [
         "--project-ref",
         { projectRef: Option.some("") },

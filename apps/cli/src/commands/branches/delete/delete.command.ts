@@ -20,7 +20,7 @@ const config = {
     Argument.withDescription("Branch name or ID to delete."),
     Argument.optional,
   ),
-  ...projectTargetFlags(),
+  ...projectTargetFlags({ parent: true }),
 } as const;
 export type BranchesDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 

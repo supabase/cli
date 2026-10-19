@@ -37,6 +37,7 @@ import {
   type StubbedRequest,
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { DnsResolverFlag, OutputFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
@@ -197,6 +198,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(OutputFlag, Option.none()),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
+    commandRuntimeLayer(["migration", "repair"]).pipe(Layer.provide(BunServices.layer)),
     mockTty({ stdinIsTty: interactive, stdoutIsTty: interactive }),
     branchApi.layer,
     BunServices.layer,
@@ -527,28 +529,28 @@ describe("migration repair", () => {
         args: [...base, "--linked"],
         flags: { linked: true },
         target: { kind: "linked", ref: VALID_REF },
-        warning: `--linked is deprecated and will be removed in v4. Use --remote instead: supabase ${base.join(" ")} --remote`,
+        warning: `--linked is deprecated and will be removed in v4. Use --remote instead: supabase migration repair --remote`,
       },
       {
         alias: "--project-ref",
         args: [...base, "--project-ref", FLAG_REF],
         flags: { projectRef: Option.some(FLAG_REF) },
         target: { kind: "linked", ref: FLAG_REF },
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase ${base.join(" ")} --remote=${FLAG_REF}`,
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase migration repair --remote=${FLAG_REF}`,
       },
       {
         alias: "--db-url",
         args: [...base, "--db-url", DB_URL],
         flags: { dbUrl: Option.some(DB_URL) },
         target: { kind: "db-url" },
-        warning: `--db-url is deprecated and will be removed in v4. Use --remote instead: supabase ${base.join(" ")} --remote=<db-url>`,
+        warning: `--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead: supabase migration repair --remote=<db-url>`,
       },
       {
         alias: "--local",
         args: [...base, "--local"],
         flags: { local: true },
         target: { kind: "local" },
-        warning: `--local isn't needed (local is the default) and will be removed in v4: supabase ${base.join(" ")}`,
+        warning: `--local isn't needed (local is the default) and will be removed in v4: supabase migration repair`,
       },
     ] as const satisfies ReadonlyArray<{
       readonly alias: string;

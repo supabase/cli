@@ -6,7 +6,11 @@ import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { PROJECT_REF_PATTERN } from "../../config/project-ref.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { block } from "../command-permissions/model.ts";
-import { mapHttpError, sanitizeInlineName } from "../http-errors.ts";
+import {
+  AUTHENTICATION_FAILED_STATUS_MESSAGE,
+  mapHttpError,
+  sanitizeInlineName,
+} from "../http-errors.ts";
 import {
   parentNotLinkedMessage,
   parentRefInvalidMessage,
@@ -23,6 +27,8 @@ import {
   LinkBranchNotReadyError,
   LinkParentRefInvalidError,
 } from "./branch-resolution.errors.ts";
+import { closestByName } from "./closest-branch.ts";
+import { stripUserinfo } from "./remote-vocabulary.ts";
 
 type Branches = typeof V1ListAllBranchesOutput.Type;
 export type ParentBranch = Branches[number];
@@ -56,6 +62,8 @@ export interface BranchResolution {
   readonly projectRef: string;
   readonly branchName: string;
   readonly parentRef: string;
+  /** The project's production branch, which is the linked project itself. */
+  readonly isDefault: boolean;
 }
 
 function branchNotFoundMessage(value: string, parentRef: string, branches: Branches): string {
@@ -74,15 +82,14 @@ function branchNotFoundMessage(value: string, parentRef: string, branches: Branc
       ? `${shownSanitized}, … (${remaining} more — run supabase branches list)`
       : shownSanitized;
 
-  const trimmedLower = value.trim().toLowerCase();
-  const nearMiss = branches.find((branch) => branch.name.toLowerCase() === trimmedLower);
+  const closest = closestByName(branches, value);
   // Sanitized like the list above — an API-provided name must not be able to inject
   // ANSI/OSC/newline controls into the terminal.
   const didYouMean =
-    nearMiss !== undefined ? ` Did you mean "${sanitizeInlineName(nearMiss.name)}"?` : "";
+    closest !== undefined ? ` Did you mean "${sanitizeInlineName(closest.name)}"?` : "";
 
   return (
-    `Branch "${value}" not found for project ${parentRef}. Available branches: ${namesList}` +
+    `Branch "${value}" not found for project ${parentRef}. Available branches: ${namesList}.` +
     `${didYouMean}${parentRefTypoHint(value)}`
   );
 }
@@ -98,8 +105,12 @@ const unresolvedParent = Effect.fnUntraced(function* (
   value: string,
 ) {
   return parent.kind === "absent"
-    ? yield* new LinkBranchNotLinkedError({ message: parentNotLinkedMessage(value) })
-    : yield* new LinkParentRefInvalidError({ message: parentRefInvalidMessage(value) });
+    ? yield* new LinkBranchNotLinkedError({
+        message: parentNotLinkedMessage(stripUserinfo(value)),
+      })
+    : yield* new LinkParentRefInvalidError({
+        message: parentRefInvalidMessage(stripUserinfo(value)),
+      });
 });
 
 /** The eager client when the command built one, else the lazy factory's, so a bare run never resolves a token. */
@@ -129,10 +140,12 @@ export const listParentBranches = Effect.fnUntraced(function* (parentRef: string
     networkError: LinkBranchListNetworkError,
     statusError: LinkBranchListStatusError,
     networkMessage: (cause) => `failed to list branches: ${cause}`,
-    statusMessage: (status, body) =>
-      status === 404
+    statusMessage: (status, body) => {
+      if (status === 401) return AUTHENTICATION_FAILED_STATUS_MESSAGE;
+      return status === 404
         ? `Cannot list branches for project ${parentRef} (HTTP 404). If ${parentRef} is itself a preview branch, link its parent project first: supabase link --project-ref <parent-ref>`
-        : `unexpected list branches status ${status}: ${body}`,
+        : `unexpected list branches status ${status}: ${body}`;
+    },
   });
 
   const task = yield* startBranchLookupTask(label);
@@ -154,7 +167,7 @@ const resolveInParent = Effect.fnUntraced(function* (value: string, parentRef: s
   const found = findBranch(branches, value);
   if (found === undefined) {
     return yield* new LinkBranchNotFoundError({
-      message: branchNotFoundMessage(value, parentRef, branches),
+      message: branchNotFoundMessage(stripUserinfo(value), parentRef, branches),
     });
   }
 
@@ -170,6 +183,7 @@ const resolveInParent = Effect.fnUntraced(function* (value: string, parentRef: s
     projectRef: found.project_ref,
     branchName: found.name,
     parentRef,
+    isDefault: found.is_default || found.project_ref === parentRef,
   } satisfies BranchResolution;
 });
 
@@ -193,10 +207,12 @@ const resolveBranchById = Effect.fnUntraced(function* (id: string) {
     networkError: LinkBranchListNetworkError,
     statusError: LinkBranchListStatusError,
     networkMessage: (cause) => `failed to look up branch: ${cause}`,
-    statusMessage: (status, body) =>
-      status === 404
+    statusMessage: (status, body) => {
+      if (status === 401) return AUTHENTICATION_FAILED_STATUS_MESSAGE;
+      return status === 404
         ? `Branch "${sanitizeInlineName(id)}" not found. Run \`supabase branches list\` to see available branches.`
-        : `unexpected get branch status ${status}: ${body}`,
+        : `unexpected get branch status ${status}: ${body}`;
+    },
   });
 
   const task = yield* startBranchLookupTask("Resolving branch...");
@@ -213,7 +229,7 @@ const resolveBranchById = Effect.fnUntraced(function* (id: string) {
       message: `Branch "${sanitizeInlineName(id)}" has no project ref yet (status: ${detail.status}). Wait for it to finish provisioning, then retry.`,
     });
   }
-  return { projectRef: detail.ref, branchName: undefined, parentRef: undefined };
+  return { projectRef: detail.ref, branchName: undefined, parentRef: undefined, isDefault: false };
 });
 
 /**

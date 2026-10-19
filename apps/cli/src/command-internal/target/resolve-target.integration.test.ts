@@ -16,6 +16,7 @@ import { ProjectRefResolver } from "../../config/project-ref.service.ts";
 import type { ProjectRefSource } from "../../config/project-ref.service.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { prepareCliArgs } from "../../shared/cli/run.ts";
+import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 import { announceTarget } from "../../shared/output/command-target.service.ts";
 import type { OutputFormat } from "../../shared/output/types.ts";
@@ -44,12 +45,12 @@ const BRANCH_REF = "branchprojectrefabcd";
 const SECRET_URL =
   "postgresql://postgres:hunter2@db.abcdefghijklmnopqrst.supabase.co:5432/postgres";
 
-const branchRow = (name: string, projectRef = BRANCH_REF) => ({
+const branchRow = (name: string, projectRef = BRANCH_REF, isDefault = false) => ({
   id: "11111111-2222-4333-8444-555555555555",
   name,
   project_ref: projectRef,
   parent_project_ref: FILE_REF,
-  is_default: false,
+  is_default: isDefault,
   persistent: false,
   status: "MIGRATIONS_PASSED",
   created_at: "2026-05-27T01:02:03Z",
@@ -91,8 +92,13 @@ const run = (
     readonly savedRef?: string;
     readonly cache?: { readonly ref: string; readonly name?: string };
     readonly args?: ReadonlyArray<string>;
+    readonly command?: ReadonlyArray<string>;
     readonly format?: OutputFormat;
-    readonly branches?: ReadonlyArray<ReturnType<typeof branchRow>> | "unavailable";
+    readonly branches?:
+      | ReadonlyArray<ReturnType<typeof branchRow>>
+      | "unavailable"
+      | "unauthorized"
+      | "forbidden";
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -119,7 +125,11 @@ const run = (
         Effect.succeed(
           options.branches === "unavailable"
             ? jsonResponse(request, 500, { message: "boom" })
-            : jsonResponse(request, 200, options.branches ?? []),
+            : options.branches === "unauthorized"
+              ? jsonResponse(request, 401, { message: "Unauthorized" })
+              : options.branches === "forbidden"
+                ? jsonResponse(request, 403, { message: "Forbidden" })
+                : jsonResponse(request, 200, options.branches ?? []),
         ),
     });
     const spans: Array<Tracer.NativeSpan> = [];
@@ -146,6 +156,7 @@ const run = (
           options.args === undefined
             ? Layer.empty
             : Layer.succeed(CliArgs, prepareCliArgs(root, options.args)),
+          options.command === undefined ? Layer.empty : commandRuntimeLayer(options.command),
         ),
       ),
       Effect.withTracer(tracer),
@@ -266,17 +277,91 @@ describe("resolveTarget", () => {
       }),
     );
 
+    it.effect("names the cached parent project in the branch banner", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "feature-x" }) },
+          {
+            savedRef: FILE_REF,
+            cache: { ref: FILE_REF, name: "alpha" },
+            branches: [branchRow("feature-x")],
+          },
+        );
+        expect(result.stderr).toContain(
+          `Target: project alpha (${FILE_REF}) · branch feature-x (${BRANCH_REF})\n`,
+        );
+      }),
+    );
+
+    it.effect("announces the default branch as the production project", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "main" }) },
+          {
+            savedRef: FILE_REF,
+            cache: { ref: FILE_REF, name: "alpha" },
+            branches: [branchRow("main", FILE_REF, true)],
+          },
+        );
+        expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FILE_REF });
+        expect(result.stderr).toContain(`Target: project alpha (${FILE_REF}) · production\n`);
+        expect(result.stderr).not.toContain("branch main");
+      }),
+    );
+
+    it.effect("announces a branch whose project is the parent as production", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "main" }) },
+          { savedRef: FILE_REF, branches: [branchRow("main", FILE_REF)] },
+        );
+        expect(result.stderr).toContain(`Target: project ${FILE_REF} · production\n`);
+      }),
+    );
+
     it.effect("fails with the available branches when none has that name", () =>
       Effect.gen(function* () {
         const result = yield* run(
           "selectable",
-          { ...none, ...remote({ _tag: "Branch", name: "feature-y" }) },
+          { ...none, ...remote({ _tag: "Branch", name: "other-name" }) },
           { savedRef: FILE_REF, branches: [branchRow("feature-x")] },
         );
         expect(failureOf(result.exit)).toMatchObject({
           _tag: "LinkBranchNotFoundError",
-          message: expect.stringContaining("Available branches: feature-x"),
+          message: `Branch "other-name" not found for project ${FILE_REF}. Available branches: feature-x.`,
         });
+      }),
+    );
+
+    it.effect("suggests the closest branch when the name is a near miss", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "feature-y" }) },
+          { savedRef: FILE_REF, branches: [branchRow("feature-x"), branchRow("main")] },
+        );
+        expect(failureOf(result.exit)).toMatchObject({
+          _tag: "LinkBranchNotFoundError",
+          message: `Branch "feature-y" not found for project ${FILE_REF}. Available branches: feature-x, main. Did you mean "feature-x"?`,
+        });
+      }),
+    );
+
+    it.effect("tells an expired token to log in instead of showing the response body", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "feature-x" }) },
+          { savedRef: FILE_REF, branches: "unauthorized" },
+        );
+        const error = failureOf(result.exit);
+        expect(error).toMatchObject({ _tag: "LinkBranchListStatusError", status: 401 });
+        expect(String((error as Error).message)).toBe(
+          "Authentication failed: your access token is invalid or has expired. Run `supabase login` to re-authenticate.",
+        );
       }),
     );
 
@@ -305,18 +390,21 @@ describe("resolveTarget", () => {
 
   describe("a bare --remote followed by a word", () => {
     const args = ["db", "pull", "--remote", "feature-x"];
+    const command = ["db", "pull"];
     const bare = { ...none, ...remote({ _tag: "Linked" }) };
+    const options = `For the branch: supabase db pull --remote=feature-x. For the linked project: supabase db pull feature-x --remote`;
 
     it.effect("fails when the word is a branch of the linked project", () =>
       Effect.gen(function* () {
         const result = yield* run("selectable", bare, {
           args,
+          command,
           savedRef: FILE_REF,
           branches: [branchRow("feature-x")],
         });
         expect(failureOf(result.exit)).toMatchObject({
           _tag: "TargetRemoteAmbiguousError",
-          message: `feature-x is a branch of project ${FILE_REF}. Did you mean --remote=feature-x?`,
+          message: `"feature-x" is a branch of project ${FILE_REF}. ${options}`,
         });
         expect(result.refFlags).toEqual([]);
       }),
@@ -333,17 +421,101 @@ describe("resolveTarget", () => {
       }),
     );
 
-    it.effect("fails when the branches cannot be listed to tell", () =>
+    it.effect("names the branch of a linked, named project", () =>
       Effect.gen(function* () {
         const result = yield* run("selectable", bare, {
           args,
+          command,
+          savedRef: FILE_REF,
+          cache: { ref: FILE_REF, name: "alpha" },
+          branches: [branchRow("feature-x")],
+        });
+        expect(failureOf(result.exit)).toMatchObject({
+          message: `"feature-x" is a branch of alpha (${FILE_REF}). ${options}`,
+        });
+      }),
+    );
+
+    it.effect("fails when the branches cannot be listed to tell, keeping the cause", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args,
+          command,
           savedRef: FILE_REF,
           branches: "unavailable",
         });
+        const error = failureOf(result.exit);
+        expect(error).toMatchObject({
+          _tag: "TargetRemoteAmbiguousError",
+          message: `Can't tell whether "feature-x" is a branch (listing the branches of project ${FILE_REF} failed with HTTP 500). ${options}`,
+          status: 500,
+          cause: { _tag: "LinkBranchListStatusError", status: 500 },
+        });
+        expect(error).not.toHaveProperty("suggestion");
+      }),
+    );
+
+    it.effect.each([
+      { name: "unauthorized", status: 401 },
+      { name: "forbidden", status: 403 },
+    ] as const)("suggests logging in when the branch listing is $name", ({ name, status }) =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args,
+          command,
+          savedRef: FILE_REF,
+          branches: name,
+        });
         expect(failureOf(result.exit)).toMatchObject({
           _tag: "TargetRemoteAmbiguousError",
-          message: `Could not list the branches of project ${FILE_REF} to tell whether feature-x names one. Did you mean --remote=feature-x?`,
+          message: `Can't tell whether "feature-x" is a branch (listing the branches of project ${FILE_REF} failed with HTTP ${status}). ${options}`,
+          suggestion: "Run `supabase login` with an account that can list this project's branches.",
+          status,
         });
+      }),
+    );
+
+    it.effect("fails for a word one edit from a branch, naming the closest branch", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args: ["db", "pull", "--remote", "feature-y"],
+          command,
+          savedRef: FILE_REF,
+          branches: [branchRow("feature-x"), branchRow("main")],
+        });
+        expect(failureOf(result.exit)).toMatchObject({
+          _tag: "TargetRemoteAmbiguousError",
+          message: `"feature-y" isn't a branch, but "feature-x" is. For the branch: supabase db pull --remote=feature-x. For the linked project: supabase db pull feature-y --remote`,
+        });
+        expect(result.refFlags).toEqual([]);
+      }),
+    );
+
+    it.effect("fails for a word that differs from a branch only by case", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args: ["db", "pull", "--remote", "Feature-X"],
+          command,
+          savedRef: FILE_REF,
+          branches: [branchRow("feature-x")],
+        });
+        expect(failureOf(result.exit)).toMatchObject({
+          message: `"Feature-X" isn't a branch, but "feature-x" is. For the branch: supabase db pull --remote=feature-x. For the linked project: supabase db pull Feature-X --remote`,
+        });
+      }),
+    );
+
+    it.effect("never echoes the userinfo of a word that carries credentials", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args: ["db", "pull", "--remote", "hunter2:pw@feature-x"],
+          command,
+          savedRef: FILE_REF,
+          branches: [branchRow("feature-x")],
+        });
+        const message = String((failureOf(result.exit) as Error).message);
+        expect(message).toContain(`"feature-x" is a branch`);
+        expect(message).not.toContain("hunter2");
       }),
     );
 
@@ -383,12 +555,13 @@ describe("resolveTarget", () => {
       Effect.gen(function* () {
         const result = yield* run("selectable", bare, {
           args: ["db", "pull", "--remote", "feature-x"],
+          command,
           savedRef: FILE_REF,
           branches: [branchRow("feature-x")],
         });
         expect(failureOf(result.exit)).toMatchObject({
           _tag: "TargetRemoteAmbiguousError",
-          message: `feature-x is a branch of project ${FILE_REF}. Did you mean --remote=feature-x?`,
+          message: `"feature-x" is a branch of project ${FILE_REF}. ${options}`,
         });
       }),
     );
@@ -408,11 +581,11 @@ describe("resolveTarget", () => {
         const result = yield* run(
           "selectable",
           { ...none, linked: true },
-          { args: ["db", "push", "--dry-run", "--linked"] },
+          { args: ["db", "push", "--dry-run", "--linked"], command: ["db", "push"] },
         );
         expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FILE_REF });
         expect(result.warnings).toEqual([
-          "--linked is deprecated and will be removed in v4. Use --remote instead: supabase db push --dry-run --remote",
+          "--linked is deprecated and will be removed in v4. Use --remote instead: supabase db push --remote",
         ]);
       }),
     );
@@ -424,7 +597,7 @@ describe("resolveTarget", () => {
           const result = yield* run(
             "selectable",
             { ...none, linked: true },
-            { args: ["db", "push", "--linked"], format },
+            { args: ["db", "push", "--linked"], command: ["db", "push"], format },
           );
           expect(succeeded(result.exit)).toMatchObject({ kind: "linked" });
           expect(result.warnings).toEqual([
@@ -440,11 +613,14 @@ describe("resolveTarget", () => {
         const result = yield* run(
           "selectable",
           { ...none, linked: true, projectRef: Option.some(FLAG_REF) },
-          { args: ["db", "push", "--linked", "--project-ref", FLAG_REF, "--dry-run"] },
+          {
+            args: ["db", "push", "--linked", "--project-ref", FLAG_REF, "--dry-run"],
+            command: ["db", "push"],
+          },
         );
         expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FLAG_REF });
         expect(result.warnings).toEqual([
-          `--linked and --project-ref are deprecated and will be removed in v4. Use --remote instead: supabase db push --dry-run --remote=${FLAG_REF}`,
+          `--linked and --project-ref are deprecated and will be removed in v4. Use --remote=<ref> instead: supabase db push --remote=${FLAG_REF}`,
         ]);
       }),
     );
@@ -454,11 +630,14 @@ describe("resolveTarget", () => {
         const result = yield* run(
           "selectable",
           { ...none, dbUrl: Option.some(SECRET_URL) },
-          { args: ["db", "push", "--db-url", SECRET_URL, "--password", "hunter2"] },
+          {
+            args: ["db", "push", "--db-url", SECRET_URL, "--password", "hunter2"],
+            command: ["db", "push"],
+          },
         );
         expect(succeeded(result.exit)).toMatchObject({ kind: "db-url" });
         expect(result.warnings).toEqual([
-          "--db-url is deprecated and will be removed in v4. Use --remote instead: supabase db push --password <redacted> --remote=<db-url>, or --remote=abcdefghijklmnopqrst with an access token set",
+          "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead: supabase db push --remote=<db-url>, or --remote=abcdefghijklmnopqrst with an access token set",
         ]);
         expect(result.warnings.join("\n")).not.toContain("hunter2");
       }),
@@ -469,7 +648,7 @@ describe("resolveTarget", () => {
         const result = yield* run(
           "selectable",
           { ...none, local: true },
-          { args: ["db", "push", "--local"] },
+          { args: ["db", "push", "--local"], command: ["db", "push"] },
         );
         expect(succeeded(result.exit)).toEqual({ kind: "local" });
         expect(result.warnings).toEqual([
@@ -540,6 +719,46 @@ describe("resolveTarget", () => {
         expect(result.stderr).toBe(
           `Target: local stack (127.0.0.1:54322) · default; pass --remote for ${FILE_REF}\n`,
         );
+      }),
+    );
+
+    it.effect("hints from SUPABASE_PROJECT_ID when nothing is linked on disk", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", none, { projectId: Option.some(FILE_REF) });
+        expect(result.stderr).toBe(
+          `Target: local stack (127.0.0.1:54322) · default; pass --remote for ${FILE_REF}\n`,
+        );
+      }),
+    );
+
+    it.effect("names the project SUPABASE_PROJECT_ID points at when the cache knows it", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", none, {
+          projectId: Option.some(FILE_REF),
+          cache: { ref: FILE_REF, name: "alpha" },
+        });
+        expect(result.stderr).toBe(
+          `Target: local stack (127.0.0.1:54322) · default; pass --remote for alpha (${FILE_REF})\n`,
+        );
+      }),
+    );
+
+    it.effect("prefers SUPABASE_PROJECT_ID over the link file", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", none, {
+          projectId: Option.some(FILE_REF),
+          savedRef: FLAG_REF,
+        });
+        expect(result.stderr).toBe(
+          `Target: local stack (127.0.0.1:54322) · default; pass --remote for ${FILE_REF}\n`,
+        );
+      }),
+    );
+
+    it.effect("adds no hint when SUPABASE_PROJECT_ID is not a project ref", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", none, { projectId: Option.some("not-a-ref") });
+        expect(result.stderr).toBe("Target: local stack (127.0.0.1:54322)\n");
       }),
     );
 

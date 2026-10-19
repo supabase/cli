@@ -1,9 +1,10 @@
 import { Option, Result } from "effect";
 
-import { classifyNamedRemote, type RemoteValue } from "./remote-value.ts";
+import { parseNamedRemote, type RemoteValue } from "./remote-value.ts";
 import type { TargetFlagValues } from "./target-flags.ts";
 import {
   TargetEmptyValueError,
+  TargetInvalidValueError,
   TargetNeedsProjectError,
   TargetProjectRefConflictError,
   TargetSelectorConflictError,
@@ -46,6 +47,8 @@ export interface ParsedTargetSelector {
 export interface TargetSelectorOptions {
   /** Names the command in the error for a database URL it cannot use. */
   readonly commandName?: string;
+  /** What `--remote` takes on this command, for the suggestions; a command with no `dbUrl` input defaults to `<ref|branch>`. */
+  readonly valueHint?: string;
 }
 
 /** Lists flag names as `a`, `a and b` or `a, b and c`. */
@@ -60,9 +63,19 @@ const emptyValueError = (flag: "--db-url" | "--project-ref" | "--project-id") =>
     message: `${flag} cannot be empty.`,
     suggestion:
       flag === "--db-url"
-        ? "Pass a connection string, for example --remote=postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+        ? "Pass a connection string as --remote=<db-url>."
         : "Pass a project ref, for example --remote=abcdefghijklmnopqrst",
   });
+
+const PROJECT_REF_CONFLICT_SUGGESTION: Readonly<
+  Record<"--remote" | "--local" | "--db-url", string>
+> = {
+  "--remote": "Use --remote=<ref> alone.",
+  "--local": "Use --remote=<ref> for the project, or leave both out for the local database.",
+  "--db-url": "Use --remote=<ref> for the project or --remote=<url> for the database, not both.",
+};
+
+const trimmed = (value: string): string => value.trim();
 
 /**
  * A `false` switch counts as absent, so `--linked=false` and `--no-linked` select nothing.
@@ -74,9 +87,11 @@ export const parseTargetSelector = (
   options: TargetSelectorOptions = {},
 ): Result.Result<ParsedTargetSelector, TargetSelectorError> => {
   const remote = Option.getOrUndefined(input.remote);
-  const dbUrl = Option.getOrUndefined(input.dbUrl ?? Option.none());
-  const projectRef = Option.getOrUndefined(input.projectRef);
-  const projectId = Option.getOrUndefined(input.projectId ?? Option.none());
+  const dbUrl = Option.getOrUndefined(Option.map(input.dbUrl ?? Option.none(), trimmed));
+  const projectRef = Option.getOrUndefined(Option.map(input.projectRef, trimmed));
+  const projectId = Option.getOrUndefined(Option.map(input.projectId ?? Option.none(), trimmed));
+  const valueHint =
+    options.valueHint ?? (input.dbUrl === undefined ? "<ref|branch>" : "<ref|branch|url>");
 
   if (dbUrl === "") return Result.fail(emptyValueError("--db-url"));
   if (projectRef === "") return Result.fail(emptyValueError("--project-ref"));
@@ -88,11 +103,16 @@ export const parseTargetSelector = (
     ...(dbUrl === undefined ? [] : ["--db-url"]),
     ...(input.local ? ["--local"] : []),
   ];
+  const available =
+    input.dbUrl === undefined
+      ? ["--remote", "--linked", "--local"]
+      : ["--remote", "--linked", "--db-url", "--local"];
   if (selected.length > 1) {
     return Result.fail(
       new TargetSelectorConflictError({
         flags: selected,
-        message: `Only one of --remote, --linked, --db-url and --local can be set; got ${joinFlags(selected)}.`,
+        message: `Only one of ${joinFlags(available)} can be set; got ${joinFlags(selected)}.`,
+        suggestion: `Use --remote or --remote=${valueHint} on its own.`,
       }),
     );
   }
@@ -102,6 +122,7 @@ export const parseTargetSelector = (
       new TargetSelectorConflictError({
         flags: ["--project-id", "--project-ref"],
         message: "--project-id is a deprecated alias of --project-ref; pass only one of them.",
+        suggestion: "Use --remote=<ref> instead.",
       }),
     );
   }
@@ -121,11 +142,26 @@ export const parseTargetSelector = (
           conflictsWith,
           message:
             conflictsWith === "--remote"
-              ? `${aliasFlag} cannot be combined with --remote=<value>; use --remote=<ref> alone.`
+              ? `${aliasFlag} cannot be combined with --remote=<value>.`
               : `${aliasFlag} selects a remote project and cannot be combined with ${conflictsWith}.`,
+          suggestion: PROJECT_REF_CONFLICT_SUGGESTION[conflictsWith],
         }),
       );
     }
+  }
+
+  const aliasRemote = aliasValue === undefined ? undefined : parseNamedRemote(aliasValue);
+  if (aliasRemote !== undefined && Result.isFailure(aliasRemote)) {
+    return Result.fail(
+      new TargetInvalidValueError({
+        flag: aliasFlag,
+        message: `${aliasFlag} takes a project ref or a branch name, not a URL.`,
+        suggestion:
+          aliasRemote.failure.ref === undefined
+            ? "Pass a project ref or a branch name, for example --remote=abcdefghijklmnopqrst"
+            : `Use --remote=${aliasRemote.failure.ref}.`,
+      }),
+    );
   }
 
   const outcome = ((): {
@@ -140,15 +176,14 @@ export const parseTargetSelector = (
         deprecations: [{ kind: "remote-alias", flags: ["--db-url"], remote: value }],
       };
     }
-    if (aliasValue !== undefined) {
-      const value = classifyNamedRemote(aliasValue);
+    if (aliasRemote !== undefined && Result.isSuccess(aliasRemote)) {
       return {
-        selection: value,
+        selection: aliasRemote.success,
         deprecations: [
           {
             kind: "remote-alias",
             flags: input.linked ? ["--linked", aliasFlag] : [aliasFlag],
-            remote: value,
+            remote: aliasRemote.success,
           },
         ],
       };

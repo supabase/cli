@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  type DeprecationCommand,
   deprecationMessages,
-  rebuildCommand,
   refFromDbUrl,
   remoteFlagText,
 } from "./target-deprecation.ts";
@@ -17,70 +17,11 @@ describe("remoteFlagText", () => {
     { remote: { _tag: "Ref", ref: REF }, expected: `--remote=${REF}` },
     { remote: { _tag: "Branch", name: "feature-x" }, expected: "--remote=feature-x" },
     { remote: { _tag: "Branch", name: "my branch" }, expected: "--remote='my branch'" },
+    { remote: { _tag: "Branch", name: "u:pw@staging" }, expected: "--remote=staging" },
+    { remote: { _tag: "Branch", name: "TRUE" }, expected: "--remote=<its ref or UUID>" },
     { remote: { _tag: "DbUrl", url: "postgresql://u:pw@h/db" }, expected: "--remote=<db-url>" },
   ] as const)("spells $remote as $expected", ({ remote, expected }) => {
     expect(remoteFlagText(remote)).toBe(expected);
-  });
-});
-
-describe("rebuildCommand", () => {
-  it.each([
-    {
-      name: "drops a deprecated switch and puts --remote last",
-      argv: ["db", "push", "--linked", "--dry-run"],
-      remote: "--remote",
-      expected: "supabase db push --dry-run --remote",
-    },
-    {
-      name: "drops a deprecated value flag together with its value",
-      argv: ["db", "dump", "--project-ref", REF, "-f", "out.sql"],
-      remote: `--remote=${REF}`,
-      expected: `supabase db dump -f out.sql --remote=${REF}`,
-    },
-    {
-      name: "drops an inline deprecated value",
-      argv: ["db", "dump", `--project-ref=${REF}`],
-      remote: `--remote=${REF}`,
-      expected: `supabase db dump --remote=${REF}`,
-    },
-    {
-      name: "drops a boolean literal that follows a deprecated switch",
-      argv: ["db", "push", "--linked", "true"],
-      remote: "--remote",
-      expected: "supabase db push --remote",
-    },
-    {
-      name: "replaces a --remote the alias already maps to",
-      argv: ["db", "push", "--remote", "--project-ref", REF],
-      remote: `--remote=${REF}`,
-      expected: `supabase db push --remote=${REF}`,
-    },
-    {
-      name: "keeps --remote ahead of a literal --",
-      argv: ["functions", "deploy", "--linked", "--", "-weird"],
-      remote: "--remote",
-      expected: "supabase functions deploy --remote -- -weird",
-    },
-    {
-      name: "redacts a database URL and a password",
-      argv: ["db", "push", "--db-url", "postgresql://u:pw@h/db", "--password", "hunter2"],
-      remote: "--remote=<db-url>",
-      expected: "supabase db push --password <redacted> --remote=<db-url>",
-    },
-    {
-      name: "redacts an inline password and a stray URL operand",
-      argv: ["db", "push", "--password=hunter2", "postgresql://u:pw@h/db", "--local"],
-      remote: undefined,
-      expected: "supabase db push --password=<redacted> <db-url>",
-    },
-    {
-      name: "quotes a token the shell would split",
-      argv: ["storage", "ls", "ss:///my bucket", "--linked"],
-      remote: "--remote",
-      expected: "supabase storage ls 'ss:///my bucket' --remote",
-    },
-  ])("$name", ({ argv, remote, expected }) => {
-    expect(rebuildCommand(argv, remote)).toBe(expected);
   });
 });
 
@@ -100,17 +41,28 @@ describe("refFromDbUrl", () => {
 });
 
 describe("deprecationMessages", () => {
+  const dbPush: DeprecationCommand = { path: "db push", operands: [] };
+  const secretsSet: DeprecationCommand = { path: "secrets set", operands: ["<NAME=VALUE>..."] };
+
   const messages = (
     deprecations: ReadonlyArray<TargetDeprecation>,
-    argv: ReadonlyArray<string> | undefined,
-  ) => deprecationMessages(deprecations, { argv, projectHost: HOST });
+    command: DeprecationCommand | undefined = dbPush,
+  ) => deprecationMessages(deprecations, { command, projectHost: HOST });
 
-  it("names the flag, the replacement and v4, with the command as the user ran it", () => {
+  it("shows the command path, its operand placeholders and the replacement last", () => {
     expect(
       messages(
-        [{ kind: "remote-alias", flags: ["--linked"], remote: { _tag: "Linked" } }],
-        ["db", "push", "--linked"],
+        [{ kind: "remote-alias", flags: ["--project-ref"], remote: { _tag: "Ref", ref: REF } }],
+        secretsSet,
       ),
+    ).toEqual([
+      `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase secrets set <NAME=VALUE>... --remote=${REF}`,
+    ]);
+  });
+
+  it("points a deprecated --linked at a bare --remote", () => {
+    expect(
+      messages([{ kind: "remote-alias", flags: ["--linked"], remote: { _tag: "Linked" } }]),
     ).toEqual([
       "--linked is deprecated and will be removed in v4. Use --remote instead: supabase db push --remote",
     ]);
@@ -118,45 +70,82 @@ describe("deprecationMessages", () => {
 
   it("joins every alias the run used into one warning", () => {
     expect(
-      messages(
-        [
-          {
-            kind: "remote-alias",
-            flags: ["--linked", "--project-ref"],
-            remote: { _tag: "Ref", ref: REF },
-          },
-        ],
-        ["db", "push", "--linked", "--project-ref", REF],
-      ),
+      messages([
+        {
+          kind: "remote-alias",
+          flags: ["--linked", "--project-ref"],
+          remote: { _tag: "Ref", ref: REF },
+        },
+      ]),
     ).toEqual([
-      `--linked and --project-ref are deprecated and will be removed in v4. Use --remote instead: supabase db push --remote=${REF}`,
+      `--linked and --project-ref are deprecated and will be removed in v4. Use --remote=<ref> instead: supabase db push --remote=${REF}`,
+    ]);
+  });
+
+  it("shows the branch an alias value names, without its userinfo", () => {
+    expect(
+      messages([
+        {
+          kind: "remote-alias",
+          flags: ["--project-ref"],
+          remote: { _tag: "Branch", name: "staging" },
+        },
+      ]),
+    ).toEqual([
+      "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead: supabase db push --remote=staging",
     ]);
   });
 
   it("offers the project ref a Supabase database URL already names, without echoing the URL", () => {
     const url = `postgresql://postgres:hunter2@db.${REF}.supabase.co:5432/postgres`;
-    const [message] = messages(
-      [{ kind: "remote-alias", flags: ["--db-url"], remote: { _tag: "DbUrl", url } }],
-      ["db", "push", "--db-url", url],
-    );
+    const [message] = messages([
+      { kind: "remote-alias", flags: ["--db-url"], remote: { _tag: "DbUrl", url } },
+    ]);
     expect(message).toBe(
-      `--db-url is deprecated and will be removed in v4. Use --remote instead: supabase db push --remote=<db-url>, or --remote=${REF} with an access token set`,
+      `--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead: supabase db push --remote=<db-url>, or --remote=${REF} with an access token set`,
     );
     expect(message).not.toContain("hunter2");
   });
 
-  it("omits the command line when the argv is unknown", () => {
-    expect(
-      messages(
-        [{ kind: "remote-alias", flags: ["--project-id"], remote: { _tag: "Ref", ref: REF } }],
-        undefined,
-      ),
-    ).toEqual(["--project-id is deprecated and will be removed in v4. Use --remote instead"]);
+  it("asks for a postgresql:// URL when --db-url held a keyword connection string", () => {
+    const [message] = messages([
+      {
+        kind: "remote-alias",
+        flags: ["--db-url"],
+        remote: { _tag: "DbUrl", url: "host=db.example.com user=postgres password=hunter2" },
+      },
+    ]);
+    expect(message).toBe(
+      "--db-url is deprecated and will be removed in v4. Convert the connection string to a postgresql:// URL and pass it as --remote=<url> instead: supabase db push --remote=<url>",
+    );
+    expect(message).not.toContain("hunter2");
   });
 
-  it("says --local is not needed and drops it from the example", () => {
-    expect(messages([{ kind: "local" }], ["db", "push", "--local"])).toEqual([
-      "--local isn't needed (local is the default) and will be removed in v4: supabase db push",
+  it.each(["true", "No", "OFF", "1"])(
+    "says a branch named %s is reached by its ref or UUID",
+    (name) => {
+      expect(
+        messages([
+          { kind: "remote-alias", flags: ["--project-ref"], remote: { _tag: "Branch", name } },
+        ]),
+      ).toEqual([
+        `--project-ref is deprecated and will be removed in v4. Reach a branch named "${name}" with --remote=<its ref or UUID> instead: supabase db push --remote=<its ref or UUID>`,
+      ]);
+    },
+  );
+
+  it("drops the example when the command is unknown", () => {
+    expect(
+      deprecationMessages(
+        [{ kind: "remote-alias", flags: ["--project-id"], remote: { _tag: "Ref", ref: REF } }],
+        { command: undefined, projectHost: HOST },
+      ),
+    ).toEqual(["--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead"]);
+  });
+
+  it("says --local is not needed and shows the command without it", () => {
+    expect(messages([{ kind: "local" }], secretsSet)).toEqual([
+      "--local isn't needed (local is the default) and will be removed in v4: supabase secrets set <NAME=VALUE>...",
     ]);
   });
 });

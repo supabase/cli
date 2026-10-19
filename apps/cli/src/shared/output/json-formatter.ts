@@ -1,14 +1,14 @@
 import type { CliOutput, HelpDoc } from "effect/cli";
 import type { CliErrorSuggestionContext } from "../cli/subcommand-flag-suggestions.ts";
 import { cliErrorCode, formatCliErrorsForDisplay } from "../cli/subcommand-flag-suggestions.ts";
-import { subcommandScopes, targetHelpFor, withRemoteFlagUsage } from "./target-help.ts";
+import { subcommandScopes, targetHelpFor, withRemoteFlagValue } from "./target-help.ts";
 
 export function jsonCliOutputFormatter(context?: CliErrorSuggestionContext): CliOutput.Formatter {
   return {
     formatHelpDoc: (doc: HelpDoc.HelpDoc) => {
       const scopes = subcommandScopes(doc, context?.rootCommand);
       const target = targetHelpFor(doc);
-      const { annotations: _annotations, ...serializable } = withRemoteFlagUsage(doc);
+      const { annotations: _annotations, ...serializable } = withRemoteFlagValue(doc);
       return JSON.stringify({
         _tag: "Help",
         doc: {

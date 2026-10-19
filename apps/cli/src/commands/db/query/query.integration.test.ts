@@ -1433,13 +1433,13 @@ describe("db query target selection", () => {
       alias: "--project-ref",
       flags: { projectRef: Option.some(FLAG_PROJECT_REF) },
       expected: { hostedRef: FLAG_PROJECT_REF },
-      warning: "--project-ref is deprecated and will be removed in v4. Use --remote instead",
+      warning: "--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead",
     },
     {
       alias: "--db-url",
       flags: { dbUrl: Option.some("postgresql://postgres:pw@db.example.com/db") },
       expected: { target: expect.objectContaining({ kind: "db-url" }) },
-      warning: "--db-url is deprecated and will be removed in v4. Use --remote instead",
+      warning: "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead",
     },
     {
       alias: "--local",

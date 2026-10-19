@@ -4,12 +4,14 @@ import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
+  statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
 /** More than one of `--remote`, `--linked`, `--db-url` and `--local` was set. */
 export class TargetSelectorConflictError extends Data.TaggedError("TargetSelectorConflictError")<{
   readonly flags: ReadonlyArray<string>;
   readonly message: string;
+  readonly suggestion: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
@@ -22,6 +24,7 @@ export class TargetProjectRefConflictError extends Data.TaggedError(
 )<{
   readonly conflictsWith: "--remote" | "--local" | "--db-url";
   readonly message: string;
+  readonly suggestion: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
@@ -39,6 +42,17 @@ export class TargetEmptyValueError extends Data.TaggedError("TargetEmptyValueErr
   }
 }
 
+/** `--project-ref` or `--project-id` was given a URL, which names neither a project ref nor a branch. */
+export class TargetInvalidValueError extends Data.TaggedError("TargetInvalidValueError")<{
+  readonly flag: "--project-ref" | "--project-id";
+  readonly message: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 /** A command that acts on a project was given a database URL. */
 export class TargetNeedsProjectError extends Data.TaggedError("TargetNeedsProjectError")<{
   readonly message: string;
@@ -48,12 +62,20 @@ export class TargetNeedsProjectError extends Data.TaggedError("TargetNeedsProjec
   }
 }
 
-/** A bare `--remote` is followed by a word that names a branch (or whose branches could not be listed), so the word is probably the branch. */
+/**
+ * A bare `--remote` is followed by a word that names a branch, nearly names one, or could not be
+ * checked because the branch listing failed; `status` is that failure's HTTP status, when it had one.
+ */
 export class TargetRemoteAmbiguousError extends Data.TaggedError("TargetRemoteAmbiguousError")<{
   readonly message: string;
+  readonly suggestion?: string;
+  readonly status?: number;
+  readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
+    return this.status === 401 || this.status === 403
+      ? statusCodeActionability(this.status)
+      : actionability.provideFlags;
   }
 }
 
@@ -71,4 +93,5 @@ export type TargetSelectorError =
   | TargetSelectorConflictError
   | TargetProjectRefConflictError
   | TargetEmptyValueError
+  | TargetInvalidValueError
   | TargetNeedsProjectError;

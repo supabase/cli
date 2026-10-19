@@ -49,6 +49,7 @@ import { dockerfileServiceImage } from "../../../shared/services/dockerfile-imag
 import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
@@ -453,6 +454,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(OutputFlag, Option.none()),
     Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
+    commandRuntimeLayer(["migration", "squash"]).pipe(Layer.provide(BunServices.layer)),
     mockTty({ stdinIsTty: interactive, stdoutIsTty: interactive }),
   );
 
@@ -1445,7 +1447,7 @@ describe("migration squash", () => {
           args: ["migration", "squash", "--project-ref", FLAG_REF],
           flags: { projectRef: Option.some(FLAG_REF) },
           target: { kind: "linked", ref: FLAG_REF },
-          warning: `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase migration squash --remote=${FLAG_REF}`,
+          warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase migration squash --remote=${FLAG_REF}`,
         },
         {
           alias: "--db-url",
@@ -1453,7 +1455,7 @@ describe("migration squash", () => {
           flags: { dbUrl: Option.some(DB_URL) },
           target: { kind: "db-url" },
           warning:
-            "--db-url is deprecated and will be removed in v4. Use --remote instead: supabase migration squash --remote=<db-url>",
+            "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead: supabase migration squash --remote=<db-url>",
         },
         {
           alias: "--local",

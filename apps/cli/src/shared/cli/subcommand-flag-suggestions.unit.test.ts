@@ -2,6 +2,7 @@ import { CliError, Command } from "effect/cli";
 import { describe, expect, it } from "vitest";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { networkRestrictionsCommand } from "../../commands/network-restrictions/network-restrictions.command.ts";
+import { rootCommandForFeatures } from "../../cli/root.ts";
 import { formatCliErrorsForDisplay } from "./subcommand-flag-suggestions.ts";
 
 const testRoot = Command.make("supabase").pipe(
@@ -273,6 +274,51 @@ describe("subcommand flag placement suggestions", () => {
     expect(errors.changed).toBe(true);
     expect(errors.errors[0]?.message).toBe(
       'Invalid value for flag --env: "Expected: Expected nano". Expected "dev" | "staging" | "prod", got "Expected: Expected nano"',
+    );
+  });
+});
+
+describe("--remote where it does not apply", () => {
+  const root = rootCommandForFeatures();
+  const messageFor = (path: ReadonlyArray<string>, option = "--remote") =>
+    formatCliErrorsForDisplay(
+      [
+        new CliError.UnrecognizedOption({
+          option,
+          command: ["supabase", ...path],
+          suggestions: [],
+        }),
+      ],
+      { rootCommand: root, args: [...path, option] },
+    ).errors[0]?.message;
+
+  it("points link at its ref-or-branch argument", () => {
+    expect(messageFor(["link"])).toBe(
+      "supabase link takes the project ref or branch as its argument: supabase link <ref-or-branch>",
+    );
+  });
+
+  it.each([["start"], ["stop"], ["db", "start"], ["init"]])("says %s is local only", (...path) => {
+    expect(messageFor(path)).toBe(
+      `supabase ${path.join(" ")} is local only; --remote doesn't apply.`,
+    );
+  });
+
+  it("rewrites --remote=<value> the same way", () => {
+    expect(messageFor(["start"], "--remote=staging")).toBe(
+      "supabase start is local only; --remote doesn't apply.",
+    );
+  });
+
+  it("leaves --remote on an account command with the library's message", () => {
+    expect(messageFor(["projects", "list"])).toBe(
+      "Unrecognized flag: --remote in command supabase projects list",
+    );
+  });
+
+  it("leaves other unrecognized flags on link and local-only commands unchanged", () => {
+    expect(messageFor(["start"], "--bogus")).toBe(
+      "Unrecognized flag: --bogus in command supabase start",
     );
   });
 });

@@ -23,6 +23,16 @@ const named = (name: string | undefined, ref: string): string => {
   return safeName.length === 0 ? ref : `${safeName} (${ref})`;
 };
 
+const productionTarget = (ref: string, name: string | undefined): RenderedTarget => ({
+  text: `project ${named(name, ref)} · production`,
+  json: {
+    kind: "linked",
+    project_ref: ref,
+    ...(name === undefined ? {} : { project_name: name }),
+    environment: "production",
+  },
+});
+
 /**
  * A linked project's identity from the `linked-project.json` cache alone, with no API call. Only a
  * cache naming the resolved ref itself is evidence (a production project); a project that is
@@ -40,17 +50,7 @@ export const describeLinkedTarget = (input: {
 }): RenderedTarget => {
   const { ref } = input;
   const cached = Option.getOrUndefined(input.cache);
-  if (cached?.ref === ref) {
-    return {
-      text: `project ${named(cached.name, ref)} · production`,
-      json: {
-        kind: "linked",
-        project_ref: ref,
-        ...(cached.name === undefined ? {} : { project_name: cached.name }),
-        environment: "production",
-      },
-    };
-  }
+  if (cached?.ref === ref) return productionTarget(ref, cached.name);
   const differsFromLinked = Option.exists(
     input.linkedRef ?? Option.none(),
     (linked) => linked !== ref,
@@ -76,12 +76,19 @@ export const linkedAlternativeHint = (input: {
   return `default; pass --remote for ${named(name, input.ref)}`;
 };
 
-/** A branch resolved to its own project ref; `branch` is absent for a UUID lookup and `parentRef` for anything but a name lookup. */
+/**
+ * A branch resolved to its own project ref; `branch` is absent for a UUID lookup and `parentRef`
+ * for anything but a name lookup. The default branch is the linked project itself, so it renders
+ * as production.
+ */
 export const renderBranchTarget = (input: {
   readonly branch: Option.Option<string>;
   readonly ref: string;
   readonly parentRef: Option.Option<string>;
+  readonly parentName?: string | undefined;
+  readonly isDefault?: boolean;
 }): RenderedTarget => {
+  if (input.isDefault === true) return productionTarget(input.ref, input.parentName);
   const branch = Option.map(input.branch, sanitizeInlineName);
   const parentRef = Option.getOrUndefined(input.parentRef);
   const label = Option.match(branch, {
@@ -89,7 +96,8 @@ export const renderBranchTarget = (input: {
     onSome: (name) => `branch ${name} (${input.ref})`,
   });
   return {
-    text: parentRef === undefined ? label : `project ${parentRef} · ${label}`,
+    text:
+      parentRef === undefined ? label : `project ${named(input.parentName, parentRef)} · ${label}`,
     json: {
       kind: "linked",
       project_ref: input.ref,

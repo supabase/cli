@@ -62,6 +62,7 @@ import { LocalDockerEngine } from "../../src/command-internal/db-bootstrap/local
 import { LinkedProjectCache } from "../../src/telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../src/telemetry/telemetry-state.service.ts";
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
+import { commandRuntimeLayer } from "../../src/shared/runtime/command-runtime.layer.ts";
 import type { Stdin } from "../../src/shared/runtime/stdin.service.ts";
 import { OutputFlag } from "../../src/command-internal/global-flags.ts";
 import type { Output } from "../../src/shared/output/output.service.ts";
@@ -1454,6 +1455,8 @@ export interface BuildTestRuntimeOpts {
   readonly outputFlag?: Option.Option<OutputFlagValue>;
   /** Raw argv seen by the handler (e.g. to exercise an explicit `--yes=false`). */
   readonly cliArgs?: ReadonlyArray<string>;
+  /** The command path the handler runs as, e.g. `["storage", "ls"]`; leave it out to run without a `CommandRuntime`. */
+  readonly commandPath?: ReadonlyArray<string>;
 }
 
 export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
@@ -1508,6 +1511,9 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
     BunServices.layer,
     Layer.succeed(OutputFlag, outputFlag),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
+    opts.commandPath === undefined
+      ? Layer.empty
+      : commandRuntimeLayer(opts.commandPath).pipe(Layer.provide(BunServices.layer)),
     linkedProjectCache,
     telemetry,
     analytics,

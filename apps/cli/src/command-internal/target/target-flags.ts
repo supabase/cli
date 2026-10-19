@@ -1,7 +1,7 @@
-import { Effect, Option, Redacted } from "effect";
+import { Effect, Option, Redacted, Result } from "effect";
 import { Flag, GlobalFlag, Param, Primitive } from "effect/cli";
 
-import { classifyRemoteValue, LEAVE_OUT_REMOTE_PREFIX, type RemoteValue } from "./remote-value.ts";
+import { parseRemoteValue, type RemoteValue, type RemoteValueRejection } from "./remote-value.ts";
 import { REMOTE_FLAG_NAME } from "./remote-vocabulary.ts";
 import type { ResolvedTarget } from "./resolve-target.ts";
 import { remoteFlagText } from "./target-deprecation.ts";
@@ -20,6 +20,8 @@ interface SelectableRemoteFlagVariant<DbUrl extends boolean> {
 
 interface HostedRemoteFlagVariant {
   readonly kind: "hosted";
+  /** A command that acts on a parent project, such as `branches *`: its value is a ref, never a branch name. */
+  readonly parent: boolean;
 }
 
 type RemoteFlagVariant = SelectableRemoteFlagVariant<boolean> | HostedRemoteFlagVariant;
@@ -32,19 +34,44 @@ type RemoteValueWithUrl = RemoteValue & { readonly [urlAcceptance]?: "accepted" 
 /** A `--remote` value on a command with no database connection; the brand exists only in the type. */
 type RemoteValueWithoutUrl = RemoteValue & { readonly [urlAcceptance]?: "rejected" };
 
-const remoteDescription = (variant: RemoteFlagVariant): string => {
-  if (variant.kind === "hosted") {
-    return "Target another project: --remote=<ref|branch>. Defaults to the linked project.";
-  }
-  return variant.dbUrl
-    ? "Target a remote database: the linked project, or --remote=<ref|branch|url>."
-    : `Target a remote ${variant.subject}: the linked project, or --remote=<ref|branch>.`;
+/** What the variant's `--remote` takes as a value; the help rows, the flag description and the errors all read it. */
+const valueHintOf = (variant: RemoteFlagVariant): string => {
+  if (variant.kind === "hosted") return variant.parent ? "<ref>" : "<ref|branch>";
+  return variant.dbUrl ? "<ref|branch|url>" : "<ref|branch>";
 };
 
-const leaveOutMessage = (variant: RemoteFlagVariant): string =>
-  variant.kind === "hosted"
-    ? `${LEAVE_OUT_REMOTE_PREFIX}to use the linked project.`
-    : `${LEAVE_OUT_REMOTE_PREFIX}to target the local ${variant.subject}.`;
+const acceptedValuesOf = (variant: RemoteFlagVariant): string => {
+  if (variant.kind === "hosted" && variant.parent) return "a project ref";
+  const url = variant.kind === "selectable" && variant.dbUrl ? "a postgres:// URL, " : "";
+  return `${url}a project ref or a branch name`;
+};
+
+const remoteDescription = (variant: RemoteFlagVariant): string => {
+  const hint = valueHintOf(variant);
+  if (variant.kind === "hosted") {
+    return `Target another project: --remote=${hint}. Defaults to the linked project.`;
+  }
+  return variant.dbUrl
+    ? `Target a remote database: the linked project, or --remote=${hint}.`
+    : `Target a remote ${variant.subject}: the linked project, or --remote=${hint}.`;
+};
+
+const rejectionMessage = (variant: RemoteFlagVariant, rejection: RemoteValueRejection): string => {
+  const fallback =
+    variant.kind === "hosted" ? "use the linked project" : `target the local ${variant.subject}`;
+  switch (rejection._tag) {
+    case "Empty":
+      return `--remote= has an empty value. Pass --remote for the linked project or --remote=${valueHintOf(variant)}; leave it out to ${fallback}.`;
+    case "Off":
+      return `--remote doesn't take false. Leave it out to ${fallback}.`;
+    case "ForeignUrl":
+      return `--remote takes ${acceptedValuesOf(variant)}${
+        rejection.ref === undefined
+          ? "."
+          : `; to target that project, use --remote=${rejection.ref}.`
+      }`;
+  }
+};
 
 const REMOTE_PRIMITIVE = Symbol.for("supabase/cli/RemotePrimitive");
 
@@ -55,10 +82,11 @@ const REMOTE_PRIMITIVE = Symbol.for("supabase/cli/RemotePrimitive");
 const remotePrimitive = (variant: RemoteFlagVariant): Primitive.Primitive<RemoteValue> =>
   Object.assign(Object.create(Primitive.Boolean), {
     [REMOTE_PRIMITIVE]: true,
-    parse: (raw: string) => {
-      const value = classifyRemoteValue(raw);
-      return value === undefined ? Effect.fail(leaveOutMessage(variant)) : Effect.succeed(value);
-    },
+    parse: (raw: string) =>
+      Result.match(parseRemoteValue(raw), {
+        onFailure: (rejection) => Effect.fail(rejectionMessage(variant, rejection)),
+        onSuccess: Effect.succeed,
+      }),
   });
 
 /** Whether a flag was declared by {@link targetFlags}, {@link projectTargetFlags} or the `seed` globals as `--remote`. */
@@ -78,6 +106,7 @@ function remoteFlag(variant: RemoteFlagVariant): Flag.Flag<Option.Option<RemoteV
     kind: Param.flagKind,
     name: REMOTE_FLAG_NAME,
     primitiveType: remotePrimitive(variant),
+    typeName: valueHintOf(variant),
   }).pipe(Flag.withDescription(remoteDescription(variant)), Flag.optional);
 }
 
@@ -175,9 +204,9 @@ export function targetFlags(
       };
 }
 
-/** The flags of a hosted-only command: `--remote=<ref|branch>` and the deprecated `--project-ref` alias. */
-export const projectTargetFlags = () => ({
-  remote: remoteFlag({ kind: "hosted" }),
+/** The flags of a hosted-only command: `--remote=<ref|branch>` and the deprecated `--project-ref` alias; `parent` narrows the value to a ref. */
+export const projectTargetFlags = (options: { readonly parent?: true } = {}) => ({
+  remote: remoteFlag({ kind: "hosted", parent: options.parent === true }),
   projectRef: projectRefFlag(),
 });
 

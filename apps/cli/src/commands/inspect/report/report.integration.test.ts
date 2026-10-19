@@ -175,6 +175,7 @@ interface SetupOpts {
   projectId?: string;
   /** Raw CLI args slice, used to detect which flags were explicitly passed. */
   cliArgs?: ReadonlyArray<string>;
+  commandPath?: ReadonlyArray<string>;
   /** Runs the real `DbConfigResolver` against `workdir`. */
   realLayers?: boolean;
 }
@@ -217,6 +218,7 @@ function setupReport(opts: SetupOpts = {}) {
       runtimeInfo,
       telemetry: telemetry.layer,
       cliArgs: opts.cliArgs,
+      commandPath: opts.commandPath,
     }),
     opts.realLayers !== true || opts.workdir === undefined
       ? resolver.layer
@@ -441,7 +443,7 @@ describe("inspect report", () => {
         cliArgs: ["inspect", "report", "--project-ref", FLAG_REF],
         flags: { projectRef: Option.some(FLAG_REF) },
         target: { kind: "linked", ref: FLAG_REF, source: "flag" },
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase inspect report --remote=${FLAG_REF}`,
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase inspect report --remote=${FLAG_REF}`,
       },
       {
         alias: "--db-url",
@@ -449,7 +451,7 @@ describe("inspect report", () => {
         flags: { dbUrl: Option.some(DEPRECATED_DB_URL) },
         target: { kind: "db-url" },
         warning:
-          "--db-url is deprecated and will be removed in v4. Use --remote instead: supabase inspect report --remote=<db-url>",
+          "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead: supabase inspect report --remote=<db-url>",
       },
       {
         alias: "--local",
@@ -473,6 +475,7 @@ describe("inspect report", () => {
           csvs: DEFAULT_RULE_CSVS,
           projectId: VALID_REF,
           cliArgs: testCase.cliArgs,
+          commandPath: ["inspect", "report"],
         });
         return Effect.gen(function* () {
           const base = yield* tempDir("supabase-report-out-");

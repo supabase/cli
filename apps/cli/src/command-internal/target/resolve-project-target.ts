@@ -15,13 +15,19 @@ interface DetailedProjectTargetOptions {
   readonly detail: true;
 }
 
-const selectProject = Effect.fnUntraced(function* (flags: ProjectTargetFlagValues) {
-  return yield* selectTarget({
-    remote: flags.remote,
-    projectRef: flags.projectRef,
-    local: false,
-    linked: false,
-  });
+const selectProject = Effect.fnUntraced(function* (
+  flags: ProjectTargetFlagValues,
+  options: { readonly valueHint?: string } = {},
+) {
+  return yield* selectTarget(
+    {
+      remote: flags.remote,
+      projectRef: flags.projectRef,
+      local: false,
+      linked: false,
+    },
+    options,
+  );
 });
 
 const unreachableSelection = (tag: "Local" | "DbUrl") =>
@@ -47,7 +53,7 @@ const resolveHosted = Effect.fn("Target.resolveProject")(function* (
 const resolveParent = Effect.fn("Target.resolveProject")(function* (
   flags: ProjectTargetFlagValues,
 ) {
-  const { selection, commandName } = yield* selectProject(flags);
+  const { selection, commandName } = yield* selectProject(flags, { valueHint: "<ref>" });
   switch (selection._tag) {
     case "Branch":
       return yield* new TargetNeedsProjectError({

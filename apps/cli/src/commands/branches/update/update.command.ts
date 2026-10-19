@@ -29,7 +29,7 @@ const config = {
     Argument.withDescription("Branch name or ID to update."),
     Argument.optional,
   ),
-  ...projectTargetFlags(),
+  ...projectTargetFlags({ parent: true }),
   name: Flag.String("name").pipe(Flag.withDescription("Rename the preview branch."), Flag.optional),
   gitBranch: Flag.String("git-branch").pipe(
     Flag.withDescription("Change the associated git branch."),

@@ -113,25 +113,81 @@ describe("targetFlags", () => {
   );
 
   it.effect.each([
-    { args: ["--remote=false"], value: "false" },
-    { args: ["--remote=0"], value: "0" },
-    { args: ["--remote", "off"], value: "off" },
-    { args: ["--no-remote"], value: "false" },
-    { args: ["--remote="], value: "" },
+    { args: ["--remote=false"] },
+    { args: ["--remote=0"] },
+    { args: ["--remote", "off"] },
+    { args: ["--no-remote"] },
   ])("rejects $args by pointing at the local default", ({ args }) =>
     Effect.gen(function* () {
       expect(yield* rejectedMessage(withDbUrl, args)).toBe(
-        "Leave out --remote to target the local database.",
+        "--remote doesn't take false. Leave it out to target the local database.",
       );
     }),
   );
 
-  it.effect("names the Storage API in its local-default message", () =>
+  it.effect("rejects an empty value and offers every form the command takes", () =>
+    Effect.gen(function* () {
+      expect(yield* rejectedMessage(withDbUrl, ["--remote="])).toBe(
+        "--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.",
+      );
+    }),
+  );
+
+  it.effect("names the Storage API in its local-default messages", () =>
     Effect.gen(function* () {
       const storage = targetFlags({ subject: "Storage API", dbUrl: false });
       expect(yield* rejectedMessage(storage, ["--no-remote"])).toBe(
-        "Leave out --remote to target the local Storage API.",
+        "--remote doesn't take false. Leave it out to target the local Storage API.",
       );
+      expect(yield* rejectedMessage(storage, ["--remote="])).toBe(
+        "--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to target the local Storage API.",
+      );
+    }),
+  );
+
+  it.effect.each([
+    {
+      value: `https://${REF}.supabase.co`,
+      message: `--remote takes a postgres:// URL, a project ref or a branch name; to target that project, use --remote=${REF}.`,
+    },
+    {
+      value: `HTTPS://${REF}.supabase.co/dashboard`,
+      message: `--remote takes a postgres:// URL, a project ref or a branch name; to target that project, use --remote=${REF}.`,
+    },
+    {
+      value: "https://example.com/db",
+      message: "--remote takes a postgres:// URL, a project ref or a branch name.",
+    },
+  ])(
+    "rejects $value because a URL that is not postgres:// never names a branch",
+    ({ value, message }) =>
+      Effect.gen(function* () {
+        expect(yield* rejectedMessage(withDbUrl, [`--remote=${value}`])).toBe(message);
+      }),
+  );
+
+  it.effect(
+    "leaves the postgres:// URL out of the foreign-URL message where none is accepted",
+    () =>
+      Effect.gen(function* () {
+        const storage = targetFlags({ subject: "Storage API", dbUrl: false });
+        expect(yield* rejectedMessage(storage, ["--remote=https://example.com"])).toBe(
+          "--remote takes a project ref or a branch name.",
+        );
+      }),
+  );
+
+  it.effect.each([
+    { value: ` ${URL} `, expected: { _tag: "DbUrl", url: URL } },
+    { value: "POSTGRESQL://u:pw@h/db", expected: { _tag: "DbUrl", url: "POSTGRESQL://u:pw@h/db" } },
+    { value: "Postgres://h/db", expected: { _tag: "DbUrl", url: "Postgres://h/db" } },
+    { value: ` ${REF} `, expected: { _tag: "Ref", ref: REF } },
+    { value: " staging ", expected: { _tag: "Branch", name: "staging" } },
+  ])("trims and classifies the value %j", ({ value, expected }) =>
+    Effect.gen(function* () {
+      expect(yield* parseWith(withDbUrl, [`--remote=${value}`])).toMatchObject({
+        remote: Option.some(expected),
+      });
     }),
   );
 
@@ -210,10 +266,28 @@ describe("projectTargetFlags", () => {
     }),
   );
 
-  it.effect("rejects an off value by pointing at the linked project", () =>
+  it.effect("rejects an off value and an empty value by pointing at the linked project", () =>
     Effect.gen(function* () {
       expect(yield* rejectedMessage(hosted, ["--no-remote"])).toBe(
-        "Leave out --remote to use the linked project.",
+        "--remote doesn't take false. Leave it out to use the linked project.",
+      );
+      expect(yield* rejectedMessage(hosted, ["--remote="])).toBe(
+        "--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.",
+      );
+    }),
+  );
+
+  it.effect("takes only a project ref on a parent-scoped command", () =>
+    Effect.gen(function* () {
+      const parent = projectTargetFlags({ parent: true });
+      expect(yield* rejectedMessage(parent, ["--remote="])).toBe(
+        "--remote= has an empty value. Pass --remote for the linked project or --remote=<ref>; leave it out to use the linked project.",
+      );
+      expect(yield* rejectedMessage(parent, ["--remote=https://example.com"])).toBe(
+        "--remote takes a project ref.",
+      );
+      expect(describeFlag(parent.remote).description).toBe(
+        "Target another project: --remote=<ref>. Defaults to the linked project.",
       );
     }),
   );
@@ -267,6 +341,12 @@ describe("isRemoteFlag", () => {
 });
 
 describe("seedTargetGlobalFlags", () => {
+  it("takes a ref or a branch, never a database URL", () => {
+    expect(describeFlag(seedTargetGlobalFlags.remote.flag).description).toBe(
+      "Target a remote Storage API: the linked project, or --remote=<ref|branch>.",
+    );
+  });
+
   it("shares the selector flag names with targetFlags", () => {
     expect(describeFlag(seedTargetGlobalFlags.remote.flag).name).toBe("remote");
     expect(describeFlag(seedTargetGlobalFlags.linked.flag).name).toBe("linked");

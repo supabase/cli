@@ -61,7 +61,7 @@ const config = {
     Argument.withDescription("Name for the new branch."),
     Argument.optional,
   ),
-  ...projectTargetFlags(),
+  ...projectTargetFlags({ parent: true }),
   region: Flag.Literals("region", BRANCH_REGIONS).pipe(
     Flag.withDescription("Select a region to deploy the branch database."),
     Flag.optional,

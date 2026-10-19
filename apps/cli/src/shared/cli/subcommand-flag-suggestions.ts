@@ -1,7 +1,9 @@
-import { Predicate } from "effect";
+import { Option, Predicate } from "effect";
 import type { CliError, Command, HelpDoc, Param } from "effect/cli";
 import { unwrapToSingleParam } from "../../command-internal/param-introspection.ts";
+import { REMOTE_FLAG_NAME } from "../../command-internal/target/remote-vocabulary.ts";
 import { isRemoteFlag } from "../../command-internal/target/target-flags.ts";
+import { readTargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { commandInternals } from "../../docs/docs-introspection.ts";
 import { formatInvalidValueMessage } from "./invalid-value-message.ts";
 
@@ -54,6 +56,16 @@ export function helpDocFor(
   commandPath: ReadonlyArray<string>,
 ): HelpDoc.HelpDoc | undefined {
   return hasHelpDoc(command) ? command.buildHelpDoc(commandPath) : undefined;
+}
+
+/** The operand placeholders the command at `path` lists in its help, e.g. `<NAME=VALUE>...`. */
+export function operandPlaceholdersAt(
+  rootCommand: Command.Command.Any,
+  path: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  const command = findCommand(rootCommand, path.slice(1));
+  const operands = (command === undefined ? undefined : helpDocFor(command, path))?.args ?? [];
+  return operands.map((operand) => `<${operand.name}>${operand.variadic ? "..." : ""}`);
 }
 
 const flagArityOf = (single: Param.Single<Param.ParamKind, unknown>): FlagArity => {
@@ -273,6 +285,35 @@ function findValueAfterOption(args: ReadonlyArray<string>, option: string): stri
   return undefined;
 }
 
+/** What to say when `--remote` is passed to `link` or a local-only command, which take no such flag. */
+function remoteFlagMisuseMessage(
+  rootCommand: Command.Command.Any,
+  commandPath: ReadonlyArray<string>,
+): string | undefined {
+  const command = findCommand(rootCommand, commandPath.slice(1));
+  if (command === undefined) return undefined;
+  const usage = `supabase ${commandPath.slice(1).join(" ")}`;
+  if (command.name === "link" && commandPath.length === 2) {
+    return `${usage} takes the project ref or branch as its argument: ${usage} <ref-or-branch>`;
+  }
+  return Option.exists(readTargetPolicy(command), (policy) => policy.group === "local-only")
+    ? `${usage} is local only; --remote doesn't apply.`
+    : undefined;
+}
+
+/** Whether `error` is `--remote` given to a command that takes no such flag and has its own message for it. */
+export function isRemoteFlagMisuse(
+  error: CliError.CliError,
+  rootCommand: Command.Command.Any,
+): error is CliError.UnrecognizedOption {
+  return (
+    Predicate.isTagged(error, "UnrecognizedOption") &&
+    normalizeOption(error.option) === REMOTE_FLAG_NAME &&
+    error.command !== undefined &&
+    remoteFlagMisuseMessage(rootCommand, error.command) !== undefined
+  );
+}
+
 function buildSubcommandFlagHint(
   error: CliError.UnrecognizedOption,
   context: CliErrorSuggestionContext,
@@ -316,6 +357,17 @@ export function formatCliErrorsForDisplay(
   let changed = false;
 
   for (const error of errors) {
+    if (context && isRemoteFlagMisuse(error, context.rootCommand) && error.command) {
+      changed = true;
+      formatted.push({
+        _tag: error._tag,
+        message: remoteFlagMisuseMessage(context.rootCommand, error.command) ?? error.message,
+        source: error,
+        changed: true,
+      });
+      continue;
+    }
+
     if (Predicate.isTagged(error, "UnrecognizedOption") && context) {
       const hint = buildSubcommandFlagHint(error, context);
       if (hint) {

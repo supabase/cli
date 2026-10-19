@@ -187,6 +187,7 @@ interface SetupOpts {
   projectId?: string;
   /** Raw CLI args slice; drives explicitly-passed flag detection. */
   cliArgs?: ReadonlyArray<string>;
+  commandPath?: ReadonlyArray<string>;
   /** Runs the real `DbConfigResolver` against the temp `workdir`. */
   realLayers?: { readonly workdir: string };
   workdir?: string;
@@ -218,6 +219,7 @@ function setup(opts: SetupOpts = {}) {
     }),
     telemetry: telemetry.layer,
     cliArgs: opts.cliArgs,
+    commandPath: opts.commandPath,
   });
   const layer = Layer.mergeAll(
     runtime,
@@ -450,7 +452,7 @@ describe("inspect db query runner", () => {
         cliArgs: ["inspect", "db", "db-stats", "--project-ref", FLAG_REF],
         flags: { projectRef: Option.some(FLAG_REF) },
         target: { kind: "linked", ref: FLAG_REF, source: "flag" },
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase inspect db db-stats --remote=${FLAG_REF}`,
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase inspect db db-stats --remote=${FLAG_REF}`,
       },
       {
         alias: "--db-url",
@@ -458,7 +460,7 @@ describe("inspect db query runner", () => {
         flags: { dbUrl: Option.some(DEPRECATED_DB_URL) },
         target: { kind: "db-url" },
         warning:
-          "--db-url is deprecated and will be removed in v4. Use --remote instead: supabase inspect db db-stats --remote=<db-url>",
+          "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead: supabase inspect db db-stats --remote=<db-url>",
       },
       {
         alias: "--local",
@@ -482,6 +484,7 @@ describe("inspect db query runner", () => {
           rows: [DB_STATS_ROW],
           projectId: VALID_REF,
           cliArgs: testCase.cliArgs,
+          commandPath: ["inspect", "db", "db-stats"],
         });
         return Effect.gen(function* () {
           yield* inspectDbDbStats(flags(testCase.flags));

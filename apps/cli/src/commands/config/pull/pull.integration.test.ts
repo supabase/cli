@@ -380,8 +380,8 @@ interface SetupOpts {
   /** Serves the project list and project lookup, answers the project picker with `VALID_REF`, and
    *  writes the linked-project cache through the real cache layer. */
   readonly pickerAndRealCache?: boolean;
-  /** The argv the deprecation warnings render their replacement command from. */
-  readonly cliArgs?: ReadonlyArray<string>;
+  /** The command path the deprecation warnings name in their example. */
+  readonly commandPath?: ReadonlyArray<string>;
   readonly yes?: boolean;
   readonly stdinIsTty?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
@@ -484,7 +484,7 @@ function setup(opts: SetupOpts = {}) {
       processControl,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
       outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
-      ...(opts.cliArgs === undefined ? {} : { cliArgs: opts.cliArgs }),
+      ...(opts.commandPath === undefined ? {} : { commandPath: opts.commandPath }),
     }),
     mockStdin(opts.stdinIsTty ?? false),
     Layer.succeed(YesFlag, opts.yes ?? false),
@@ -1776,12 +1776,12 @@ describe("config pull integration", () => {
       toml: 'project_id = "test"\n',
       yes: true,
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
-      cliArgs: ["config", "pull", "--project-ref", "staging"],
+      commandPath: ["config", "pull"],
     });
     return Effect.gen(function* () {
       yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
       expect(warningsOf(out)).toEqual([
-        "--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase config pull --remote=staging",
+        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead: supabase config pull --remote=staging",
       ]);
       expect(out.stderrText).toContain(`Pulling config from 'staging' (branch ${BRANCH_REF})`);
     }).pipe(Effect.provide(layer));

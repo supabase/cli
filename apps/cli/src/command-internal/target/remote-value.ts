@@ -1,4 +1,4 @@
-import { Predicate } from "effect";
+import { Predicate, Result } from "effect";
 
 import { BRANCH_PROJECT_REF_PATTERN } from "../ref-patterns.ts";
 import { DB_URL_PATTERN, LINKED_LITERAL, OFF_LITERAL } from "./remote-vocabulary.ts";
@@ -19,19 +19,54 @@ export const isRemoteValue = (value: unknown): value is RemoteValue =>
 
 export type NamedRemoteValue = Exclude<RemoteValue, { readonly _tag: "Linked" }>;
 
-/** Starts every failure for an off or empty `--remote` value, which the CLI prints without its usual `Invalid value` framing. */
-export const LEAVE_OUT_REMOTE_PREFIX = "Leave out --remote ";
+/** A value with `://` that is not a postgres URL; `ref` is the project it points at when it is a project's own URL. */
+export interface ForeignUrlRejection {
+  readonly _tag: "ForeignUrl";
+  readonly ref: string | undefined;
+}
 
-/** 20 lowercase letters is a project ref, a postgres URL is a database, anything else names a branch. */
-export const classifyNamedRemote = (raw: string): NamedRemoteValue => {
-  if (BRANCH_PROJECT_REF_PATTERN.test(raw)) return { _tag: "Ref", ref: raw };
-  if (DB_URL_PATTERN.test(raw)) return { _tag: "DbUrl", url: raw };
-  return { _tag: "Branch", name: raw };
+export type RemoteValueRejection =
+  | { readonly _tag: "Empty" }
+  | { readonly _tag: "Off" }
+  | ForeignUrlRejection;
+
+const PROJECT_URL_REF = /^[a-z][a-z0-9+.-]*:\/\/([a-z]{20})\.supabase\.[a-z]+(?::\d+)?(?:[/?#]|$)/;
+
+const refOfProjectUrl = (value: string): string | undefined =>
+  PROJECT_URL_REF.exec(value.toLowerCase())?.[1];
+
+/** 20 lowercase letters is a project ref, a postgres URL is a database, any other URL is rejected, anything else names a branch. */
+export const parseNamedRemote = (
+  raw: string,
+): Result.Result<NamedRemoteValue, ForeignUrlRejection> => {
+  const value = raw.trim();
+  if (BRANCH_PROJECT_REF_PATTERN.test(value)) return Result.succeed({ _tag: "Ref", ref: value });
+  if (DB_URL_PATTERN.test(value)) return Result.succeed({ _tag: "DbUrl", url: value });
+  if (value.includes("://")) {
+    return Result.fail({ _tag: "ForeignUrl", ref: refOfProjectUrl(value) });
+  }
+  return Result.succeed({ _tag: "Branch", name: value });
 };
 
-/** Classifies a `--remote` value; `undefined` for an empty value or an off switch (`false|no|off|0`). */
+/** Classifies a `--remote` value, or says why it is rejected: empty, an off switch (`false|no|off|0`) or a URL that is not a postgres URL. */
+export const parseRemoteValue = (raw: string): Result.Result<RemoteValue, RemoteValueRejection> => {
+  const value = raw.trim();
+  if (LINKED_LITERAL.test(value)) return Result.succeed({ _tag: "Linked" });
+  if (value === "") return Result.fail({ _tag: "Empty" });
+  if (OFF_LITERAL.test(value)) return Result.fail({ _tag: "Off" });
+  return parseNamedRemote(value);
+};
+
+/** {@link parseNamedRemote} for a caller that reads a value the flag's own parser already accepted: a foreign URL falls back to a branch name. */
+export const classifyNamedRemote = (raw: string): NamedRemoteValue =>
+  Result.getOrElse(parseNamedRemote(raw), (): NamedRemoteValue => ({
+    _tag: "Branch",
+    name: raw.trim(),
+  }));
+
+/** {@link parseRemoteValue} for the same caller; `undefined` for an empty value or an off switch. */
 export const classifyRemoteValue = (raw: string): RemoteValue | undefined => {
-  if (LINKED_LITERAL.test(raw)) return { _tag: "Linked" };
-  if (raw === "" || OFF_LITERAL.test(raw)) return undefined;
-  return classifyNamedRemote(raw);
+  const value = raw.trim();
+  if (value === "" || OFF_LITERAL.test(value)) return undefined;
+  return Result.getOrUndefined(parseRemoteValue(value)) ?? classifyNamedRemote(value);
 };

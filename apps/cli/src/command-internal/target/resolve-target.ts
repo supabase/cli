@@ -32,10 +32,13 @@ type SelectedBy = "flag" | "default";
 const hintLinkedAlternative = Effect.fnUntraced(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { workdir } = yield* CommandSettings;
-  const linkedRef = yield* readProjectRefFile(fs, path, workdir).pipe(
-    Effect.map(Option.filter((ref) => PROJECT_REF_PATTERN.test(ref))),
+  const { workdir, projectId } = yield* CommandSettings;
+  const fileRef = yield* readProjectRefFile(fs, path, workdir).pipe(
     Effect.orElseSucceed(() => Option.none<string>()),
+  );
+  const linkedRef = Option.filter(
+    Option.orElse(projectId, () => fileRef),
+    (ref) => PROJECT_REF_PATTERN.test(ref),
   );
   if (Option.isNone(linkedRef)) return;
   const cell = yield* Effect.serviceOption(CommandTarget);

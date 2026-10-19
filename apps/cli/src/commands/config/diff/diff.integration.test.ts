@@ -131,8 +131,8 @@ interface SetupOpts {
   /** cliSettings.explicitWorkdir override — true iff --workdir/SUPABASE_WORKDIR was set verbatim. */
   readonly explicitWorkdir?: boolean;
   readonly analytics?: ReturnType<typeof mockContextualAnalytics>;
-  /** The argv the deprecation warnings render their replacement command from. */
-  readonly cliArgs?: ReadonlyArray<string>;
+  /** The command path the deprecation warnings name in their example. */
+  readonly commandPath?: ReadonlyArray<string>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -186,7 +186,7 @@ function setup(opts: SetupOpts = {}) {
       processControl,
       outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
       ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
-      ...(opts.cliArgs === undefined ? {} : { cliArgs: opts.cliArgs }),
+      ...(opts.commandPath === undefined ? {} : { commandPath: opts.commandPath }),
     }),
     projectFiles,
     cliConfigValuesTestLayer,
@@ -693,12 +693,12 @@ describe("config diff integration", () => {
     const { layer, out, api } = setup({
       toml: 'project_id = "test"\n',
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
-      cliArgs: ["config", "diff", "--project-ref", "staging"],
+      commandPath: ["config", "diff"],
     });
     return Effect.gen(function* () {
       yield* configDiff({ ...noFlags, projectRef: Option.some("staging") });
       expect(warningsOf(out)).toEqual([
-        "--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase config diff --remote=staging",
+        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead: supabase config diff --remote=staging",
       ]);
       expect(out.stderrText).toContain(
         `Comparing against 'staging' (branch ${BRANCH_REF}) using base config`,

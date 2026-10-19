@@ -35,6 +35,7 @@ import {
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -161,6 +162,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockCommandSettings({ workdir }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
+    commandRuntimeLayer(["migration", "list"]).pipe(Layer.provide(BunServices.layer)),
     branchApi.layer,
     BunServices.layer,
   );
@@ -341,7 +343,7 @@ describe("migration list", () => {
         args: ["migration", "list", "--project-ref", FLAG_REF],
         flags: { projectRef: Option.some(FLAG_REF) },
         target: { kind: "linked", ref: FLAG_REF },
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase migration list --remote=${FLAG_REF}`,
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase migration list --remote=${FLAG_REF}`,
       },
       {
         alias: "--db-url",
@@ -349,7 +351,7 @@ describe("migration list", () => {
         flags: { dbUrl: Option.some(DB_URL) },
         target: { kind: "db-url" },
         warning:
-          "--db-url is deprecated and will be removed in v4. Use --remote instead: supabase migration list --remote=<db-url>",
+          "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead: supabase migration list --remote=<db-url>",
       },
       {
         alias: "--local",

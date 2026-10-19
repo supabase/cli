@@ -20,6 +20,7 @@ import {
 import { CliError, CliOutput, Command } from "effect/cli";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
+import { REMOTE_FLAG_NAME } from "../../command-internal/target/remote-vocabulary.ts";
 import { CLI_VERSION } from "./version.ts";
 import type { CliProjectHome } from "../config/cli-project-home.service.ts";
 import type { CliSettings } from "../config/cli-settings.service.ts";
@@ -69,7 +70,9 @@ import { SuccessTrailer, successTrailerLayer } from "./success-trailer.ts";
 import type { CliErrorSuggestionContext } from "./subcommand-flag-suggestions.ts";
 import {
   flagAliasesFor,
+  isRemoteFlagMisuse,
   isValueTakingFlagTokenFor,
+  operandPlaceholdersAt,
   resolvedCommandPathForArgv,
 } from "./subcommand-flag-suggestions.ts";
 
@@ -225,10 +228,23 @@ export function prepareCliArgs(
   rawArgs: ReadonlyArray<string>,
 ): CliArgsShape {
   const leaf = remoteArgvLeafFor(rootCommand, rawArgs);
-  if (leaf === undefined) return { args: rawArgs };
+  if (leaf === undefined) {
+    return { args: rawArgs, operandPlaceholders: operandPlaceholdersFor(rootCommand, rawArgs) };
+  }
   const args = joinRemoteOperands(rawArgs, leaf);
-  return { args, bareRemoteOperand: bareRemoteOperand(args, leaf) };
+  return {
+    args,
+    bareRemoteOperand: bareRemoteOperand(args, leaf),
+    operandPlaceholders: operandPlaceholdersFor(rootCommand, args),
+  };
 }
+
+const operandPlaceholdersFor =
+  (rootCommand: Command.Command.Any, args: ReadonlyArray<string>) => (): ReadonlyArray<string> =>
+    operandPlaceholdersAt(
+      rootCommand,
+      resolvedCommandPathForArgv(rootCommand, extractCommandPath(args)),
+    );
 
 /** `CliArgs` and a `Stdio` whose `args` is the same argv, so every reader of either sees the rewritten command line. */
 export const cliArgsLayer = (cliArgs: CliArgsShape) =>
@@ -523,7 +539,14 @@ export function classifyParseErrorConsoleOutput(
       flagAliasesFor(context.rootCommand, error.commandPath, inner.option),
       isValueTakingToken,
     );
-  return error.errors.every(isSuppressedMissingFlag) ? "drop" : "flush-help-doc-to-stderr";
+  const isRemoteFlagError = (inner: (typeof error.errors)[number]) =>
+    (Predicate.isTagged(inner, "InvalidValue") &&
+      inner.kind === "flag" &&
+      inner.option === REMOTE_FLAG_NAME) ||
+    isRemoteFlagMisuse(inner, context.rootCommand);
+  return error.errors.every((inner) => isSuppressedMissingFlag(inner) || isRemoteFlagError(inner))
+    ? "drop"
+    : "flush-help-doc-to-stderr";
 }
 
 /**

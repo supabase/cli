@@ -81,7 +81,6 @@ import {
   OutputFlag,
   YesFlag,
 } from "../../command-internal/global-flags.ts";
-import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { DbConfigResolver } from "../../command-internal/db-config.service.ts";
 import type {
   DbConnectionInput,
@@ -667,8 +666,8 @@ interface SetupOpts {
   readonly projectId?: Option.Option<string>;
   /** Serves `GET /v1/projects` and answers the project picker with `VALID_REF`. */
   readonly picksProject?: boolean;
-  /** The argv the deprecation warnings render their replacement command from. */
-  readonly cliArgs?: ReadonlyArray<string>;
+  /** The command path the deprecation warnings name in their example. */
+  readonly commandPath?: ReadonlyArray<string>;
 }
 
 interface MachineSetupOpts extends SetupOpts {
@@ -809,10 +808,10 @@ function setupRuntime(
       processControl: { layer: processControl.layer },
       analytics: { layer: analytics.layer },
       outputFlag: opts.outputFlag ?? Option.none(),
+      commandPath: opts.commandPath,
     }),
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
-    Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
     // Listed after `buildTestRuntime` so its spawner overrides the real one `BunServices.layer`
     // provides (last-wins).
     substrate.layer,
@@ -987,13 +986,13 @@ describe("pull integration", () => {
   it.effect("--project-ref still resolves a branch name and warns to use --remote", () => {
     const { layer, out } = setup({
       yes: true,
-      cliArgs: ["pull", "--project-ref", "staging"],
+      commandPath: ["pull"],
     });
     return Effect.gen(function* () {
       yield* writeConfig();
       yield* runPull(pullFlags({ projectRef: Option.some("staging"), dryRun: true }));
       expect(warningsOf(out)).toEqual([
-        "--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase pull --remote=staging",
+        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead: supabase pull --remote=staging",
       ]);
     }).pipe(Effect.provide(layer));
   });

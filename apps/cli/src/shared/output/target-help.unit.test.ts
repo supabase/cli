@@ -140,6 +140,49 @@ describe("help --remote flag row", () => {
   it("leaves other flags as the default formatter renders them", () => {
     expect(textHelp(tree, ["db", "push"])).toMatch(/--other\s+Another flag\./);
   });
+
+  it("shows the hint once, in the flag name", () => {
+    expect(textHelp(tree, ["db", "push"])).not.toMatch(/--remote\[=<ref\|branch\|url>\]\s+<ref/);
+  });
+});
+
+describe("help value hints per command variant", () => {
+  const remoteRow = (text: string) => text.split("\n").find((line) => line.includes("--remote[="));
+
+  it.each([
+    {
+      command: ["storage", "ls"],
+      hint: "<ref|branch>",
+      target: "Local by default. Pass --remote for the linked project, or --remote=<ref|branch>.",
+    },
+    {
+      command: ["db", "push"],
+      hint: "<ref|branch|url>",
+      target:
+        "Local by default. Pass --remote for the linked project, or --remote=<ref|branch|url>.",
+    },
+    {
+      command: ["functions", "deploy"],
+      hint: "<ref|branch>",
+      target: "Remote only. Uses the linked project; pass --remote=<ref|branch> for another.",
+    },
+    {
+      command: ["branches", "list"],
+      hint: "<ref>",
+      target: "Remote only. Uses the linked project; pass --remote=<ref> for another.",
+    },
+  ])(
+    "agrees on $hint for $command in the TARGET row, the flag row and the description",
+    ({ command, hint, target }) => {
+      const text = textHelp(rootCommand, command);
+      const row = remoteRow(text);
+
+      expect(text).toContain(`TARGET\n  ${target}\n`);
+      expect(row).toContain(`--remote[=${hint}]`);
+      expect(row).toContain(`--remote=${hint}`);
+      expect(row).not.toMatch(new RegExp(`\\]\\s+${hint.replace(/[|[\]]/g, "\\$&")}\\s`));
+    },
+  );
 });
 
 describe("JSON help", () => {
@@ -168,10 +211,31 @@ describe("JSON help", () => {
     });
   });
 
-  it("names the --remote flag with its value hint", () => {
+  it("keeps the --remote flag's name and says it takes an optional value", () => {
     const flags: Array<{ name: string }> = jsonHelp(tree, ["db", "push"]).flags;
 
-    expect(flags.map((flag) => flag.name)).toContain("remote[=<ref|branch|url>]");
+    expect(flags.find((flag) => flag.name === "remote")).toMatchObject({
+      name: "remote",
+      type: "string",
+      value: "<ref|branch|url>",
+      valueOptional: true,
+    });
+  });
+
+  it.each([
+    { command: ["storage", "ls"], value: "<ref|branch>" },
+    { command: ["functions", "deploy"], value: "<ref|branch>" },
+    { command: ["branches", "list"], value: "<ref>" },
+  ])("reports $value as the --remote value of $command", ({ command, value }) => {
+    const flags: Array<{ name: string; value?: string }> = jsonHelp(rootCommand, command).flags;
+
+    expect(flags.find((flag) => flag.name === "remote")?.value).toBe(value);
+  });
+
+  it("leaves every other flag without a value hint", () => {
+    const flags: Array<{ name: string; value?: string }> = jsonHelp(tree, ["db", "push"]).flags;
+
+    expect(flags.find((flag) => flag.name === "other")).not.toHaveProperty("value");
   });
 
   it("omits target from an account command", () => {

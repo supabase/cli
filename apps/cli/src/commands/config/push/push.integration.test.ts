@@ -293,8 +293,8 @@ interface SetupOptions {
   /** Answers the project picker with `REF` and writes the linked-project cache through the real
    *  cache layer. */
   readonly pickerAndRealCache?: boolean;
-  /** The argv the deprecation warnings render their replacement command from. */
-  readonly cliArgs?: ReadonlyArray<string>;
+  /** The command path the deprecation warnings name in their example. */
+  readonly commandPath?: ReadonlyArray<string>;
 }
 
 type PushApiRoutes = Pick<
@@ -451,7 +451,7 @@ function setup(opts: SetupOptions) {
           (opts.interactive ?? true),
       }),
       ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
-      ...(opts.cliArgs === undefined ? {} : { cliArgs: opts.cliArgs }),
+      ...(opts.commandPath === undefined ? {} : { commandPath: opts.commandPath }),
     }),
     mockStdin(opts.stdinIsTty ?? true),
     Layer.succeed(YesFlag, opts.yes ?? false),
@@ -3540,12 +3540,12 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
       yes: true,
       branchList: { status: 200, body: [BRANCH_BY_NAME] },
       v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
-      cliArgs: ["config", "push", "--project-ref", "staging"],
+      commandPath: ["config", "push"],
     });
     return Effect.gen(function* () {
       yield* configPush({ remote: Option.none(), projectRef: Option.some("staging") });
       expect(warningsOf(out)).toEqual([
-        "--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase config push --remote=staging",
+        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead: supabase config push --remote=staging",
       ]);
       expect(out.stderrText).toContain(`Target: project ${REF} · branch staging (${BRANCH_REF})\n`);
     }).pipe(Effect.provide(layer));

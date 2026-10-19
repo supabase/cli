@@ -2,6 +2,7 @@ import { Cause, Data, Runtime } from "effect";
 import { CliError, Command } from "effect/cli";
 import { describe, expect, it } from "vitest";
 
+import { rootCommandForFeatures } from "../../cli/root.ts";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { migrationCommand } from "../../commands/migration/migration.command.ts";
 import { ssoCommand } from "../../commands/sso/sso.command.ts";
@@ -396,6 +397,109 @@ describe("classifyParseErrorConsoleOutput", () => {
         args: [],
       }),
     ).toBe("flush-unchanged");
+  });
+});
+
+describe("classifyParseErrorConsoleOutput for --remote", () => {
+  const root = rootCommandForFeatures();
+  const remoteInvalid = new CliError.InvalidValue({
+    option: "remote",
+    value: "false",
+    expected: "--remote doesn't take false. Leave it out to target the local database.",
+    kind: "flag",
+  });
+
+  it("drops the help dump for an invalid --remote value", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({ commandPath: ["supabase", "db", "push"], errors: [remoteInvalid] }),
+    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: root,
+        args: ["db", "push", "--remote=false"],
+      }),
+    ).toBe("drop");
+  });
+
+  it.each([
+    { name: "link", path: ["supabase", "link"] },
+    { name: "a local-only command", path: ["supabase", "start"] },
+  ])("drops the help dump for --remote on $name", ({ path }) => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: path,
+        errors: [
+          new CliError.UnrecognizedOption({ option: "--remote", command: path, suggestions: [] }),
+        ],
+      }),
+    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: root,
+        args: [...path.slice(1), "--remote"],
+      }),
+    ).toBe("drop");
+  });
+
+  it("keeps the help dump for --remote on a command that takes no such flag and has no message for it", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["supabase", "projects", "list"],
+        errors: [
+          new CliError.UnrecognizedOption({
+            option: "--remote",
+            command: ["supabase", "projects", "list"],
+            suggestions: [],
+          }),
+        ],
+      }),
+    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: root,
+        args: ["projects", "list", "--remote"],
+      }),
+    ).toBe("flush-help-doc-to-stderr");
+  });
+
+  it("keeps the help dump when a --remote error comes with an unrelated one", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["supabase", "db", "push"],
+        errors: [
+          remoteInvalid,
+          new CliError.UnrecognizedOption({ option: "--bogus", suggestions: [] }),
+        ],
+      }),
+    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: root,
+        args: ["db", "push", "--remote=false", "--bogus"],
+      }),
+    ).toBe("flush-help-doc-to-stderr");
+  });
+
+  it("keeps the help dump for another flag's invalid value", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["supabase", "db", "push"],
+        errors: [
+          new CliError.InvalidValue({
+            option: "output-format",
+            value: "xml",
+            expected: "Expected one of text, json",
+            kind: "flag",
+          }),
+        ],
+      }),
+    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: root,
+        args: ["db", "push", "--output-format=xml"],
+      }),
+    ).toBe("flush-help-doc-to-stderr");
   });
 });
 

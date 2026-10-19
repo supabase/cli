@@ -391,7 +391,7 @@ describe("storage mv", () => {
         cliArgs: ["storage", "mv", "--project-ref", FLAG_REF],
         flags: { projectRef: Option.some(FLAG_REF) },
         host: `https://${FLAG_REF}.supabase.co`,
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase storage mv --remote=${FLAG_REF}`,
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase storage mv --remote=${FLAG_REF}`,
       },
       {
         alias: "--local",
@@ -408,6 +408,7 @@ describe("storage mv", () => {
         const { layer, requests, out } = setupStorage(tmp.current, {
           toml: 'project_id = "test"\n[api]\nport = 65432\n',
           cliArgs: testCase.cliArgs,
+          commandPath: ["storage", "mv"],
           yes: true,
           routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
         });

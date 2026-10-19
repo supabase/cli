@@ -192,7 +192,7 @@ describe("resolveProjectTarget", () => {
       );
       expect(refOf(result.exit)).toBe(FLAG_REF);
       expect(result.warnings).toEqual([
-        `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase functions deploy hello --remote=${FLAG_REF}`,
+        `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase functions deploy <Function name>... --remote=${FLAG_REF}`,
       ]);
       expect(result.outputWarnCalls).toEqual([]);
       expect(result.stdout).toBe("");
@@ -273,7 +273,7 @@ describe("resolveProjectTarget", () => {
       );
       expect(failureOf(result.exit)).toMatchObject({
         _tag: "TargetRemoteAmbiguousError",
-        message: `feature-x is a branch of project ${FILE_REF}. Did you mean --remote=feature-x?`,
+        message: `"feature-x" is a branch of project ${FILE_REF}. For the branch: supabase functions deploy --remote=feature-x. For the linked project: supabase functions deploy feature-x --remote`,
       });
     }),
   );

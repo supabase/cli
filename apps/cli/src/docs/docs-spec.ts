@@ -10,7 +10,7 @@ import {
 } from "./docs-introspection.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
 import { isRemoteFlag } from "../command-internal/target/target-flags.ts";
-import { remoteFlagName, remoteValueHint } from "../shared/output/target-help.ts";
+import { remoteFlagName } from "../shared/output/target-help.ts";
 import {
   DOCS_ARG_OVERRIDES,
   DOCS_CHOICE_OVERRIDES,
@@ -184,7 +184,6 @@ function docsNormalizeText(text: string): string {
 export function docsFlagDoc(
   commandPath: ReadonlyArray<string>,
   param: Param.AnyFlag,
-  remoteHint?: string,
 ): DocsFlag | undefined {
   const unwrapped = unwrapParam(param);
   if (unwrapped === undefined) {
@@ -211,8 +210,8 @@ export function docsFlagDoc(
 
   const shorthand = single.aliases.find((alias) => alias.length === 1);
   const longName =
-    isRemoteFlag(single) && remoteHint !== undefined
-      ? remoteFlagName(remoteHint)
+    isRemoteFlag(single) && single.typeName !== undefined
+      ? remoteFlagName(single.typeName)
       : `${single.name}${varname === undefined ? "" : ` <${varname}>`}`;
   const name = `${shorthand === undefined ? "" : `-${shorthand}, `}--${longName}`;
 
@@ -314,11 +313,10 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
   const flagDocsFor = (
     commandPath: ReadonlyArray<string>,
     params: ReadonlyArray<Param.AnyFlag>,
-    remoteHint?: string,
   ): ReadonlyArray<DocsFlag> => {
     const docId = commandPath.join("-");
     return params
-      .map((param) => docsFlagDoc(commandPath, param, remoteHint))
+      .map((param) => docsFlagDoc(commandPath, param))
       .filter((flag) => flag !== undefined)
       .filter((flag) => {
         const key = `${docId} ${flag.id}`;
@@ -351,8 +349,7 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
 
     const flags: Array<DocsFlag> = [];
     if (isLeaf) {
-      const remoteHint = remoteValueHint(command.annotations);
-      const declared = flagDocsFor(commandPath, internals.config.flags, remoteHint);
+      const declared = flagDocsFor(commandPath, internals.config.flags);
       const declaredIds = new Set(declared.map((flag) => flag.id));
       const extraFlags = DOCS_EXTRA_FLAGS[docId];
       if (extraFlags !== undefined) {
@@ -376,7 +373,7 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
         flags.push(experimentalOptionalFlag);
       }
       const ownIds = new Set(own.map((flag) => flag.id));
-      const inherited = flagDocsFor(commandPath, inheritedParams, remoteHint).filter(
+      const inherited = flagDocsFor(commandPath, inheritedParams).filter(
         (flag) => !ownIds.has(flag.id) && !rootFlagIds.has(flag.id),
       );
       inherited.forEach((flag) => seenFlagKeys.add(`${docId} ${flag.id}`));

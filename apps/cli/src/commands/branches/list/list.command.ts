@@ -14,7 +14,7 @@ import { projectTargetFlags } from "../../../command-internal/target/target-flag
 import { branchesParentTarget } from "../branches.target.ts";
 
 const config = {
-  ...projectTargetFlags(),
+  ...projectTargetFlags({ parent: true }),
 } as const;
 
 export type BranchesListFlags = CliCommand.Command.Config.Infer<typeof config>;

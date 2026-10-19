@@ -31,6 +31,7 @@ import {
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import { OutputFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
@@ -278,6 +279,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     mockTty({ stdinIsTty: true, stdoutIsTty: false }),
     mockStdin(true, opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined),
     Layer.succeed(CliArgs, { args: opts.args ?? ["seed", "buckets"] }),
+    commandRuntimeLayer(["seed", "buckets"]).pipe(Layer.provide(BunServices.layer)),
     Layer.succeed(YesFlag, opts.yes ?? false),
     projectRefLayer,
     recorded === undefined
@@ -2375,7 +2377,7 @@ describe("seed buckets", () => {
         cliArgs: ["seed", "buckets", "--project-ref", FLAG_REF],
         flags: { projectRef: Option.some(FLAG_REF), local: false },
         host: `https://${FLAG_REF}.supabase.co`,
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase seed buckets --remote=${FLAG_REF}`,
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase seed buckets --remote=${FLAG_REF}`,
       },
       {
         alias: "--local",

@@ -369,7 +369,7 @@ project_id = "env(STAGING_REF)"
         cliArgs: ["storage", "ls", "--project-ref", FLAG_REF],
         flags: { projectRef: Option.some(FLAG_REF) },
         host: `https://${FLAG_REF}.supabase.co`,
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase storage ls --remote=${FLAG_REF}`,
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase storage ls --remote=${FLAG_REF}`,
       },
       {
         alias: "--local",
@@ -386,6 +386,7 @@ project_id = "env(STAGING_REF)"
         const { layer, requests, out } = setupStorage(tmp.current, {
           toml: 'project_id = "test"\n[api]\nport = 65432\n',
           cliArgs: testCase.cliArgs,
+          commandPath: ["storage", "ls"],
           routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
         });
         return Effect.gen(function* () {
@@ -687,7 +688,7 @@ describe("stack backend", () => {
     return Effect.gen(function* () {
       const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      expect(out.stderrText).toContain("Target: local stack (127.0.0.1:59999)\n");
+      expect(out.stderrText).toContain("Target: local stack (127.0.0.1:59999)");
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
       const serviceRoleJwt = generateLocalJwt(STORAGE_TEST_JWT_SECRET, "service_role");
@@ -1097,7 +1098,7 @@ describe("stack backend", () => {
       const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests[0]?.url.includes(":65432")).toBe(true);
-      expect(out.stderrText).toContain("Target: local stack (127.0.0.1:65432)\n");
+      expect(out.stderrText).toContain("Target: local stack (127.0.0.1:65432)");
     });
   });
 

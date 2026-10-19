@@ -55,11 +55,11 @@ export const prepareLocalTargetEndpoint = Effect.fn("DeclarativeSchema.localTarg
   E,
   R,
 >(shouldReset: Effect.Effect<boolean, E, R>, password: Option.Option<string> = Option.none()) {
-  const { workdir } = yield* CommandSettings;
+  const { workdir, projectId } = yield* CommandSettings;
   yield* rejectTargetPassword(
     "local",
     password,
-    yield* isCheckoutLinked(yield* FileSystem.FileSystem, yield* Path.Path, workdir),
+    yield* isCheckoutLinked(yield* FileSystem.FileSystem, yield* Path.Path, workdir, projectId),
   );
   const seam = yield* DeclarativeSeam;
   yield* seam.ensureLocalPostgresImageCurrent;
