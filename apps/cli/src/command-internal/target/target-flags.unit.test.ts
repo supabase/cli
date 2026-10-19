@@ -10,7 +10,6 @@ import {
   deprecatedProjectIdFlag,
   flagsForTarget,
   projectTargetFlags,
-  remoteTelemetryFlag,
   seedTargetGlobalFlags,
   targetFlags,
 } from "./target-flags.ts";
@@ -224,21 +223,6 @@ describe("seedTargetGlobalFlags", () => {
     expect(describeFlag(seedTargetGlobalFlags.remote.flag).name).toBe("remote");
     expect(describeFlag(seedTargetGlobalFlags.linked.flag).name).toBe("linked");
     expect(describeFlag(seedTargetGlobalFlags.local.flag).name).toBe("local");
-  });
-});
-
-describe("remoteTelemetryFlag", () => {
-  it.each([
-    { remote: { _tag: "Linked" }, expected: true },
-    { remote: { _tag: "Ref", ref: REF }, expected: REF },
-    { remote: { _tag: "Branch", name: "customer-acme" }, expected: "<redacted>" },
-    { remote: { _tag: "DbUrl", url: URL }, expected: "<redacted>" },
-  ] as const)("records $remote as $expected", ({ remote, expected }) => {
-    expect(remoteTelemetryFlag(Option.some(remote))).toEqual(Option.some(expected));
-  });
-
-  it("records nothing when --remote is absent", () => {
-    expect(remoteTelemetryFlag(Option.none())).toEqual(Option.none());
   });
 });
 

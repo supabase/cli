@@ -113,21 +113,6 @@ export const projectTargetFlags = () => ({
   projectRef: projectRefFlag(),
 });
 
-/** The `--remote` value as telemetry records it: a project ref verbatim, a bare `--remote` as `true`, a branch name or database URL redacted. */
-export const remoteTelemetryFlag = (
-  remote: Option.Option<RemoteValue>,
-): Option.Option<string | boolean> =>
-  Option.map(remote, (value) => {
-    switch (value._tag) {
-      case "Linked":
-        return true;
-      case "Ref":
-        return value.ref;
-      default:
-        return "<redacted>";
-    }
-  });
-
 /** The flags that point a suggested follow-up command at `target`; a database URL is never echoed. */
 export const flagsForTarget = (target: ResolvedTarget): string => {
   switch (target.kind) {

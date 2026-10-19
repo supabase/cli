@@ -48,6 +48,7 @@ import {
 } from "../shared/cli/value-consuming-flags.ts";
 import { unwrapToSingleParam } from "../command-internal/param-introspection.ts";
 import { StackBackendContext } from "../command-internal/stack-backend.ts";
+import { isRemoteValue, type RemoteValue } from "../command-internal/target/remote-value.ts";
 import {
   CommandTelemetryAttributes,
   type CommandTelemetryAttributeValues,
@@ -118,6 +119,20 @@ const REDACTED_VALUE = "<redacted>";
 // collapses to the resolved text format.
 const MACHINE_OUTPUT_FLAG_FORMATS = new Set(["env", "json", "toml", "yaml", "csv"]);
 const OUTPUT_FLAG_FORMATS = new Set([...MACHINE_OUTPUT_FLAG_FORMATS, "pretty"]);
+
+const REMOTE_FLAG_NAME = "remote";
+
+// A project ref is telemetry-safe; a branch name or database URL is user data.
+function remoteTelemetryValue(remote: RemoteValue): string | boolean {
+  switch (remote._tag) {
+    case "Linked":
+      return true;
+    case "Ref":
+      return remote.ref;
+    default:
+      return REDACTED_VALUE;
+  }
+}
 
 function toCliFlagName(key: string): string {
   return key.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`);
@@ -318,7 +333,12 @@ function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
     // only fall back to the live global-flag value when the handler never declared this name.
     const isFromHandler = handlerFlagsByCliName.has(cliName);
     const rawValue = isFromHandler ? handlerFlagsByCliName.get(cliName) : globalFlags[cliName];
-    const value = normalizeFlagValue(rawValue);
+    const normalized = normalizeFlagValue(rawValue);
+    const remote =
+      isFromHandler && cliName === REMOTE_FLAG_NAME && isRemoteValue(normalized)
+        ? normalized
+        : undefined;
+    const value = remote === undefined ? normalized : remoteTelemetryValue(remote);
 
     // `safeFlagSet`/`choiceFlagNames` vouch for a value only when it actually came from this
     // command's own `flags` record — a value resolved from the global-flag fallback instead
@@ -326,6 +346,7 @@ function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
     // a different command's per-flag safe/choice annotation just because the CLI name matches.
     // Boolean values are always safe, regardless of source.
     const isSafe =
+      remote !== undefined ||
       typeof value === "boolean" ||
       (isFromHandler
         ? safeFlagSet.has(cliName) || choiceFlagNames.has(cliName)

@@ -1,3 +1,5 @@
+import { Predicate } from "effect";
+
 import { BRANCH_PROJECT_REF_PATTERN } from "../ref-patterns.ts";
 
 /** What `--remote` (or a `db diff --from/--to` value) names. */
@@ -6,6 +8,13 @@ export type RemoteValue =
   | { readonly _tag: "Ref"; readonly ref: string }
   | { readonly _tag: "DbUrl"; readonly url: string }
   | { readonly _tag: "Branch"; readonly name: string };
+
+/** Whether a value is a `RemoteValue`, told apart by its `_tag`. */
+export const isRemoteValue = (value: unknown): value is RemoteValue =>
+  Predicate.isTagged(value, "Linked") ||
+  Predicate.isTagged(value, "Ref") ||
+  Predicate.isTagged(value, "DbUrl") ||
+  Predicate.isTagged(value, "Branch");
 
 export type NamedRemoteValue = Exclude<RemoteValue, { readonly _tag: "Linked" }>;
 

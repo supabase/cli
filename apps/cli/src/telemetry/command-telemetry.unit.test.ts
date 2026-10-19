@@ -29,7 +29,6 @@ import { DbDumpRunError } from "../commands/db/dump/dump.errors.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import { RemovedSurfaceError } from "../command-internal/removed-command.ts";
 import type { RemoteValue } from "../command-internal/target/remote-value.ts";
-import { remoteTelemetryFlag } from "../command-internal/target/target-flags.ts";
 import { withCommandTelemetry } from "./command-telemetry.ts";
 import { recordCommandTelemetry } from "./command-telemetry-attributes.ts";
 import { stackBackendLayer } from "../command-internal/stack-backend.ts";
@@ -579,56 +578,84 @@ describe("withCommandTelemetry", () => {
     const REF = "abcdefghijklmnopqrst";
     const DB_URL = "postgresql://postgres:secret@db.example.com:5432/postgres";
 
-    const recordedFlags = (
-      remote: Option.Option<RemoteValue>,
-      passRemoteTelemetryFlag: boolean,
-    ) => {
+    const recordedFlags = (remote: unknown, arg: string, safeFlags?: ReadonlyArray<string>) => {
       const analytics = mockContextualAnalytics();
       return Effect.void.pipe(
-        withCommandTelemetry({
-          flags: { remote: passRemoteTelemetryFlag ? remoteTelemetryFlag(remote) : remote },
-          safeFlags: passRemoteTelemetryFlag ? ["remote"] : [],
-        }),
+        withCommandTelemetry({ flags: { remote }, safeFlags }),
         Effect.provide(analytics.layer),
         Effect.provide(mockProcessControl().layer),
         Effect.provide(mockOutput({ format: "text" }).layer),
-        Effect.provide(
-          Stdio.layerTest({ args: Effect.succeed(["functions", "deploy", "--remote"]) }),
-        ),
+        Effect.provide(Stdio.layerTest({ args: Effect.succeed(["functions", "deploy", arg]) })),
         Effect.provide(
           commandRuntimeLayer(["functions", "deploy"]).pipe(Layer.provide(BunCrypto.layer)),
         ),
-        Effect.map(() => analytics.captured[0]?.properties.flags),
+        Effect.map(() => analytics.captured[0]),
       );
     };
 
-    it.live("redacts the value when a command passes its raw flags", () =>
-      Effect.gen(function* () {
-        const flags = yield* recordedFlags(
-          Option.some({ _tag: "Branch", name: "customer-acme" }),
-          false,
-        );
-        expect(flags).toEqual({ remote: "<redacted>" });
-      }),
-    );
-
     it.live.each([
-      { name: "a bare --remote as true", remote: { _tag: "Linked" }, expected: true },
-      { name: "a project ref verbatim", remote: { _tag: "Ref", ref: REF }, expected: REF },
+      {
+        name: "a bare --remote as true",
+        arg: "--remote",
+        remote: { _tag: "Linked" },
+        expected: true,
+      },
+      {
+        name: "a project ref verbatim",
+        arg: `--remote=${REF}`,
+        remote: { _tag: "Ref", ref: REF },
+        expected: REF,
+      },
       {
         name: "a branch name as redacted",
+        arg: "--remote=customer-acme",
         remote: { _tag: "Branch", name: "customer-acme" },
         expected: "<redacted>",
       },
       {
         name: "a database URL as redacted",
+        arg: `--remote=${DB_URL}`,
         remote: { _tag: "DbUrl", url: DB_URL },
         expected: "<redacted>",
       },
-    ] as const)("records $name through remoteTelemetryFlag", ({ remote, expected }) =>
+    ] as const)("records $name when the command passes no safeFlags", ({ arg, remote, expected }) =>
       Effect.gen(function* () {
-        const flags = yield* recordedFlags(Option.some(remote), true);
-        expect(flags).toEqual({ remote: expected });
+        const event = yield* recordedFlags(Option.some(remote), arg);
+        expect(event?.properties.flags).toEqual({ remote: expected });
+        expect(JSON.stringify(event)).not.toContain(DB_URL);
+        expect(JSON.stringify(event)).not.toContain("customer-acme");
+      }),
+    );
+
+    it.live("keeps the command's own safeFlags alongside --remote", () =>
+      Effect.gen(function* () {
+        const analytics = mockContextualAnalytics();
+        const event = yield* Effect.void.pipe(
+          withCommandTelemetry({
+            flags: { remote: Option.some<RemoteValue>({ _tag: "Linked" }), projectRef: REF },
+            safeFlags: ["project-ref"],
+          }),
+          Effect.provide(analytics.layer),
+          Effect.provide(mockProcessControl().layer),
+          Effect.provide(mockOutput({ format: "text" }).layer),
+          Effect.provide(
+            Stdio.layerTest({
+              args: Effect.succeed(["functions", "deploy", "--remote", "--project-ref", REF]),
+            }),
+          ),
+          Effect.provide(
+            commandRuntimeLayer(["functions", "deploy"]).pipe(Layer.provide(BunCrypto.layer)),
+          ),
+          Effect.map(() => analytics.captured[0]),
+        );
+        expect(event?.properties.flags).toEqual({ remote: true, "project-ref": REF });
+      }),
+    );
+
+    it.live("redacts a --remote flag that does not carry a RemoteValue", () =>
+      Effect.gen(function* () {
+        const event = yield* recordedFlags("customer-acme", "--remote=customer-acme");
+        expect(event?.properties.flags).toEqual({ remote: "<redacted>" });
       }),
     );
   });

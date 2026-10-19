@@ -34,7 +34,6 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import {
   deprecatedProjectIdFlag,
-  remoteTelemetryFlag,
   targetFlags,
 } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
@@ -180,10 +179,9 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
   Command.withHandler((flags) =>
     genTypes(flags).pipe(
       withCommandTelemetry({
-        flags: { ...flags, remote: remoteTelemetryFlag(flags.remote) },
+        flags,
         safeFlags: [
           "project-id",
-          "remote",
           ...(Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
             ? ["project-ref"]
             : []),
