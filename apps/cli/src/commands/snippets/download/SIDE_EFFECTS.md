@@ -40,20 +40,20 @@ The snippet request carries no project ref and no query. The ref is resolved onl
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                      |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — SQL written to stdout                                                                                                                                                                                |
-| `1`  | `SnippetsInvalidIdError` — `<snippet-id>` is not a valid UUID                                                                                                                                                  |
-| `1`  | `ProjectRefNotLinkedError`; `InvalidProjectRefError` for a malformed `SUPABASE_PROJECT_ID` or link-file ref                                                                                                    |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
-| `1`  | `SnippetsDownloadUnexpectedStatusError` — non-2xx response                                                                                                                                                     |
-| `1`  | `SnippetsDownloadNetworkError` — transport-level failure                                                                                                                                                       |
+| Code | Condition                                                                                                                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — SQL written to stdout                                                                                                                                                                                        |
+| `1`  | `SnippetsInvalidIdError` — `<snippet-id>` is not a valid UUID                                                                                                                                                          |
+| `1`  | `ProjectRefNotLinkedError`; `InvalidProjectRefError` for a malformed `SUPABASE_PROJECT_ID` or link-file ref                                                                                                            |
+| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
+| `1`  | `SnippetsDownloadUnexpectedStatusError` — non-2xx response                                                                                                                                                             |
+| `1`  | `SnippetsDownloadNetworkError` — transport-level failure                                                                                                                                                               |
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties                                                                                                         |
-| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--remote` → `true` (bare), the ref, or `<redacted>`; `--project-ref` → `<redacted>`) |
+| Event                  | When                                       | Notable properties                                                                                                                                       |
+| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--remote` → `true` (bare), the ref, or `<redacted>`; `--project-ref` → the ref when ref-shaped, else `<redacted>`) |
 
 ## Output
 

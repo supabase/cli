@@ -125,7 +125,7 @@ guaranteed and is deduplicated on the Logflare-minted `id`.
 
 `--kind` is a choice flag, so its value is logged verbatim (a closed enum carries
 no user data). `--remote=<ref>` is logged as the ref and a bare `--remote` as `true`; any other
-`--remote` value, and `--project-ref`, is redacted. No custom events.
+`--remote` value is redacted, and `--project-ref` is logged only when it is ref-shaped. No custom events.
 
 ## Output Formats
 

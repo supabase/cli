@@ -52,9 +52,9 @@
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                                                                                                                                             |
-| ---------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--remote=<ref>` → the ref, a bare `--remote` → `true`, any other `--remote` value → `<redacted>`; `--project-ref` / `--timestamp` → `<redacted>`) |
+| Event                  | When                                       | Notable properties / groups                                                                                                                                                                                                         |
+| ---------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--remote=<ref>` → the ref, a bare `--remote` → `true`, any other `--remote` value → `<redacted>`; `--project-ref` → the ref when ref-shaped, else `<redacted>`; `--timestamp` → `<redacted>`) |
 
 ## Output
 

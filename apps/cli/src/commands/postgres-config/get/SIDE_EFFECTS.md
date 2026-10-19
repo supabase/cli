@@ -35,21 +35,21 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                      |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success - Postgres config printed                                                                                                                                                                              |
-| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) - checked before ref resolution/API/telemetry                                                                      |
-| `1`  | project ref unresolved (`ProjectRefNotLinkedError`; `InvalidProjectRefError` for a malformed `SUPABASE_PROJECT_ID` or link-file ref)                                                                           |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
-| `1`  | API non-2xx (`PostgresConfigGetUnexpectedStatusError`)                                                                                                                                                         |
-| `1`  | transport failure (`PostgresConfigGetNetworkError`); the GET retries on 5xx and transport errors first                                                                                                         |
-| `1`  | response body is not a JSON object (`PostgresConfigGetUnmarshalError`)                                                                                                                                         |
+| Code | Condition                                                                                                                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success - Postgres config printed                                                                                                                                                                                      |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) - checked before ref resolution/API/telemetry                                                                              |
+| `1`  | project ref unresolved (`ProjectRefNotLinkedError`; `InvalidProjectRefError` for a malformed `SUPABASE_PROJECT_ID` or link-file ref)                                                                                   |
+| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
+| `1`  | API non-2xx (`PostgresConfigGetUnexpectedStatusError`)                                                                                                                                                                 |
+| `1`  | transport failure (`PostgresConfigGetNetworkError`); the GET retries on 5xx and transport errors first                                                                                                                 |
+| `1`  | response body is not a JSON object (`PostgresConfigGetUnmarshalError`)                                                                                                                                                 |
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                                                                                |
-| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--remote` → `true` (bare), the ref, or `<redacted>`; `--project-ref` → `<redacted>`) |
+| Event                  | When                                       | Notable properties / groups                                                                                                                              |
+| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--remote` → `true` (bare), the ref, or `<redacted>`; `--project-ref` → the ref when ref-shaped, else `<redacted>`) |
 
 ## Output
 

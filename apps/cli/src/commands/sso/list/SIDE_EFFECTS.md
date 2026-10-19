@@ -37,13 +37,13 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                      |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                        |
-| `1`  | `SsoListSamlDisabledError` — 404 from list endpoint                                                                                                                                                            |
-| `1`  | `SsoListUnexpectedStatusError` — other non-2xx                                                                                                                                                                 |
-| `1`  | `SsoListNetworkError` — transport-level failure                                                                                                                                                                |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
+| Code | Condition                                                                                                                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                |
+| `1`  | `SsoListSamlDisabledError` — 404 from list endpoint                                                                                                                                                                    |
+| `1`  | `SsoListUnexpectedStatusError` — other non-2xx                                                                                                                                                                         |
+| `1`  | `SsoListNetworkError` — transport-level failure                                                                                                                                                                        |
+| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
 
 ## Telemetry Events Fired
 

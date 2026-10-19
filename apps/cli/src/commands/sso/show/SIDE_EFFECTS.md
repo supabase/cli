@@ -38,15 +38,15 @@ side-calls.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                      |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                        |
-| `1`  | `SsoInvalidUuidError` — provider ID is not a canonical UUID                                                                                                                                                    |
-| `1`  | `SsoShowNotFoundError` — 404 from get endpoint                                                                                                                                                                 |
-| `1`  | `SsoShowUnexpectedStatusError` — other non-2xx                                                                                                                                                                 |
-| `1`  | `SsoShowEnvNotSupportedError` — `--output env` with show                                                                                                                                                       |
-| `1`  | `SsoShowNetworkError` — transport-level failure                                                                                                                                                                |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
+| Code | Condition                                                                                                                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                |
+| `1`  | `SsoInvalidUuidError` — provider ID is not a canonical UUID                                                                                                                                                            |
+| `1`  | `SsoShowNotFoundError` — 404 from get endpoint                                                                                                                                                                         |
+| `1`  | `SsoShowUnexpectedStatusError` — other non-2xx                                                                                                                                                                         |
+| `1`  | `SsoShowEnvNotSupportedError` — `--output env` with show                                                                                                                                                               |
+| `1`  | `SsoShowNetworkError` — transport-level failure                                                                                                                                                                        |
+| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
 
 ## Telemetry Events Fired
 

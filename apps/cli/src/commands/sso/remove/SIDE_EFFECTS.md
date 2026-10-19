@@ -38,16 +38,16 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                      |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                        |
-| `1`  | `SsoInvalidUuidError` — provider ID is not a canonical UUID                                                                                                                                                    |
-| `1`  | `SsoRemoveNotFoundError` — 404 from delete endpoint                                                                                                                                                            |
-| `1`  | `SsoRemoveUnexpectedStatusError` — other non-2xx                                                                                                                                                               |
-| `1`  | `SsoRemoveNetworkError` — transport-level failure                                                                                                                                                              |
-| `1`  | declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed                                                                                                   |
-| `1`  | JSON, stream-json, `-o` or non-interactive run without `--yes` (`HostedMutationConsentRequiredError`) — nothing is changed                                                                                     |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
+| Code | Condition                                                                                                                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                |
+| `1`  | `SsoInvalidUuidError` — provider ID is not a canonical UUID                                                                                                                                                            |
+| `1`  | `SsoRemoveNotFoundError` — 404 from delete endpoint                                                                                                                                                                    |
+| `1`  | `SsoRemoveUnexpectedStatusError` — other non-2xx                                                                                                                                                                       |
+| `1`  | `SsoRemoveNetworkError` — transport-level failure                                                                                                                                                                      |
+| `1`  | declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed                                                                                                           |
+| `1`  | JSON, stream-json, `-o` or non-interactive run without `--yes` (`HostedMutationConsentRequiredError`) — nothing is changed                                                                                             |
+| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
 
 ## Telemetry Events Fired
 

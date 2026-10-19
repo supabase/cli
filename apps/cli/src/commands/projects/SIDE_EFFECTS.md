@@ -64,8 +64,8 @@ subcommand's own `SIDE_EFFECTS.md`.
 | ---------------------- | ------------------------------------------ | ----------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
-`safeFlags`: `--org-id` (`create`), a ref-shaped `--project-ref` (`api-keys`); the shared
-wrapper reports `--remote` as `true` (bare), the ref, or `<redacted>`. No custom events beyond `cli_command_executed`.
+`safeFlags`: `--org-id` (`create`). The shared wrapper reports the target flags: `--remote` as
+`true` (bare), the ref, or `<redacted>`, and `--project-ref` only when it is ref-shaped. No custom events beyond `cli_command_executed`.
 
 ## Output (two-axis: `--output` × `--output-format`)
 

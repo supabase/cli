@@ -83,20 +83,20 @@ never mentions `favorite` keeps whatever the dashboard set.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                      |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                        |
-| `1`  | no project ref — not linked and no `--remote`                                                                                                                                                                  |
-| `1`  | the named notebook is not in `supabase/notebooks/`                                                                                                                                                             |
-| `1`  | a file is unreadable, not JSON, or not a notebook — before anything is sent                                                                                                                                    |
-| `1`  | duplicate remote names (only the selected name for a named push)                                                                                                                                               |
-| `1`  | the notebooks path exists but cannot be read as a directory                                                                                                                                                    |
-| `1`  | a project notebook name cannot be stored safely as a local file                                                                                                                                                |
-| `1`  | a Management API call failed (transport, unexpected status, or undecodable body)                                                                                                                               |
-| `1`  | `-o env`, which cannot represent the payload                                                                                                                                                                   |
-| `1`  | declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed                                                                                                   |
-| `1`  | JSON, stream-json, `-o` or non-interactive run without `--yes` (`HostedMutationConsentRequiredError`) — nothing is changed                                                                                     |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
+| Code | Condition                                                                                                                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                |
+| `1`  | no project ref — not linked and no `--remote`                                                                                                                                                                          |
+| `1`  | the named notebook is not in `supabase/notebooks/`                                                                                                                                                                     |
+| `1`  | a file is unreadable, not JSON, or not a notebook — before anything is sent                                                                                                                                            |
+| `1`  | duplicate remote names (only the selected name for a named push)                                                                                                                                                       |
+| `1`  | the notebooks path exists but cannot be read as a directory                                                                                                                                                            |
+| `1`  | a project notebook name cannot be stored safely as a local file                                                                                                                                                        |
+| `1`  | a Management API call failed (transport, unexpected status, or undecodable body)                                                                                                                                       |
+| `1`  | `-o env`, which cannot represent the payload                                                                                                                                                                           |
+| `1`  | declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed                                                                                                           |
+| `1`  | JSON, stream-json, `-o` or non-interactive run without `--yes` (`HostedMutationConsentRequiredError`) — nothing is changed                                                                                             |
+| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
 
 ## Environment Variables
 

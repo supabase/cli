@@ -40,12 +40,12 @@ own. The ref resolution and the cache fill still call the API:
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                      |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                        |
-| `1`  | `InvalidProjectRefError` — `SUPABASE_PROJECT_ID` or the link file holds a ref that doesn't match `^[a-z]{20}$`                                                                                                 |
-| `1`  | `ProjectRefNotLinkedError` — no ref source available                                                                                                                                                           |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
+| Code | Condition                                                                                                                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                |
+| `1`  | `InvalidProjectRefError` — `SUPABASE_PROJECT_ID` or the link file holds a ref that doesn't match `^[a-z]{20}$`                                                                                                         |
+| `1`  | `ProjectRefNotLinkedError` — no ref source available                                                                                                                                                                   |
+| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
 
 ## Telemetry Events Fired
 

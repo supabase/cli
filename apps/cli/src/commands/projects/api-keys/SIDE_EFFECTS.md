@@ -41,14 +41,14 @@ Management API to return the full secret keys (`sb_secret_...`) in `api_key` ins
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                      |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — API keys printed to stdout                                                                                                                                                                           |
-| `1`  | authentication error — no valid token found                                                                                                                                                                    |
-| `1`  | API error — non-2xx response from `/v1/projects/{ref}/api-keys`                                                                                                                                                |
-| `1`  | network / connection failure                                                                                                                                                                                   |
-| `1`  | project ref not provided and no linked project found                                                                                                                                                           |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
+| Code | Condition                                                                                                                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — API keys printed to stdout                                                                                                                                                                                   |
+| `1`  | authentication error — no valid token found                                                                                                                                                                            |
+| `1`  | API error — non-2xx response from `/v1/projects/{ref}/api-keys`                                                                                                                                                        |
+| `1`  | network / connection failure                                                                                                                                                                                           |
+| `1`  | project ref not provided and no linked project found                                                                                                                                                                   |
+| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
 
 ## Telemetry Events Fired
 
