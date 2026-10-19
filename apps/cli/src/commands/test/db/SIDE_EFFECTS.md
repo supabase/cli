@@ -124,7 +124,7 @@ command (exit 1).
 - Stack `test db` runs catalog `pg_prove` through the owning stack runtime with runtime credentials for native and container runtimes. External targets use the catalog Postgres client. Compose stays on `supabase/pg_prove:3.36`. There is no PATH fallback or host major-version check.
 - **Target selection** (shared by `db test` via `testDbConfig`). `--remote` is read as the linked project (bare), a project ref (20
   lowercase letters), a Postgres URL, or else a branch of the linked project by name or UUID;
-  `--remote=false` and `--remote=` fail with `Leave out --remote to target the local database.` A
+  `--remote=false` fails with `--remote doesn't take false. Leave it out to target the local database.`, and `--remote=` with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A
   bare `--remote` followed by a word that exactly matches a branch of the linked project, is within
   a small edit distance of one, or can't be checked because the branch listing failed stops the run
   with an error that offers both readings: `--remote=<word>` for the branch, `<word> --remote` for

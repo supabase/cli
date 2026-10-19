@@ -156,8 +156,7 @@ code or the rest of the payload.
   targets the linked project (`SUPABASE_PROJECT_ID`, else `.temp/project-ref`). `--remote=<value>`
   is read as a project ref (20 lowercase letters), a database URL (`postgres://` or
   `postgresql://`), `true|yes|on|1` (the linked project), or otherwise the name of a branch of the
-  linked project, which resolves to that branch's own project. `false|no|off|0`, `--no-remote` and
-  an empty value fail with `Leave out --remote to target the local database.` A word after a bare
+  linked project, which resolves to that branch's own project. `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to target the local database.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A word after a bare
   `--remote` is read as its value, `--remote=<word>`, because the command takes no operands. The
   resolved target is announced on stderr (`Target: …`) in every output format and, in JSON results,
   as a `target` object. The shadow database is provisioned locally whatever the target; the target

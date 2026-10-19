@@ -80,8 +80,7 @@ Single `success` event with `{providers: items}` as data.
   or, on an interactive terminal, the project picker. A bare `--remote` targets the linked project.
 - `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
   project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
-  (`supabase sso list` takes a project, not a database); `false|no|off|0`, `--no-remote` and an
-  empty value fail with `Leave out --remote to use the linked project.`
+  (`supabase sso list` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
 - A word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes
   no operands.
 - The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a

@@ -73,8 +73,8 @@ UUID also resolves in a checkout with no linked project. A URL applies only wher
 Postgres: `storage`, `seed buckets` and `hosted` commands need a project and reject one. `hosted`
 commands accept `--remote=<ref|branch>`, and bare `--remote` changes nothing for them. The linked
 project comes from `SUPABASE_PROJECT_ID`, then the link file. `SUPABASE_PROJECT_ID` alone never
-makes a `selectable` command remote; it is only a ref source once `--remote` is passed. An
-unresolvable remote target fails. The CLI never falls back between local and remote.
+makes a `selectable` command remote; it is only a ref source once `--remote` is passed, and it
+alone is enough for the `default; pass --remote` hint. An unresolvable remote target fails. The CLI never falls back between local and remote.
 
 `--remote=<value>` always parses. `--remote <value>` is rewritten to `--remote=<value>` before
 parsing when the command takes no positional, when the token is a ref or URL, or when the command
@@ -115,7 +115,11 @@ onto `--remote`:
   and `--to`, `remote` always means the linked project.
 - `--no-remote` and `--remote=false` fail and tell the user to leave `--remote` out.
   `--remote yes`, `--remote 1`, `--remote true` and `--remote on` mean bare `--remote`.
-- An empty `--remote=` value is rejected.
+- An empty `--remote=` value is rejected, and the message names the values that command accepts.
+  Neither error prints the command's help.
+- A conflict error lists only the selector flags the command has and suggests the `--remote` form.
+- `--remote` on `link`, which takes the project as its argument, and on a `local-only` command
+  fails with a message saying so instead of an unknown-flag error.
 - `--password` is rejected unless the target is a project, meaning bare `--remote`, a ref or a
   branch.
 
@@ -181,7 +185,9 @@ behaviour. A group's help labels each subcommand `[local or remote]` (`selectabl
 or `[remote only]` (`hosted`); account commands carry no label. A command's own help has a `TARGET`
 section above `USAGE`, and its `remote` flag row reads `--remote[=<ref|branch|url>]` on a command
 that takes a database URL and `--remote[=<ref|branch>]` on one that does not (`hosted` commands,
-`storage`, `seed buckets`). JSON help carries the same information as `target`. Docs, examples, help and the deprecation warnings put `--remote` last, in the `=` form
+`storage`, `seed buckets`); `branches *` commands act on a parent project and take
+`--remote[=<ref>]`. JSON help carries the same information as `target`, and gives the `remote` flag
+`value` and `valueOptional` fields in place of the bracketed name. Docs, examples, help and the deprecation warnings put `--remote` last, in the `=` form
 when it has a value (`db pull add_profiles --remote`, `db push --remote=<ref>`), so it cannot be
 read as anything else, and shell completion never offers a space-separated value for `--remote` on
 a command that has a positional.

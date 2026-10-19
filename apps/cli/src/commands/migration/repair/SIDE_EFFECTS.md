@@ -97,8 +97,7 @@ Same structured result delivered as an NDJSON `result` event.
   targets the linked project (`SUPABASE_PROJECT_ID`, else `.temp/project-ref`). `--remote=<value>`
   is read as a project ref (20 lowercase letters), a database URL (`postgres://` or
   `postgresql://`), `true|yes|on|1` (the linked project), or otherwise the name of a branch of the
-  linked project, which resolves to that branch's own project. `false|no|off|0`, `--no-remote` and
-  an empty value fail with `Leave out --remote to target the local database.` A bare `--remote`
+  linked project, which resolves to that branch's own project. `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to target the local database.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A bare `--remote`
   followed by a word that exactly matches a branch of the linked project, is within a small edit
   distance of one, or can't be checked because the branch listing failed stops the run with an error
   that offers both readings: `--remote=<word>` for the branch, `<word> --remote` for the operand.
@@ -107,9 +106,9 @@ Same structured result delivered as an NDJSON `result` event.
   as a `target` object.
 - **Deprecated selectors.** `--linked`, `--project-ref`, `--db-url` and `--local` are hidden aliases
   that still select their target and print a warning on stderr naming the replacement, for example
-  `--linked is deprecated and will be removed in v4. Use --remote instead: supabase migration repair --remote`
+  `--linked is deprecated and will be removed in v4. Use --remote instead: supabase migration repair <version>... --remote`
   and
-  `--local isn't needed (local is the default) and will be removed in v4: supabase migration repair`;
+  `--local isn't needed (local is the default) and will be removed in v4: supabase migration repair <version>...`;
   a database URL is never echoed. Two selectors together fail
   (`Only one of --remote, --linked, --db-url and --local can be set; got …`), `--project-ref` cannot
   be combined with `--local`, `--db-url` or `--remote=<value>`, an empty `--db-url` or

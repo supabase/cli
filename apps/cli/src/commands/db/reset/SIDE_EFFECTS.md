@@ -274,7 +274,7 @@ to those defaults (the usual outcome for an interactive terminal).
   never printed or logged.
 - **Target selection.** `--remote` is read as the linked project (bare), a project ref (20
   lowercase letters), a Postgres URL, or else a branch of the linked project by name or UUID;
-  `--remote=false` and `--remote=` fail with `Leave out --remote to target the local database.` A
+  `--remote=false` fails with `--remote doesn't take false. Leave it out to target the local database.`, and `--remote=` with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A
   word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes no
   operands.
 - **Deprecated aliases.** `--linked`, `--project-ref=<ref>`, `--db-url=<url>` and `--local` still

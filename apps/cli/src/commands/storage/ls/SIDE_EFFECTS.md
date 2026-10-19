@@ -111,8 +111,7 @@ No custom storage telemetry events.
   is read as a project ref (20 lowercase letters), `true|yes|on|1` (the linked project), or
   otherwise the name of a branch of the linked project, which resolves to that branch's own project.
   A database URL (`--remote=<db-url>`) fails with a `needs a project, not a database URL` error and
-  sends no request. `false|no|off|0`, `--no-remote` and an empty value fail with
-  `Leave out --remote to target the local Storage API.` A bare `--remote` followed by a word that
+  sends no request. `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to target the local Storage API.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to target the local Storage API.` A bare `--remote` followed by a word that
   exactly matches a branch of the linked project, is within a small edit distance of one, or can't
   be checked because the branch listing failed stops the run with an error that offers both
   readings: `--remote=<word>` for the branch, `<word> --remote` for the operand. Any other word runs
@@ -120,8 +119,8 @@ No custom storage telemetry events.
   in every output format and, in JSON results, as a `target` object.
 - **Deprecated selectors.** `--linked`, `--project-ref` and `--local` are hidden aliases that still
   select their target and print a warning on stderr naming the replacement, for example
-  `--linked is deprecated and will be removed in v4. Use --remote instead: supabase storage ls --remote`
-  and `--local isn't needed (local is the default) and will be removed in v4: supabase storage ls`.
+  `--linked is deprecated and will be removed in v4. Use --remote instead: supabase storage ls <path> --remote`
+  and `--local isn't needed (local is the default) and will be removed in v4: supabase storage ls <path>`.
   Two selectors together fail
   (`Only one of --remote, --linked, --db-url and --local can be set; got …`), `--project-ref` cannot
   be combined with `--local` or `--remote=<value>`, an empty `--project-ref` is rejected, and

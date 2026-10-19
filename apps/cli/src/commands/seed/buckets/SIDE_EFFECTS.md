@@ -204,8 +204,7 @@ stdout and a terminal `result`/`error` event is emitted.
   is read as a project ref (20 lowercase letters), `true|yes|on|1` (the linked project), or
   otherwise the name of a branch of the linked project, which resolves to that branch's own project.
   A database URL (`--remote=<db-url>`) fails with a `needs a project, not a database URL` error and
-  sends no request. `false|no|off|0`, `--no-remote` and an empty value fail with
-  `Leave out --remote to target the local Storage API.` A word after a bare `--remote` is read as
+  sends no request. `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to target the local Storage API.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to target the local Storage API.` A word after a bare `--remote` is read as
   its value, `--remote=<word>`, because the command takes no operands. The resolved target is
   announced on stderr (`Target: …`)
   in every output format and, in JSON results, as a `target` object. `--remote`, `--linked`,

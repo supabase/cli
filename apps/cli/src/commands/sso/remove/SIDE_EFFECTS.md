@@ -85,8 +85,7 @@ Single `success` event with the removed provider's details as data.
   or, on an interactive terminal, the project picker. A bare `--remote` targets the linked project.
 - `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
   project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
-  (`supabase sso remove` takes a project, not a database); `false|no|off|0`, `--no-remote` and an
-  empty value fail with `Leave out --remote to use the linked project.`
+  (`supabase sso remove` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
 - A bare `--remote` followed by a word that exactly matches a branch of the linked project, is
   within a small edit distance of one, or can't be checked because the branch listing failed stops
   the run before any other work with an error that offers both readings: `--remote=<word>` for the

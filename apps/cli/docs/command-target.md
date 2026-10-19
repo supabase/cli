@@ -19,7 +19,7 @@ Database commands run against the local stack unless `--remote` is passed: bare 
 | Branch found by name or UUID          | `project <parent name> (<parent ref>) · branch <name> (<ref>)`, or `branch <ref>` for a UUID |
 | The project's default branch          | `project <name> (<ref>) · production`                                                        |
 
-The `default; pass --remote` hint appears only when the checkout is linked and no `--remote` was passed. "Branch" is claimed only on positive evidence: a branch lookup by name or UUID, or a live probe. A cached link never proves one. A branch's parent shows as its bare ref when the cache doesn't know its name.
+The `default; pass --remote` hint appears only when a project is linked, by `SUPABASE_PROJECT_ID` or the link file, and no `--remote` was passed. "Branch" is claimed only on positive evidence: a branch lookup by name or UUID, or a live probe. A cached link never proves one. A branch's parent shows as its bare ref when the cache doesn't know its name.
 
 ## JSON `target`
 

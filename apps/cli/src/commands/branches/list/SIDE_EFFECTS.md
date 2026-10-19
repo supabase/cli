@@ -107,7 +107,7 @@ One `result` NDJSON event with `{branches: [...]}`.
 
 ## Notes
 
-- `--remote=<ref>` names the parent project; with no selector or a bare `--remote` the parent comes from the chain above. A branch name or UUID is rejected with `` `supabase branches list` acts on a parent project, so --remote takes its project ref, not a branch name. Use --remote=<ref>. ``, and a database URL with `` `supabase branches list` needs a project, not a database URL. ``; `false|no|off|0`, `--no-remote` and an empty value fail with `Leave out --remote to use the linked project.` The branch itself stays a positional argument.
+- `--remote=<ref>` names the parent project; with no selector or a bare `--remote` the parent comes from the chain above. A branch name or UUID is rejected with `` `supabase branches list` acts on a parent project, so --remote takes its project ref, not a branch name. Use --remote=<ref>. ``, and a database URL with `` `supabase branches list` needs a project, not a database URL. ``; `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref>; leave it out to use the linked project.` The branch itself stays a positional argument.
 - The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
 - Timestamps are formatted as UTC `YYYY-MM-DD HH:MM:SS`.
 - Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers.
