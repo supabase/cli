@@ -15,7 +15,7 @@ import {
   type StorageGateway,
 } from "../../../command-internal/storage-gateway.ts";
 import { splitBucketPrefix, storageIsDir } from "../../../command-internal/storage-url.ts";
-import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
+import type { TargetFlagValuesWithoutDbUrl } from "../../../command-internal/target/target-flags.ts";
 import {
   assertStorageWorkdir,
   connectStorageGateway,
@@ -31,13 +31,9 @@ import {
 } from "../storage.errors.ts";
 import { listStoragePaths } from "../storage.iterate.ts";
 
-export interface StorageRmFlags {
+export interface StorageRmFlags extends TargetFlagValuesWithoutDbUrl {
   readonly files: ReadonlyArray<string>;
   readonly recursive: boolean;
-  readonly remote: Option.Option<RemoteValue>;
-  readonly linked: boolean;
-  readonly local: boolean;
-  readonly projectRef: Option.Option<string>;
 }
 
 interface RmSummary {

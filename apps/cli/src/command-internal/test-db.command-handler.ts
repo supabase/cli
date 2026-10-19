@@ -7,8 +7,7 @@ import { Output } from "../shared/output/output.service.ts";
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import { withCommandTelemetry } from "../telemetry/command-telemetry.ts";
 import type { TestDbNoTestsError, TestDbRunError } from "./test-db.errors.ts";
-import type { RemoteValue } from "./target/remote-value.ts";
-import { targetFlags } from "./target/target-flags.ts";
+import { targetFlags, type TargetFlagValuesWithDbUrl } from "./target/target-flags.ts";
 import { testDb } from "./test-db.handler.ts";
 
 /** Shared verbatim by both `test db` and its `db test` alias. */
@@ -47,13 +46,8 @@ export const testDbConfig = {
   ...targetFlags({ subject: "database", dbUrl: true }),
 } as const;
 
-export interface TestDbFlags {
+export interface TestDbFlags extends TargetFlagValuesWithDbUrl {
   readonly paths: ReadonlyArray<string>;
-  readonly remote: Option.Option<RemoteValue>;
-  readonly dbUrl: Option.Option<string>;
-  readonly linked: boolean;
-  readonly local: boolean;
-  readonly projectRef: Option.Option<string>;
 }
 
 /**

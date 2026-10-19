@@ -17,11 +17,11 @@ import { branchResolution } from "../../../command-internal/target/branch-resolu
 import {
   seedTargetGlobalFlags,
   targetFlags,
+  type TargetFlagValuesWithoutDbUrl,
 } from "../../../command-internal/target/target-flags.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import { seedBuckets } from "./buckets.handler.ts";
-import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
@@ -29,12 +29,7 @@ const config = {
 };
 
 // `--remote`/`--linked`/`--local` are scoped globals on the `seed` group (`seedTargetGlobalFlags`).
-export type BucketsFlags = {
-  readonly remote: Option.Option<RemoteValue>;
-  readonly linked: boolean;
-  readonly local: boolean;
-  readonly projectRef: Option.Option<string>;
-};
+export type BucketsFlags = TargetFlagValuesWithoutDbUrl;
 
 export const bucketsCommand = Command.make("buckets", config).pipe(
   Command.withDescription("Seed buckets declared in [storage.buckets]."),

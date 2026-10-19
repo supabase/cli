@@ -14,6 +14,7 @@ import {
   seedTargetGlobalFlags,
   targetFlags,
 } from "./target-flags.ts";
+import { resolveTarget } from "./resolve-target.ts";
 
 const silentFormatter: CliOutput.Formatter = {
   formatCliError: () => "",
@@ -144,6 +145,29 @@ describe("targetFlags", () => {
       "projectRef",
       "remote",
     ]);
+  });
+
+  it("keeps a database-URL leaf from dropping --db-url and a no-URL leaf from passing one", () => {
+    const storage = targetFlags({ subject: "Storage API", dbUrl: false });
+    const unselected = {
+      remote: Option.none(),
+      local: false,
+      linked: false,
+      projectRef: Option.none(),
+    };
+    const withUrl: CliCommand.Command.Config.Infer<typeof withDbUrl> = {
+      ...unselected,
+      dbUrl: Option.none(),
+    };
+    const withoutUrl: CliCommand.Command.Config.Infer<typeof storage> = unselected;
+    const { dbUrl: _dropped, ...droppedDbUrl } = withUrl;
+
+    expect(Effect.isEffect(resolveTarget(withUrl))).toBe(true);
+    expect(Effect.isEffect(resolveTarget(withoutUrl))).toBe(true);
+    // @ts-expect-error a leaf that declared dbUrl: true cannot hand the resolver flags without it
+    resolveTarget(droppedDbUrl);
+    // @ts-expect-error a leaf that declared dbUrl: false cannot pass a database URL
+    resolveTarget({ ...withoutUrl, dbUrl: Option.some(URL) });
   });
 
   it("shows --remote and hides every deprecated alias", () => {

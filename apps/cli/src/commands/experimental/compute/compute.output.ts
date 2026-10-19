@@ -1,6 +1,6 @@
 import { Effect, Option } from "effect";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
-import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
+import type { ProjectTargetFlagValues } from "../../../command-internal/target/target-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   encodeSortedJson,
@@ -102,13 +102,7 @@ export const rejectComputeEnvOutput = Effect.fnUntraced(function* () {
  * prompt. Keyed off the flags, not the resolved ref, so a link-supplied ref isn't echoed back as
  * noise; the resolved ref also stands in for a branch name, which needs no second lookup.
  */
-export const computeRemoteSuffix = (
-  flags: {
-    readonly remote: Option.Option<RemoteValue>;
-    readonly projectRef: Option.Option<string>;
-  },
-  ref: string,
-): string =>
+export const computeRemoteSuffix = (flags: ProjectTargetFlagValues, ref: string): string =>
   Option.isSome(flags.projectRef) || Option.exists(flags.remote, (value) => value._tag !== "Linked")
     ? ` --remote=${ref}`
     : "";

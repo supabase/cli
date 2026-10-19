@@ -7,18 +7,12 @@ import { DbConfigResolver } from "../../../command-internal/db-config.service.ts
 import type { ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
-import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
+import type { TargetFlagValuesWithDbUrl } from "../../../command-internal/target/target-flags.ts";
 import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 
 /** The target selector flags every `inspect db` subcommand inherits; see `targetFlags`. */
-export interface InspectConnectionFlags {
-  readonly remote: Option.Option<RemoteValue>;
-  readonly dbUrl: Option.Option<string>;
-  readonly linked: boolean;
-  readonly local: boolean;
-  readonly projectRef: Option.Option<string>;
-}
+export type InspectConnectionFlags = TargetFlagValuesWithDbUrl;
 
 /**
  * A single `inspect db` subcommand: the SQL it runs, the query parameters, table headers, and
