@@ -158,7 +158,7 @@ export function requireLiveJson(
 
 /** Flags every storage live test passes: the suite links the shared project
  * and the storage command family is experimental-gated. */
-export const storageLiveFlags: ReadonlyArray<string> = ["--linked", "--experimental"];
+export const storageLiveFlags: ReadonlyArray<string> = ["--remote", "--experimental"];
 
 /**
  * Best-effort exact-object cleanup for storage live tests: removes one owned
@@ -181,7 +181,7 @@ export async function removeStorageLiveObject(
 /** Flags for experimental-gated live tests that address the shared project by
  * ref rather than linking it (contrast `storageLiveFlags`). */
 export function experimentalProjectLiveFlags(project: LiveProject): ReadonlyArray<string> {
-  return ["--project-ref", project.ref, "--experimental"];
+  return [`--remote=${project.ref}`, "--experimental"];
 }
 
 /**
@@ -217,8 +217,7 @@ export async function removeLiveMigration(
     version,
     "--status",
     "reverted",
-    "--db-url",
-    project.dbUrl,
+    `--remote=${project.dbUrl}`,
     "--yes",
   ]);
   requireCliSuccess(reverted, `migration repair cleanup for ${version}`);
