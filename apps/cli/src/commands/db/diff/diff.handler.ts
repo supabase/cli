@@ -27,6 +27,7 @@ import {
   type LinkedTarget,
 } from "../../../command-internal/target/resolve-target.ts";
 import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
+import { warnTarget } from "../../../command-internal/target/remote-resolution.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import { makeDir } from "../../../command-internal/make-dir.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
@@ -311,7 +312,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
             }
             case "Remote":
               if (explicit.viaDeprecatedLinked) {
-                yield* output.warn(
+                yield* warnTarget(
                   `${flag} linked is deprecated and will be removed in v4. Use ${flag} remote instead.`,
                 );
               }

@@ -19,18 +19,23 @@ import { renderBranchTarget } from "./target-identity.ts";
 import type { TargetDeprecation } from "./target-selector.ts";
 import { TargetRemoteAmbiguousError } from "./target.errors.ts";
 
-/** Prints one warning per deprecated selector flag the run used on stderr in every output format, rebuilt from the real command line when it is known. */
+/** Prints a target warning on stderr in every output format, since stdout may carry the payload. */
+export const warnTarget = Effect.fnUntraced(function* (message: string) {
+  const output = yield* Output;
+  yield* output.raw(`${yellow(`Warning: ${message}`)}\n`, "stderr");
+});
+
+/** Prints one warning per deprecated selector flag the run used, rebuilt from the real command line when it is known. */
 export const warnTargetDeprecations = Effect.fnUntraced(function* (
   deprecations: ReadonlyArray<TargetDeprecation>,
 ) {
   if (deprecations.length === 0) return;
-  const output = yield* Output;
   const { projectHost } = yield* CommandSettings;
   const argv = Option.getOrUndefined(
     Option.map(yield* Effect.serviceOption(CliArgs), (cli) => cli.args),
   );
   for (const message of deprecationMessages(deprecations, { argv, projectHost })) {
-    yield* output.raw(`${yellow(`Warning: ${message}`)}\n`, "stderr");
+    yield* warnTarget(message);
   }
 });
 

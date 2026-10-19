@@ -113,9 +113,14 @@ const acquireApi = Effect.fnUntraced(function* () {
   return yield* factory.value.make;
 });
 
+/** A branch-lookup spinner, shown only on a terminal: a non-terminal text run writes task steps to stdout, which may carry the command's payload. */
+export const startBranchLookupTask = Effect.fnUntraced(function* (label: string) {
+  const output = yield* Output;
+  return output.format === "text" && output.interactive ? yield* output.task(label) : undefined;
+});
+
 /** `GET /v1/projects/{ref}/branches`, shared by every branch-name lookup. */
 export const listParentBranches = Effect.fnUntraced(function* (parentRef: string, label: string) {
-  const output = yield* Output;
   const api = yield* acquireApi();
 
   const mapBranchListError = mapHttpError({
@@ -128,7 +133,7 @@ export const listParentBranches = Effect.fnUntraced(function* (parentRef: string
         : `unexpected list branches status ${status}: ${body}`,
   });
 
-  const task = output.format === "text" ? yield* output.task(label) : undefined;
+  const task = yield* startBranchLookupTask(label);
   const branches: Branches = yield* api.v1.listAllBranches({ ref: parentRef }).pipe(
     Effect.tapError(() => task?.fail() ?? Effect.void),
     Effect.catch(mapBranchListError),
