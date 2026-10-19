@@ -1,8 +1,9 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 
 import { aqua } from "../../../command-internal/colors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { runDbPull, type DbPullInvoke } from "../../../command-internal/db-pull-run.ts";
+import { warnLinkedTargetDefault } from "../../../command-internal/target-default-warning.ts";
 import type { DbPullFlags } from "./pull.command.ts";
 
 /**
@@ -12,6 +13,17 @@ import type { DbPullFlags } from "./pull.command.ts";
  */
 export const dbPull = Effect.fn("db.pull")(function* (flags: DbPullFlags, invoke?: DbPullInvoke) {
   const output = yield* Output;
+  // `db remote commit` reuses this handler and keeps its own linked default.
+  if (invoke === undefined) {
+    yield* warnLinkedTargetDefault({
+      command: "db pull",
+      targetSelected:
+        Option.isSome(flags.dbUrl) ||
+        Option.isSome(flags.linked) ||
+        Option.isSome(flags.local) ||
+        Option.isSome(flags.projectRef),
+    });
+  }
   const outcome = yield* runDbPull(flags, invoke);
 
   yield* Effect.annotateCurrentSpan({

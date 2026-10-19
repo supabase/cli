@@ -19,6 +19,7 @@ import {
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { assertTargetDefaultWarning } from "../../../../tests/helpers/target-default-warning.ts";
 import {
   asRecordedRequests,
   provideEnv,
@@ -620,4 +621,37 @@ describe("inspect db through the real database-config resolver", () => {
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
+});
+
+describe("inspect db target default warning", () => {
+  const selectors = [
+    { label: "--linked", args: ["--linked"], over: { linked: true } },
+    { label: "--linked=false", args: ["--linked=false"], over: {} },
+    { label: "--local", args: ["--local"], over: { local: true } },
+    {
+      label: "--db-url",
+      args: ["--db-url", "postgresql://x"],
+      over: { dbUrl: Option.some("postgresql://x") },
+    },
+    {
+      label: "--project-ref",
+      args: ["--project-ref", VALID_REF],
+      over: { linked: true, projectRef: Option.some(VALID_REF) },
+    },
+  ] as const;
+
+  it.effect("warns on a bare run and stays silent with every selector", () =>
+    assertTargetDefaultWarning({
+      command: "inspect db db-stats",
+      sameTarget: selectors[0],
+      selectors,
+      run: (selector) => {
+        const { layer, out } = setup({ rows: [DB_STATS_ROW], cliArgs: selector?.args ?? [] });
+        return inspectDbDbStats(flags(selector?.over)).pipe(
+          Effect.provide(layer),
+          Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
+        );
+      },
+    }),
+  );
 });

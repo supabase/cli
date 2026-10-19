@@ -31,6 +31,7 @@ import {
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { assertTargetDefaultWarning } from "../../../../tests/helpers/target-default-warning.ts";
 import {
   asRecordedRequests,
   realDbConfigResolver,
@@ -549,10 +550,14 @@ describe("inspect report", () => {
   );
 
   it.effect("emits a structured result and writes CSVs but no table in json mode", () => {
-    const { layer, out } = setupReport({ format: "json", csvs: DEFAULT_RULE_CSVS });
+    const { layer, out } = setupReport({
+      format: "json",
+      csvs: DEFAULT_RULE_CSVS,
+      cliArgs: ["--linked"],
+    });
     return Effect.gen(function* () {
       const base = yield* tempDir("supabase-report-out-");
-      yield* inspectReport(flags({ outputDir: base }));
+      yield* inspectReport(flags({ outputDir: base, linked: true }));
       expect(out.stdoutText).toBe("");
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "inspect report" }),
@@ -763,4 +768,43 @@ describe("inspect report through the real database-config resolver", () => {
       });
     }).pipe(Effect.scoped, Effect.provide(layer));
   });
+});
+
+describe("inspect report target default warning", () => {
+  const selectors = [
+    { label: "--linked", args: ["--linked"], over: { linked: true } },
+    { label: "--linked=false", args: ["--linked=false"], over: {} },
+    { label: "--local", args: ["--local"], over: { local: true } },
+    {
+      label: "--db-url",
+      args: ["--db-url", "postgres://x"],
+      over: { dbUrl: Option.some("postgres://x") },
+    },
+    {
+      label: "--project-ref",
+      args: ["--project-ref", VALID_REF],
+      over: { linked: true, projectRef: Option.some(VALID_REF) },
+    },
+  ] as const;
+
+  it.effect("warns on a bare run and stays silent with every selector", () =>
+    Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
+      yield* assertTargetDefaultWarning({
+        command: "inspect report",
+        sameTarget: selectors[0],
+        selectors,
+        run: (selector) => {
+          const { layer, out } = setupReport({
+            csvs: DEFAULT_RULE_CSVS,
+            cliArgs: selector?.args ?? [],
+          });
+          return inspectReport(flags({ outputDir: base, ...selector?.over })).pipe(
+            Effect.provide(layer),
+            Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
+          );
+        },
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });

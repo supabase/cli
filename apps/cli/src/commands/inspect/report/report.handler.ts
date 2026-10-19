@@ -10,6 +10,7 @@ import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
+import { warnLinkedTargetDefault } from "../../../command-internal/target-default-warning.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { InspectMutuallyExclusiveFlagsError } from "../db/inspect-query.ts";
 import type { InspectReportFlags } from "./report.command.ts";
@@ -69,6 +70,10 @@ const runInspectReport = Effect.fnUntraced(function* (
   // Mutual exclusivity is keyed off raw argv, not the parsed boolean value: `--local=false`
   // was explicitly passed, so value-based detection would miss it and default to linked.
   const target = resolveDbTargetFlags(cliArgs.args);
+  yield* warnLinkedTargetDefault({
+    command: "inspect report",
+    targetSelected: target.connType !== undefined || Option.isSome(flags.projectRef),
+  });
   if (target.setFlags.length > 1) {
     return yield* new InspectMutuallyExclusiveFlagsError({
       message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,

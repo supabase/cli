@@ -82,6 +82,16 @@ shell inherits the suppressing variables and is missed.
 > password) is printed **in cleartext** to stdout. Operators piping `--dry-run`
 > output to logs or CI artifacts should treat that output as a secret.
 
+### Target default warning
+
+A run that passes none of `--local`, `--linked`, `--db-url` or `--project-ref` (in any form, including `--linked=false`) writes one line to **stderr** after flag validation and before the connection is resolved, in every `--output-format`. stdout is unchanged. The next major version targets the local database by default.
+
+```
+Warning: supabase db dump will target the local database by default in the next major version. Pass --linked to keep targeting the linked project.
+```
+
+`SUPABASE_PROJECT_ID` does not suppress it.
+
 ## Notes / Divergences
 
 - `--data-only` XOR `--role-only`; `--keep-comments` XOR `--data-only`;

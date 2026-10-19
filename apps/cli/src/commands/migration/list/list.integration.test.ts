@@ -21,6 +21,7 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { assertTargetDefaultWarning } from "../../../../tests/helpers/target-default-warning.ts";
 import {
   asRecordedRequests,
   provideEnv,
@@ -398,4 +399,40 @@ describe("migration list", () => {
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
+});
+
+describe("migration list target default warning", () => {
+  const selectors = [
+    { label: "--linked", args: ["--linked"], over: {} },
+    { label: "--linked=false", args: ["--linked=false"], over: { linked: false } },
+    { label: "--local", args: ["--local"], over: { linked: false, local: true } },
+    {
+      label: "--db-url",
+      args: ["--db-url", "postgresql://x"],
+      over: { dbUrl: Option.some("postgresql://x") },
+    },
+    {
+      label: "--project-ref",
+      args: ["--project-ref", VALID_REF],
+      over: { projectRef: Option.some(VALID_REF) },
+    },
+  ] as const;
+
+  it.effect("warns on a bare run and stays silent with every selector", () =>
+    assertTargetDefaultWarning({
+      command: "migration list",
+      sameTarget: selectors[0],
+      selectors,
+      run: (selector) => {
+        const { layer, out } = setup(tmp.current, {
+          args: selector?.args ?? [],
+          remote: ["20240101000000"],
+        });
+        return migrationList(flags(selector?.over)).pipe(
+          Effect.provide(layer),
+          Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
+        );
+      },
+    }),
+  );
 });

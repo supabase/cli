@@ -14,6 +14,7 @@ vi.mock("node:net", (importOriginal) =>
 
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { assertTargetDefaultWarning } from "../../../../tests/helpers/target-default-warning.ts";
 import {
   asRecordedRequests,
   provideEnv,
@@ -1314,4 +1315,42 @@ describe("db push", () => {
       expect(linkedCache.cached).toBe(false);
     });
   });
+});
+
+describe("db push target default warning", () => {
+  const tmp = useTempWorkdir("supabase-db-push-warning-");
+  const selectors = [
+    { label: "--linked", args: ["--linked"], over: { linked: true, local: false } },
+    { label: "--linked=false", args: ["--linked=false"], over: { linked: false, local: false } },
+    { label: "--local", args: ["--local"], over: { linked: false, local: true } },
+    {
+      label: "--db-url",
+      args: ["--db-url", "postgresql://x"],
+      over: { dbUrl: Option.some("postgresql://x"), linked: false, local: false },
+    },
+    {
+      label: "--project-ref",
+      args: ["--project-ref", VALID_REF],
+      over: { projectRef: Option.some(VALID_REF), linked: false, local: false },
+    },
+  ] as const;
+
+  it.effect("warns on a bare run and stays silent with every selector", () =>
+    assertTargetDefaultWarning({
+      command: "db push",
+      sameTarget: selectors[0],
+      selectors,
+      run: (selector) => {
+        const { layer, out } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          args: ["db", "push", ...(selector?.args ?? [])],
+          isLocal: false,
+        });
+        return dbPush({ ...DEFAULT_FLAGS, ...selector?.over }).pipe(
+          Effect.provide(layer),
+          Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
+        );
+      },
+    }),
+  );
 });

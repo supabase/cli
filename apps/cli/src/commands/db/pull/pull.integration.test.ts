@@ -28,6 +28,7 @@ vi.mock("node:net", (importOriginal) =>
 const reachableDirectHost = withReachableDirectHost(fixtureNet);
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
+import { assertTargetDefaultWarning } from "../../../../tests/helpers/target-default-warning.ts";
 import { withReachableDirectHost } from "../../../../tests/helpers/refuse-invalid-db-hosts.ts";
 import {
   assertBlockDrift,
@@ -2444,6 +2445,39 @@ describe("db pull", () => {
   });
 });
 
+describe("db pull target default warning", () => {
+  const selectors = [
+    { label: "--linked", over: { linked: Option.some(true) } },
+    { label: "--linked=false", over: { linked: Option.some(false) } },
+    { label: "--local", over: { local: Option.some(true) } },
+    { label: "--db-url", over: { dbUrl: Option.some("postgresql://u:p@h/db") } },
+    { label: "--project-ref", over: { projectRef: Option.some("flagflagflagflagflag") } },
+  ] as const;
+
+  it.effect("warns on a bare run and stays silent with every selector", () =>
+    assertTargetDefaultWarning({
+      command: "db pull",
+      sameTarget: selectors[0],
+      selectors,
+      run: (selector) => {
+        const s = setup(tmp.current, {
+          migrations: ["20240101000000"],
+          remoteVersions: ["20240101000000"],
+          edgeStdout: "",
+        });
+        return dbPull(flags(selector?.over)).pipe(
+          Effect.exit,
+          Effect.provide(s.layer),
+          Effect.map(() => ({
+            stdout: streamText(s.out, "stdout"),
+            stderr: streamText(s.out, "stderr"),
+          })),
+        );
+      },
+    }),
+  );
+});
+
 describe("db remote commit", () => {
   it.effect("writes a remote_commit migration in-process and skips the pull PostRun line", () => {
     const s = setup(tmp.current, {
@@ -2481,6 +2515,7 @@ describe("db remote commit", () => {
       );
       expect(streamText(s.out, "stdout")).not.toContain("Finished supabase db pull.");
       expect(streamText(s.out, "stdout")).not.toContain("is deprecated");
+      expect(streamText(s.out, "stderr")).not.toContain("by default in the next major version");
       expect(s.engineCalls).toHaveLength(1);
       expect(s.engineCalls[0]?.operation).toBe("diff");
     }).pipe(Effect.provide(s.layer));

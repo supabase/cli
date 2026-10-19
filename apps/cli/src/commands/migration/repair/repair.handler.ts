@@ -15,6 +15,7 @@ import { loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection, type DbSession } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
+import { warnLinkedTargetDefault } from "../../../command-internal/target-default-warning.ts";
 import {
   DELETE_MIGRATION_VERSION,
   type MigrationFile,
@@ -243,5 +244,9 @@ export const migrationRepair = Effect.fn("migration.repair")(function* (
   const telemetryState = yield* TelemetryState;
   const cliArgs = yield* CliArgs;
   const target = resolveDbTargetFlags(cliArgs.args);
+  yield* warnLinkedTargetDefault({
+    command: "migration repair",
+    targetSelected: target.connType !== undefined || Option.isSome(input.projectRef),
+  });
   yield* runRepair(input, target).pipe(Effect.ensuring(telemetryState.flush));
 });

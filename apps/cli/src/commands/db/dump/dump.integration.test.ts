@@ -28,6 +28,7 @@ vi.mock("node:net", (importOriginal) =>
 const reachableDirectHost = withReachableDirectHost(fixtureNet);
 
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
+import { assertTargetDefaultWarning } from "../../../../tests/helpers/target-default-warning.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import { withReachableDirectHost } from "../../../../tests/helpers/refuse-invalid-db-hosts.ts";
 import {
@@ -1490,4 +1491,29 @@ describe("db dump permissions through the real resolver and cache", () => {
       });
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
+});
+
+describe("db dump target default warning", () => {
+  const selectors = [
+    { label: "--linked", over: { linked: Option.some(true) } },
+    { label: "--linked=false", over: { linked: Option.some(false) } },
+    { label: "--local", over: { local: Option.some(true) } },
+    { label: "--db-url", over: { dbUrl: Option.some("postgresql://u:p@h/db") } },
+    { label: "--project-ref", over: { projectRef: Option.some("flagflagflagflagflag") } },
+  ] as const;
+
+  it.effect("warns on a bare run and stays silent with every selector", () =>
+    assertTargetDefaultWarning({
+      command: "db dump",
+      sameTarget: selectors[0],
+      selectors,
+      run: (selector) => {
+        const { layer, out } = setup({ conn: REMOTE_CONN, isLocal: false });
+        return dbDump(flags({ dryRun: true, ...selector?.over })).pipe(
+          Effect.provide(layer),
+          Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
+        );
+      },
+    }),
+  );
 });

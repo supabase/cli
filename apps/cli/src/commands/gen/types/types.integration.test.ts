@@ -33,6 +33,7 @@ import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-fa
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { assertTargetDefaultWarning } from "../../../../tests/helpers/target-default-warning.ts";
 import {
   asRecordedRequests,
   primaryPoolerConfigs,
@@ -3310,4 +3311,48 @@ describe("gen types permissions through the real layers", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
   }
+});
+
+describe("gen types target default warning", () => {
+  const selectors = [
+    { label: "--linked", args: ["--linked"], over: { linked: true } },
+    { label: "--linked=false", args: ["--linked=false"], over: {} },
+    { label: "--local", args: ["--local"], over: { local: true } },
+    {
+      label: "--db-url",
+      args: ["--db-url", "postgresql://x"],
+      over: { dbUrl: Option.some("postgresql://x") },
+    },
+    {
+      label: "--project-id",
+      args: ["--project-id", VALID_REF],
+      over: { projectId: Option.some(VALID_REF) },
+    },
+  ] as const;
+
+  it.effect("warns on a bare run and stays silent with every selector", () =>
+    assertTargetDefaultWarning({
+      command: "gen types",
+      sameTarget: selectors[0],
+      selectors,
+      run: (selector) =>
+        Effect.gen(function* () {
+          const { layer, out } = yield* setup({
+            projectId: Option.some(VALID_REF),
+            projectTypes: "export type Database = {};",
+            args: ["gen", "types", ...(selector?.args ?? [])],
+          });
+          yield* genTypes(defaultFlags(selector?.over)).pipe(Effect.provide(layer), Effect.exit);
+          return { stdout: out.stdoutText, stderr: out.stderrText };
+        }).pipe(Effect.provide(BunServices.layer)),
+    }),
+  );
+
+  it.effect("stays silent when an unlinked run fails before targeting a project", () =>
+    Effect.gen(function* () {
+      const { layer, out } = yield* setup();
+      yield* genTypes(defaultFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(out.stderrText).not.toContain("by default in the next major version");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });

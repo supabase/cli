@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
+import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { targetDefaultWarning } from "../../../../tests/helpers/target-default-warning.ts";
 import { mockTelemetryStateTracked } from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
@@ -185,6 +187,9 @@ describe("inspect db deprecated aliases", () => {
           ? `Command "${testCase.alias}" is deprecated and will be removed in v3, use "${testCase.target}" instead.\n`
           : `Command "${testCase.alias}" is deprecated, use "${testCase.target}" instead.\n`;
         expect(ctx.out.stderrText).toContain(expected);
+        expect(stripAnsi(ctx.out.stderrText)).toContain(
+          targetDefaultWarning(`inspect db ${testCase.alias}`),
+        );
         expect(ctx.out.stdoutText).not.toContain("is deprecated");
         expect(ctx.querySql).toBe(testCase.routedSpec.sql);
       }).pipe(Effect.provide(ctx.layer));

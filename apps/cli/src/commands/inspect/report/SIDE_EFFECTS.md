@@ -121,6 +121,16 @@ instead a structured result is emitted:
 { "outputDir": "<abs path>", "files": [{ "name": "locks", "path": "..." }, ...], "rules": [{ "name": "...", "status": "...", "matches": "..." }, ...] }
 ```
 
+### Target default warning
+
+A run that passes none of `--local`, `--linked`, `--db-url` or `--project-ref` (in any form, including `--linked=false`) writes one line to **stderr** before the target is resolved, in every `--output-format`. stdout is unchanged. The next major version targets the local database by default.
+
+```
+Warning: supabase inspect report will target the local database by default in the next major version. Pass --linked to keep targeting the linked project.
+```
+
+`SUPABASE_PROJECT_ID` does not suppress it.
+
 ## Notes
 
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)

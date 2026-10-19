@@ -85,6 +85,16 @@ Pagination prints `Loading page: <N>` to **stderr**.
 {"type":"result","data":{"paths":["bucket/","bucket/folder/file.png"]}}
 ```
 
+### Target default warning
+
+A run that passes none of `--local`, `--linked` or `--project-ref` (in any form, including `--linked=false`) writes one line to **stderr** after the experimental gate and the `--linked`/`--local` exclusivity check, before any credential lookup or request, in every `--output-format`. stdout is unchanged. The next major version targets the local Storage API by default.
+
+```
+Warning: supabase storage ls will target the local Storage API by default in the next major version. Pass --linked to keep targeting the linked project.
+```
+
+`SUPABASE_PROJECT_ID` does not suppress it.
+
 ## Telemetry Events Fired
 
 | Event                  | When                                       | Notable properties               |

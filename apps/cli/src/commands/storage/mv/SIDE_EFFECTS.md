@@ -86,6 +86,16 @@ backend — same roles as `storage ls`.
 {"type":"result","data":{"message":"Successfully moved"}}
 ```
 
+### Target default warning
+
+A run that passes none of `--local`, `--linked` or `--project-ref` (in any form, including `--linked=false`) writes one line to **stderr** after the experimental gate and the `--linked`/`--local` exclusivity check, before any credential lookup or request, in every `--output-format`. stdout is unchanged. The next major version targets the local Storage API by default.
+
+```
+Warning: supabase storage mv will target the local Storage API by default in the next major version. Pass --linked to keep targeting the linked project.
+```
+
+`SUPABASE_PROJECT_ID` does not suppress it.
+
 ## Telemetry Events Fired
 
 | Event                  | When                                       | Notable properties               |
