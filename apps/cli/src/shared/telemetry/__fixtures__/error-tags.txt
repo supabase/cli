@@ -226,6 +226,7 @@ DockerRemoveAllNetworkPruneError
 DockerRemoveAllStopError
 DockerRemoveAllVolumePruneError
 DockerRunError
+DocsExamplesError
 DomainsCnameError
 DomainsNetworkError
 DomainsUnexpectedStatusError
