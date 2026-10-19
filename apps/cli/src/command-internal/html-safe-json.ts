@@ -1,0 +1,136 @@
+/**
+ * Byte-stable JSON encoder for commands whose stdout format is fixed.
+ *
+ * Doesn't sort object keys — the caller builds objects whose key insertion order is already the
+ * desired order; a `Map` is preserved as true insertion order (a plain object reorders
+ * integer-like string keys into ascending numeric order, which would undo a lexicographic sort).
+ *
+ * Differs from `JSON.stringify(x, null, 2)` in escaping `<`, `>`, `&`, and control characters
+ * (`\u0008`/`\u000c` instead of `\b`/`\f`).
+ */
+
+const HEX = "0123456789abcdef";
+
+function unicodeEscape(codeUnit: number): string {
+  return `\\u${HEX[(codeUnit >> 12) & 0xf]}${HEX[(codeUnit >> 8) & 0xf]}${HEX[(codeUnit >> 4) & 0xf]}${HEX[codeUnit & 0xf]}`;
+}
+
+/**
+ * Quotes and escapes a string with HTML escaping.
+ * Iterates by UTF-16 code unit; the only non-ASCII characters escaped (U+2028, U+2029) are single
+ * BMP code units, so code units suffice.
+ */
+export function escapeHtmlSafeJsonString(value: string): string {
+  let out = '"';
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    switch (code) {
+      case 0x22: // "
+        out += '\\"';
+        break;
+      case 0x5c: // \
+        out += "\\\\";
+        break;
+      case 0x0a: // \n
+        out += "\\n";
+        break;
+      case 0x0d: // \r
+        out += "\\r";
+        break;
+      case 0x09: // \t
+        out += "\\t";
+        break;
+      case 0x3c: // <
+        out += "\\u003c";
+        break;
+      case 0x3e: // >
+        out += "\\u003e";
+        break;
+      case 0x26: // &
+        out += "\\u0026";
+        break;
+      case 0x2028:
+      case 0x2029:
+        out += unicodeEscape(code);
+        break;
+      default:
+        out += code < 0x20 ? unicodeEscape(code) : value[i];
+    }
+  }
+  return out + '"';
+}
+
+function walk(value: unknown, depth: number, pretty: boolean): string {
+  if (value === null || value === undefined) return "null";
+  switch (typeof value) {
+    case "string":
+      return escapeHtmlSafeJsonString(value);
+    case "number":
+      // JSON.stringify collapses `-0` to `"0"`, but a float64 negative
+      // zero marshals as `-0` — reachable via `gen bearer-jwt`'s signed payload, where the signed bytes
+      // must match.
+      if (!Number.isFinite(value)) return "null";
+      return Object.is(value, -0) ? "-0" : JSON.stringify(value);
+    case "boolean":
+      return value ? "true" : "false";
+  }
+  const indent = pretty ? "  ".repeat(depth + 1) : "";
+  const closeIndent = pretty ? "  ".repeat(depth) : "";
+  const open = pretty ? "\n" : "";
+  const separator = pretty ? ",\n" : ",";
+  const close = pretty ? "\n" : "";
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]";
+    const items = value.map((item) => indent + walk(item, depth + 1, pretty));
+    return `[${open}${items.join(separator)}${close}${closeIndent}]`;
+  }
+  // A plain object reorders integer-like string keys ("2", "10") into ascending numeric order on
+  // enumeration, unlike lexicographic order; callers needing that order (e.g.
+  // `sortKeysDeep`) pass a `Map`, whose iteration order is true insertion order.
+  const entries =
+    value instanceof Map
+      ? [...(value as Map<string, unknown>).entries()]
+      : Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0) return "{}";
+  const colon = pretty ? ": " : ":";
+  const lines = entries.map(
+    ([key, val]) =>
+      `${indent}${escapeHtmlSafeJsonString(key)}${colon}${walk(val, depth + 1, pretty)}`,
+  );
+  return `{${open}${lines.join(separator)}${close}${closeIndent}}`;
+}
+
+/**
+ * Encodes a value with 2-space indentation, object keys in insertion order,
+ * HTML-safe string escaping, and a trailing newline.
+ */
+export function encodeHtmlSafeJsonIndented(value: unknown): string {
+  return walk(value, 0, true) + "\n";
+}
+
+/**
+ * Encodes a value with compact separators
+ * (`{"k":v}`), object keys in insertion order, HTML-safe string escaping,
+ * and no trailing newline.
+ */
+export function encodeHtmlSafeJsonCompact(value: unknown): string {
+  return walk(value, 0, false);
+}
+
+/**
+ * Type names for the JSON-representable kinds a decode rejects, used in "expected X, got <kind>"
+ * decode errors.
+ */
+export function jsonKindName(value: unknown): string {
+  if (Array.isArray(value)) return "array";
+  switch (typeof value) {
+    case "number":
+      return "number";
+    case "string":
+      return "string";
+    case "boolean":
+      return "boolean";
+    default:
+      return "value";
+  }
+}

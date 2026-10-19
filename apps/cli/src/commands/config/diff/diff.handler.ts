@@ -3,7 +3,6 @@ import {
   diffProjectConfig,
   fromApiProjectConfig,
 } from "@supabase/config/effect";
-import { remoteNameForProjectRef } from "@supabase/config/internal";
 import { operationDefinitions } from "@supabase/api/effect";
 import { Effect, FileSystem, Option, Ref } from "effect";
 
@@ -13,7 +12,7 @@ import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-va
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
-import { unsupportedOutputFlagMessage } from "../../../command-internal/go-output-flag.ts";
+import { unsupportedOutputFlagMessage } from "../../../command-internal/output-formats.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
 import {
@@ -26,8 +25,12 @@ import {
   resolveConfigTarget,
 } from "../../../command-internal/project-target.ts";
 import { configIsRecord } from "../config.paths.ts";
-import { loadLocalConfig } from "../config.load.ts";
-import { configApiScope, configScopeLine } from "../config.format.ts";
+import {
+  loadResolvedConfig,
+  loadTargetResolvedConfig,
+  relativeConfigPath,
+} from "../config.load.ts";
+import { configApiScope, configEnvOriginLookup, configScopeLine } from "../config.format.ts";
 import { configProjectConfigTry } from "../config.project-config.ts";
 import { configReadStatusMessage } from "../config.read-status.ts";
 import {
@@ -74,21 +77,13 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
   const telemetryState = yield* TelemetryState;
   const cliSettings = yield* CommandSettings;
   const processControl = yield* ProcessControl;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const fs = yield* FileSystem.FileSystem;
 
   // An empty `--project-ref` value is absent, mirroring the resolver's own rule.
   const requested = Option.filter(flags.projectRef, (value) => value.length > 0);
 
-  // Resolved against `cliSettings.workdir`, the same root the project-ref resolver and the
-  // linked-project cache use, so `--workdir ../other` compares that directory's own config
-  // against its own linked project.
-  const loadConfig = (projectRef: string | undefined) =>
-    loadLocalConfig(
-      cliSettings,
-      projectRef,
-      (message) => new ConfigDiffLoadConfigError({ message }),
-    );
+  const makeLoadError = (message: string) => new ConfigDiffLoadConfigError({ message });
 
   // Set once the target ref resolves, so the Effect.ensuring cache write below only fires for
   // invocations that got that far.
@@ -97,7 +92,7 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
   yield* Effect.gen(function* () {
     // Reject `-o/--output` outright: this command only supports `--output-format`. Checked first
     // so an invalid invocation never burns a config load or a network call.
-    if (Option.isSome(goOutputFlag)) {
+    if (Option.isSome(outputFlag)) {
       return yield* new ConfigDiffOutputFlagUnsupportedError({
         message: unsupportedOutputFlagMessage("config diff"),
       });
@@ -109,10 +104,14 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
       Effect.mapError((error) => new ConfigDiffWorkdirError({ message: error.message })),
     );
 
-    // Loaded before target resolution so a missing config points at `supabase init` rather than
-    // a not-linked error, and a malformed document doesn't burn a branch-resolution round trip.
-    // No `[remotes.*]` overlay yet -- it's keyed by the resolved ref, applied below.
-    let loaded = yield* loadConfig(undefined);
+    // The config loads before target resolution so a missing file points at `supabase init`
+    // rather than a not-linked error, and a malformed document doesn't burn a
+    // branch-resolution round trip.
+    const earlyResolvedConfig = yield* loadResolvedConfig(
+      cliSettings,
+      Option.none(),
+      makeLoadError,
+    );
 
     // See resolveConfigTarget's doc comment for the target-resolution rules this preserves.
     const { ref, branch } = yield* resolveConfigTarget(
@@ -126,20 +125,22 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
       "config.target_is_branch": branch !== undefined,
     });
 
-    // Reload only if a `[remotes.*]` entry matches the resolved ref (ADR 0018), matched against
-    // the raw pre-`env()` `project_id` literal so an `env(REF)` entry that merely resolves to
-    // `ref` isn't treated as a match -- that would reload the config and duplicate its load-time
-    // warnings.
-    const remoteMatchesRef =
-      remoteNameForProjectRef(loaded.rawDocument?.["remotes"], ref) !== undefined;
-    if (remoteMatchesRef) {
-      loaded = yield* loadConfig(ref);
-    }
+    // The view `config push` sends: the `[remotes.*]` block matched to `ref` and the env overlay.
+    const resolvedConfig = yield* loadTargetResolvedConfig(
+      cliSettings,
+      earlyResolvedConfig,
+      ref,
+      makeLoadError,
+    );
+    const loaded = resolvedConfig.loaded;
+    const originFor = configEnvOriginLookup(resolvedConfig.origins, (file) =>
+      relativeConfigPath(cliSettings.workdir, file),
+    );
 
     const context: ConfigDiffContext = {
       projectRef: ref,
       branch,
-      appliedRemote: loaded.appliedRemote,
+      appliedRemote: Option.getOrUndefined(resolvedConfig.appliedRemote),
       configSchema: loaded.schemaRef ?? CLI_CONFIG_SCHEMA_URL,
     };
     yield* output.raw(configDiffComparisonLine(context), "stderr");
@@ -201,10 +202,10 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
     if (output.format !== "text") {
       yield* output.success(
         configDiffSummaryMessage(changeSet, scope),
-        configDiffPayload(changeSet, scope, context),
+        configDiffPayload(changeSet, scope, context, originFor),
       );
     } else {
-      yield* output.raw(renderConfigDiffText(changeSet, scope));
+      yield* output.raw(renderConfigDiffText(changeSet, scope, originFor));
     }
 
     // `--exit-code` sets exit 2 for drift, distinct from the 1 every other failure uses, so a

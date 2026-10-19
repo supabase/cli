@@ -25,6 +25,7 @@ import {
   mockOutput,
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import {
   VALID_REF,
   buildTestRuntime,
@@ -253,14 +254,17 @@ function setup(opts: SetupOpts = {}) {
     workdir: tempRoot.current,
     projectId: opts.projectId ?? Option.none(),
   });
-  const layer = buildTestRuntime({
-    out,
-    api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer(opts) },
-    cliSettings,
-    analytics,
-    telemetry: telemetry.layer,
-    linkedProjectCache: linkedCache.layer,
-  });
+  const layer = Layer.merge(
+    buildTestRuntime({
+      out,
+      api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer(opts) },
+      cliSettings,
+      analytics,
+      telemetry: telemetry.layer,
+      linkedProjectCache: linkedCache.layer,
+    }),
+    cliConfigValuesTestLayer,
+  );
   return { layer, out, analytics, telemetry, linkedCache, apiMock, workdir: tempRoot.current };
 }
 
@@ -621,11 +625,14 @@ describe("link integration", () => {
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildTestRuntime({
-        out,
-        api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({ tenant: "fail" }) },
-        cliSettings,
-      });
+      const layer = Layer.merge(
+        buildTestRuntime({
+          out,
+          api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({ tenant: "fail" }) },
+          cliSettings,
+        }),
+        cliConfigValuesTestLayer,
+      );
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1457,42 +1464,40 @@ describe("link integration", () => {
   });
 
   describe("telemetry: --project-ref redaction (CLI-2167)", () => {
-    it.effect(
-      "does not redact --project-ref in cli_command_executed when it is ref-shaped (Go parity: cmd/link.go:52)",
-      () => {
-        const out = mockOutput({ format: "text" });
-        const analytics = mockContextualAnalytics();
-        const apiMock = mockCommandPlatformApiService({
-          v1: {
-            getProject: () => Effect.succeed(HEALTHY_PROJECT),
-            getProjectApiKeys: () => Effect.succeed(SERVICE_KEYS),
-            getStorageConfig: () => Effect.succeed({ migrationVersion: "m" }),
-            getPoolerConfig: () => Effect.succeed(POOLER_PRIMARY),
-          },
-        });
-        const cliSettings = mockCommandSettings({
-          workdir: tempRoot.current,
-          projectId: Option.none(),
-        });
-        const layer = Layer.mergeAll(
-          buildTestRuntime({
-            out,
-            api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({}) },
-            cliSettings,
-            analytics,
-          }),
-          commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
-          Stdio.layerTest({
-            args: Effect.succeed(["link", "--project-ref", VALID_REF]),
-          }),
-        );
-        return Effect.gen(function* () {
-          yield* linkHandler(flags({ projectRef: Option.some(VALID_REF) }));
-          const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-          expect(event?.properties.flags).toEqual({ "project-ref": VALID_REF });
-        }).pipe(Effect.provide(layer));
-      },
-    );
+    it.effect("does not redact --project-ref in cli_command_executed when it is ref-shaped", () => {
+      const out = mockOutput({ format: "text" });
+      const analytics = mockContextualAnalytics();
+      const apiMock = mockCommandPlatformApiService({
+        v1: {
+          getProject: () => Effect.succeed(HEALTHY_PROJECT),
+          getProjectApiKeys: () => Effect.succeed(SERVICE_KEYS),
+          getStorageConfig: () => Effect.succeed({ migrationVersion: "m" }),
+          getPoolerConfig: () => Effect.succeed(POOLER_PRIMARY),
+        },
+      });
+      const cliSettings = mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({}) },
+          cliSettings,
+          analytics,
+        }),
+        cliConfigValuesTestLayer,
+        commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
+        Stdio.layerTest({
+          args: Effect.succeed(["link", "--project-ref", VALID_REF]),
+        }),
+      );
+      return Effect.gen(function* () {
+        yield* linkHandler(flags({ projectRef: Option.some(VALID_REF) }));
+        const event = analytics.captured.find((c) => c.event === "cli_command_executed");
+        expect(event?.properties.flags).toEqual({ "project-ref": VALID_REF });
+      }).pipe(Effect.provide(layer));
+    });
 
     it.effect(
       "redacts --project-ref in cli_command_executed when it is a branch name, not a ref",
@@ -1511,6 +1516,7 @@ describe("link integration", () => {
             cliSettings,
             analytics,
           }),
+          cliConfigValuesTestLayer,
           commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
           Stdio.layerTest({
             args: Effect.succeed(["link", "--project-ref", "my-branch"]),
@@ -1570,21 +1576,24 @@ describe("link permissions", () => {
           return jsonResponse(request, 404, { message: "unexpected request" });
         }),
     });
-    const layer = buildTestRuntime({
-      out,
-      api,
-      cliSettings: mockCommandSettings({
-        workdir: tempRoot.current,
-        projectId: Option.none(),
+    const layer = Layer.merge(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({
+          workdir: tempRoot.current,
+          projectId: Option.none(),
+        }),
+        tty: mockTty({ stdinIsTty: true }),
       }),
-      tty: mockTty({ stdinIsTty: true }),
-    });
+      cliConfigValuesTestLayer,
+    );
     return { layer, api, out, workdir: tempRoot.current };
   }
 
   const managementCalls = (api: { requests: ReadonlyArray<{ method: string; url: string }> }) =>
     api.requests
-      .filter(({ url }) => url.startsWith(API))
+      .filter(({ url }) => new URL(url).origin === API)
       .map(({ method, url }) => `${method} ${url.slice(API.length)}`);
 
   it.effect("links by --project-ref, reading the project, its keys, storage and the pooler", () => {

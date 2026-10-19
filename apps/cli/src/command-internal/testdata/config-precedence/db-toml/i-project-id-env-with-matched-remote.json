@@ -1,0 +1,45 @@
+{
+  "ok": {
+    "apiSchemas": [
+      "public",
+      "base_api"
+    ],
+    "appliedRemote": "prod",
+    "baseline": {
+      "apiAutoExposeNewTables": null,
+      "authEnabled": false,
+      "realtimeEnabled": true,
+      "storageEnabled": true,
+      "vaultNames": []
+    },
+    "denoVersion": 2,
+    "majorVersion": 17,
+    "migrationsEnabled": false,
+    "orioledbVersion": null,
+    "password": "postgres",
+    "pgDelta": {
+      "declarativeSchemaPath": "supabase/remote-declarative",
+      "enabled": false,
+      "formatOptions": null
+    },
+    "poolerConnectionString": null,
+    "port": 55001,
+    "projectEnv": {},
+    "projectId": "shell-project-id",
+    "schemaPathPatterns": [
+      "./schemas/*.sql"
+    ],
+    "schemaPaths": [
+      "supabase/schemas/*.sql"
+    ],
+    "seed": {
+      "enabled": false,
+      "sqlPaths": [
+        "supabase/seeds/*.sql"
+      ]
+    },
+    "shadowPort": 55002,
+    "vault": [],
+    "webhooksEnabled": false
+  }
+}

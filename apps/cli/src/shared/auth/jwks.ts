@@ -9,7 +9,7 @@ import {
 const remoteJwksTimeoutMs = 10_000;
 
 /**
- * Structural JWK shape shared by the two in-tree JWK types (`command-internal/go-jwt.ts`'s
+ * Structural JWK shape shared by the two in-tree JWK types (`command-internal/local-jwt.ts`'s
  * `Jwk` and `shared/functions/serve.ts`'s `SigningKeyJwk`), so either can be passed to
  * {@link toPublicJwk} without conversion. Defined locally since `shared/` cannot import from
  * the command tree.
