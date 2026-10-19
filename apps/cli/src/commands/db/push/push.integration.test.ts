@@ -18,7 +18,7 @@ import {
   BRANCH_PROJECT_REF,
   branchListApi,
   warningsOf,
-} from "../../../../tests/helpers/db-remote-selection.ts";
+} from "../../../../tests/helpers/remote-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,

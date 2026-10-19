@@ -34,6 +34,7 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { configDiffHandler } from "./diff.command.ts";
 import { CONFIG_DIFF_PAYLOAD_VERSION } from "./diff.format.ts";
 import { configDiff } from "./diff.handler.ts";
+import { warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
 const tempRoot = useTempWorkdir("supabase-config-diff-int-");
 
@@ -699,9 +700,7 @@ describe("config diff integration", () => {
     });
     return Effect.gen(function* () {
       yield* configDiff({ ...noFlags, projectRef: Option.some("staging") });
-      expect(
-        out.messages.filter((message) => message.type === "warn").map(({ message }) => message),
-      ).toEqual([
+      expect(warningsOf(out)).toEqual([
         "--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase config diff --remote=staging",
       ]);
       expect(out.stderrText).toContain(

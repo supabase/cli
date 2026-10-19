@@ -66,6 +66,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { functionsDeploy } from "./deploy.handler.ts";
 import type { FunctionsDeployFlags } from "./deploy.command.ts";
+import { BRANCH_PROJECT_REF, branchRow } from "../../../../tests/helpers/remote-selection.ts";
 
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -449,19 +450,6 @@ describe("functions deploy", () => {
 
   describe("project selection", () => {
     const OTHER_REF = "qrstuvwxyzabcdefghij";
-    const BRANCH_REF = "branchprojectrefabcd";
-    const branchRow = (name: string) => ({
-      id: "11111111-2222-4333-8444-555555555555",
-      name,
-      project_ref: BRANCH_REF,
-      parent_project_ref: VALID_REF,
-      is_default: false,
-      persistent: false,
-      status: "MIGRATIONS_PASSED",
-      created_at: "2026-05-27T01:02:03Z",
-      updated_at: "2026-05-27T01:02:04Z",
-      with_data: true,
-    });
 
     const selectionHarness = (args: ReadonlyArray<string>) => {
       const out = mockOutput({ format: "text" });
@@ -602,7 +590,7 @@ describe("functions deploy", () => {
           `GET https://api.supabase.com/v1/projects/${VALID_REF}/branches`,
         );
         expect(deployedTo()).toEqual([
-          `https://api.supabase.com/v1/projects/${BRANCH_REF}/functions/deploy`,
+          `https://api.supabase.com/v1/projects/${BRANCH_PROJECT_REF}/functions/deploy`,
         ]);
         assertPermissionDrift({
           command: "functions deploy",

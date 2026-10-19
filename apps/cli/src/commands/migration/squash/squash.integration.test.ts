@@ -96,6 +96,11 @@ import {
   MigrationSquashWriteError,
 } from "./squash.errors.ts";
 import { migrationSquash } from "./squash.handler.ts";
+import {
+  BRANCH_PROJECT_REF,
+  branchRow,
+  warningsOf,
+} from "../../../../tests/helpers/remote-selection.ts";
 
 // Distinguishes squash's three pg_dump containers from the shadow's setup jobs by env:
 // only a pg_dump invocation carries PGDATABASE. Among dump calls, the first two sharing
@@ -235,21 +240,7 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
 );
 
 const FLAG_REF = "flagflagflagflagflag";
-const BRANCH_REF = "branchprojectrefabcd";
 const DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
-
-const branchRow = (name: string) => ({
-  id: "11111111-2222-4333-8444-555555555555",
-  name,
-  project_ref: BRANCH_REF,
-  parent_project_ref: VALID_REF,
-  is_default: false,
-  persistent: false,
-  status: "MIGRATIONS_PASSED",
-  created_at: "2026-05-27T01:02:03Z",
-  updated_at: "2026-05-27T01:02:04Z",
-  with_data: true,
-});
 
 interface SetupOpts {
   /** Runs the real `DbConfigResolver` and linked-project cache against `workdir`. */
@@ -472,8 +463,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     telemetry,
     cache,
     branchRequests: branchApi.requests,
-    warnings: () =>
-      out.messages.filter((message) => message.type === "warn").map((message) => message.message),
+    warnings: () => warningsOf(out),
     ...fake,
   };
 }
@@ -1404,8 +1394,11 @@ describe("migration squash", () => {
           expect(s.branchRequests.map(({ method, url }) => `${method} ${url}`)).toEqual([
             `GET https://api.supabase.com/v1/projects/${VALID_REF}/branches`,
           ]);
-          expect(s.resolverCalls[0]?.target).toMatchObject({ kind: "linked", ref: BRANCH_REF });
-          expect(s.cache.cachedRef).toBe(BRANCH_REF);
+          expect(s.resolverCalls[0]?.target).toMatchObject({
+            kind: "linked",
+            ref: BRANCH_PROJECT_REF,
+          });
+          expect(s.cache.cachedRef).toBe(BRANCH_PROJECT_REF);
           expect(s.warnings()).toEqual([]);
         }).pipe(Effect.provide(s.layer));
       },

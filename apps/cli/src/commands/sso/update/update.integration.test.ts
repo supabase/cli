@@ -17,7 +17,7 @@ import {
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
-import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import {
   mockAnalytics,
   mockOutput,
@@ -1697,11 +1697,11 @@ describeHostedConsent("sso update", {
   }),
 });
 
-describeHostedRemoteSelection({
-  command: ["sso", "update"],
-  args: [VALID_PROVIDER_ID],
-  workdir: () => tempRoot.current,
+describeHostedTargetSelection("sso update", {
+  operands: [VALID_PROVIDER_ID],
   respond: (request) =>
-    jsonResponse(request, 200, request.method === "GET" ? EXISTING_PROVIDER : RESPONSE_PROVIDER),
-  run: (selector, layer) => ssoUpdate({ ...defaultFlags, ...selector }).pipe(Effect.provide(layer)),
+    Effect.succeed(
+      jsonResponse(request, 200, request.method === "GET" ? EXISTING_PROVIDER : RESPONSE_PROVIDER),
+    ),
+  run: (flags) => ssoUpdate({ ...defaultFlags, ...flags }),
 });

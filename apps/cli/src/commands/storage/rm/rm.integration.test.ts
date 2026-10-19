@@ -24,6 +24,7 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { storageRm } from "./rm.handler.ts";
+import { warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
 const writeAncestorConfig = Effect.fnUntraced(function* (root: string, toml: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -803,9 +804,7 @@ describe("storage rm", () => {
         requests.some((r) => r.url.startsWith(`https://${STORAGE_TEST_BRANCH_REF}.supabase.co`)),
       ).toBe(true);
       expect(linkedCache.cachedRef).toBe(STORAGE_TEST_BRANCH_REF);
-      expect(
-        out.messages.filter((message) => message.type === "warn").map((message) => message.message),
-      ).toEqual([]);
+      expect(warningsOf(out)).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -887,11 +886,7 @@ describe("storage rm", () => {
           const exit = yield* storageRm({ ...RM_ARGS, ...testCase.flags }).pipe(Effect.exit);
           expect(Exit.isSuccess(exit)).toBe(true);
           expect(requests[0]?.url.startsWith(testCase.host)).toBe(true);
-          expect(
-            out.messages
-              .filter((message) => message.type === "warn")
-              .map((message) => message.message),
-          ).toEqual([testCase.warning]);
+          expect(warningsOf(out)).toEqual([testCase.warning]);
         }).pipe(Effect.provide(layer));
       });
     }

@@ -56,6 +56,7 @@ import { secretDigestHex } from "./push.secret.ts";
 import { configDiff } from "../diff/diff.handler.ts";
 import { configPush } from "./push.handler.ts";
 import { configPushHandler } from "./push.command.ts";
+import { warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
 const tempRoot = useTempWorkdir("supabase-config-push-int-");
 
@@ -3549,9 +3550,7 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
     });
     return Effect.gen(function* () {
       yield* configPush({ remote: Option.none(), projectRef: Option.some("staging") });
-      expect(
-        out.messages.filter((message) => message.type === "warn").map(({ message }) => message),
-      ).toEqual([
+      expect(warningsOf(out)).toEqual([
         "--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase config push --remote=staging",
       ]);
       expect(out.stderrText).toContain(`Target: project ${REF} · branch staging (${BRANCH_REF})\n`);

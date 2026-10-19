@@ -56,6 +56,7 @@ import {
   type ConfigPullSource,
 } from "./pull.handler.ts";
 import type { ConfigPullFlags } from "./pull.command.ts";
+import { warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
 // Setup mirrors ../diff/diff.integration.test.ts: same temp workdir helper, mocked
 // services, and v2Response() fixture.
@@ -1779,9 +1780,7 @@ describe("config pull integration", () => {
     });
     return Effect.gen(function* () {
       yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
-      expect(
-        out.messages.filter((message) => message.type === "warn").map(({ message }) => message),
-      ).toEqual([
+      expect(warningsOf(out)).toEqual([
         "--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase config pull --remote=staging",
       ]);
       expect(out.stderrText).toContain(`Pulling config from 'staging' (branch ${BRANCH_REF})`);

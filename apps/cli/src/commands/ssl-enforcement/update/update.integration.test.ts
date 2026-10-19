@@ -3,7 +3,7 @@ import { type V1GetSslEnforcementConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
-import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -574,18 +574,16 @@ describe("ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  describeHostedRemoteSelection({
-    command: ["ssl-enforcement", "update"],
-    args: ["--enable-db-ssl-enforcement"],
-    workdir: () => tempRoot.current,
+  describeHostedTargetSelection("ssl-enforcement update", {
+    operands: ["--enable-db-ssl-enforcement"],
     activeFlags: { "enable-db-ssl-enforcement": true, "disable-db-ssl-enforcement": false },
-    respond: (request) => jsonResponse(request, 200, SSL_ENFORCED),
-    run: (selector, layer) =>
+    respond: (request) => Effect.succeed(jsonResponse(request, 200, SSL_ENFORCED)),
+    run: (flags) =>
       sslEnforcementUpdate({
-        ...selector,
+        ...flags,
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
-      }).pipe(Effect.provide(layer)),
+      }),
   });
 });
 

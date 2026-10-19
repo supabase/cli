@@ -25,7 +25,7 @@ import {
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
-import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
@@ -1343,10 +1343,8 @@ describeHostedConsent("sso add", {
   }),
 });
 
-describeHostedRemoteSelection({
-  command: ["sso", "add"],
-  args: ["--type", "saml"],
-  workdir: () => tempRoot.current,
-  respond: (request) => jsonResponse(request, 201, RESPONSE_PROVIDER),
-  run: (selector, layer) => ssoAdd({ ...defaultFlags, ...selector }).pipe(Effect.provide(layer)),
+describeHostedTargetSelection("sso add", {
+  operands: ["--type", "saml"],
+  respond: (request) => Effect.succeed(jsonResponse(request, 201, RESPONSE_PROVIDER)),
+  run: (flags) => ssoAdd({ ...defaultFlags, ...flags }),
 });

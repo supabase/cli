@@ -20,7 +20,7 @@ import {
   unverifiedTargetBanner,
 } from "../../../tests/helpers/command-mocks.ts";
 import { describeHostedConsent } from "../../../tests/helpers/hosted-consent.ts";
-import { describeHostedRemoteSelection } from "../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -1084,42 +1084,34 @@ describeHostedConsent("vanity-subdomains delete", {
   }),
 });
 
-describeHostedRemoteSelection({
-  command: ["vanity-subdomains", "get"],
-  workdir: () => tempRoot.current,
-  respond: (request) => jsonResponse(request, 200, SAMPLE_GET),
-  run: (selector, layer) => vanitySubdomainsGet(selector).pipe(Effect.provide(layer)),
+describeHostedTargetSelection("vanity-subdomains get", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, SAMPLE_GET)),
+  run: (flags) => vanitySubdomainsGet(flags),
 });
 
-describeHostedRemoteSelection({
-  command: ["vanity-subdomains", "check-availability"],
-  args: ["--desired-subdomain", "example.com"],
-  workdir: () => tempRoot.current,
+describeHostedTargetSelection("vanity-subdomains check-availability", {
+  operands: ["--desired-subdomain", "example.com"],
   activeFlags: { "desired-subdomain": "example.com" },
-  respond: (request) => jsonResponse(request, 201, SAMPLE_CHECK),
-  run: (selector, layer) =>
+  respond: (request) => Effect.succeed(jsonResponse(request, 201, SAMPLE_CHECK)),
+  run: (flags) =>
     vanitySubdomainsCheckAvailability({
-      ...selector,
+      ...flags,
       desiredSubdomain: Option.some("example.com"),
-    }).pipe(Effect.provide(layer)),
+    }),
 });
 
-describeHostedRemoteSelection({
-  command: ["vanity-subdomains", "activate"],
-  args: ["--desired-subdomain", "example.com"],
-  workdir: () => tempRoot.current,
+describeHostedTargetSelection("vanity-subdomains activate", {
+  operands: ["--desired-subdomain", "example.com"],
   activeFlags: { "desired-subdomain": "example.com" },
-  respond: (request) => jsonResponse(request, 201, SAMPLE_ACTIVATE),
-  run: (selector, layer) =>
+  respond: (request) => Effect.succeed(jsonResponse(request, 201, SAMPLE_ACTIVATE)),
+  run: (flags) =>
     vanitySubdomainsActivate({
-      ...selector,
+      ...flags,
       desiredSubdomain: Option.some("example.com"),
-    }).pipe(Effect.provide(layer)),
+    }),
 });
 
-describeHostedRemoteSelection({
-  command: ["vanity-subdomains", "delete"],
-  workdir: () => tempRoot.current,
-  respond: (request) => jsonResponse(request, 200, null),
-  run: (selector, layer) => vanitySubdomainsDelete(selector).pipe(Effect.provide(layer)),
+describeHostedTargetSelection("vanity-subdomains delete", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, null)),
+  run: (flags) => vanitySubdomainsDelete(flags),
 });

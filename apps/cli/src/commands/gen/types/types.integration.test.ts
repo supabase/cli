@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vitest";
-import { BunPath, BunServices } from "@effect/platform-bun";
+import { BunCrypto, BunPath, BunServices } from "@effect/platform-bun";
 import type {
   V1CreateLoginRoleOutput,
   V1GetABranchConfigOutput,
@@ -31,10 +31,11 @@ import {
 } from "effect";
 import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
 import { DnsResolverFlag, OutputFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
-import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { mockContextualAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
@@ -74,7 +75,7 @@ import type {
   ResolvedDbConfig,
   ResolvedDbConnection,
 } from "../../../command-internal/db-config.types.ts";
-import type { GenTypesFlags } from "./types.command.ts";
+import { genTypesHandler, type GenTypesFlags } from "./types.command.ts";
 import { GenTypesLocalDbInspectError, GenTypesLocalDbNotRunningError } from "./types.errors.ts";
 import { genTypes } from "./types.handler.ts";
 import { localDbContainerId, parseQueryTimeoutMillis, rootCaBundle } from "./types.shared.ts";
@@ -87,6 +88,11 @@ import {
   type GenTypesGenerateInput,
   GenTypesToolFailedError,
 } from "./types.generator.service.ts";
+import {
+  BRANCH_PROJECT_REF,
+  branchRow,
+  warningsOf,
+} from "../../../../tests/helpers/remote-selection.ts";
 
 const fixtureNet = vi.hoisted(() => ({ directHostReachable: false }));
 
@@ -161,21 +167,6 @@ function defaultFlags(overrides: Partial<GenTypesFlags> = {}): GenTypesFlags {
     ...overrides,
   };
 }
-
-const BRANCH_PROJECT_REF = "branchprojectrefabcd";
-
-const branchRow = (name: string): Record<string, unknown> => ({
-  id: "11111111-2222-4333-8444-555555555555",
-  name,
-  project_ref: BRANCH_PROJECT_REF,
-  parent_project_ref: VALID_REF,
-  is_default: false,
-  persistent: false,
-  status: "MIGRATIONS_PASSED",
-  created_at: "2026-05-27T01:02:03Z",
-  updated_at: "2026-05-27T01:02:04Z",
-  with_data: true,
-});
 
 function statusApiError(status: number, body: string) {
   const request = HttpClientRequest.get("https://api.supabase.test/v1/projects/ref");
@@ -1060,9 +1051,10 @@ describe("gen types", () => {
 
           expect(alias.out.stdoutText).toBe("export type Database = {}\n");
           expect(alias.out.stdoutText).toBe(canonical.out.stdoutText);
-          expect(alias.out.messages.filter((message) => message.type === "warn")).toEqual([]);
-          expect(stripAnsi(alias.out.stderrText)).toContain("Warning: --project-id is deprecated");
-          expect(canonical.out.stderrText).not.toContain("deprecated");
+          expect(warningsOf(alias.out)).toEqual([
+            `--project-id is deprecated and will be removed in v4. Use --remote instead: supabase gen types --remote=${VALID_REF}`,
+          ]);
+          expect(warningsOf(canonical.out)).toEqual([]);
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -1187,7 +1179,7 @@ describe("gen types", () => {
 
         expect(dbConfig.resolves.map(({ target }) => target.kind)).toEqual(["db-url"]);
         expect(api.requests).toEqual([]);
-        expect(out.messages.filter((message) => message.type === "warn")).toEqual([]);
+        expect(warningsOf(out)).toEqual([]);
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
@@ -1255,11 +1247,7 @@ describe("gen types", () => {
             yield* genTypes(defaultFlags(testCase.flags)).pipe(Effect.provide(context.layer));
 
             testCase.reached(context);
-            expect(
-              context.out.messages
-                .filter((message) => message.type === "warn")
-                .map((message) => message.message),
-            ).toEqual([testCase.warning]);
+            expect(warningsOf(context.out)).toEqual([testCase.warning]);
           }).pipe(Effect.provide(BunServices.layer)),
         );
       }
@@ -3516,6 +3504,7 @@ const setupRecorded = Effect.fnUntraced(function* (opts: {
   readonly branchOf?: string;
   readonly pickRef?: string;
   readonly generator?: ReturnType<typeof mockGenTypesGenerator>;
+  readonly analytics?: ReturnType<typeof mockContextualAnalytics>;
 }) {
   const workdir = yield* makeWorkdir("supabase-gen-types-recorded-");
   yield* ensureDefaultConfig(workdir);
@@ -3584,6 +3573,7 @@ const setupRecorded = Effect.fnUntraced(function* (opts: {
     api,
     cliSettings,
     telemetry: telemetry.layer,
+    ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
     tty: mockTty({ stdinIsTty: opts.pickRef !== undefined }),
     cliArgs: opts.args,
     linkedProjectCache: realLinkedProjectCache({
@@ -3686,9 +3676,7 @@ describe("gen types permissions through the real layers", () => {
       expect(methodPaths(ctx.api.requests)).toEqual([
         `GET /v1/projects/${VALID_REF}/types/typescript`,
       ]);
-      expect(
-        ctx.out.messages.filter((message) => message.type === "warn").map(({ message }) => message),
-      ).toEqual([
+      expect(warningsOf(ctx.out)).toEqual([
         `--project-id is deprecated and will be removed in v4. Use --remote instead: supabase gen types --remote=${VALID_REF}`,
       ]);
       assertPermissionDrift({
@@ -3699,6 +3687,67 @@ describe("gen types permissions through the real layers", () => {
       });
     }).pipe(Effect.provide(BunServices.layer)),
   );
+
+  describe("telemetry wiring", () => {
+    const reportedFlags = (
+      args: ReadonlyArray<string>,
+      overrides: Partial<GenTypesFlags>,
+      setup: { readonly projectRefFile?: string; readonly cacheRef?: string } = {},
+    ) =>
+      Effect.gen(function* () {
+        const analytics = mockContextualAnalytics();
+        const ctx = yield* setupRecorded({ args, analytics, ...setup });
+        yield* ctx.run(
+          genTypesHandler({ ...defaultFlags(overrides), language: Option.none() }).pipe(
+            Effect.provide(
+              commandRuntimeLayer(["gen", "types"]).pipe(Layer.provide(BunCrypto.layer)),
+            ),
+          ),
+        );
+        return analytics.captured.find((c) => c.event === "cli_command_executed")?.properties.flags;
+      }).pipe(Effect.provide(BunServices.layer));
+
+    it.effect("reports a ref-shaped --project-id verbatim", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* reportedFlags(["gen", "types", "--project-id", VALID_REF], {
+            projectId: Option.some(VALID_REF),
+          }),
+        ).toEqual({ "project-id": VALID_REF });
+      }),
+    );
+
+    it.effect("redacts a --project-id that names a branch", () =>
+      Effect.gen(function* () {
+        const flags = yield* reportedFlags(
+          ["gen", "types", "--project-id", "feature-x"],
+          { projectId: Option.some("feature-x") },
+          { projectRefFile: VALID_REF, cacheRef: BRANCH_PROJECT_REF },
+        );
+        expect(flags).toEqual({ "project-id": "<redacted>" });
+      }),
+    );
+
+    it.effect("reports a ref-shaped --project-ref verbatim", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* reportedFlags(["gen", "types", "--project-ref", VALID_REF], {
+            projectRef: Option.some(VALID_REF),
+          }),
+        ).toEqual({ "project-ref": VALID_REF });
+      }),
+    );
+
+    it.effect("reports --remote=<ref> through the central remote handling", () =>
+      Effect.gen(function* () {
+        expect(
+          yield* reportedFlags(["gen", "types", `--remote=${VALID_REF}`], {
+            remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+          }),
+        ).toEqual({ remote: VALID_REF });
+      }),
+    );
+  });
 
   it.effect(
     "looks the branch --remote=<branch> names up in the linked project, then generates",

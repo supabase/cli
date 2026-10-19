@@ -18,6 +18,7 @@ import { StorageGatewayStatusError } from "../../../command-internal/storage-gat
 import { storageLs } from "./ls.handler.ts";
 import type { StorageLsFlags } from "./ls.command.ts";
 import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
+import { warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
 const FLAG_REF = "flagflagflagflagflag";
 const DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
@@ -314,9 +315,7 @@ project_id = "env(STAGING_REF)"
         requests.some((r) => r.url.startsWith(`https://${STORAGE_TEST_BRANCH_REF}.supabase.co`)),
       ).toBe(true);
       expect(linkedCache.cachedRef).toBe(STORAGE_TEST_BRANCH_REF);
-      expect(
-        out.messages.filter((message) => message.type === "warn").map((message) => message.message),
-      ).toEqual([]);
+      expect(warningsOf(out)).toEqual([]);
     });
   });
 
@@ -396,11 +395,7 @@ project_id = "env(STAGING_REF)"
           );
           expect(Exit.isSuccess(exit)).toBe(true);
           expect(requests[0]?.url.startsWith(testCase.host)).toBe(true);
-          expect(
-            out.messages
-              .filter((message) => message.type === "warn")
-              .map((message) => message.message),
-          ).toEqual([testCase.warning]);
+          expect(warningsOf(out)).toEqual([testCase.warning]);
         });
       });
     }

@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
-import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
@@ -431,11 +431,8 @@ describeHostedConsent("sso remove", {
   }),
 });
 
-describeHostedRemoteSelection({
-  command: ["sso", "remove"],
-  args: [VALID_PROVIDER_ID],
-  workdir: () => tempRoot.current,
-  respond: (request) => jsonResponse(request, 200, PROVIDER),
-  run: (selector, layer) =>
-    ssoRemove({ ...selector, providerId: VALID_PROVIDER_ID }).pipe(Effect.provide(layer)),
+describeHostedTargetSelection("sso remove", {
+  operands: [VALID_PROVIDER_ID],
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, PROVIDER)),
+  run: (flags) => ssoRemove({ ...flags, providerId: VALID_PROVIDER_ID }),
 });

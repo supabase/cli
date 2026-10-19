@@ -7,7 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
-import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -826,16 +826,12 @@ describe("network-restrictions update integration", () => {
   });
 });
 
-describeHostedRemoteSelection({
-  command: ["network-restrictions", "update"],
-  args: ["--db-allow-cidr", "12.3.4.5/32"],
-  workdir: () => tempRoot.current,
-  respond: (request) => jsonResponse(request, 201, POST_APPLIED),
+describeHostedTargetSelection("network-restrictions update", {
+  operands: ["--db-allow-cidr", "12.3.4.5/32"],
+  respond: (request) => Effect.succeed(jsonResponse(request, 201, POST_APPLIED)),
   activeFlags: { append: false },
-  run: (selector, layer) =>
-    networkRestrictionsUpdate({ ...baseFlags, ...selector, dbAllowCidr: ["12.3.4.5/32"] }).pipe(
-      Effect.provide(layer),
-    ),
+  run: (flags) =>
+    networkRestrictionsUpdate({ ...baseFlags, ...flags, dbAllowCidr: ["12.3.4.5/32"] }),
 });
 
 describeHostedConsent("network-restrictions update", {

@@ -15,7 +15,7 @@ import {
   useTempWorkdir,
   unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -347,10 +347,8 @@ describe("network-bans get integration", () => {
     });
   });
 
-  describeHostedRemoteSelection({
-    command: ["network-bans", "get"],
-    workdir: () => tempRoot.current,
-    respond: (request) => jsonResponse(request, 201, SAMPLE_BANS),
-    run: (selector, layer) => networkBansGet(selector).pipe(Effect.provide(layer)),
+  describeHostedTargetSelection("network-bans get", {
+    respond: (request) => Effect.succeed(jsonResponse(request, 201, SAMPLE_BANS)),
+    run: (flags) => networkBansGet(flags),
   });
 });

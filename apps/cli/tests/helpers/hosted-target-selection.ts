@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Stdio } from "effect";
 
 import { YesFlag } from "../../src/command-internal/global-flags.ts";
 import type { RemoteValue } from "../../src/command-internal/target/remote-value.ts";
@@ -12,32 +12,19 @@ import {
   jsonResponse,
   mockCommandPlatformApi,
   mockCommandSettings,
+  mockLinkedProjectCacheTracked,
   useTempWorkdir,
 } from "./command-mocks.ts";
 import type { ApiHandler } from "./command-mocks.ts";
 import { mockOutput } from "./mocks.ts";
 import { assertPermissionDrift } from "./permission-drift.ts";
 import type { ActiveFlags, PermissionVariant } from "./permission-registry.ts";
+import { BRANCH_PROJECT_REF, branchRow, warningsOf } from "./remote-selection.ts";
 
 const OTHER_REF = "qrstuvwxyzabcdefghij";
-const BRANCH_REF = "branchprojectrefabcd";
 const DB_URL = "postgresql://postgres:pw@db.example.com:5432/postgres";
 const API_URL = "https://api.supabase.com";
 const PROJECT_REF_IN_URL = /\/v[12]\/projects\/([a-z]{20})(?:[/?]|$)/;
-
-/** The branch list the harness answers a `--remote=feature-x` lookup with. */
-export const branchListRow = (name: string) => ({
-  id: "11111111-2222-4333-8444-555555555555",
-  name,
-  project_ref: BRANCH_REF,
-  parent_project_ref: VALID_REF,
-  is_default: false,
-  persistent: false,
-  status: "MIGRATIONS_PASSED",
-  created_at: "2026-05-27T01:02:03Z",
-  updated_at: "2026-05-27T01:02:04Z",
-  with_data: true,
-});
 
 export interface TargetSelectionFlags {
   readonly remote: Option.Option<RemoteValue>;
@@ -54,6 +41,8 @@ interface TargetSelectionHarness<R> {
   readonly layer: Layer.Layer<R, unknown>;
   readonly requests: () => ReadonlyArray<RecordedCall>;
   readonly warnings: () => ReadonlyArray<string>;
+  /** For a leaf whose requests never name its project (`sso info`, `snippets list`): the ref it cached as its target. */
+  readonly cachedRef?: () => string | undefined;
 }
 
 export interface TargetSelectionMatrix<R> {
@@ -92,9 +81,9 @@ const projectRefsOf = (requests: ReadonlyArray<RecordedCall>): ReadonlyArray<str
 
 /**
  * Registers the `--remote` selection matrix for the leaf `path`: `--remote=<ref>` with no
- * warning, the `--project-ref` alias with its deprecation warning, a database URL rejected before
- * any request, and a branch name looked up under the linked project (or rejected, for a
- * parent-scoped command).
+ * warning, a bare `--remote` on the linked project, the `--project-ref` alias with its
+ * deprecation warning, a database URL rejected before any request, and a branch name looked up
+ * under the linked project (or rejected, for a parent-scoped command).
  */
 export function describeTargetSelectionMatrix<R>(
   path: string,
@@ -106,8 +95,10 @@ export function describeTargetSelectionMatrix<R>(
   const extraFlags = matrix.activeFlags ?? {};
   const driftVariant = matrix.variant === undefined ? {} : { variant: matrix.variant };
   // A parent-scoped command goes on to touch the branch's own project, so only the first project it reaches is the parent.
-  const expectActedOn = (requests: ReadonlyArray<RecordedCall>, ref: string) => {
-    const refs = projectRefsOf(requests);
+  const expectActedOn = (run: TargetSelectionHarness<R>, ref: string) => {
+    const refs = projectRefsOf(run.requests());
+    if (run.cachedRef !== undefined) expect(run.cachedRef()).toBe(ref);
+    if (run.cachedRef !== undefined && refs.length === 0) return;
     if (matrix.mode === "parent") expect(refs[0]).toBe(ref);
     else expect(refs).toEqual([ref]);
   };
@@ -125,7 +116,7 @@ export function describeTargetSelectionMatrix<R>(
       });
 
     it.effect("uses the project --remote=<ref> names, with no deprecation warning", () => {
-      const { layer, requests, warnings } = harness([`--remote=${OTHER_REF}`], OTHER_REF);
+      const run = harness([`--remote=${OTHER_REF}`], OTHER_REF);
       return Effect.gen(function* () {
         yield* prepare;
         yield* matrix.run({
@@ -133,32 +124,44 @@ export function describeTargetSelectionMatrix<R>(
           projectRef: Option.none(),
         });
 
-        expectActedOn(requests(), OTHER_REF);
-        expect(warnings()).toEqual([]);
+        expectActedOn(run, OTHER_REF);
+        expect(run.warnings()).toEqual([]);
         assertPermissionDrift({
           command: path,
           ...driftVariant,
           activeFlags: { ...extraFlags, remote: OTHER_REF },
-          requests: requests(),
+          requests: run.requests(),
         });
-      }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(run.layer));
+    });
+
+    it.effect("acts on the linked project for a bare --remote, with no deprecation warning", () => {
+      const run = harness(["--remote"], VALID_REF);
+      return Effect.gen(function* () {
+        yield* prepare;
+        yield* matrix.linkParent(tempRoot.current);
+        yield* matrix.run({ remote: Option.some({ _tag: "Linked" }), projectRef: Option.none() });
+
+        expectActedOn(run, VALID_REF);
+        expect(run.warnings()).toEqual([]);
+      }).pipe(Effect.provide(run.layer));
     });
 
     it.effect("keeps --project-ref working and points at --remote=<ref>", () => {
-      const { layer, requests, warnings } = harness(["--project-ref", OTHER_REF], OTHER_REF);
+      const run = harness(["--project-ref", OTHER_REF], OTHER_REF);
       return Effect.gen(function* () {
         yield* prepare;
         yield* matrix.run({ remote: Option.none(), projectRef: Option.some(OTHER_REF) });
 
-        expectActedOn(requests(), OTHER_REF);
-        expect(warnings()).toEqual([
+        expectActedOn(run, OTHER_REF);
+        expect(run.warnings()).toEqual([
           `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase ${commandLine} --remote=${OTHER_REF}`,
         ]);
-      }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(run.layer));
     });
 
     it.effect("rejects a database URL before any request", () => {
-      const { layer, requests } = harness([`--remote=${DB_URL}`], VALID_REF);
+      const run = harness([`--remote=${DB_URL}`], VALID_REF);
       return Effect.gen(function* () {
         yield* prepare;
         const error = yield* matrix
@@ -169,13 +172,13 @@ export function describeTargetSelectionMatrix<R>(
           _tag: "TargetNeedsProjectError",
           message: `${commandName} needs a project, not a database URL.`,
         });
-        expect(requests()).toEqual([]);
-      }).pipe(Effect.provide(layer));
+        expect(run.requests()).toEqual([]);
+      }).pipe(Effect.provide(run.layer));
     });
 
     if (matrix.mode === "parent") {
       it.effect("rejects a branch name and points at --remote=<ref>", () => {
-        const { layer, requests } = harness(["--remote=feature-x"], VALID_REF);
+        const run = harness(["--remote=feature-x"], VALID_REF);
         return Effect.gen(function* () {
           yield* prepare;
           const error = yield* matrix
@@ -189,14 +192,14 @@ export function describeTargetSelectionMatrix<R>(
             _tag: "TargetNeedsProjectError",
             message: `${commandName} acts on a parent project, so --remote takes its project ref, not a branch name. Use --remote=<ref>.`,
           });
-          expect(requests()).toEqual([]);
-        }).pipe(Effect.provide(layer));
+          expect(run.requests()).toEqual([]);
+        }).pipe(Effect.provide(run.layer));
       });
       return;
     }
 
     it.effect("acts on the project of the branch --remote=<branch> names", () => {
-      const { layer, requests } = harness(["--remote=feature-x"], BRANCH_REF);
+      const run = harness(["--remote=feature-x"], BRANCH_PROJECT_REF);
       return Effect.gen(function* () {
         yield* prepare;
         yield* matrix.linkParent(tempRoot.current);
@@ -206,18 +209,23 @@ export function describeTargetSelectionMatrix<R>(
           projectRef: Option.none(),
         });
 
-        expect(requests()[0]).toMatchObject({
+        expect(run.requests()[0]).toMatchObject({
           method: "GET",
           url: `${API_URL}/v1/projects/${VALID_REF}/branches`,
         });
-        expect(projectRefsOf(requests())).toEqual([VALID_REF, BRANCH_REF]);
+        const refs = projectRefsOf(run.requests());
+        if (run.cachedRef !== undefined) expect(run.cachedRef()).toBe(BRANCH_PROJECT_REF);
+        expect(refs[0]).toBe(VALID_REF);
+        if (run.cachedRef === undefined || refs.length > 1) {
+          expect(refs).toEqual([VALID_REF, BRANCH_PROJECT_REF]);
+        }
         assertPermissionDrift({
           command: path,
           ...driftVariant,
           activeFlags: { ...extraFlags, remote: "feature-x" },
-          requests: requests(),
+          requests: run.requests(),
         });
-      }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(run.layer));
     });
   });
 }
@@ -225,12 +233,14 @@ export function describeTargetSelectionMatrix<R>(
 const hostedLayer = (
   words: ReadonlyArray<string>,
   runtime: Parameters<typeof buildTestRuntime>[0],
+  argv: ReadonlyArray<string>,
 ) =>
   Layer.mergeAll(
     buildTestRuntime(runtime),
     commandRuntimeLayer(words).pipe(Layer.provide(BunServices.layer)),
     Layer.succeed(YesFlag, true),
     Layer.succeed(TargetPolicy, { group: "hosted", consent: "yes" }),
+    Stdio.layerTest({ args: Effect.succeed(argv) }),
   );
 
 /** Everything a hosted leaf's handler can require while `describeHostedTargetSelection` runs it. */
@@ -269,21 +279,25 @@ export function describeHostedTargetSelection(
       const api = mockCommandPlatformApi({
         handler: (request) =>
           mode === "project" && request.method === "GET" && request.url.endsWith("/branches")
-            ? Effect.succeed(jsonResponse(request, 200, [branchListRow("feature-x")]))
+            ? Effect.succeed(jsonResponse(request, 200, [branchRow("feature-x")]))
             : scenario.respond(request, expectedRef),
       });
+      const cache = mockLinkedProjectCacheTracked();
       return {
-        layer: hostedLayer(path.split(" "), {
-          out,
-          api,
-          cliSettings: mockCommandSettings({ workdir, projectId: Option.none() }),
-          cliArgs: selectorArgs,
-        }),
+        layer: hostedLayer(
+          path.split(" "),
+          {
+            out,
+            api,
+            cliSettings: mockCommandSettings({ workdir, projectId: Option.none() }),
+            cliArgs: selectorArgs,
+            linkedProjectCache: cache.layer,
+          },
+          selectorArgs,
+        ),
         requests: () => api.requests,
-        warnings: () =>
-          out.messages
-            .filter((message) => message.type === "warn")
-            .map((message) => message.message),
+        warnings: () => warningsOf(out),
+        cachedRef: () => cache.cachedRef,
       };
     },
     linkParent: (workdir) =>

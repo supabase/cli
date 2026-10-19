@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
-import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -504,13 +504,10 @@ describe("network-bans remove integration", () => {
     });
   });
 
-  describeHostedRemoteSelection({
-    command: ["network-bans", "remove"],
-    args: ["--db-unban-ip", "1.2.3.4"],
-    workdir: () => tempRoot.current,
-    respond: (request) => jsonResponse(request, 200, null),
-    run: (selector, layer) =>
-      networkBansRemove({ ...selector, dbUnbanIp: ["1.2.3.4"] }).pipe(Effect.provide(layer)),
+  describeHostedTargetSelection("network-bans remove", {
+    operands: ["--db-unban-ip", "1.2.3.4"],
+    respond: (request) => Effect.succeed(jsonResponse(request, 200, null)),
+    run: (flags) => networkBansRemove({ ...flags, dbUnbanIp: ["1.2.3.4"] }),
   });
 });
 

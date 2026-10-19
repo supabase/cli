@@ -12,7 +12,7 @@ import {
   mockCommandPlatformApi,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { secretsList } from "./list.handler.ts";
@@ -343,10 +343,8 @@ describe("secrets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  describeHostedRemoteSelection({
-    command: ["secrets", "list"],
-    workdir: () => tempRoot.current,
-    respond: (request) => jsonResponse(request, 200, SAMPLE_SECRETS),
-    run: (selector, layer) => secretsList(selector).pipe(Effect.provide(layer)),
+  describeHostedTargetSelection("secrets list", {
+    respond: (request) => Effect.succeed(jsonResponse(request, 200, SAMPLE_SECRETS)),
+    run: (flags) => secretsList(flags),
   });
 });

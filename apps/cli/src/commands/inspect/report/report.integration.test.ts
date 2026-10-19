@@ -61,22 +61,13 @@ import { TargetPolicy } from "../../../command-internal/target/target-policy.ts"
 import type { InspectReportFlags } from "./report.command.ts";
 import { inspectReport } from "./report.handler.ts";
 import { REPORT_QUERIES, reportIgnoreSchemas, wrapReportQuery } from "./report.queries.ts";
+import {
+  BRANCH_PROJECT_REF,
+  branchRow,
+  warningsOf,
+} from "../../../../tests/helpers/remote-selection.ts";
 
 const FLAG_REF = "flagflagflagflagflag";
-const BRANCH_REF = "branchprojectrefabcd";
-
-const branchRow = (name: string) => ({
-  id: "11111111-2222-4333-8444-555555555555",
-  name,
-  project_ref: BRANCH_REF,
-  parent_project_ref: VALID_REF,
-  is_default: false,
-  persistent: false,
-  status: "MIGRATIONS_PASSED",
-  created_at: "2026-05-27T01:02:03Z",
-  updated_at: "2026-05-27T01:02:04Z",
-  with_data: true,
-});
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -253,8 +244,7 @@ function setupReport(opts: SetupOpts = {}) {
     connection,
     telemetry,
     branchRequests: api.requests,
-    warnings: () =>
-      out.messages.filter((message) => message.type === "warn").map((message) => message.message),
+    warnings: () => warningsOf(out),
   };
 }
 
@@ -411,7 +401,7 @@ describe("inspect report", () => {
       ]);
       expect(resolver.connectionInput?.target).toMatchObject({
         kind: "linked",
-        ref: BRANCH_REF,
+        ref: BRANCH_PROJECT_REF,
       });
       expect(warnings()).toEqual([]);
     }).pipe(Effect.provide(layer));

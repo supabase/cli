@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
 import { describeHostedConsent } from "../../../tests/helpers/hosted-consent.ts";
-import { describeHostedRemoteSelection } from "../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../tests/helpers/hosted-target-selection.ts";
 import { mockOutput, mockTty } from "../../../tests/helpers/mocks.ts";
 import { makeApiClient } from "@supabase/api/effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -1188,42 +1188,40 @@ describe("postgres-config delete", () => {
   });
 });
 
-describeHostedRemoteSelection({
-  command: ["postgres-config", "get"],
-  workdir: () => tempRoot.current,
-  respond: (request) => jsonResponse(request, 200, { max_connections: 100 }),
-  run: (selector, layer) => postgresConfigGet(selector).pipe(Effect.provide(layer)),
+describeHostedTargetSelection("postgres-config get", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, { max_connections: 100 })),
+  run: (flags) => postgresConfigGet(flags),
 });
 
-describeHostedRemoteSelection({
-  command: ["postgres-config", "update"],
-  args: ["--config", "max_connections=100"],
-  workdir: () => tempRoot.current,
+describeHostedTargetSelection("postgres-config update", {
+  operands: ["--config", "max_connections=100"],
   activeFlags: { "replace-existing-overrides": false },
   respond: (request) =>
-    jsonResponse(request, 200, request.method === "PUT" ? { max_connections: 100 } : {}),
-  run: (selector, layer) =>
+    Effect.succeed(
+      jsonResponse(request, 200, request.method === "PUT" ? { max_connections: 100 } : {}),
+    ),
+  run: (flags) =>
     postgresConfigUpdate({
-      ...selector,
+      ...flags,
       config: ["max_connections=100"],
       replaceExistingOverrides: false,
       noRestart: false,
-    }).pipe(Effect.provide(layer)),
+    }),
 });
 
-describeHostedRemoteSelection({
-  command: ["postgres-config", "delete"],
-  args: ["--config", "max_connections"],
-  workdir: () => tempRoot.current,
+describeHostedTargetSelection("postgres-config delete", {
+  operands: ["--config", "max_connections"],
   activeFlags: { config: true, "no-restart": false },
   respond: (request) =>
-    jsonResponse(request, 200, request.method === "PUT" ? {} : { max_connections: 100 }),
-  run: (selector, layer) =>
+    Effect.succeed(
+      jsonResponse(request, 200, request.method === "PUT" ? {} : { max_connections: 100 }),
+    ),
+  run: (flags) =>
     postgresConfigDelete({
-      ...selector,
+      ...flags,
       config: ["max_connections"],
       noRestart: false,
-    }).pipe(Effect.provide(layer)),
+    }),
 });
 
 describeHostedConsent("postgres-config update", {

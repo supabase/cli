@@ -11,7 +11,7 @@ import {
   mockCommandPlatformApi,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { projectsApiKeys } from "./api-keys.handler.ts";
@@ -321,12 +321,9 @@ describe("projects api-keys integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  describeHostedRemoteSelection({
-    command: ["projects", "api-keys"],
-    workdir: () => tempRoot.current,
+  describeHostedTargetSelection("projects api-keys", {
     activeFlags: { reveal: false },
-    respond: (request) => jsonResponse(request, 200, SAMPLE_KEYS),
-    run: (selector, layer) =>
-      projectsApiKeys({ ...selector, reveal: false }).pipe(Effect.provide(layer)),
+    respond: (request) => Effect.succeed(jsonResponse(request, 200, SAMPLE_KEYS)),
+    run: (flags) => projectsApiKeys({ ...flags, reveal: false }),
   });
 });

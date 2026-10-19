@@ -15,7 +15,7 @@ import {
   BRANCH_PROJECT_REF,
   branchListApi,
   warningsOf,
-} from "../../../../tests/helpers/db-remote-selection.ts";
+} from "../../../../tests/helpers/remote-selection.ts";
 import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,

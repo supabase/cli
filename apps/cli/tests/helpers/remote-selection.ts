@@ -1,11 +1,13 @@
 import { Effect } from "effect";
 
+import { stripAnsi } from "./ansi.ts";
 import { VALID_REF, jsonResponse, mockCommandPlatformApi } from "./command-mocks.ts";
 import type { mockOutput } from "./mocks.ts";
 
 export const BRANCH_PROJECT_REF = "branchprojectrefabcd";
 
-const branchRow = (name: string) => ({
+/** A branch of the project {@link VALID_REF} whose own project is {@link BRANCH_PROJECT_REF}. */
+export const branchRow = (name: string) => ({
   id: "11111111-2222-4333-8444-555555555555",
   name,
   project_ref: BRANCH_PROJECT_REF,
@@ -29,6 +31,9 @@ export const branchListApi = (name = "feature-x") =>
       ),
   });
 
-/** The text of every warning the run printed. */
-export const warningsOf = (out: Pick<ReturnType<typeof mockOutput>, "messages">) =>
-  out.messages.filter((message) => message.type === "warn").map((message) => message.message);
+/** The text of every warning the run printed on stderr, without the `Warning: ` prefix. */
+export const warningsOf = (out: Pick<ReturnType<typeof mockOutput>, "stderrText">) =>
+  stripAnsi(out.stderrText)
+    .split("\n")
+    .filter((line) => line.startsWith("Warning: "))
+    .map((line) => line.slice("Warning: ".length));

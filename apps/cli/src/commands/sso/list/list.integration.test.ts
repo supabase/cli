@@ -12,7 +12,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -499,9 +499,7 @@ describe("sso list integration", () => {
   });
 });
 
-describeHostedRemoteSelection({
-  command: ["sso", "list"],
-  workdir: () => tempRoot.current,
-  respond: (request) => jsonResponse(request, 200, { items: [PROVIDER_ITEM] }),
-  run: (selector, layer) => ssoList(selector).pipe(Effect.provide(layer)),
+describeHostedTargetSelection("sso list", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, { items: [PROVIDER_ITEM] })),
+  run: (flags) => ssoList(flags),
 });

@@ -104,6 +104,7 @@ import { pull } from "./pull.handler.ts";
 import { PgDeltaEngine, PgDeltaEngineError } from "../db/shared/pgdelta-engine.service.ts";
 import type { PullFlags } from "./pull.command.ts";
 import { pullHandler } from "./pull.command.ts";
+import { warningsOf } from "../../../tests/helpers/remote-selection.ts";
 
 /**
  * Scenario-oriented integration coverage for `supabase pull` (ADR 0024), driving the real
@@ -991,9 +992,7 @@ describe("pull integration", () => {
     return Effect.gen(function* () {
       yield* writeConfig();
       yield* runPull(pullFlags({ projectRef: Option.some("staging"), dryRun: true }));
-      expect(
-        out.messages.filter((message) => message.type === "warn").map(({ message }) => message),
-      ).toEqual([
+      expect(warningsOf(out)).toEqual([
         "--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase pull --remote=staging",
       ]);
     }).pipe(Effect.provide(layer));

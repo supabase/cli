@@ -14,7 +14,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -375,10 +375,8 @@ describe("network-restrictions get integration", () => {
     });
   });
 
-  describeHostedRemoteSelection({
-    command: ["network-restrictions", "get"],
-    workdir: () => tempRoot.current,
-    respond: (request) => jsonResponse(request, 200, APPLIED_WITH_CIDRS),
-    run: (selector, layer) => networkRestrictionsGet(selector).pipe(Effect.provide(layer)),
+  describeHostedTargetSelection("network-restrictions get", {
+    respond: (request) => Effect.succeed(jsonResponse(request, 200, APPLIED_WITH_CIDRS)),
+    run: (flags) => networkRestrictionsGet(flags),
   });
 });

@@ -24,6 +24,7 @@ import { configValuesLayer } from "../../../../../tests/helpers/config-values-la
 import { ComputeEnvNotSupportedError } from "../compute.errors.ts";
 import { computeDeleteCommand } from "./delete.command.ts";
 import { computeDelete } from "./delete.handler.ts";
+import { warningsOf } from "../../../../../tests/helpers/remote-selection.ts";
 
 const CONFIG = `project_id = "demo"\n\n[compute.api]\nruntime = "node"\nsize = "2gb"\n`;
 
@@ -311,7 +312,7 @@ describe("compute delete", () => {
         const suggestion = error instanceof ComputeNotDeployedError ? error.suggestion : "";
         expect(suggestion).toContain("supabase compute list");
         expect(suggestion).not.toContain("compute push");
-        expect(out.messages.filter((message) => message.type === "warn")).toHaveLength(0);
+        expect(warningsOf(out)).toEqual([]);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );

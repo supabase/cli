@@ -36,7 +36,7 @@ import {
   BRANCH_PROJECT_REF,
   branchListApi,
   warningsOf,
-} from "../../../../tests/helpers/db-remote-selection.ts";
+} from "../../../../tests/helpers/remote-selection.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";

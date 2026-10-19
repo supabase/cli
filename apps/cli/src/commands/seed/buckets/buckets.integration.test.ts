@@ -67,6 +67,7 @@ import {
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
 interface MockRoute {
   readonly method: string;
@@ -2316,7 +2317,7 @@ describe("seed buckets", () => {
         requests.some((r) => r.url.startsWith(`https://${STORAGE_TEST_BRANCH_REF}.supabase.co`)),
       ).toBe(true);
       expect(linkedCache.cachedRef).toBe(STORAGE_TEST_BRANCH_REF);
-      expect(out.messages.filter((message) => message.type === "warn")).toEqual([]);
+      expect(warningsOf(out)).toEqual([]);
     }).pipe(seedScenario),
   );
 
@@ -2404,11 +2405,7 @@ describe("seed buckets", () => {
           expect(Exit.isSuccess(exit)).toBe(true);
           expect(requests.length).toBeGreaterThan(0);
           expect(requests.every((r) => r.url.startsWith(testCase.host))).toBe(true);
-          expect(
-            out.messages
-              .filter((message) => message.type === "warn")
-              .map((message) => message.message),
-          ).toEqual([testCase.warning]);
+          expect(warningsOf(out)).toEqual([testCase.warning]);
         }).pipe(seedScenario),
       );
     }

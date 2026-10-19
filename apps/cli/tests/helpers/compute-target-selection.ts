@@ -4,9 +4,10 @@ import { Effect, FileSystem, Layer, Path } from "effect";
 import { commandRuntimeLayer } from "../../src/shared/runtime/command-runtime.layer.ts";
 import { COMPUTE_PROJECT_REF, setupCompute } from "./compute.ts";
 import type { ComputeHttpRoutes } from "./compute.ts";
-import { describeTargetSelectionMatrix, branchListRow } from "./hosted-target-selection.ts";
+import { describeTargetSelectionMatrix } from "./hosted-target-selection.ts";
 import type { TargetSelectionFlags } from "./hosted-target-selection.ts";
 import type { ActiveFlags } from "./permission-registry.ts";
+import { branchRow, warningsOf } from "./remote-selection.ts";
 
 type ComputeSetup = ReturnType<typeof setupCompute>;
 
@@ -59,7 +60,7 @@ export function describeComputeTargetSelection(
           ...scenario.routes(expectedRef),
           [`GET /v1/projects/${COMPUTE_PROJECT_REF}/branches`]: {
             status: 200,
-            body: [branchListRow("feature-x")],
+            body: [branchRow("feature-x")],
           },
         },
       });
@@ -69,10 +70,7 @@ export function describeComputeTargetSelection(
           commandRuntimeLayer(path.split(" ")).pipe(Layer.provide(BunServices.layer)),
         ),
         requests: () => http.driftRequests,
-        warnings: () =>
-          out.messages
-            .filter((message) => message.type === "warn")
-            .map((message) => message.message),
+        warnings: () => warningsOf(out),
       };
     },
   });

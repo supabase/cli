@@ -24,6 +24,7 @@ import {
 } from "./notebooks.errors.ts";
 import { notebooksPullHandler } from "./pull/pull.command.ts";
 import { notebooksPushHandler } from "./push/push.command.ts";
+import { warningsOf } from "../../../tests/helpers/remote-selection.ts";
 
 const temp = useTempWorkdir("supabase-notebooks-regression-");
 const ID = "44444444-4444-4444-8444-444444444444";
@@ -699,9 +700,7 @@ describe.each(commands)("notebooks %s project selection", (command) => {
     return Effect.gen(function* () {
       yield* runWith(command, { ...none, projectRef: Option.some(NOTEBOOKS_PROJECT_REF) });
       expect(http.routeKeys).toEqual([`GET ${notebooksRoute()}`]);
-      expect(
-        out.messages.filter((message) => message.type === "warn").map((message) => message.message),
-      ).toEqual([
+      expect(warningsOf(out)).toEqual([
         `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase notebooks ${command} --remote=${NOTEBOOKS_PROJECT_REF}`,
       ]);
     }).pipe(Effect.provide(Layer.mergeAll(layer, Layer.succeed(CliArgs, { args: argv }))));

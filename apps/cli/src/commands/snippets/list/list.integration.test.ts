@@ -14,7 +14,7 @@ import {
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import { snippetsList } from "./list.handler.ts";
@@ -464,10 +464,8 @@ describe("snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  describeHostedRemoteSelection({
-    command: ["snippets", "list"],
-    workdir: () => tempRoot.current,
-    respond: (request) => jsonResponse(request, 200, SINGLE_RESPONSE),
-    run: (selector, layer) => snippetsList(selector).pipe(Effect.provide(layer)),
+  describeHostedTargetSelection("snippets list", {
+    respond: (request) => Effect.succeed(jsonResponse(request, 200, SINGLE_RESPONSE)),
+    run: (flags) => snippetsList(flags),
   });
 });

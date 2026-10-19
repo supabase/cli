@@ -31,7 +31,7 @@ import {
   BRANCH_PROJECT_REF,
   branchListApi,
   warningsOf,
-} from "../../../../tests/helpers/db-remote-selection.ts";
+} from "../../../../tests/helpers/remote-selection.ts";
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import { withReachableDirectHost } from "../../../../tests/helpers/refuse-invalid-db-hosts.ts";

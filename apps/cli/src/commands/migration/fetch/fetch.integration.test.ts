@@ -54,25 +54,16 @@ import { OperationCanceledError } from "../migration.errors.ts";
 import { MigrationFetchWriteError } from "./fetch.errors.ts";
 import { migrationFetch } from "./fetch.handler.ts";
 import type { MigrationFetchFlags } from "./fetch.command.ts";
+import {
+  BRANCH_PROJECT_REF,
+  branchRow,
+  warningsOf,
+} from "../../../../tests/helpers/remote-selection.ts";
 
 const SELECT_SQL =
   "SELECT version, coalesce(name, '') as name, statements FROM supabase_migrations.schema_migrations";
 const FLAG_REF = "flagflagflagflagflag";
-const BRANCH_REF = "branchprojectrefabcd";
 const DB_URL = "postgresql://u:p@db.example.com/postgres";
-
-const branchRow = (name: string) => ({
-  id: "11111111-2222-4333-8444-555555555555",
-  name,
-  project_ref: BRANCH_REF,
-  parent_project_ref: VALID_REF,
-  is_default: false,
-  persistent: false,
-  status: "MIGRATIONS_PASSED",
-  created_at: "2026-05-27T01:02:03Z",
-  updated_at: "2026-05-27T01:02:04Z",
-  with_data: true,
-});
 
 interface MigrationRow {
   readonly version: string;
@@ -199,8 +190,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     ),
     BunServices.layer,
   );
-  const warnings = () =>
-    out.messages.filter((message) => message.type === "warn").map((message) => message.message);
+  const warnings = () => warningsOf(out);
   return {
     layer,
     http,
@@ -572,8 +562,8 @@ describe("migration fetch", () => {
       expect(branchRequests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `GET https://api.supabase.com/v1/projects/${VALID_REF}/branches`,
       ]);
-      expect(resolveCalls[0]?.target).toMatchObject({ kind: "linked", ref: BRANCH_REF });
-      expect(cache.cachedRef).toBe(BRANCH_REF);
+      expect(resolveCalls[0]?.target).toMatchObject({ kind: "linked", ref: BRANCH_PROJECT_REF });
+      expect(cache.cachedRef).toBe(BRANCH_PROJECT_REF);
       expect(warnings()).toEqual([]);
     }).pipe(Effect.provide(layer));
   });

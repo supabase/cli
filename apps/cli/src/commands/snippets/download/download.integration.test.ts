@@ -13,7 +13,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -437,12 +437,9 @@ describe("snippets download integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  describeHostedRemoteSelection({
-    command: ["snippets", "download"],
-    args: [VALID_ID],
-    workdir: () => tempRoot.current,
-    respond: (request) => jsonResponse(request, 200, SNIPPET_RESPONSE),
-    run: (selector, layer) =>
-      snippetsDownload({ ...selector, snippetId: VALID_ID }).pipe(Effect.provide(layer)),
+  describeHostedTargetSelection("snippets download", {
+    operands: [VALID_ID],
+    respond: (request) => Effect.succeed(jsonResponse(request, 200, SNIPPET_RESPONSE)),
+    run: (flags) => snippetsDownload({ ...flags, snippetId: VALID_ID }),
   });
 });

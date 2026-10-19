@@ -15,7 +15,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -438,10 +438,8 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  describeHostedRemoteSelection({
-    command: ["ssl-enforcement", "get"],
-    workdir: () => tempRoot.current,
-    respond: (request) => jsonResponse(request, 200, SSL_ENFORCED),
-    run: (selector, layer) => sslEnforcementGet(selector).pipe(Effect.provide(layer)),
+  describeHostedTargetSelection("ssl-enforcement get", {
+    respond: (request) => Effect.succeed(jsonResponse(request, 200, SSL_ENFORCED)),
+    run: (flags) => sslEnforcementGet(flags),
   });
 });

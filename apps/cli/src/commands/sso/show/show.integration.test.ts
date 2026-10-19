@@ -12,7 +12,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -410,13 +410,8 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
   });
 });
 
-describeHostedRemoteSelection({
-  command: ["sso", "show"],
-  args: [VALID_PROVIDER_ID],
-  workdir: () => tempRoot.current,
-  respond: (request) => jsonResponse(request, 200, PROVIDER),
-  run: (selector, layer) =>
-    ssoShow({ ...selector, providerId: VALID_PROVIDER_ID, metadata: false }).pipe(
-      Effect.provide(layer),
-    ),
+describeHostedTargetSelection("sso show", {
+  operands: [VALID_PROVIDER_ID],
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, PROVIDER)),
+  run: (flags) => ssoShow({ ...flags, providerId: VALID_PROVIDER_ID, metadata: false }),
 });

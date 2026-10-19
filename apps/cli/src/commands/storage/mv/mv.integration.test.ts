@@ -16,6 +16,7 @@ import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { storageMv } from "./mv.handler.ts";
 import type { StorageMvFlags } from "./mv.command.ts";
+import { warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
 const FLAG_REF = "flagflagflagflagflag";
 const DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
@@ -334,9 +335,7 @@ describe("storage mv", () => {
         requests.some((r) => r.url.startsWith(`https://${STORAGE_TEST_BRANCH_REF}.supabase.co`)),
       ).toBe(true);
       expect(linkedCache.cachedRef).toBe(STORAGE_TEST_BRANCH_REF);
-      expect(
-        out.messages.filter((message) => message.type === "warn").map((message) => message.message),
-      ).toEqual([]);
+      expect(warningsOf(out)).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -419,11 +418,7 @@ describe("storage mv", () => {
           }).pipe(Effect.exit);
           expect(Exit.isSuccess(exit)).toBe(true);
           expect(requests[0]?.url.startsWith(testCase.host)).toBe(true);
-          expect(
-            out.messages
-              .filter((message) => message.type === "warn")
-              .map((message) => message.message),
-          ).toEqual([testCase.warning]);
+          expect(warningsOf(out)).toEqual([testCase.warning]);
         }).pipe(Effect.provide(layer));
       });
     }

@@ -17,7 +17,7 @@ import { HostedMutationDeclinedError } from "../../../command-internal/hosted-co
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
-import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import {
   mockOutput,
   mockRuntimeInfo,
@@ -1177,16 +1177,12 @@ FROM_CONFIG = "config-value"
   );
 });
 
-describeHostedRemoteSelection({
-  command: ["secrets", "set"],
-  args: ["FOO=bar"],
-  workdir: () => tempRoot.current,
-  respond: (request) => jsonResponse(request, 201, null),
-  run: (selector, layer) =>
-    secretsSet({ ...selector, envFile: Option.none(), secrets: ["FOO=bar"] }).pipe(
-      Effect.provide(
-        Layer.mergeAll(layer, cliConfigValuesTestLayer, mockDebugLoggerTracked().layer),
-      ),
+describeHostedTargetSelection("secrets set", {
+  operands: ["FOO=bar"],
+  respond: (request) => Effect.succeed(jsonResponse(request, 201, null)),
+  run: (flags) =>
+    secretsSet({ ...flags, envFile: Option.none(), secrets: ["FOO=bar"] }).pipe(
+      Effect.provide(Layer.mergeAll(cliConfigValuesTestLayer, mockDebugLoggerTracked().layer)),
     ),
 });
 
