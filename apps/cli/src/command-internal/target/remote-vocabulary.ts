@@ -1,5 +1,3 @@
-/** What `--remote` values look like, shared by the argv rewrite, the value parser and the permission evaluators. */
-
 export const REMOTE_FLAG_NAME = "remote";
 
 export const DB_URL_PATTERN = /^postgres(ql)?:\/\//;
@@ -10,7 +8,6 @@ export const LINKED_LITERAL = /^(true|yes|on|1)$/i;
 /** The spellings of an off switch, in any case. */
 export const OFF_LITERAL = /^(false|no|off|0)$/i;
 
-/** Whether a word is a boolean literal in either direction, in any case. */
 export const isBooleanLiteral = (word: string): boolean =>
   LINKED_LITERAL.test(word) || OFF_LITERAL.test(word);
 
