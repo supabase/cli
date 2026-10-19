@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
 import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
@@ -139,7 +140,7 @@ describe("sso remove integration", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        ssoRemove({ projectRef: Option.none(), providerId: "not-a-uuid" }),
+        ssoRemove({ remote: Option.none(), projectRef: Option.none(), providerId: "not-a-uuid" }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -151,7 +152,11 @@ describe("sso remove integration", () => {
   it.effect("DELETEs the correct path and renders provider in text mode", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
-      yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
+      yield* ssoRemove({
+        remote: Option.none(),
+        projectRef: Option.none(),
+        providerId: VALID_PROVIDER_ID,
+      });
       const req = api.requests.find((r) => r.method === "DELETE");
       expect(req?.url).toContain(
         `/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
@@ -165,7 +170,11 @@ describe("sso remove integration", () => {
     const { layer } = setup({ status: 404, body: {} });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
+        ssoRemove({
+          remote: Option.none(),
+          projectRef: Option.none(),
+          providerId: VALID_PROVIDER_ID,
+        }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -178,7 +187,11 @@ describe("sso remove integration", () => {
     const { layer } = setup({ status: 500, body: { error: "boom" } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
+        ssoRemove({
+          remote: Option.none(),
+          projectRef: Option.none(),
+          providerId: VALID_PROVIDER_ID,
+        }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -192,7 +205,13 @@ describe("sso remove integration", () => {
   it.effect("fires cli_upgrade_suggested when gated on 4xx", () => {
     const { layer, analytics, api } = setup({ status: 404, body: {}, upgradeGate: "gated" });
     return Effect.gen(function* () {
-      yield* Effect.exit(ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }));
+      yield* Effect.exit(
+        ssoRemove({
+          remote: Option.none(),
+          projectRef: Option.none(),
+          providerId: VALID_PROVIDER_ID,
+        }),
+      );
       expect(analytics.captured.some((c) => c.event === EventUpgradeSuggested)).toBe(true);
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
@@ -206,7 +225,11 @@ describe("sso remove integration", () => {
   it.effect("--output=env emits nothing", () => {
     const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
-      yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
+      yield* ssoRemove({
+        remote: Option.none(),
+        projectRef: Option.none(),
+        providerId: VALID_PROVIDER_ID,
+      });
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
@@ -214,7 +237,11 @@ describe("sso remove integration", () => {
   it.effect("--output=json encodes response verbatim", () => {
     const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
-      yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
+      yield* ssoRemove({
+        remote: Option.none(),
+        projectRef: Option.none(),
+        providerId: VALID_PROVIDER_ID,
+      });
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
     }).pipe(Effect.provide(layer));
   });
@@ -233,7 +260,11 @@ describe("sso remove integration", () => {
     const { layer, out } = setup({ outputFlag: "toml", body });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
+        ssoRemove({
+          remote: Option.none(),
+          projectRef: Option.none(),
+          providerId: VALID_PROVIDER_ID,
+        }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -248,7 +279,11 @@ describe("sso remove integration", () => {
   it.effect("TS --output-format=json emits success", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
+      yield* ssoRemove({
+        remote: Option.none(),
+        projectRef: Option.none(),
+        providerId: VALID_PROVIDER_ID,
+      });
       expect(out.messages.some((m) => m.type === "success")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -290,7 +325,11 @@ describe("sso remove integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
       expect(yield* fs.exists(cachePath)).toBe(false);
-      yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
+      yield* ssoRemove({
+        remote: Option.none(),
+        projectRef: Option.none(),
+        providerId: VALID_PROVIDER_ID,
+      });
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         "GET https://api.supabase.com/v1/projects",
         `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/config/auth/sso/providers/${VALID_PROVIDER_ID}`,
@@ -307,7 +346,11 @@ describe("sso remove integration", () => {
   it.effect("flushes telemetry + linked-project cache on success", () => {
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
-      yield* ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
+      yield* ssoRemove({
+        remote: Option.none(),
+        projectRef: Option.none(),
+        providerId: VALID_PROVIDER_ID,
+      });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -317,7 +360,11 @@ describe("sso remove integration", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
+        ssoRemove({
+          remote: Option.none(),
+          projectRef: Option.none(),
+          providerId: VALID_PROVIDER_ID,
+        }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -330,7 +377,11 @@ describe("sso remove integration", () => {
     const { layer } = setup({ rawBody: "{not json" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
+        ssoRemove({
+          remote: Option.none(),
+          projectRef: Option.none(),
+          providerId: VALID_PROVIDER_ID,
+        }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -349,7 +400,11 @@ describe("sso remove integration", () => {
     const { layer } = setup({ body: {} });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        ssoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
+        ssoRemove({
+          remote: Option.none(),
+          projectRef: Option.none(),
+          providerId: VALID_PROVIDER_ID,
+        }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -368,6 +423,19 @@ describe("sso remove integration", () => {
 describeHostedConsent("sso remove", {
   api: { response: { status: 200, body: PROVIDER } },
   invoke: () => ({
-    run: ssoRemove({ projectRef: Option.some(VALID_REF), providerId: VALID_PROVIDER_ID }),
+    run: ssoRemove({
+      remote: Option.some({ _tag: "Ref", ref: VALID_REF }),
+      projectRef: Option.none(),
+      providerId: VALID_PROVIDER_ID,
+    }),
   }),
+});
+
+describeHostedRemoteSelection({
+  command: ["sso", "remove"],
+  args: [VALID_PROVIDER_ID],
+  workdir: () => tempRoot.current,
+  respond: (request) => jsonResponse(request, 200, PROVIDER),
+  run: (selector, layer) =>
+    ssoRemove({ ...selector, providerId: VALID_PROVIDER_ID }).pipe(Effect.provide(layer)),
 });

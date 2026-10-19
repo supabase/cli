@@ -36,7 +36,12 @@ const SALES_FILE = JSON.stringify({
 });
 
 function flags(overrides: Partial<NotebooksPushFlags> = {}): NotebooksPushFlags {
-  return { notebookName: Option.none(), projectRef: Option.none(), ...overrides };
+  return {
+    notebookName: Option.none(),
+    remote: Option.none(),
+    projectRef: Option.none(),
+    ...overrides,
+  };
 }
 
 const temp = useTempWorkdir("supabase-notebooks-push-");
@@ -487,7 +492,8 @@ describeHostedConsent("notebooks push", {
     return {
       run: notebooksPushCore({
         notebookName: Option.none(),
-        projectRef: Option.some(VALID_REF),
+        remote: Option.some({ _tag: "Ref", ref: VALID_REF }),
+        projectRef: Option.none(),
       }).pipe(Effect.provide(http.layer)),
       mutations: () => http.requests.filter((request) => request.method !== "GET").length,
     };

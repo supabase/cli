@@ -15,6 +15,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedRemoteSelection } from "../../../../tests/helpers/hosted-remote-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -81,7 +82,7 @@ describe("ssl-enforcement get integration", () => {
     () => {
       const { layer, out } = setup({ response: SSL_ENFORCED });
       return Effect.gen(function* () {
-        yield* sslEnforcementGet({ projectRef: Option.none() });
+        yield* sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stdoutText).toBe("SSL is being enforced.\n");
       }).pipe(Effect.provide(layer));
     },
@@ -90,7 +91,7 @@ describe("ssl-enforcement get integration", () => {
   it.effect('prints "SSL is *NOT* being enforced." when database=false', () => {
     const { layer, out } = setup({ response: SSL_NOT_ENFORCED });
     return Effect.gen(function* () {
-      yield* sslEnforcementGet({ projectRef: Option.none() });
+      yield* sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toBe("SSL is *NOT* being enforced.\n");
     }).pipe(Effect.provide(layer));
   });
@@ -100,7 +101,7 @@ describe("ssl-enforcement get integration", () => {
     () => {
       const { layer, out } = setup({ response: SSL_DESIRED_BUT_NOT_APPLIED });
       return Effect.gen(function* () {
-        yield* sslEnforcementGet({ projectRef: Option.none() });
+        yield* sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stdoutText).toBe("SSL is *NOT* being enforced.\n");
       }).pipe(Effect.provide(layer));
     },
@@ -109,7 +110,7 @@ describe("ssl-enforcement get integration", () => {
   it.effect("emits env output for --output env (exact bytes)", () => {
     const { layer, out } = setup({ outputFlag: "env", response: SSL_ENFORCED });
     return Effect.gen(function* () {
-      yield* sslEnforcementGet({ projectRef: Option.none() });
+      yield* sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toBe('APPLIEDSUCCESSFULLY="true"\nCURRENTCONFIG_DATABASE="true"\n');
     }).pipe(Effect.provide(layer));
   });
@@ -117,7 +118,7 @@ describe("ssl-enforcement get integration", () => {
   it.effect("emits indented JSON for --output json (exact bytes)", () => {
     const { layer, out } = setup({ outputFlag: "json", response: SSL_ENFORCED });
     return Effect.gen(function* () {
-      yield* sslEnforcementGet({ projectRef: Option.none() });
+      yield* sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toBe(
         `{
   "appliedSuccessfully": true,
@@ -133,7 +134,7 @@ describe("ssl-enforcement get integration", () => {
   it.effect("emits YAML for --output yaml", () => {
     const { layer, out } = setup({ outputFlag: "yaml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
-      yield* sslEnforcementGet({ projectRef: Option.none() });
+      yield* sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("appliedsuccessfully: true");
       expect(out.stdoutText).toContain("database: true");
     }).pipe(Effect.provide(layer));
@@ -142,7 +143,7 @@ describe("ssl-enforcement get integration", () => {
   it.effect("emits TOML for --output toml", () => {
     const { layer, out } = setup({ outputFlag: "toml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
-      yield* sslEnforcementGet({ projectRef: Option.none() });
+      yield* sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("AppliedSuccessfully = true");
       expect(out.stdoutText).toContain("[CurrentConfig]");
     }).pipe(Effect.provide(layer));
@@ -151,7 +152,7 @@ describe("ssl-enforcement get integration", () => {
   it.effect("treats --output pretty as identical to text mode", () => {
     const { layer, out } = setup({ outputFlag: "pretty", response: SSL_ENFORCED });
     return Effect.gen(function* () {
-      yield* sslEnforcementGet({ projectRef: Option.none() });
+      yield* sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toBe("SSL is being enforced.\n");
     }).pipe(Effect.provide(layer));
   });
@@ -159,7 +160,7 @@ describe("ssl-enforcement get integration", () => {
   it.effect("emits a JSON success event when --output-format=json", () => {
     const { layer, out } = setup({ format: "json", response: SSL_ENFORCED });
     return Effect.gen(function* () {
-      yield* sslEnforcementGet({ projectRef: Option.none() });
+      yield* sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({
@@ -172,7 +173,7 @@ describe("ssl-enforcement get integration", () => {
   it.effect("emits a result event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json", response: SSL_ENFORCED });
     return Effect.gen(function* () {
-      yield* sslEnforcementGet({ projectRef: Option.none() });
+      yield* sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({ currentConfig: { database: true } });
@@ -182,7 +183,7 @@ describe("ssl-enforcement get integration", () => {
   it.effect("--output wins over --output-format when both provided", () => {
     const { layer, out } = setup({ format: "json", outputFlag: "yaml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
-      yield* sslEnforcementGet({ projectRef: Option.none() });
+      yield* sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("appliedsuccessfully: true");
       expect(out.stdoutText.startsWith("{")).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -191,7 +192,7 @@ describe("ssl-enforcement get integration", () => {
   it.effect("passes the resolved project ref into the getSslEnforcementConfig URL", () => {
     const { layer, api } = setup({ response: SSL_ENFORCED });
     return Effect.gen(function* () {
-      yield* sslEnforcementGet({ projectRef: Option.none() });
+      yield* sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/ssl-enforcement`);
       assertPermissionDrift({
@@ -232,7 +233,7 @@ describe("ssl-enforcement get integration", () => {
     });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      yield* sslEnforcementGet({ projectRef: Option.none() });
+      yield* sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() });
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         "GET https://api.supabase.com/v1/projects",
         `GET https://api.supabase.com/v1/projects/${VALID_REF}/ssl-enforcement`,
@@ -251,11 +252,14 @@ describe("ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("uses --project-ref flag value over CommandSettings.projectId", () => {
+  it.effect("uses the --remote=<ref> value over CommandSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ response: SSL_ENFORCED });
     return Effect.gen(function* () {
-      yield* sslEnforcementGet({ projectRef: Option.some(flagRef) });
+      yield* sslEnforcementGet({
+        remote: Option.some({ _tag: "Ref", ref: flagRef }),
+        projectRef: Option.none(),
+      });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${flagRef}/`);
     }).pipe(Effect.provide(layer));
   });
@@ -285,7 +289,9 @@ describe("ssl-enforcement get integration", () => {
       });
       const layer = buildTestRuntime({ out, api, cliSettings });
 
-      yield* sslEnforcementGet({ projectRef: Option.none() }).pipe(Effect.provide(layer));
+      yield* sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        Effect.provide(layer),
+      );
       expect(api.requests[0]?.url).toContain(`/v1/projects/${fileRef}/`);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -305,7 +311,9 @@ describe("ssl-enforcement get integration", () => {
       const layer = buildTestRuntime({ out, api, cliSettings });
 
       const exit = yield* Effect.exit(
-        sslEnforcementGet({ projectRef: Option.none() }).pipe(Effect.provide(layer)),
+        sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.provide(layer),
+        ),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -315,20 +323,32 @@ describe("ssl-enforcement get integration", () => {
   );
 
   it.effect("fails with InvalidProjectRefError when the resolved ref is malformed", () => {
-    const { layer } = setup({ response: SSL_ENFORCED });
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
+    const layer = buildTestRuntime({
+      out,
+      api,
+      cliSettings: mockCommandSettings({
+        workdir: tempRoot.current,
+        projectId: Option.some("BADREF"),
+      }),
+    });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(sslEnforcementGet({ projectRef: Option.some("BADREF") }));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("InvalidProjectRefError");
-      }
+      const error = yield* sslEnforcementGet({
+        remote: Option.none(),
+        projectRef: Option.none(),
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "InvalidProjectRefError" });
+      expect(api.requests).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("fails with SslEnforcementGetUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503, response: SSL_ENFORCED });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(sslEnforcementGet({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -341,7 +361,9 @@ describe("ssl-enforcement get integration", () => {
   it.effect("fails with SslEnforcementGetNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(sslEnforcementGet({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -354,7 +376,9 @@ describe("ssl-enforcement get integration", () => {
   it.effect("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 503, response: SSL_ENFORCED });
     return Effect.gen(function* () {
-      yield* sslEnforcementGet({ projectRef: Option.none() }).pipe(withJsonErrorHandling);
+      yield* sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        withJsonErrorHandling,
+      );
       expect(out.messages.some((m) => m.type === "fail")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -373,7 +397,7 @@ describe("ssl-enforcement get integration", () => {
       linkedProjectCache: cache.layer,
     });
     return Effect.gen(function* () {
-      yield* sslEnforcementGet({ projectRef: Option.none() });
+      yield* sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -404,11 +428,20 @@ describe("ssl-enforcement get integration", () => {
       });
 
       const exit = yield* Effect.exit(
-        sslEnforcementGet({ projectRef: Option.none() }).pipe(Effect.provide(layer)),
+        sslEnforcementGet({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.provide(layer),
+        ),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
+
+  describeHostedRemoteSelection({
+    command: ["ssl-enforcement", "get"],
+    workdir: () => tempRoot.current,
+    respond: (request) => jsonResponse(request, 200, SSL_ENFORCED),
+    run: (selector, layer) => sslEnforcementGet(selector).pipe(Effect.provide(layer)),
+  });
 });
