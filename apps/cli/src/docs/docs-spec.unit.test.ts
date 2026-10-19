@@ -481,6 +481,26 @@ describe("readDocsContent rejects malformed examples.yaml", () => {
   );
 });
 
+describe("readDocsContent walk", () => {
+  it.effect("does not walk symlinked directories or link loops", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "docs-spec-test-" });
+      const outside = yield* fs.makeTempDirectoryScoped({ prefix: "docs-spec-test-" });
+      yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
+      yield* fs.makeDirectory(path.join(dir, "templates"), { recursive: true });
+      yield* fs.writeFileString(path.join(dir, "supabase", "link.md"), "## supabase-link\n");
+      yield* fs.writeFileString(path.join(outside, "outside.md"), "## outside\n");
+      yield* fs.symlink(outside, path.join(dir, "supabase", "linked"));
+      yield* fs.symlink("..", path.join(dir, "supabase", "up"));
+      yield* fs.writeFileString(path.join(dir, "templates", "examples.yaml"), "{}\n");
+      const content = yield* readDocsContent(dir);
+      expect([...content.overlays.keys()]).toEqual(["supabase/link.md"]);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+});
+
 describe("DOCS_EXPERIMENTAL mirrors the runtime gate", () => {
   it.effect("matches the requireExperimental call sites exactly", () =>
     Effect.gen(function* () {
