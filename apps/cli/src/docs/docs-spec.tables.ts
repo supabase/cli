@@ -2,11 +2,9 @@ import type { DocsFlag } from "./docs-spec.ts";
 import { genTypesLanguageFlagDefaults } from "../commands/gen/types/types.languages.ts";
 
 /**
- * Static data for the docs spec generator — information the Effect command tree cannot
- * express structurally: docs-site section tags, `--experimental`-required leaves, deprecated
- * commands to exclude from the reference (though still shown in `--help`), and flag defaults
- * that `Flag.withDefault` only captures in a closure. `buildDocsSpec` validates every key here
- * against the walked tree and fails the build on stale entries.
+ * Static data the Effect command tree cannot express structurally: docs-site section tags,
+ * `--experimental`-required leaves, deprecated commands, and flag defaults that
+ * `Flag.withDefault` only captures in a closure. `buildDocsSpec` fails the build on stale keys.
  */
 
 export interface DocsInfoTag {
