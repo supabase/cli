@@ -13,7 +13,8 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesPause } from "./pause.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
-import { branchesParentTarget, branchesSafeFlags } from "../branches.target.ts";
+import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
+import { branchesParentTarget } from "../branches.target.ts";
 
 const config = {
   name: Argument.String("name").pipe(
@@ -40,7 +41,7 @@ export const branchesPauseCommand = Command.make("pause", config).pipe(
   ),
   Command.withHandler((flags) =>
     branchesPause(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: branchesSafeFlags(flags) }),
+      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
       withJsonErrorHandling,
     ),
   ),

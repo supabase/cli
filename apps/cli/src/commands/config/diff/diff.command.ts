@@ -1,10 +1,9 @@
-import { Option } from "effect";
 import type * as CliCommand from "effect/cli/Command";
 import { Command, Flag } from "effect/cli";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
-import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
+import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { configTarget } from "../../../command-internal/project-target.ts";
@@ -37,10 +36,7 @@ export const configDiffHandler = (flags: ConfigDiffFlags) =>
     // actually ref-shaped — a user-created branch name must never reach PostHog.
     withCommandTelemetry({
       flags,
-      safeFlags:
-        Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
-          ? ["project-ref"]
-          : [],
+      safeFlags: projectRefSafeFlags(flags),
       // This command rejects every `-o/--output` value itself with a message pointing at
       // `--output-format`, so the wrapper must allow the full choice set through — otherwise its
       // own generic enum-check message would fire first and the handler would never run.

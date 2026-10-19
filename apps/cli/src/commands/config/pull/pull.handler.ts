@@ -9,10 +9,10 @@ import {
 } from "../../../command-internal/http-errors.ts";
 import {
   configTargetErrorsFor,
-  requestedConfigTarget,
   resolveConfigTarget,
   type ConfigTarget,
 } from "../../../command-internal/project-target.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -256,14 +256,12 @@ export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullF
     const source = yield* openConfigPullSource();
 
     // Resolves the pull target via resolveConfigTarget, shared with config diff/config push.
-    const requested = yield* requestedConfigTarget({
-      remote: flags.remote,
-      projectRef: flags.projectRef,
-    });
-    const { ref, branch } = yield* resolveConfigTarget(
-      requested,
-      configTargetErrors,
-      mapBranchResolveError,
+    const { ref, branch } = yield* resolveProjectTarget(
+      { remote: flags.remote, projectRef: flags.projectRef },
+      {
+        resolveRequested: (requested) =>
+          resolveConfigTarget(requested, configTargetErrors, mapBranchResolveError),
+      },
     );
     yield* Ref.set(resolvedRef, Option.some(ref));
     yield* Effect.annotateCurrentSpan("config.target_is_branch", branch !== undefined);

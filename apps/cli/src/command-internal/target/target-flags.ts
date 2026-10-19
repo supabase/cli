@@ -1,7 +1,12 @@
 import { Effect, Option } from "effect";
 import { Flag, GlobalFlag, Param, Primitive } from "effect/cli";
 
-import { classifyRemoteValue, LEAVE_OUT_REMOTE_PREFIX, type RemoteValue } from "./remote-value.ts";
+import {
+  classifyRemoteValue,
+  LEAVE_OUT_REMOTE_PREFIX,
+  REMOTE_FLAG_NAME,
+  type RemoteValue,
+} from "./remote-value.ts";
 import type { ResolvedTarget } from "./resolve-target.ts";
 
 type TargetSubject = "database" | "Storage API";
@@ -44,7 +49,7 @@ const remotePrimitive = (variant: RemoteFlagVariant): Primitive.Primitive<Remote
 const remoteFlag = (variant: RemoteFlagVariant) =>
   Param.makeSingle({
     kind: Param.flagKind,
-    name: "remote",
+    name: REMOTE_FLAG_NAME,
     primitiveType: remotePrimitive(variant),
   }).pipe(Flag.withDescription(remoteDescription(variant)), Flag.optional);
 
@@ -130,7 +135,7 @@ export const flagsForTarget = (target: ResolvedTarget): string => {
  * share their definitions with {@link targetFlags}.
  */
 export const seedTargetGlobalFlags = {
-  remote: GlobalFlag.Setting("remote")({
+  remote: GlobalFlag.Setting(REMOTE_FLAG_NAME)({
     flag: remoteFlag({ kind: "selectable", subject: "Storage API", dbUrl: false }),
   }),
   linked: GlobalFlag.Setting("linked")({ flag: linkedFlag() }),

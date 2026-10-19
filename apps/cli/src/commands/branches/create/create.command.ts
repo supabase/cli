@@ -12,7 +12,8 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesCreate } from "./create.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
-import { branchesParentTarget, branchesSafeFlags } from "../branches.target.ts";
+import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
+import { branchesParentTarget } from "../branches.target.ts";
 
 const BRANCH_REGIONS = [
   "ap-east-1",
@@ -109,7 +110,7 @@ export const branchesCreateCommand = Command.make("create", config).pipe(
   ),
   Command.withHandler((flags) =>
     branchesCreate(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: branchesSafeFlags(flags), config }),
+      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags), config }),
       withJsonErrorHandling,
     ),
   ),

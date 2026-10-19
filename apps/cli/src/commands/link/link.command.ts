@@ -2,7 +2,7 @@ import { Effect, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
-import { PROJECT_REF_PATTERN } from "../../config/project-ref.service.ts";
+import { projectRefSafeFlags } from "../../command-internal/target/project-ref-safe-flags.ts";
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withContext } from "../../command-internal/command-permissions/model.ts";
 import { linkServices } from "../../command-internal/link-services-core.ts";
@@ -51,10 +51,7 @@ export const linkHandler = (flags: LinkFlags) =>
     // branch name, which is user data. `--skip-pooler` is always safe; `--password` stays redacted.
     withCommandTelemetry({
       flags,
-      safeFlags:
-        Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
-          ? ["project-ref"]
-          : [],
+      safeFlags: projectRefSafeFlags(flags),
     }),
     withJsonErrorHandling,
   );

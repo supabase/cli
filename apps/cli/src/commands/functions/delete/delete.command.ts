@@ -1,12 +1,10 @@
-import { Option } from "effect";
 import { Argument, Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
-import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
+import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
-import { FUNCTIONS_PROJECT_REF_SAFE_FLAGS } from "../../../shared/functions/functions.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -30,10 +28,7 @@ export const functionsDeleteHandler = (flags: FunctionsDeleteFlags) =>
   functionsDelete(flags).pipe(
     withCommandTelemetry({
       flags,
-      safeFlags:
-        Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
-          ? FUNCTIONS_PROJECT_REF_SAFE_FLAGS
-          : [],
+      safeFlags: projectRefSafeFlags(flags),
     }),
     withJsonErrorHandling,
   );

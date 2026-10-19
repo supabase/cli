@@ -48,7 +48,11 @@ import {
 } from "../shared/cli/value-consuming-flags.ts";
 import { unwrapToSingleParam } from "../command-internal/param-introspection.ts";
 import { StackBackendContext } from "../command-internal/stack-backend.ts";
-import { isRemoteValue, type RemoteValue } from "../command-internal/target/remote-value.ts";
+import {
+  isRemoteValue,
+  REMOTE_FLAG_NAME,
+  type RemoteValue,
+} from "../command-internal/target/remote-value.ts";
 import {
   CommandTelemetryAttributes,
   type CommandTelemetryAttributeValues,
@@ -119,8 +123,6 @@ const REDACTED_VALUE = "<redacted>";
 // collapses to the resolved text format.
 const MACHINE_OUTPUT_FLAG_FORMATS = new Set(["env", "json", "toml", "yaml", "csv"]);
 const OUTPUT_FLAG_FORMATS = new Set([...MACHINE_OUTPUT_FLAG_FORMATS, "pretty"]);
-
-const REMOTE_FLAG_NAME = "remote";
 
 // A project ref is telemetry-safe; a branch name or database URL is user data.
 function remoteTelemetryValue(remote: RemoteValue): string | boolean {

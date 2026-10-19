@@ -115,7 +115,7 @@ export const ssoUpdateCommand = Command.make("update", config).pipe(
   ),
   Command.withHandler((flags) =>
     ssoUpdate(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags.projectRef), config }),
+      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags), config }),
       withJsonErrorHandling,
     ),
   ),

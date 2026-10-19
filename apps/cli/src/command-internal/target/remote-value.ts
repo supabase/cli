@@ -2,6 +2,8 @@ import { Predicate } from "effect";
 
 import { BRANCH_PROJECT_REF_PATTERN } from "../ref-patterns.ts";
 
+export const REMOTE_FLAG_NAME = "remote";
+
 /** What `--remote` (or a `db diff --from/--to` value) names. */
 export type RemoteValue =
   | { readonly _tag: "Linked" }

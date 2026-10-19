@@ -41,6 +41,7 @@ const run = (
     readonly savedRef?: string;
     readonly args?: ReadonlyArray<string>;
     readonly branches?: ReadonlyArray<ReturnType<typeof branchRow>>;
+    readonly interactive?: boolean;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -72,7 +73,9 @@ const run = (
       resolveOptional: () => Effect.die("resolveOptional is not used by resolveProjectTarget"),
       promptProjectRef: () => Effect.die("promptProjectRef is not used by resolveProjectTarget"),
     });
-    const out = mockOutput();
+    const out = mockOutput(
+      options.interactive === undefined ? {} : { interactive: options.interactive },
+    );
     const api = mockCommandPlatformApi({
       handler: (request) => Effect.succeed(jsonResponse(request, 200, options.branches ?? [])),
     });
@@ -102,6 +105,7 @@ const run = (
         .filter((line) => line.startsWith("Warning: "))
         .map((line) => line.slice("Warning: ".length)),
       outputWarnCalls: out.messages.filter((m) => m.type === "warn"),
+      progressEvents: out.progressEvents,
       refFlags,
       branchRequests: api.requests.length,
     };
@@ -162,6 +166,32 @@ describe("resolveProjectTarget", () => {
       expect(result.branchRequests).toBe(1);
       expect(result.refFlags).toEqual([]);
       expect(result.stderr).toContain(`project ${FILE_REF} · branch feature-x (${BRANCH_REF})`);
+    }),
+  );
+
+  it.effect("shows the branch lookup spinner on a terminal", () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        { remote: { _tag: "Branch", name: "feature-x" } },
+        { savedRef: FILE_REF, branches: [branchRow("feature-x")], interactive: true },
+      );
+      expect(refOf(result.exit)).toBe(BRANCH_REF);
+      expect(result.progressEvents).toContainEqual({
+        type: "start",
+        message: "Resolving branch...",
+      });
+    }),
+  );
+
+  it.effect("keeps the branch lookup off stdout when it is not a terminal", () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        { remote: { _tag: "Branch", name: "feature-x" } },
+        { savedRef: FILE_REF, branches: [branchRow("feature-x")], interactive: false },
+      );
+      expect(refOf(result.exit)).toBe(BRANCH_REF);
+      expect(result.progressEvents).toEqual([]);
+      expect(result.stdout).toBe("");
     }),
   );
 

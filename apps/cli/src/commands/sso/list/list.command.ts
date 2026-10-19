@@ -40,7 +40,7 @@ export const ssoListCommand = Command.make("list", config).pipe(
   ),
   Command.withHandler((flags) =>
     ssoList(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags.projectRef) }),
+      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
       withJsonErrorHandling,
     ),
   ),

@@ -5,11 +5,10 @@ import { withPermissions } from "../../../command-internal/command-permissions/c
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
-import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
+import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { functionsDownload as functionsDownloadCalls } from "../../../shared/functions/download.ts";
-import { FUNCTIONS_PROJECT_REF_SAFE_FLAGS } from "../../../shared/functions/functions.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
@@ -49,11 +48,6 @@ export type FunctionsDownloadFlags = CliCommand.Command.Config.Infer<typeof conf
 
 // Exported so integration tests can drive the exact wiring `Command.withHandler`
 // uses below, instead of re-asserting the generic instrumentation mechanism.
-const projectRefSafeFlags = (flags: FunctionsDownloadFlags) =>
-  Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
-    ? FUNCTIONS_PROJECT_REF_SAFE_FLAGS
-    : [];
-
 export const functionsDownloadHandler = (flags: FunctionsDownloadFlags) =>
   functionsDownload(flags).pipe(
     withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),

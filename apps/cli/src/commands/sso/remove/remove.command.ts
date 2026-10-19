@@ -46,7 +46,7 @@ export const ssoRemoveCommand = Command.make("remove", config).pipe(
   ),
   Command.withHandler((flags) =>
     ssoRemove(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags.projectRef) }),
+      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
       withJsonErrorHandling,
     ),
   ),

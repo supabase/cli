@@ -22,9 +22,9 @@ import {
 } from "../../../command-internal/http-errors.ts";
 import {
   configTargetErrorsFor,
-  requestedConfigTarget,
   resolveConfigTarget,
 } from "../../../command-internal/project-target.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { configIsRecord } from "../config.paths.ts";
 import {
   loadResolvedConfig,
@@ -113,14 +113,12 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
     );
 
     // See resolveConfigTarget's doc comment for the target-resolution rules this preserves.
-    const requested = yield* requestedConfigTarget({
-      remote: flags.remote,
-      projectRef: flags.projectRef,
-    });
-    const { ref, branch } = yield* resolveConfigTarget(
-      requested,
-      configTargetErrors,
-      mapBranchResolveError,
+    const { ref, branch } = yield* resolveProjectTarget(
+      { remote: flags.remote, projectRef: flags.projectRef },
+      {
+        resolveRequested: (requested) =>
+          resolveConfigTarget(requested, configTargetErrors, mapBranchResolveError),
+      },
     );
     yield* Ref.set(resolvedRef, Option.some(ref));
     yield* Effect.annotateCurrentSpan({

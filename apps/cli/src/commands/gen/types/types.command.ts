@@ -1,4 +1,3 @@
-import { Option } from "effect";
 import { Argument, Command, Flag, Param } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -38,7 +37,7 @@ import {
   targetFlags,
 } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
-import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
+import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 
 const config = {
   ...targetFlags({ subject: "database", dbUrl: true }),
@@ -113,6 +112,17 @@ const remoteTarget: ReadonlyArray<EntryCondition> = [
   { flag: "postgrest-v9-compat", is: false },
 ];
 
+// Exported so integration tests can drive the exact wiring `Command.withHandler` uses below.
+export const genTypesHandler = (flags: CliCommand.Command.Config.Infer<typeof commandConfig>) =>
+  genTypes(flags).pipe(
+    withCommandTelemetry({
+      flags,
+      safeFlags: projectRefSafeFlags(flags),
+      config: flagsConfig,
+    }),
+    withJsonErrorHandling,
+  );
+
 export const genTypesCommand = Command.make("types", commandConfig).pipe(
   Command.withDescription("Generate types from Postgres schema."),
   Command.withShortDescription("Generate types from Postgres schema"),
@@ -186,23 +196,7 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
       { default: "local" },
     ),
   ),
-  Command.withHandler((flags) =>
-    genTypes(flags).pipe(
-      withCommandTelemetry({
-        flags,
-        safeFlags: [
-          ...(Option.isSome(flags.projectId) && PROJECT_REF_PATTERN.test(flags.projectId.value)
-            ? ["project-id"]
-            : []),
-          ...(Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
-            ? ["project-ref"]
-            : []),
-        ],
-        config: flagsConfig,
-      }),
-      withJsonErrorHandling,
-    ),
-  ),
+  Command.withHandler(genTypesHandler),
   Command.provide(genTypesRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(commandConfig),

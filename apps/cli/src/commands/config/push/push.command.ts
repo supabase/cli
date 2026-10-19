@@ -1,9 +1,8 @@
-import { Option } from "effect";
 import { Command } from "effect/cli";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
-import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
+import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -32,10 +31,7 @@ export const configPushHandler = (flags: ConfigPushFlags) =>
     // a bad paste) must reach PostHog as "<redacted>".
     withCommandTelemetry({
       flags,
-      safeFlags:
-        Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
-          ? ["project-ref"]
-          : [],
+      safeFlags: projectRefSafeFlags(flags),
     }),
     withJsonErrorHandling,
   );

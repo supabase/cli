@@ -15,7 +15,8 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesGet } from "./get.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
-import { branchesParentTarget, branchesSafeFlags } from "../branches.target.ts";
+import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
+import { branchesParentTarget } from "../branches.target.ts";
 
 // `get.handler.ts` skips the api-keys and pooler calls for `-o pretty`, and with no `-o` when the output format is text.
 const MACHINE_OUTPUT: ReadonlyArray<{
@@ -90,7 +91,7 @@ export const branchesGetCommand = Command.make("get", config).pipe(
   ),
   Command.withHandler((flags) =>
     branchesGet(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: branchesSafeFlags(flags) }),
+      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
       withJsonErrorHandling,
     ),
   ),

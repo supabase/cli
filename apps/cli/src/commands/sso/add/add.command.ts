@@ -100,7 +100,7 @@ export const ssoAddCommand = Command.make("add", config).pipe(
     ssoAdd(flags).pipe(
       withCommandTelemetry({
         flags,
-        safeFlags: projectRefSafeFlags(flags.projectRef),
+        safeFlags: projectRefSafeFlags(flags),
         config,
         // Maps the `-t` alias back to `type` so telemetry records it as changed.
         aliases: { t: "type" },

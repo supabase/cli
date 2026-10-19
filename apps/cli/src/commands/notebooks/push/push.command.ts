@@ -28,7 +28,7 @@ export type NotebooksPushFlags = CliCommand.Command.Config.Infer<typeof config>;
 // uses below, instead of re-asserting the generic instrumentation mechanism.
 export const notebooksPushHandler = (flags: NotebooksPushFlags) =>
   notebooksPush(flags).pipe(
-    withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags.projectRef) }),
+    withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
     withJsonErrorHandling,
   );
 

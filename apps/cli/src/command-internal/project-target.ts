@@ -12,14 +12,12 @@ import {
   resolveParentScopedProjectRef,
 } from "./parent-project-ref.ts";
 import { announceTarget } from "../shared/output/command-target.service.ts";
-import { Output } from "../shared/output/output.service.ts";
 import { projectRefPicker } from "../config/project-ref.layer.ts";
 import { branchRef, resolveBranchProjectRef } from "./branch-ref.resolver.ts";
 import { compose, withCondition } from "./command-permissions/model.ts";
 import { sanitizeInlineName } from "./http-errors.ts";
 import { BRANCH_PROJECT_REF_PATTERN, BRANCH_UUID_PATTERN } from "./ref-patterns.ts";
-import { selectProject } from "./target/project-selection.ts";
-import type { ProjectTargetInput } from "./target/resolve-project-target.ts";
+import { startBranchLookupTask } from "./target/branch-resolution.ts";
 import { type LinkedTarget, linkedTarget } from "./target/resolve-target.ts";
 import { renderBranchTarget } from "./target/target-identity.ts";
 import {
@@ -169,26 +167,6 @@ export const configTarget = compose(
   projectRefPicker,
 );
 
-/** The ref, branch name or UUID that `--remote` (or the deprecated `--project-ref`) names; none means the linked project. */
-export const requestedConfigTarget = Effect.fn("ProjectTarget.requested")(function* (
-  input: ProjectTargetInput,
-) {
-  const { selection } = yield* selectProject(input);
-  switch (selection.explicit) {
-    case "branch":
-      return Option.some(selection.name);
-    case "linked":
-      return selection.ref;
-    case undefined:
-      return Option.none<string>();
-    case "local":
-    case "db-url":
-      return yield* Effect.die(
-        new Error(`a project-only selector cannot select "${selection.explicit}"`),
-      );
-  }
-});
-
 /**
  * Resolves the requested `--remote` value to a {@link ConfigTarget}: a project ref, or the name/UUID
  * of a branch on the linked project. A ref-shaped value (20 lowercase letters) is always a project ref.
@@ -205,7 +183,6 @@ export const resolveConfigTarget = Effect.fn("ProjectTarget.resolve")(function* 
   /** Maps a branch-lookup (`GET`-by-UUID or `FIND`-by-name) transport/status failure. */
   mapResolveError: (cause: SupabaseApiError) => Effect.Effect<never, EResolve>,
 ) {
-  const output = yield* Output;
   const resolver = yield* ProjectRefResolver;
 
   let ref: string;
@@ -233,8 +210,7 @@ export const resolveConfigTarget = Effect.fn("ProjectTarget.resolve")(function* 
       parentProjectRef = Option.some(parent.ref);
     }
 
-    const resolving =
-      output.format === "text" ? yield* output.task("Resolving branch...") : undefined;
+    const resolving = yield* startBranchLookupTask("Resolving branch...");
     ref = yield* resolveBranchProjectRef(target, parentRef, {
       mapGetError: mapResolveError,
       mapFindError: mapResolveError,

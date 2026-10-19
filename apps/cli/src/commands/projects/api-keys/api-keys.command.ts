@@ -59,7 +59,7 @@ export const projectsApiKeysCommand = Command.make("api-keys", config).pipe(
       // `reveal` is intentionally not in `safeFlags`: it is a boolean flag, and
       // boolean values are always logged verbatim by the instrumentation. Only
       // string flags that are telemetry-safe belong in `safeFlags`.
-      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags.projectRef) }),
+      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
       withJsonErrorHandling,
     ),
   ),

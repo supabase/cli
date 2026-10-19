@@ -35,7 +35,7 @@ export const ssoInfoCommand = Command.make("info", config).pipe(
   ),
   Command.withHandler((flags) =>
     ssoInfo(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags.projectRef) }),
+      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
       withJsonErrorHandling,
     ),
   ),

@@ -51,7 +51,7 @@ export const ssoShowCommand = Command.make("show", config).pipe(
   ),
   Command.withHandler((flags) =>
     ssoShow(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags.projectRef) }),
+      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
       withJsonErrorHandling,
     ),
   ),

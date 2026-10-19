@@ -11,7 +11,8 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesDisable } from "./disable.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
-import { branchesParentTarget, branchesSafeFlags } from "../branches.target.ts";
+import { projectRefSafeFlags } from "../../../command-internal/target/project-ref-safe-flags.ts";
+import { branchesParentTarget } from "../branches.target.ts";
 
 const config = {
   ...projectTargetFlags(),
@@ -32,7 +33,7 @@ export const branchesDisableCommand = Command.make("disable", config).pipe(
   ),
   Command.withHandler((flags) =>
     branchesDisable(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: branchesSafeFlags(flags) }),
+      withCommandTelemetry({ flags, safeFlags: projectRefSafeFlags(flags) }),
       withJsonErrorHandling,
     ),
   ),

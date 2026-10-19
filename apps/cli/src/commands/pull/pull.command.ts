@@ -1,4 +1,3 @@
-import { Option } from "effect";
 import type * as CliCommand from "effect/cli/Command";
 import { Command, Flag } from "effect/cli";
 
@@ -10,7 +9,7 @@ import {
   dbConfigPoolerFallbackLinked,
 } from "../../command-internal/db-config.layer.ts";
 import { configTarget } from "../../command-internal/project-target.ts";
-import { PROJECT_REF_PATTERN } from "../../config/project-ref.service.ts";
+import { projectRefSafeFlags } from "../../command-internal/target/project-ref-safe-flags.ts";
 import { functionsDownload } from "../../shared/functions/download.ts";
 import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
 import { withCliConfigFlags } from "../../config/cli-config-flags.ts";
@@ -64,10 +63,7 @@ export const pullHandler = (flags: PullFlags) =>
     // `--remote-label` is a free-form, user-chosen string and is never safe to log verbatim.
     withCommandTelemetry({
       flags,
-      safeFlags:
-        Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
-          ? ["project-ref"]
-          : [],
+      safeFlags: projectRefSafeFlags(flags),
       // The handler rejects every `-o`/`--output` value with a message pointing at
       // `--output-format`, so the full global choice set is declared "allowed" here.
       outputFormats: GLOBAL_OUTPUT_FORMATS,

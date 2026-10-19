@@ -23,9 +23,9 @@ import {
 } from "../../../command-internal/http-errors.ts";
 import {
   configTargetErrorsFor,
-  requestedConfigTarget,
   resolveConfigTarget,
 } from "../../../command-internal/project-target.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import {
   missingProjectConfigMessageEffect,
   relativeConfigPath,
@@ -252,14 +252,12 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // the resolved config load before its one schema decode, so a base document that's invalid without its
     // overlay must never be decoded on its own — this can cost a network round trip before a
     // malformed `config.toml` is caught.
-    const requestedRef = yield* requestedConfigTarget({
-      remote: flags.remote,
-      projectRef: flags.projectRef,
-    });
-    const { ref, branch } = yield* resolveConfigTarget(
-      requestedRef,
-      configTargetErrors,
-      mapPushBranchResolveError,
+    const { ref, branch } = yield* resolveProjectTarget(
+      { remote: flags.remote, projectRef: flags.projectRef },
+      {
+        resolveRequested: (requested) =>
+          resolveConfigTarget(requested, configTargetErrors, mapPushBranchResolveError),
+      },
     );
     yield* Ref.set(resolvedRef, Option.some(ref));
     yield* Effect.annotateCurrentSpan({
