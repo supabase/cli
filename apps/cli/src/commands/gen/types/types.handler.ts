@@ -1,9 +1,10 @@
 import { ChildProcessSpawner } from "effect/process";
-import { Effect, FileSystem, Match, Option, Path, Predicate, Stdio, Stream } from "effect";
+import { Effect, FileSystem, Match, Option, Path, Predicate, Result, Stdio, Stream } from "effect";
 import { getDomain } from "tldts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { announceTarget } from "../../../shared/output/command-target.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   mutuallyExclusiveFlagsMessage,
   PERSISTENT_VALUE_FLAG_NAMES,
@@ -30,6 +31,7 @@ import {
   type ResolvedTarget,
 } from "../../../command-internal/target/resolve-target.ts";
 import { renderLocalTarget } from "../../../command-internal/target/target-identity.ts";
+import { parseTargetSelector } from "../../../command-internal/target/target-selector.ts";
 import type { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { tempPaths } from "../../../shared/config/temp-paths.ts";
@@ -570,13 +572,11 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       yield* output.raw(`${POSTGREST_V9_COMPAT_DEPRECATION_LINE}\n`, "stderr");
     }
 
-    const target = yield* resolveTarget(flags);
-
     const projectRefFlag = Option.orElse(flags.projectRef, () => flags.projectId);
     const remoteIsDatabase = Option.exists(flags.remote, (value) => value._tag === "DbUrl");
 
-    // This guard runs before flag-group validation, so its error wins when both apply. Both
-    // run after the telemetry context is installed, so every return here must stay inside the
+    // These guards run before the target resolves, so a usage error never costs a network call or
+    // prints a `Target:` banner. Every return here must stay inside the
     // `Effect.ensuring(telemetryState.flush)` below.
     if (flags.postgrestV9Compat && Option.isNone(flags.dbUrl) && !remoteIsDatabase) {
       // Established error text, including the "must used" typo — do not
@@ -586,17 +586,20 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       });
     }
     const positionalLang = findPositionalLanguage(rawArgs);
-    if (
+    const unknownPositionalLang =
       Option.isSome(positionalLang) &&
       positionalLang.value !== "typescript" &&
-      !occurrences.has("lang")
-    ) {
-      return yield* new GenTypesFlagUsageError({
-        message: "use --lang flag to specify the typegen language",
-      });
-    }
+      !occurrences.has("lang");
+    const positionalLangError = () =>
+      new GenTypesFlagUsageError({ message: "use --lang flag to specify the typegen language" });
+    // The word after a bare `--remote` may be a branch name; the target's check rules on it first.
+    const cliArgs = Option.getOrUndefined(yield* Effect.serviceOption(CliArgs));
+    const deferPositionalLang =
+      unknownPositionalLang && positionalLang.value === cliArgs?.bareRemoteOperand;
+    if (unknownPositionalLang && !deferPositionalLang) return yield* positionalLangError();
 
-    if (target.kind === "linked") {
+    const selection = Result.getOrUndefined(parseTargetSelector(flags))?.selection;
+    if (selection?._tag === "Linked" || selection?._tag === "Ref" || selection?._tag === "Branch") {
       const excluded = HOSTED_EXCLUDED_FLAGS.find((name) => occurrences.has(name));
       if (excluded !== undefined) {
         const selectors = [
@@ -612,6 +615,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         });
       }
     }
+
+    const target = yield* resolveTarget(flags);
+    if (deferPositionalLang) return yield* positionalLangError();
 
     yield* Effect.annotateCurrentSpan("typegen.lang", lang);
 

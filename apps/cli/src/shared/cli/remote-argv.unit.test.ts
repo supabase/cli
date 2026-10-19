@@ -247,6 +247,16 @@ describe("prepareCliArgs argv", () => {
       expected: ["seed", "--remote", "buckets"],
     },
     {
+      name: "leaves a branch-shaped word for gen types's legacy language operand",
+      args: ["gen", "types", "--remote", "feature-x"],
+      expected: ["gen", "types", "--remote", "feature-x"],
+    },
+    {
+      name: "joins a ref for gen types despite its legacy language operand",
+      args: ["gen", "types", "--remote", REF],
+      expected: ["gen", "types", `--remote=${REF}`],
+    },
+    {
       name: "leaves commands without a remote flag alone",
       args: ["link", "--remote", "feature-x"],
       expected: ["link", "--remote", "feature-x"],
@@ -276,6 +286,16 @@ describe("prepareCliArgs bareRemoteOperand on the real command tree", () => {
 
   it("reads db pull's migration-name operand, which may be a branch", () => {
     expect(operandOf(["db", "pull", "--remote", "feature-x"])).toBe("feature-x");
+  });
+
+  it("reads gen types's legacy language operand, which may be a branch", () => {
+    expect(operandOf(["gen", "types", "--remote", "feature-x"])).toBe("feature-x");
+  });
+
+  it("lists gen types's legacy language operand among its placeholders", () => {
+    expect(prepareCliArgs(root, ["gen", "types", "--remote"]).operandPlaceholders?.()).toEqual([
+      "<language>",
+    ]);
   });
 
   it("finds nothing once every word is joined into --remote=<word>", () => {

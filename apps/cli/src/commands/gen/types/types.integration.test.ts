@@ -1647,6 +1647,86 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
+    it.effect("prefers the --postgrest-v9-compat guard over a selector conflict", () =>
+      Effect.gen(function* () {
+        const { layer } = yield* setup({
+          args: ["gen", "types", "--local", "--linked", "--postgrest-v9-compat"],
+        });
+        const exit = yield* genTypes(
+          defaultFlags({ local: true, linked: true, postgrestV9Compat: true }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain(
+            "--postgrest-v9-compat must used together with --remote=<db-url>",
+          );
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("prefers the positional language guard over a selector conflict", () =>
+      Effect.gen(function* () {
+        const { layer } = yield* setup({ args: ["gen", "types", "go", "--local", "--linked"] });
+        const exit = yield* genTypes(defaultFlags({ local: true, linked: true })).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain("use --lang flag to specify the typegen language");
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect("rejects a hosted selector with --query-timeout before any request or banner", () =>
+      Effect.gen(function* () {
+        const { layer, out, api, telemetry } = yield* setup({
+          args: ["gen", "types", `--remote=${VALID_REF}`, "--query-timeout", "20s"],
+          projectTypes: "ok",
+        });
+        const exit = yield* genTypes(
+          defaultFlags({
+            remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+            queryTimeout: "20s",
+          }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain(
+            "if any flags in the group [remote linked project-ref query-timeout] are set none of the others can be; [query-timeout remote] were all set",
+          );
+        }
+        expect(api.requests).toEqual([]);
+        expect(out.stderrText).not.toContain("Target:");
+        expect(telemetry.flushed).toBe(true);
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect(
+      "reads the word after a bare --remote as the positional language once it names no branch",
+      () =>
+        Effect.gen(function* () {
+          const { layer, api, generator } = yield* setup({
+            args: ["gen", "types", "--remote", "feature-x"],
+            projectId: Option.some(VALID_REF),
+            branches: [branchRow("other")],
+          });
+          const exit = yield* genTypes(
+            defaultFlags({ remote: Option.some({ _tag: "Linked" } as const) }),
+          ).pipe(Effect.provide(layer), Effect.exit);
+
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(String(exit.cause)).toContain("use --lang flag to specify the typegen language");
+          }
+          expect(api.requests.map(({ method }) => method)).toEqual(["listAllBranches"]);
+          expect(generator.calls).toHaveLength(0);
+        }).pipe(Effect.provide(BunServices.layer)),
+    );
+
     it.effect("prefers the positional language guard over mutex group errors", () =>
       Effect.gen(function* () {
         const { layer } = yield* setup({

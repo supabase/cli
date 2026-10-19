@@ -157,7 +157,7 @@ Not applicable.
   linked project, which resolves to that branch's own project. `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to target the local database.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A bare `--remote`
   followed by a word that exactly matches a branch of the linked project, is within a small edit
   distance of one, or can't be checked because the branch listing failed stops the run with an error
-  that offers both readings: `--remote=<word>` for the branch, `<word> --remote` for the operand.
+  that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project.
   Any other word runs as the operand. The
   resolved target is announced on stderr (`Target: …`) in every output format.
 - **Deprecated selectors.** `--linked`, `--project-ref`, `--project-id`, `--db-url` and `--local`
@@ -178,9 +178,12 @@ Not applicable.
   language flag (`swift-access-control`). Passing the selector together with any of them fails with
   `if any flags in the group [remote linked project-ref <flag>] are set none of the others can be; [<set flags, sorted>] were all set`,
   reporting the first violated group in that order. `--remote=<db-url>` and `--db-url` are not
-  members, so they accept all three. The target resolves first, ahead of these groups and the
-  language guards, so a selector error, a missing project or a bare `--remote <word>` that names a
-  branch fails before them. The command reads its own rewritten command line, so
+  members, so they accept all three. These groups and the other usage guards
+  (`--postgrest-v9-compat` without a database target, a positional language other than
+  `typescript` without `--lang`) run before the target resolves, so a usage error never costs a
+  network call or prints a `Target:` banner; the one exception is a positional language that is
+  also the word after a bare `--remote`, which the branch check rules on first. The command reads
+  its own rewritten command line, so
   `--remote <ref>` and `--remote <url>` mean `--remote=<ref>` and `--remote=<url>`, and the word is not
   taken as the positional language.
 - With the local target, a missing `supabase/config.toml` uses the embedded config defaults plus
