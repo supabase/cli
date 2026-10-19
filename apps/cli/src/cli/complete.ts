@@ -356,9 +356,9 @@ const COMPLETION_NO_FILE_COMP_PATHS: ReadonlySet<string> = new Set([
 /** Offered instead of a bare `--remote`, so the next word is typed as its value rather than read as an operand. */
 const REMOTE_FLAG_CANDIDATE = `--${REMOTE_FLAG_NAME}=`;
 
-/** `--remote=` takes its value right after the `=`, so the shell must not add a space. */
+/** `--remote=` takes its value right after the `=`, so no space follows it; any other candidate in the list keeps the space. */
 function flagNameDirective(candidates: ReadonlyArray<CompletionCandidate>): number {
-  return candidates.some((candidate) => candidate.name === REMOTE_FLAG_CANDIDATE)
+  return candidates.length > 0 && candidates.every((candidate) => candidate.name.endsWith("="))
     ? CompletionDirective.NoFileComp | CompletionDirective.NoSpace
     : CompletionDirective.NoFileComp;
 }

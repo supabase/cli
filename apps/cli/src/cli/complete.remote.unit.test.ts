@@ -39,6 +39,12 @@ describe("--remote flag-name completion", () => {
     );
   });
 
+  it("keeps the space when other flags are offered next to --remote=", () => {
+    expect(names("db", "push", "--")).toContain("--remote=");
+    expect(names("db", "push", "--")?.length).toBeGreaterThan(1);
+    expect(complete("db", "push", "--")?.directive).toBe(CompletionDirective.NoFileComp);
+  });
+
   it("keeps the space after a flag name that takes no value", () => {
     expect(complete("db", "push", "--ot")?.directive).toBe(CompletionDirective.NoFileComp);
   });
