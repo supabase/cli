@@ -58,10 +58,10 @@ describe("storage experimental gate vs mutual-exclusivity ordering", () => {
   ];
 
   for (const { name, args } of leaves) {
-    const conflictingArgs = [...args, "--linked", "--local"];
+    const conflictingArgs = [...args, "--remote", "--local"];
 
     it.effect(
-      `${name} --linked --local without --experimental fails with the gate error, not the mutex error`,
+      `${name} --remote --local without --experimental fails with the gate error, not the mutex error`,
       () => {
         const { layer } = setup(conflictingArgs);
         return Effect.gen(function* () {
@@ -79,7 +79,7 @@ describe("storage experimental gate vs mutual-exclusivity ordering", () => {
       },
     );
 
-    it.effect(`${name} --linked --local with --experimental fails with the mutex error`, () => {
+    it.effect(`${name} --remote --local with --experimental fails with the mutex error`, () => {
       const withExperimental = [...conflictingArgs, "--experimental"];
       const { layer } = setup(withExperimental);
       return Effect.gen(function* () {

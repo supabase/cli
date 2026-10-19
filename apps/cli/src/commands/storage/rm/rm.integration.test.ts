@@ -10,9 +10,11 @@ import { StorageRmConfirmationRequiredError } from "../storage.errors.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import {
   setupStorage,
+  STORAGE_TEST_BRANCH_REF,
   STORAGE_TEST_JWT_SECRET,
   storageConsentApi,
   storageConsentServices,
+  storageTestBranch,
 } from "../../../../tests/helpers/storage.ts";
 import {
   VALID_REF,
@@ -31,6 +33,16 @@ const writeAncestorConfig = Effect.fnUntraced(function* (root: string, toml: str
   yield* fs.writeFileString(path.join(dir, "config.toml"), toml);
 });
 
+const RM_ARGS = {
+  files: ["ss:///private/a.pdf"],
+  recursive: false,
+  remote: Option.none(),
+  linked: false,
+  local: false,
+  projectRef: Option.none(),
+};
+const FLAG_REF = "flagflagflagflagflag";
+const DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 const BUCKET = "/storage/v1/bucket";
 const DELETE_OBJECT = (bucket: string) => `/storage/v1/object/${bucket}`;
 const DELETE_BUCKET = (bucket: string) => `/storage/v1/bucket/${bucket}`;
@@ -77,7 +89,7 @@ describe("storage rm", () => {
         recursive: false,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -101,7 +113,7 @@ describe("storage rm", () => {
         recursive: false,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -126,7 +138,7 @@ describe("storage rm", () => {
           recursive: false,
           remote: Option.none(),
           linked: false,
-          local: true,
+          local: false,
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isSuccess(exit)).toBe(true);
@@ -150,7 +162,7 @@ describe("storage rm", () => {
         recursive: false,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -170,8 +182,8 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        remote: Option.none(),
-        linked: true,
+        remote: Option.some({ _tag: "Linked" } as const),
+        linked: false,
         local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -202,7 +214,7 @@ describe("storage rm", () => {
         recursive: false,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -224,7 +236,7 @@ describe("storage rm", () => {
         recursive: false,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -247,7 +259,7 @@ describe("storage rm", () => {
         recursive: false,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -277,7 +289,7 @@ describe("storage rm", () => {
               recursive: false,
               remote: Option.none(),
               linked: false,
-              local: true,
+              local: false,
               projectRef: Option.none(),
             }).pipe(Effect.provide(layer), Effect.exit);
             expect(Exit.isFailure(exit)).toBe(true);
@@ -312,7 +324,7 @@ describe("storage rm", () => {
         recursive: true,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -342,7 +354,7 @@ describe("storage rm", () => {
           recursive: false,
           remote: Option.none(),
           linked: false,
-          local: true,
+          local: false,
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -383,7 +395,7 @@ describe("storage rm", () => {
         recursive: false,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -407,7 +419,7 @@ describe("storage rm", () => {
         recursive: false,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -429,7 +441,7 @@ describe("storage rm", () => {
         recursive: false,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -453,7 +465,7 @@ describe("storage rm", () => {
         recursive: false,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -483,7 +495,7 @@ describe("storage rm", () => {
         recursive: true,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -519,7 +531,7 @@ describe("storage rm", () => {
         recursive: true,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -578,7 +590,7 @@ describe("storage rm", () => {
         recursive: true,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -611,7 +623,7 @@ describe("storage rm", () => {
         recursive: true,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -636,7 +648,7 @@ describe("storage rm", () => {
         recursive: true,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -660,7 +672,7 @@ describe("storage rm", () => {
         recursive: false,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -692,7 +704,7 @@ describe("storage rm", () => {
         recursive: false,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -715,7 +727,7 @@ describe("storage rm", () => {
         recursive: true,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -736,8 +748,8 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        remote: Option.none(),
-        linked: true,
+        remote: Option.some({ _tag: "Linked" } as const),
+        linked: false,
         local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -749,9 +761,8 @@ describe("storage rm", () => {
     });
   });
 
-  it.effect("deletes from the project given via --project-ref, overriding VALID_REF", () => {
+  it.effect("deletes from the project given via --remote=<ref>, overriding VALID_REF", () => {
     // The fake's default projectRef is VALID_REF; the flag must win over it.
-    const FLAG_REF = "flagflagflagflagflag";
     const { layer, requests, linkedCache } = setupStorage(tmp.current, {
       yes: true,
       routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
@@ -760,10 +771,10 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        remote: Option.none(),
-        linked: true,
+        remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const),
+        linked: false,
         local: false,
-        projectRef: Option.some(FLAG_REF),
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.url.startsWith(`https://${FLAG_REF}.supabase.co`))).toBe(true);
@@ -773,30 +784,142 @@ describe("storage rm", () => {
     });
   });
 
-  it.effect("rejects --project-ref combined with --local", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
-      toml: 'project_id = "test"\n',
-      local: true,
+  it.effect("deletes from the project of the branch --remote=<branch> names", () => {
+    const { layer, requests, linkedCache, managementCalls, out } = setupStorage(tmp.current, {
+      branches: [storageTestBranch("feature-x")],
       yes: true,
+      routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
     });
     return Effect.gen(function* () {
       const exit = yield* storageRm({
-        files: ["ss:///private/a.pdf"],
-        recursive: false,
-        remote: Option.none(),
-        linked: false,
-        local: true,
-        projectRef: Option.some(FLAG_REF),
-      }).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain(
-          "--project-ref selects a remote project and cannot be combined with --local.",
-        );
-      }
+        ...RM_ARGS,
+        remote: Option.some({ _tag: "Branch", name: "feature-x" } as const),
+      }).pipe(Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(managementCalls.filter(({ method }) => method === "listAllBranches")).toEqual([
+        { method: "listAllBranches", input: { ref: VALID_REF } },
+      ]);
+      expect(
+        requests.some((r) => r.url.startsWith(`https://${STORAGE_TEST_BRANCH_REF}.supabase.co`)),
+      ).toBe(true);
+      expect(linkedCache.cachedRef).toBe(STORAGE_TEST_BRANCH_REF);
+      expect(
+        out.messages.filter((message) => message.type === "warn").map((message) => message.message),
+      ).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails with the branches that exist when --remote=<branch> matches none", () => {
+    const { layer, requests } = setupStorage(tmp.current, {
+      branches: [storageTestBranch("feature-x")],
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      const error = yield* storageRm({
+        ...RM_ARGS,
+        remote: Option.some({ _tag: "Branch", name: "feature-y" } as const),
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "LinkBranchNotFoundError",
+        message: expect.stringContaining("Available branches: feature-x"),
+      });
+      expect(requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects --remote=<url> because storage needs a project, not a database", () => {
+    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      const error = yield* storageRm({
+        ...RM_ARGS,
+        remote: Option.some({ _tag: "DbUrl", url: DB_URL } as const),
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "TargetNeedsProjectError",
+        message: expect.stringContaining("needs a project, not a database URL"),
+      });
       expect(requests).toHaveLength(0);
       expect(linkedCache.cached).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  describe("deprecated selectors", () => {
+    const cases = [
+      {
+        alias: "--linked",
+        cliArgs: ["storage", "rm", "--linked"],
+        flags: { linked: true },
+        host: `https://${VALID_REF}.supabase.co`,
+        warning:
+          "--linked is deprecated and will be removed in v4. Use --remote instead: supabase storage rm --remote",
+      },
+      {
+        alias: "--project-ref",
+        cliArgs: ["storage", "rm", "--project-ref", FLAG_REF],
+        flags: { projectRef: Option.some(FLAG_REF) },
+        host: `https://${FLAG_REF}.supabase.co`,
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase storage rm --remote=${FLAG_REF}`,
+      },
+      {
+        alias: "--local",
+        cliArgs: ["storage", "rm", "--local"],
+        flags: { local: true },
+        host: "http://127.0.0.1:65432",
+        warning:
+          "--local isn't needed (local is the default) and will be removed in v4: supabase storage rm",
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      it.effect(`${testCase.alias} still selects its target and warns`, () => {
+        const { layer, requests, out } = setupStorage(tmp.current, {
+          toml: 'project_id = "test"\n[api]\nport = 65432\n',
+          cliArgs: testCase.cliArgs,
+          yes: true,
+          routes: [
+            { method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] },
+          ],
+        });
+        return Effect.gen(function* () {
+          const exit = yield* storageRm({ ...RM_ARGS, ...testCase.flags }).pipe(Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(requests[0]?.url.startsWith(testCase.host)).toBe(true);
+          expect(
+            out.messages
+              .filter((message) => message.type === "warn")
+              .map((message) => message.message),
+          ).toEqual([testCase.warning]);
+        }).pipe(Effect.provide(layer));
+      });
+    }
+
+    it.effect("rejects --project-ref combined with --local", () => {
+      const { layer, requests, linkedCache } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageRm({
+          files: ["ss:///private/a.pdf"],
+          recursive: false,
+          remote: Option.none(),
+          linked: false,
+          local: true,
+          projectRef: Option.some(FLAG_REF),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain(
+            "--project-ref selects a remote project and cannot be combined with --local.",
+          );
+        }
+        expect(requests).toHaveLength(0);
+        expect(linkedCache.cached).toBe(false);
+      });
     });
   });
 
@@ -824,7 +947,7 @@ describe("storage rm", () => {
           recursive: false,
           remote: Option.none(),
           linked: false,
-          local: true,
+          local: false,
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -850,7 +973,7 @@ describe("storage rm", () => {
           recursive: false,
           remote: Option.none(),
           linked: false,
-          local: true,
+          local: false,
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isSuccess(exit)).toBe(true);
@@ -875,7 +998,7 @@ describe("storage rm", () => {
           recursive: false,
           remote: Option.none(),
           linked: false,
-          local: true,
+          local: false,
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -902,7 +1025,7 @@ describe("storage rm", () => {
         recursive: false,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -928,8 +1051,8 @@ describe("storage rm", () => {
           yield* storageRm({
             files: ["ss:///private/a.pdf"],
             recursive: false,
-            remote: Option.none(),
-            linked: true,
+            remote: Option.some({ _tag: "Linked" } as const),
+            linked: false,
             local: false,
             projectRef: Option.none(),
           });
@@ -943,7 +1066,7 @@ describe("storage rm", () => {
           expect(yield* fs.exists(`${tmp.current}/${CACHE_FILE}`)).toBe(true);
           assertPermissionDrift({
             command: "storage rm",
-            activeFlags: { linked: true },
+            activeFlags: { remote: true },
             requests: managementRequests,
           });
         }).pipe(Effect.provide(layer));
@@ -969,7 +1092,7 @@ describe("stack backend", () => {
         recursive: false,
         remote: Option.none(),
         linked: false,
-        local: true,
+        local: false,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -999,7 +1122,7 @@ describe("stack backend", () => {
           recursive: false,
           remote: Option.none(),
           linked: false,
-          local: true,
+          local: false,
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isSuccess(exit)).toBe(true);
@@ -1023,7 +1146,7 @@ describe("stack backend", () => {
           recursive: false,
           remote: Option.none(),
           linked: false,
-          local: true,
+          local: false,
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -1055,10 +1178,10 @@ describeHostedConsent("storage rm", {
       run: storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        remote: Option.none(),
+        remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
         linked: false,
         local: false,
-        projectRef: Option.some(VALID_REF),
+        projectRef: Option.none(),
       }).pipe(Effect.provide(storage.layer)),
       mutations: storage.writes,
     };

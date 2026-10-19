@@ -4,9 +4,11 @@ import { Cause, Effect, Exit, FileSystem, Option, Path, Predicate } from "effect
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import {
   setupStorage,
+  STORAGE_TEST_BRANCH_REF,
   STORAGE_TEST_JWT_SECRET,
   storageConsentApi,
   storageConsentServices,
+  storageTestBranch,
 } from "../../../../tests/helpers/storage.ts";
 import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
@@ -16,6 +18,8 @@ import { StorageUnsupportedOperationError } from "../storage.errors.ts";
 import { storageCp } from "./cp.handler.ts";
 import type { StorageCpFlags } from "./cp.command.ts";
 
+const FLAG_REF = "flagflagflagflagflag";
+const DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 const BUCKET = "/storage/v1/bucket";
 const OBJECT = (p: string) => `/storage/v1/object/${p}`;
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
@@ -30,7 +34,7 @@ function cpFlags(opts: {
   cacheControl?: string;
   contentType?: string;
   jobs?: number;
-  local?: boolean;
+  remote?: boolean;
 }): StorageCpFlags {
   return {
     src: opts.src,
@@ -39,9 +43,9 @@ function cpFlags(opts: {
     cacheControl: opts.cacheControl === undefined ? Option.none() : Option.some(opts.cacheControl),
     contentType: opts.contentType === undefined ? Option.none() : Option.some(opts.contentType),
     jobs: opts.jobs === undefined ? Option.none() : Option.some(opts.jobs),
-    remote: Option.none(),
-    linked: opts.local === false,
-    local: opts.local ?? true,
+    remote: opts.remote === true ? Option.some({ _tag: "Linked" } as const) : Option.none(),
+    linked: false,
+    local: false,
     projectRef: Option.none(),
   };
 }
@@ -535,7 +539,7 @@ describe("storage cp", () => {
         cpFlags({
           src: path.join(tmp.current, "readme.md"),
           dst: "ss:///private/readme.md",
-          local: false,
+          remote: true,
         }),
       ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
@@ -556,7 +560,7 @@ describe("storage cp", () => {
       const path = yield* Path.Path;
       const dst = path.join(tmp.current, "out.md");
       const exit = yield* storageCp(
-        cpFlags({ src: "ss:///private/readme.md", dst, local: false }),
+        cpFlags({ src: "ss:///private/readme.md", dst, remote: true }),
       ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(yield* fs.readFileString(dst)).toBe("downloaded-bytes");
@@ -564,10 +568,9 @@ describe("storage cp", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("uploads to the project given via --project-ref, overriding VALID_REF", () => {
+  it.effect("uploads to the project given via --remote=<ref>, overriding VALID_REF", () => {
     // The fake's own fallback stays at its default (VALID_REF); the flag must win and drive
     // the gateway host.
-    const FLAG_REF = "flagflagflagflagflag";
     const { layer, requests, linkedCache } = setupStorage(tmp.current, {
       yes: true,
       routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
@@ -578,8 +581,7 @@ describe("storage cp", () => {
       yield* fs.writeFileString(path.join(tmp.current, "readme.md"), "hello world");
       const exit = yield* storageCp({
         ...cpFlags({ src: path.join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
-        local: false,
-        projectRef: Option.some(FLAG_REF),
+        remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const),
       }).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.url.startsWith(`https://${FLAG_REF}.supabase.co`))).toBe(true);
@@ -589,30 +591,147 @@ describe("storage cp", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --project-ref combined with --local", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
-      toml: 'project_id = "test"\n',
-      local: true,
+  it.effect("downloads from the project of the branch --remote=<branch> names", () => {
+    const { layer, requests, linkedCache, managementCalls, out } = setupStorage(tmp.current, {
+      branches: [storageTestBranch("feature-x")],
+      routes: [{ method: "GET", match: OBJECT("private/readme.md"), rawBody: "downloaded-bytes" }],
     });
     return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      yield* fs.writeFileString(path.join(tmp.current, "readme.md"), "hello world");
       const exit = yield* storageCp({
-        ...cpFlags({ src: path.join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
-        local: true,
-        projectRef: Option.some(FLAG_REF),
+        ...cpFlags({ src: "ss:///private/readme.md", dst: path.join(tmp.current, "out.md") }),
+        remote: Option.some({ _tag: "Branch", name: "feature-x" } as const),
       }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain(
-          "--project-ref selects a remote project and cannot be combined with --local.",
-        );
-      }
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(managementCalls.filter(({ method }) => method === "listAllBranches")).toEqual([
+        { method: "listAllBranches", input: { ref: VALID_REF } },
+      ]);
+      expect(
+        requests.some((r) => r.url.startsWith(`https://${STORAGE_TEST_BRANCH_REF}.supabase.co`)),
+      ).toBe(true);
+      expect(linkedCache.cachedRef).toBe(STORAGE_TEST_BRANCH_REF);
+      expect(
+        out.messages.filter((message) => message.type === "warn").map((message) => message.message),
+      ).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails with the branches that exist when --remote=<branch> matches none", () => {
+    const { layer, requests } = setupStorage(tmp.current, {
+      branches: [storageTestBranch("feature-x")],
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const error = yield* storageCp({
+        ...cpFlags({ src: "ss:///private/readme.md", dst: path.join(tmp.current, "out.md") }),
+        remote: Option.some({ _tag: "Branch", name: "feature-y" } as const),
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "LinkBranchNotFoundError",
+        message: expect.stringContaining("Available branches: feature-x"),
+      });
+      expect(requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects --remote=<url> because storage needs a project, not a database", () => {
+    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const error = yield* storageCp({
+        ...cpFlags({ src: "ss:///private/readme.md", dst: path.join(tmp.current, "out.md") }),
+        remote: Option.some({ _tag: "DbUrl", url: DB_URL } as const),
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "TargetNeedsProjectError",
+        message: expect.stringContaining("needs a project, not a database URL"),
+      });
       expect(requests).toHaveLength(0);
       expect(linkedCache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
+  });
+
+  describe("deprecated selectors", () => {
+    const cases = [
+      {
+        alias: "--linked",
+        cliArgs: ["storage", "cp", "--linked"],
+        flags: { linked: true },
+        host: `https://${VALID_REF}.supabase.co`,
+        warning:
+          "--linked is deprecated and will be removed in v4. Use --remote instead: supabase storage cp --remote",
+      },
+      {
+        alias: "--project-ref",
+        cliArgs: ["storage", "cp", "--project-ref", FLAG_REF],
+        flags: { projectRef: Option.some(FLAG_REF) },
+        host: `https://${FLAG_REF}.supabase.co`,
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase storage cp --remote=${FLAG_REF}`,
+      },
+      {
+        alias: "--local",
+        cliArgs: ["storage", "cp", "--local"],
+        flags: { local: true },
+        host: "http://127.0.0.1:65432",
+        warning:
+          "--local isn't needed (local is the default) and will be removed in v4: supabase storage cp",
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      it.effect(`${testCase.alias} still selects its target and warns`, () => {
+        const { layer, requests, out } = setupStorage(tmp.current, {
+          toml: 'project_id = "test"\n[api]\nport = 65432\n',
+          cliArgs: testCase.cliArgs,
+          routes: [
+            { method: "GET", match: OBJECT("private/readme.md"), rawBody: "downloaded-bytes" },
+          ],
+        });
+        return Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const exit = yield* storageCp({
+            ...cpFlags({ src: "ss:///private/readme.md", dst: path.join(tmp.current, "out.md") }),
+            ...testCase.flags,
+          }).pipe(Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(requests[0]?.url.startsWith(testCase.host)).toBe(true);
+          expect(
+            out.messages
+              .filter((message) => message.type === "warn")
+              .map((message) => message.message),
+          ).toEqual([testCase.warning]);
+        }).pipe(Effect.provide(layer));
+      });
+    }
+
+    it.effect("rejects --project-ref combined with --local", () => {
+      const { layer, requests, linkedCache } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.writeFileString(path.join(tmp.current, "readme.md"), "hello world");
+        const exit = yield* storageCp({
+          ...cpFlags({ src: path.join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
+          local: true,
+          projectRef: Option.some(FLAG_REF),
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain(
+            "--project-ref selects a remote project and cannot be combined with --local.",
+          );
+        }
+        expect(requests).toHaveLength(0);
+        expect(linkedCache.cached).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
   });
 
   it.effect("propagates a non-200 from the gateway on upload", () => {
@@ -730,7 +849,7 @@ describe("storage cp", () => {
             cpFlags({
               src: path.join(tmp.current, "readme.md"),
               dst: "ss:///private/readme.md",
-              local: false,
+              remote: true,
               jobs: 1,
             }),
           );
@@ -743,7 +862,7 @@ describe("storage cp", () => {
           expect(yield* fs.exists(path.join(tmp.current, CACHE_FILE))).toBe(true);
           assertPermissionDrift({
             command: "storage cp",
-            activeFlags: { linked: true, jobs: "1" },
+            activeFlags: { remote: true, jobs: "1" },
             requests: managementRequests,
           });
         }).pipe(Effect.provide(layer));
@@ -857,9 +976,7 @@ describeHostedConsent("storage cp", {
     return {
       run: storageCp({
         ...cpFlags({ src: `${workdir}/readme.md`, dst: "ss:///private/readme.md" }),
-        local: false,
-        linked: false,
-        projectRef: Option.some(VALID_REF),
+        remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
       }).pipe(Effect.provide(storage.layer)),
       mutations: storage.writes,
     };
