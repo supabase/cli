@@ -238,18 +238,6 @@ describe("config io", () => {
     expect(config.remotes).toEqual({});
   });
 
-  test("defaults the workspace target to local", () => {
-    expect(decodeCliConfig({}).target).toBe("local");
-  });
-
-  test("decodes target = remote", () => {
-    expect(decodeCliConfig({ target: "remote" }).target).toBe("remote");
-  });
-
-  test("rejects an unknown workspace target", () => {
-    expect(() => decodeCliConfig({ target: "staging" })).toThrow();
-  });
-
   test("requires enabled twilio fields during decode", () => {
     expect(() =>
       decodeCliConfig({
@@ -1637,86 +1625,6 @@ enabled = false
       sources: {},
     };
   }
-
-  describe("workspace target", () => {
-    const targetInRemote = `project_id = "baseref"
-
-[remotes.preview]
-project_id = "${PREVIEW_REF}"
-target = "remote"
-`;
-
-    async function loadFailureCause(
-      toml: string,
-      options?: { readonly projectRef: string },
-    ): Promise<unknown> {
-      const cwd = await writeTomlProject(toml);
-      try {
-        const exit = await Effect.runPromiseExit(
-          loadCliConfig(cwd, options).pipe(Effect.provide(BunServices.layer)),
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
-        expect(Option.isSome(error) ? (error.value as { _tag: string })._tag : undefined).toBe(
-          "CliConfigParseError",
-        );
-        return Option.isSome(error) ? (error.value as { cause: unknown }).cause : undefined;
-      } finally {
-        await rm(cwd, { recursive: true, force: true });
-      }
-    }
-
-    test("loads the top-level target", async () => {
-      const cwd = await writeTomlProject(`project_id = "baseref"\ntarget = "remote"\n`);
-      try {
-        const loaded = await runConfigEffect(loadCliConfig(cwd));
-        expect(loaded?.config.target).toBe("remote");
-      } finally {
-        await rm(cwd, { recursive: true, force: true });
-      }
-    });
-
-    test("defaults to local when the file omits target", async () => {
-      const cwd = await writeTomlProject(`project_id = "baseref"\n`);
-      try {
-        const loaded = await runConfigEffect(loadCliConfig(cwd));
-        expect(loaded?.config.target).toBe("local");
-      } finally {
-        await rm(cwd, { recursive: true, force: true });
-      }
-    });
-
-    test("fails to load an invalid top-level target", async () => {
-      await loadFailureCause(`project_id = "baseref"\ntarget = "staging"\n`);
-    });
-
-    test("rejects target in an unselected [remotes.*] block", async () => {
-      const cause = await loadFailureCause(targetInRemote);
-      expect(String(cause)).toContain('[remotes.preview] cannot set "target"');
-    });
-
-    test("rejects target in the selected [remotes.*] block instead of overriding the workspace value", async () => {
-      const cause = await loadFailureCause(targetInRemote, { projectRef: PREVIEW_REF });
-      expect(String(cause)).toContain('[remotes.preview] cannot set "target"');
-    });
-
-    test("rejects target in a [remotes.*] block of a pending document", async () => {
-      const exit = await Effect.runPromiseExit(
-        decodeCliConfigDocumentForValidationEffect(
-          {
-            project_id: "abc123",
-            remotes: { preview: { project_id: PREVIEW_REF, target: "remote" } },
-          },
-          { cliCompat: true, path: "supabase/config.toml", format: "toml", remoteName: "preview" },
-        ).pipe(Effect.provide(BunServices.layer)),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
-      expect(Option.isSome(error) ? (error.value as { _tag: string })._tag : undefined).toBe(
-        "CliConfigParseError",
-      );
-    });
-  });
 
   test("tracks the source of effective local, remote, and environment values", async () => {
     const localCwd = await writeTomlProject(`project_id = "baseref"

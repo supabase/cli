@@ -8,7 +8,6 @@ import { experimental } from "./experimental.ts";
 import { functions } from "./functions.ts";
 import { inbucket } from "./inbucket.ts";
 import { toPublishedJsonSchemaDocument } from "./json-schema-document.ts";
-import { stringEnum } from "./lib/schema.ts";
 import { realtime } from "./realtime.ts";
 import { storage } from "./storage.ts";
 import { studio } from "./studio.ts";
@@ -76,19 +75,8 @@ export const RemotesSchema = Schema.Record(Schema.String, remoteCliConfigBlock).
   tags: ["general"],
 });
 
-const defaultTarget = "local";
-
-// Workspace-local: a [remotes.*] block must not carry it, so it lives outside remoteCliConfigBlock.
-const target = stringEnum(["local", "remote"], {
-  default: defaultTarget,
-  description:
-    "Default target for commands that can run locally or against the linked project (`db reset`, `db query`, `inspect`, `migration list`, `gen types`, `storage`, ...). `remote` means the linked project. The `--local`, `--linked`, `--db-url` and `--project-ref` flags always win.",
-  tags: ["general"],
-}).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultTarget)));
-
 export const CliConfigSchema = Schema.Struct({
   ...baseCliConfigFields,
-  target,
   remotes: RemotesSchema.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 

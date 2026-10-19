@@ -707,7 +707,6 @@
       "api_url": "http://127.0.0.1",
       "enabled": true,
       "port": 55323
-    },
-    "target": "local"
+    }
   }
 }

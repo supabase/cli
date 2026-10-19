@@ -143,31 +143,6 @@ export function remoteNameForProjectRef(
   return remoteProjectIdEntries(remotes).find((entry) => entry.projectId === projectRef)?.name;
 }
 
-/**
- * Names the first `[remotes.*]` block that sets a workspace-wide key. `target` decides how
- * commands behave before any project is chosen, so a remote block cannot override it.
- */
-const rejectRemoteWorkspaceKeys = Effect.fnUntraced(function* (
-  document: unknown,
-  path: string,
-  format: ConfigFormat,
-) {
-  if (!isObject(document) || !isObject(document["remotes"])) {
-    return;
-  }
-  for (const [remoteName, remote] of Object.entries(document["remotes"])) {
-    if (isObject(remote) && Object.hasOwn(remote, "target")) {
-      return yield* new CliConfigParseError({
-        path,
-        format,
-        cause: new Error(
-          `[remotes.${remoteName}] cannot set "target"; it is a workspace-wide setting`,
-        ),
-      });
-    }
-  }
-});
-
 /** Valid project ref format: exactly 20 lowercase ASCII letters. */
 const REMOTE_PROJECT_ID_PATTERN = /^[a-z]{20}$/;
 
@@ -371,7 +346,6 @@ export const decodeCliConfigDocumentForValidationEffect = Effect.fn(
   const cliCompat = options.cliCompat ?? false;
 
   const withoutTolerated = yield* rejectRemovedConfigKeys(document, options.path, options.format);
-  yield* rejectRemoteWorkspaceKeys(withoutTolerated, options.path, options.format);
   const { document: documentForDecode, appliedRemote } = mergeSelectedRemoteForValidation(
     withoutTolerated,
     options.remoteName,
@@ -414,7 +388,6 @@ const readAndNormalizeCliConfigFile = Effect.fnUntraced(function* (filePath: str
   const normalized = isObject(document)
     ? yield* rejectRemovedConfigKeys(document, filePath, format)
     : document;
-  yield* rejectRemoteWorkspaceKeys(normalized, filePath, format);
   return { format, content, document, normalized } as const;
 });
 

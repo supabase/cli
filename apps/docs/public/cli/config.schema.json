@@ -2515,12 +2515,6 @@
       },
       "additionalProperties": false
     },
-    "target": {
-      "type": "string",
-      "enum": ["local", "remote"],
-      "description": "Default target for commands that can run locally or against the linked project (`db reset`, `db query`, `inspect`, `migration list`, `gen types`, `storage`, ...). `remote` means the linked project. The `--local`, `--linked`, `--db-url` and `--project-ref` flags always win.",
-      "default": "local"
-    },
     "remotes": {
       "anyOf": [
         {
