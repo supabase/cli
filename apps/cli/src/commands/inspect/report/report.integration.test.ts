@@ -27,6 +27,7 @@ import {
   VALID_REF,
   VALID_TOKEN,
   buildTestRuntime,
+  jsonResponse,
   mockCommandPlatformApi,
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -60,6 +61,22 @@ import { TargetPolicy } from "../../../command-internal/target/target-policy.ts"
 import type { InspectReportFlags } from "./report.command.ts";
 import { inspectReport } from "./report.handler.ts";
 import { REPORT_QUERIES, reportIgnoreSchemas, wrapReportQuery } from "./report.queries.ts";
+
+const FLAG_REF = "flagflagflagflagflag";
+const BRANCH_REF = "branchprojectrefabcd";
+
+const branchRow = (name: string) => ({
+  id: "11111111-2222-4333-8444-555555555555",
+  name,
+  project_ref: BRANCH_REF,
+  parent_project_ref: VALID_REF,
+  is_default: false,
+  persistent: false,
+  status: "MIGRATIONS_PASSED",
+  created_at: "2026-05-27T01:02:03Z",
+  updated_at: "2026-05-27T01:02:04Z",
+  with_data: true,
+});
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -197,10 +214,13 @@ function setupReport(opts: SetupOpts = {}) {
       ? tempDirLayer("supabase-report-cwd-", (cwd) => mockRuntimeInfo({ cwd }))
       : mockRuntimeInfo({ cwd: opts.cwd })
   ).pipe(Layer.orDie);
+  const api = mockCommandPlatformApi({
+    handler: (request) => Effect.succeed(jsonResponse(request, 200, [branchRow("feature-x")])),
+  });
   const layer = Layer.mergeAll(
     buildTestRuntime({
       out,
-      api: mockCommandPlatformApi(),
+      api,
       cliSettings,
       tty: mockTty({ stdoutIsTty: opts.stdoutIsTty ?? false }),
       runtimeInfo,
@@ -226,7 +246,16 @@ function setupReport(opts: SetupOpts = {}) {
       ),
     ),
   );
-  return { layer, out, resolver, connection, telemetry };
+  return {
+    layer,
+    out,
+    resolver,
+    connection,
+    telemetry,
+    branchRequests: api.requests,
+    warnings: () =>
+      out.messages.filter((message) => message.type === "warn").map((message) => message.message),
+  };
 }
 
 const flags = (over: Partial<InspectReportFlags> = {}): InspectReportFlags => ({
@@ -294,20 +323,16 @@ describe("inspect report", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => process.umask(prevUmask))));
   });
 
-  it.effect("inspects the local database with --local", () => {
-    const { layer, resolver } = setupReport({ csvs: DEFAULT_RULE_CSVS });
-    return Effect.gen(function* () {
-      const base = yield* tempDir("supabase-report-out-");
-      yield* inspectReport(flags({ outputDir: base, local: true }));
-      expect(resolver.connectionInput?.target).toEqual({ kind: "local" });
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("inspects a custom database with --db-url", () => {
+  it.effect("inspects a custom database with --remote=<url>", () => {
     const { layer, resolver, out } = setupReport({ csvs: DEFAULT_RULE_CSVS, isLocal: false });
     return Effect.gen(function* () {
       const base = yield* tempDir("supabase-report-out-");
-      yield* inspectReport(flags({ outputDir: base, dbUrl: Option.some("postgres://x") }));
+      yield* inspectReport(
+        flags({
+          outputDir: base,
+          remote: Option.some({ _tag: "DbUrl", url: "postgres://x" } as const),
+        }),
+      );
       const target = resolver.connectionInput?.target;
       expect(target?.kind === "db-url" ? Redacted.value(target.url) : undefined).toBe(
         "postgres://x",
@@ -325,51 +350,159 @@ describe("inspect report", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects more than one of --db-url/--linked/--local", () => {
+  it.effect("rejects --remote combined with --local", () => {
     const { layer, resolver } = setupReport();
     return Effect.gen(function* () {
-      const error = yield* inspectReport(flags({ linked: true, local: true })).pipe(Effect.flip);
+      const error = yield* inspectReport(
+        flags({ remote: Option.some({ _tag: "Linked" } as const), local: true }),
+      ).pipe(Effect.flip);
       expect(error).toBeInstanceOf(TargetSelectorConflictError);
       expect(resolver.connectionInput).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("--linked routes to the linked project and announces it", () => {
-    const { layer, resolver, out } = setupReport({
+  it.effect("a bare --remote routes to the linked project and announces it", () => {
+    const { layer, resolver, out, warnings } = setupReport({
       csvs: DEFAULT_RULE_CSVS,
       projectId: VALID_REF,
     });
     return Effect.gen(function* () {
       const base = yield* tempDir("supabase-report-out-");
-      yield* inspectReport(flags({ outputDir: base, linked: true }));
+      yield* inspectReport(
+        flags({ outputDir: base, remote: Option.some({ _tag: "Linked" } as const) }),
+      );
       expect(resolver.connectionInput?.target).toMatchObject({ kind: "linked", ref: VALID_REF });
       expect(out.stderrText).toContain(unverifiedTargetBanner());
+      expect(warnings()).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("--project-ref implies the linked project", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, resolver } = setupReport({ csvs: DEFAULT_RULE_CSVS });
+  it.effect("--remote=<ref> targets that project", () => {
+    const { layer, resolver, warnings } = setupReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
       const base = yield* tempDir("supabase-report-out-");
-      yield* inspectReport(flags({ outputDir: base, projectRef: Option.some(FLAG_REF) }));
+      yield* inspectReport(
+        flags({ outputDir: base, remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const) }),
+      );
       expect(resolver.connectionInput?.target).toMatchObject({
         kind: "linked",
         ref: FLAG_REF,
         source: "flag",
       });
+      expect(warnings()).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --project-ref combined with --local", () => {
-    const { layer, resolver } = setupReport({ csvs: DEFAULT_RULE_CSVS });
+  it.effect("--remote=<branch> targets the project of the branch it names", () => {
+    const { layer, resolver, branchRequests, warnings } = setupReport({
+      csvs: DEFAULT_RULE_CSVS,
+      projectId: VALID_REF,
+    });
     return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
+      yield* inspectReport(
+        flags({
+          outputDir: base,
+          remote: Option.some({ _tag: "Branch", name: "feature-x" } as const),
+        }),
+      );
+      expect(branchRequests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+        `GET https://api.supabase.com/v1/projects/${VALID_REF}/branches`,
+      ]);
+      expect(resolver.connectionInput?.target).toMatchObject({
+        kind: "linked",
+        ref: BRANCH_REF,
+      });
+      expect(warnings()).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("--remote=<branch> fails with the branches that exist when none matches", () => {
+    const { layer, resolver } = setupReport({ csvs: DEFAULT_RULE_CSVS, projectId: VALID_REF });
+    return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
       const error = yield* inspectReport(
-        flags({ local: true, projectRef: Option.some("flagflagflagflagflag") }),
+        flags({
+          outputDir: base,
+          remote: Option.some({ _tag: "Branch", name: "feature-y" } as const),
+        }),
       ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(TargetProjectRefConflictError);
+      expect(error).toMatchObject({
+        _tag: "LinkBranchNotFoundError",
+        message: expect.stringContaining("Available branches: feature-x"),
+      });
       expect(resolver.connectionInput).toBeUndefined();
     }).pipe(Effect.provide(layer));
+  });
+
+  describe("deprecated selectors", () => {
+    const DEPRECATED_DB_URL = "postgres://x";
+    const cases = [
+      {
+        alias: "--linked",
+        cliArgs: ["inspect", "report", "--linked"],
+        flags: { linked: true },
+        target: { kind: "linked", ref: VALID_REF },
+        warning:
+          "--linked is deprecated and will be removed in v4. Use --remote instead: supabase inspect report --remote",
+      },
+      {
+        alias: "--project-ref",
+        cliArgs: ["inspect", "report", "--project-ref", FLAG_REF],
+        flags: { projectRef: Option.some(FLAG_REF) },
+        target: { kind: "linked", ref: FLAG_REF, source: "flag" },
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase inspect report --remote=${FLAG_REF}`,
+      },
+      {
+        alias: "--db-url",
+        cliArgs: ["inspect", "report", "--db-url", DEPRECATED_DB_URL],
+        flags: { dbUrl: Option.some(DEPRECATED_DB_URL) },
+        target: { kind: "db-url" },
+        warning:
+          "--db-url is deprecated and will be removed in v4. Use --remote instead: supabase inspect report --remote=<db-url>",
+      },
+      {
+        alias: "--local",
+        cliArgs: ["inspect", "report", "--local"],
+        flags: { local: true },
+        target: { kind: "local" },
+        warning:
+          "--local isn't needed (local is the default) and will be removed in v4: supabase inspect report",
+      },
+    ] as const satisfies ReadonlyArray<{
+      readonly alias: string;
+      readonly cliArgs: ReadonlyArray<string>;
+      readonly flags: Partial<InspectReportFlags>;
+      readonly target: Record<string, string>;
+      readonly warning: string;
+    }>;
+
+    for (const testCase of cases) {
+      it.effect(`${testCase.alias} still selects its target and warns`, () => {
+        const { layer, resolver, warnings } = setupReport({
+          csvs: DEFAULT_RULE_CSVS,
+          projectId: VALID_REF,
+          cliArgs: testCase.cliArgs,
+        });
+        return Effect.gen(function* () {
+          const base = yield* tempDir("supabase-report-out-");
+          yield* inspectReport(flags({ outputDir: base, ...testCase.flags }));
+          expect(resolver.connectionInput?.target).toMatchObject(testCase.target);
+          expect(warnings()).toEqual([testCase.warning]);
+        }).pipe(Effect.provide(layer));
+      });
+    }
+
+    it.effect("rejects --project-ref combined with --local", () => {
+      const { layer, resolver } = setupReport({ csvs: DEFAULT_RULE_CSVS });
+      return Effect.gen(function* () {
+        const error = yield* inspectReport(
+          flags({ local: true, projectRef: Option.some(FLAG_REF) }),
+        ).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(TargetProjectRefConflictError);
+        expect(resolver.connectionInput).toBeUndefined();
+      }).pipe(Effect.provide(layer));
+    });
   });
 
   it.effect("prints running + saved progress to stderr and the rules table to stdout", () => {
@@ -698,7 +831,7 @@ describe("inspect report through the real database-config resolver", () => {
     const { layer, connection } = setupReport({
       csvs: DEFAULT_RULE_CSVS,
       isLocal: false,
-      cliArgs: ["inspect", "report", "--project-ref", VALID_REF],
+      cliArgs: ["inspect", "report", `--remote=${VALID_REF}`],
       workdir: tempRoot.current,
       realLayers: true,
     });
@@ -706,7 +839,9 @@ describe("inspect report through the real database-config resolver", () => {
     return Effect.gen(function* () {
       const base = yield* tempDir("supabase-report-out-");
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-      yield* inspectReport(flags({ outputDir: base, projectRef: Option.some(VALID_REF) }));
+      yield* inspectReport(
+        flags({ outputDir: base, remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
+      );
       expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
         `GET /v1/projects/${VALID_REF}/config/database/pooler`,
         `POST /v1/projects/${VALID_REF}/cli/login-role`,
@@ -716,17 +851,17 @@ describe("inspect report through the real database-config resolver", () => {
       expect(connection.copiedSql).toHaveLength(14);
       assertPermissionDrift({
         command: "inspect report",
-        activeFlags: { "project-ref": VALID_REF, "output-dir": true },
+        activeFlags: { remote: VALID_REF, "output-dir": true },
         requests: asRecordedRequests(requests),
         exact: true,
       });
     }).pipe(Effect.scoped, Effect.provide(layer));
   });
 
-  it.effect("makes no Management API request for --local", () => {
+  it.effect("makes no Management API request for the default local target", () => {
     const { layer, connection } = setupReport({
       csvs: DEFAULT_RULE_CSVS,
-      cliArgs: ["inspect", "report", "--local"],
+      cliArgs: ["inspect", "report"],
       workdir: tempRoot.current,
       realLayers: true,
     });
@@ -734,14 +869,14 @@ describe("inspect report through the real database-config resolver", () => {
     return Effect.gen(function* () {
       const base = yield* tempDir("supabase-report-out-");
       yield* stubManagementApi(requests, () => undefined);
-      yield* inspectReport(flags({ outputDir: base, local: true }));
+      yield* inspectReport(flags({ outputDir: base }));
       const { files } = yield* dateFolderContents(base);
       expect(files).toHaveLength(14);
       expect(connection.copiedSql).toHaveLength(14);
       expect(requests).toEqual([]);
       assertPermissionDrift({
         command: "inspect report",
-        activeFlags: { local: true, "output-dir": true },
+        activeFlags: { "output-dir": true },
         requests: [],
         exact: true,
       });
