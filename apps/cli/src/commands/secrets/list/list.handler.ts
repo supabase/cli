@@ -7,16 +7,16 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
+import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
-  encodeGoToml,
-  encodeGoYaml,
-  goPtr,
-  goSlice,
-  goString,
-  goStruct,
-  goTomlListWrapper,
-} from "../../../command-internal/go-struct-output.encoders.ts";
+  encodeStructToml,
+  encodeStructYaml,
+  shapePtr,
+  shapeSlice,
+  shapeString,
+  shapeStruct,
+  shapeTomlListWrapper,
+} from "../../../command-internal/struct-output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
   SecretsEnvNotSupportedError,
@@ -40,19 +40,19 @@ function sortSecrets(secrets: Secrets): Secrets {
 }
 
 /** Struct shape for the secrets response; drives `-o yaml|toml` key casing. */
-const GO_SECRET_RESPONSE = goStruct([
-  ["name", goString],
-  ["updated_at", goPtr(goString)],
-  ["value", goString],
+const SECRET_RESPONSE_SHAPE = shapeStruct([
+  ["name", shapeString],
+  ["updated_at", shapePtr(shapeString)],
+  ["value", shapeString],
 ]);
 
-const GO_SECRETS_LIST = goSlice(GO_SECRET_RESPONSE);
+const SECRETS_LIST_SHAPE = shapeSlice(SECRET_RESPONSE_SHAPE);
 
-const GO_SECRETS_TOML_WRAPPER = goTomlListWrapper("secrets", GO_SECRET_RESPONSE);
+const SECRETS_TOML_WRAPPER_SHAPE = shapeTomlListWrapper("secrets", SECRET_RESPONSE_SHAPE);
 
 export const secretsList = Effect.fn("secrets.list")(function* (flags: SecretsListFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
@@ -70,23 +70,23 @@ export const secretsList = Effect.fn("secrets.list")(function* (flags: SecretsLi
     yield* fetching?.clear ?? Effect.void;
 
     const sorted = sortSecrets(response);
-    const goFmt = Option.getOrUndefined(goOutputFlag);
+    const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-    if (goFmt === "env") {
+    if (outputFlagFormat === "env") {
       return yield* new SecretsEnvNotSupportedError({
         message: "--output env flag is not supported",
       });
     }
-    if (goFmt === "json") {
-      yield* output.raw(encodeGoJson(sorted));
+    if (outputFlagFormat === "json") {
+      yield* output.raw(encodeSortedJson(sorted));
       return;
     }
-    if (goFmt === "yaml") {
-      yield* output.raw(encodeGoYaml(sorted, GO_SECRETS_LIST));
+    if (outputFlagFormat === "yaml") {
+      yield* output.raw(encodeStructYaml(sorted, SECRETS_LIST_SHAPE));
       return;
     }
-    if (goFmt === "toml") {
-      yield* output.raw(encodeGoToml({ secrets: sorted }, GO_SECRETS_TOML_WRAPPER));
+    if (outputFlagFormat === "toml") {
+      yield* output.raw(encodeStructToml({ secrets: sorted }, SECRETS_TOML_WRAPPER_SHAPE));
       return;
     }
 

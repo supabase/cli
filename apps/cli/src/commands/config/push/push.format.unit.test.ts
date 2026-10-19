@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import type { PushResource } from "./push.plan.ts";
 import type { PushSecretReport } from "./push.secrets.ts";
 import {
+  pushEnvSourcedLine,
   pushNotes,
   pushNotPushableLine,
   pushPayload,
@@ -288,6 +289,53 @@ describe("pushUpdatingLine", () => {
     expect(rendered).toContain(
       "auth.sms.test_otp.evil[31mred No config differences found. [update]",
     );
+  });
+});
+
+describe("pushEnvSourcedLine", () => {
+  test("names one shell-supplied path with its variable", () => {
+    expect(
+      pushEnvSourcedLine([
+        { path: ["api", "max_rows"], origin: { tier: "shell", envName: "SUPABASE_API_MAX_ROWS" } },
+      ]),
+    ).toBe("Pushing 1 value set by environment variables: api.max_rows (SUPABASE_API_MAX_ROWS)\n");
+  });
+
+  test("lists every path, adding the .env file for a project-env value", () => {
+    expect(
+      pushEnvSourcedLine([
+        {
+          path: ["auth", "site_url"],
+          origin: {
+            tier: "projectEnv",
+            envName: "SUPABASE_AUTH_SITE_URL",
+            file: "supabase/.env.local",
+          },
+        },
+        { path: ["api", "max_rows"], origin: { tier: "shell", envName: "SUPABASE_API_MAX_ROWS" } },
+      ]),
+    ).toBe(
+      "Pushing 2 values set by environment variables: " +
+        "auth.site_url (SUPABASE_AUTH_SITE_URL, supabase/.env.local), " +
+        "api.max_rows (SUPABASE_API_MAX_ROWS)\n",
+    );
+  });
+});
+
+describe("pushUpdatingLine origin notes", () => {
+  test("annotates only the rows an env origin supplied", () => {
+    const line = pushUpdatingLine({
+      resource: "api",
+      changes: [API_MAX_ROWS_CHANGE],
+      secrets: [],
+      ...NO_EXTRAS_OR_FORCED,
+      originFor: () => ({
+        tier: "projectEnv",
+        envName: "SUPABASE_API_MAX_ROWS",
+        file: "supabase/.env",
+      }),
+    });
+    expect(line).toContain("  local:  2000 (from SUPABASE_API_MAX_ROWS in supabase/.env)\n");
   });
 });
 
@@ -829,6 +877,30 @@ describe("pushPayload", () => {
     remoteOnly: 12,
     scope: { present: ["api", "auth", "database", "pooler", "realtime", "storage"], missing: [] },
   };
+
+  test("adds env_sourced only when an environment variable supplied a pushed value", () => {
+    expect(pushPayload(BASE_INPUT)).not.toHaveProperty("env_sourced");
+    expect(
+      pushPayload({
+        ...BASE_INPUT,
+        envSourced: [
+          {
+            path: ["api", "max_rows"],
+            origin: { tier: "projectEnv", envName: "SUPABASE_API_MAX_ROWS", file: "supabase/.env" },
+          },
+        ],
+      }),
+    ).toHaveProperty("env_sourced", [
+      {
+        path: ["api", "max_rows"],
+        origin: {
+          source: "project_env",
+          env_variable: "SUPABASE_API_MAX_ROWS",
+          file: "supabase/.env",
+        },
+      },
+    ]);
+  });
 
   test("shapes the full payload, bucketing secrets across all six statuses", () => {
     expect(pushPayload(BASE_INPUT)).toEqual({

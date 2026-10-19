@@ -45,9 +45,12 @@ export const vanitySubdomainsDelete = Effect.fn("vanity-subdomains.delete")(func
       // `--output` is ignored entirely (stderr-only success). We still read
       // the legacy flag so that an explicit --output suppresses the TS json/stream-json
       // success event, keeping stdout empty either way.
-      const goOutput = Option.getOrUndefined(outputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-      if (goOutput === undefined && (output.format === "json" || output.format === "stream-json")) {
+      if (
+        outputFlagFormat === undefined &&
+        (output.format === "json" || output.format === "stream-json")
+      ) {
         yield* output.success("Deleted vanity subdomain successfully.");
         return;
       }

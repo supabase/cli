@@ -61,7 +61,7 @@ Two-axis: `--output {pretty|json|yaml|toml|env}` wins when set; otherwise
 
 ### `--output-format text`
 
-Glamour ASCII table. Column order: `NAME`, `KEY VALUE`. A null api key renders as `******`.
+ASCII table. Column order: `NAME`, `KEY VALUE`. A null api key renders as `******`.
 
 ```
   NAME         | KEY VALUE
@@ -102,7 +102,7 @@ On failure, an `error` event is emitted instead:
 - API keys with null values (redacted by the API) render as `******` in text mode and
   in the toml/env env map; the json/yaml encodings preserve the raw `null`. Passing
   `--reveal` makes the API return the secret values, so they print in full across all
-  formats (issue #4775). This is a TS-only flag with no Go CLI equivalent.
+  formats (issue #4775).
 - The `--project-ref` flag is optional when the CLI is linked to a project via `supabase link`.
   When omitted, the ref is resolved flag → env → `.temp/project-ref` → prompt on a TTY,
   failing with a not-linked error otherwise.

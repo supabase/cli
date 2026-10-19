@@ -1,6 +1,6 @@
 import { Data, Effect, FileSystem, Predicate } from "effect";
 import type { ServiceCreationInput } from "@supabase/stack/effect";
-import { parseDotEnv } from "./dotenv.ts";
+import { parseDotEnv } from "../shared/config/dotenv.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,

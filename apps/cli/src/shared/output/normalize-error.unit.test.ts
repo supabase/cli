@@ -62,7 +62,7 @@ describe("normalizeCliError", () => {
     });
   });
 
-  test("MissingOption renders Go Cobra's `required flag(s) X not set` wording", () => {
+  test("MissingOption renders the `required flag(s) X not set` wording", () => {
     const error = { _tag: "MissingOption", option: "type" };
     expect(normalizeCliError(error)).toEqual({
       code: "MissingOption",
@@ -123,26 +123,26 @@ describe("normalizeCliError", () => {
     });
   });
 
-  test("InvalidValue passes a complete pflag-format diagnostic through verbatim (Go stderr parity, CLI-1983)", () => {
+  test("InvalidValue passes a complete `invalid argument` diagnostic through verbatim", () => {
     // This flag's diagnostic is emitted as a complete message in `expected`;
     // wrapping it in the generic "Invalid value..." template would double-frame it.
-    const pflagMessage =
+    const invalidValueMessage =
       'invalid argument "\\"1.2.3.4" for "--db-unban-ip" flag: parse error on line 1, column 9: extraneous or missing " in quoted-field';
     const error = new CliError.InvalidValue({
       option: "db-unban-ip",
       value: '"1.2.3.4',
-      expected: pflagMessage,
+      expected: invalidValueMessage,
       kind: "flag",
     });
 
     expect(normalizeCliError(error)).toEqual({
       code: "InvalidValue",
-      message: pflagMessage,
+      message: invalidValueMessage,
     });
   });
 
-  test("ShowHelp envelope unwraps a single InvalidValue carrying a pflag-format diagnostic verbatim", () => {
-    const pflagMessage =
+  test("ShowHelp envelope unwraps a single InvalidValue carrying an `invalid argument` diagnostic verbatim", () => {
+    const invalidValueMessage =
       'invalid argument "\\"1.2.3.0/24" for "--db-allow-cidr" flag: parse error on line 1, column 12: extraneous or missing " in quoted-field';
     const error = {
       _tag: "ShowHelp",
@@ -151,7 +151,7 @@ describe("normalizeCliError", () => {
         new CliError.InvalidValue({
           option: "db-allow-cidr",
           value: '"1.2.3.0/24',
-          expected: pflagMessage,
+          expected: invalidValueMessage,
           kind: "flag",
         }),
       ],
@@ -159,7 +159,7 @@ describe("normalizeCliError", () => {
 
     expect(normalizeCliError(error)).toEqual({
       code: "InvalidValue",
-      message: pflagMessage,
+      message: invalidValueMessage,
     });
   });
 
@@ -178,21 +178,19 @@ describe("normalizeCliError", () => {
     });
   });
 
-  test("InvalidValue surfaces a complete pflag-style 'expected' message verbatim (Go flag-parse parity)", () => {
+  test("InvalidValue surfaces a complete `invalid argument` 'expected' message verbatim", () => {
     // This flag's diagnostic already includes its own "invalid argument ..."
     // message in `expected`; wrapping it in the generic template would double it.
     const error = new CliError.InvalidValue({
       option: "jobs",
       value: "-1",
-      expected:
-        'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
+      expected: 'invalid argument "-1" for "-j, --jobs" flag: expected an unsigned integer',
       kind: "flag",
     });
 
     expect(normalizeCliError(error)).toEqual({
       code: "InvalidValue",
-      message:
-        'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
+      message: 'invalid argument "-1" for "-j, --jobs" flag: expected an unsigned integer',
     });
   });
 
@@ -216,7 +214,7 @@ describe("normalizeCliError", () => {
     });
   });
 
-  test("ShowHelp envelope unwraps a single MissingOption to Cobra wording", () => {
+  test("ShowHelp envelope unwraps a single MissingOption to the required-flag wording", () => {
     const error = {
       _tag: "ShowHelp",
       commandPath: ["sso", "add"],
@@ -228,7 +226,7 @@ describe("normalizeCliError", () => {
     });
   });
 
-  test("ShowHelp envelope unwraps a single UnrecognizedOption to its own message (no Go-parity mapping exists yet)", () => {
+  test("ShowHelp envelope unwraps a single UnrecognizedOption to its own message (no mapping exists yet)", () => {
     const error = {
       _tag: "ShowHelp",
       commandPath: ["branches"],

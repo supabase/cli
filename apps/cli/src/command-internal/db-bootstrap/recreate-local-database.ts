@@ -44,7 +44,6 @@ import {
 } from "./container-lifecycle.ts";
 import {
   runFreshDbSetup,
-  resolveResetSeedConfig,
   applyApiPrivileges,
   applyDatabaseWebhooks,
   initSchema14,
@@ -67,6 +66,7 @@ import {
   type KongReloadError,
   type RestartServicesError,
 } from "./restart-services.ts";
+import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -130,8 +130,6 @@ export interface RecreateLocalDatabaseInput<E> {
   readonly dbHealthTimeoutSeconds: number;
   /** The resolved reset migration version (`""` for every pending migration). */
   readonly version: string;
-  /** `db reset`'s `--no-seed`/`--sql-paths` — see {@link resolveResetSeedConfig}. */
-  readonly seedFlags: { readonly noSeed: boolean; readonly sqlPaths: ReadonlyArray<string> };
   /** The same shape `start-database.ts`'s `StartDatabaseInput.setup` uses — hoisted to {@link FreshDbSetupInput}. */
   readonly setup: FreshDbSetupInput<E>;
 }
@@ -262,6 +260,7 @@ const recreateLocalDatabase15 = <E>(
   | HttpClient.HttpClient
   | FileSystem.FileSystem
   | Path.Path
+  | CliConfigValues
 > =>
   Effect.gen(function* () {
     const output = yield* Output;
@@ -290,7 +289,7 @@ const recreateLocalDatabase15 = <E>(
     });
 
     // No fresh-volume gate needed: a reset just removed the volume above, so it's always fresh.
-    // Passes the resolved reset `version`/`seedFlags`, unlike `db start`'s own call.
+    // Passes the resolved reset `version`, unlike `db start`'s own call.
     yield* runFreshDbSetup(spawner, {
       fs: input.fs,
       path: input.path,
@@ -300,7 +299,6 @@ const recreateLocalDatabase15 = <E>(
       hostname: input.hostname,
       dbPort: input.dbPort,
       version: input.version,
-      seedFlags: input.seedFlags,
       setup: input.setup,
     });
 
@@ -325,6 +323,7 @@ const recreateLocalDatabase14 = <E>(
   | HttpClient.HttpClient
   | FileSystem.FileSystem
   | Path.Path
+  | CliConfigValues
 > =>
   Effect.gen(function* () {
     const { setup, fs, path, workdir } = input;
@@ -389,7 +388,7 @@ const recreateLocalDatabase14 = <E>(
         const session = yield* connectAs("postgres", "postgres");
         yield* migrateAndSeed(session, fs, path, workdir, input.version, {
           migrationsEnabled: toml.migrationsEnabled,
-          seed: resolveResetSeedConfig(toml.seed, input.seedFlags, path),
+          seed: toml.seed,
           experimental: setup.experimental,
           pgDeltaEnabled: toml.pgDelta.enabled,
           schemaPaths: toml.schemaPaths,
@@ -416,6 +415,7 @@ export const recreateLocalDatabase = <E>(
   | HttpClient.HttpClient
   | FileSystem.FileSystem
   | Path.Path
+  | CliConfigValues
 > =>
   (input.setup.majorVersion <= 14
     ? recreateLocalDatabase14(spawner, input)
