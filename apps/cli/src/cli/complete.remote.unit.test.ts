@@ -20,14 +20,27 @@ const names = (...words: ReadonlyArray<string>) =>
   complete(...words)?.candidates.map((candidate) => candidate.name);
 
 const noValueCandidates = { candidates: [], directive: CompletionDirective.NoFileComp };
+const positionalCandidates = { candidates: [], directive: CompletionDirective.Default };
+
+const PROJECT_REF = "abcdefghijklmnopqrst";
 
 describe("--remote flag-name completion", () => {
-  it("offers --remote as a bare switch, never --remote=", () => {
-    expect(names("db", "push", "--rem")).toEqual(["--remote"]);
+  it("offers --remote= so the next word is typed as its value", () => {
+    expect(names("db", "push", "--rem")).toEqual(["--remote="]);
   });
 
-  it("offers --remote after positionals", () => {
-    expect(names("db", "pull", "add_profiles", "--rem")).toEqual(["--remote"]);
+  it("offers --remote= after positionals", () => {
+    expect(names("db", "pull", "add_profiles", "--rem")).toEqual(["--remote="]);
+  });
+
+  it("asks the shell not to add a space after --remote=", () => {
+    expect(complete("db", "push", "--rem")?.directive).toBe(
+      CompletionDirective.NoFileComp | CompletionDirective.NoSpace,
+    );
+  });
+
+  it("keeps the space after a flag name that takes no value", () => {
+    expect(complete("db", "push", "--ot")?.directive).toBe(CompletionDirective.NoFileComp);
   });
 
   it("stops offering --remote once it is given", () => {
@@ -56,14 +69,15 @@ describe("the token after a bare --remote", () => {
   });
 
   it("is the positional while the command has a free positional slot", () => {
-    expect(complete("db", "pull", "--remote", "")).toEqual({
-      candidates: [],
-      directive: CompletionDirective.Default,
-    });
-    expect(complete("db", "query", "--remote", "sel")).toEqual({
-      candidates: [],
-      directive: CompletionDirective.Default,
-    });
+    expect(complete("db", "pull", "--remote", "")).toEqual(positionalCandidates);
+    expect(complete("db", "query", "--remote", "sel")).toEqual(positionalCandidates);
+  });
+
+  it("is the value when it is a project ref or a database URL, even with a free positional slot", () => {
+    expect(complete("db", "pull", "--remote", PROJECT_REF)).toEqual(noValueCandidates);
+    expect(complete("db", "query", "--remote", "postgresql://u:p@host:5432/db")).toEqual(
+      noValueCandidates,
+    );
   });
 
   it("is the value once the positionals are filled", () => {
@@ -71,11 +85,13 @@ describe("the token after a bare --remote", () => {
     expect(complete("db", "query", "select 1", "--remote", "")).toEqual(noValueCandidates);
   });
 
-  it("is always a positional when the command takes a variadic one", () => {
-    expect(complete("db", "cp", "a", "b", "--remote", "")).toEqual({
-      candidates: [],
-      directive: CompletionDirective.Default,
-    });
+  it("is a positional when the command takes a variadic one and the word could be an operand", () => {
+    expect(complete("db", "cp", "a", "b", "--remote", "")).toEqual(positionalCandidates);
+    expect(complete("db", "cp", "a", "--remote", "feat")).toEqual(positionalCandidates);
+  });
+
+  it("is the value on a variadic command once it is a project ref", () => {
+    expect(complete("db", "cp", "a", "--remote", PROJECT_REF)).toEqual(noValueCandidates);
   });
 
   it("does not stop flag completion from running after the bare switch", () => {

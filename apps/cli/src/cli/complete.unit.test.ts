@@ -93,10 +93,10 @@ describe("respondToComplete", () => {
 
   it("offers a non-root command's own declared global flags from a nested subcommand (Command.withGlobalFlags)", () => {
     const atGroup = respondToComplete(rootCommand, ["__complete", "seed", "--rem"]);
-    expect(atGroup?.candidates.map((c) => c.name)).toEqual(expect.arrayContaining(["--remote"]));
+    expect(atGroup?.candidates.map((c) => c.name)).toEqual(expect.arrayContaining(["--remote="]));
 
     const atLeaf = respondToComplete(rootCommand, ["__complete", "seed", "buckets", "--rem"]);
-    expect(atLeaf?.candidates.map((c) => c.name)).toEqual(expect.arrayContaining(["--remote"]));
+    expect(atLeaf?.candidates.map((c) => c.name)).toEqual(expect.arrayContaining(["--remote="]));
   });
 
   it("does not duplicate a flag name that exists both globally and as a command's own local flag", () => {
@@ -176,7 +176,7 @@ describe("respondToComplete", () => {
         "20240101000000",
         "--rem",
       ]);
-      expect(result?.candidates.map((c) => c.name)).toContain("--remote");
+      expect(result?.candidates.map((c) => c.name)).toContain("--remote=");
     });
 
     it("does not short-circuit on --help positioned after a genuine `--` terminator (it is positional, not a flag)", () => {
@@ -555,7 +555,7 @@ describe("respondToComplete", () => {
         "table",
         "--rem",
       ]);
-      expect(result?.candidates.map((c) => c.name)).toContain("--remote");
+      expect(result?.candidates.map((c) => c.name)).toContain("--remote=");
     });
 
     it("accepts the resource-command values (env/pretty/toml/yaml) outside db query", () => {
@@ -581,8 +581,8 @@ describe("respondToComplete", () => {
         "0x10",
         "--r",
       ]);
-      expect(result?.directive).toBe(CompletionDirective.NoFileComp);
-      expect(result?.candidates.map((c) => c.name)).toEqual(expect.arrayContaining(["--remote"]));
+      expect(result?.directive).toBe(CompletionDirective.NoFileComp | CompletionDirective.NoSpace);
+      expect(result?.candidates.map((c) => c.name)).toEqual(expect.arrayContaining(["--remote="]));
     });
 
     it("rejects a value one past int64 max for a plain (non-uint) integer flag", () => {
@@ -641,7 +641,7 @@ describe("respondToComplete", () => {
         "5s",
         "--rem",
       ]);
-      expect(queryTimeoutValid?.candidates.map((c) => c.name)).toContain("--remote");
+      expect(queryTimeoutValid?.candidates.map((c) => c.name)).toContain("--remote=");
 
       const validFor = respondToComplete(rootCommand, [
         "__complete",
@@ -687,7 +687,7 @@ describe("respondToComplete", () => {
         "2562047h47m16.854775807s",
         "--rem",
       ]);
-      expect(max?.candidates.map((c) => c.name)).toContain("--remote");
+      expect(max?.candidates.map((c) => c.name)).toContain("--remote=");
     });
 
     it("rejects a malformed value for the time flag (gen bearer-jwt --exp, RFC3339 only)", () => {

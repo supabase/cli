@@ -194,7 +194,7 @@ function valueTakingFlagTokenPredicateForArgv(
 }
 
 /** How the command `args` resolves to reads its operands, or `undefined` without `--remote` or when the command takes no `--remote`. */
-function remoteArgvLeafFor(
+export function remoteArgvLeafFor(
   rootCommand: Command.Command.Any,
   args: ReadonlyArray<string>,
 ): RemoteArgvLeaf | undefined {

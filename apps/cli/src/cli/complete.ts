@@ -9,9 +9,11 @@ import {
   RESOURCE_OUTPUT_FORMATS,
 } from "../command-internal/output-formats.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
-import { commandInternals } from "../docs/docs-introspection.ts";
+import { REMOTE_FLAG_NAME } from "../command-internal/target/remote-vocabulary.ts";
 import { isValidBase0Int64, parseUintBase0 } from "../shared/config/parse-uint.ts";
 import { parseStringSliceFlag } from "../command-internal/string-slice-flag.ts";
+import { joinRemoteOperands, type RemoteArgvLeaf } from "../shared/cli/remote-argv.ts";
+import { remoteArgvLeafFor } from "../shared/cli/run.ts";
 import { withAnalyticsContext } from "../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import {
@@ -50,6 +52,7 @@ export interface CompletionResult {
 /** Bit flags for the shell completion protocol's directive value. */
 export const CompletionDirective = {
   Default: 0,
+  NoSpace: 2,
   NoFileComp: 4,
   FilterFileExt: 8,
 } as const;
@@ -80,6 +83,8 @@ export interface ClassifyCompletionInput {
   readonly trimmedArgs: ReadonlyArray<string>;
   readonly toComplete: string;
   readonly inScopeFlags: ReadonlyArray<FlagDescriptor>;
+  /** How the argv rewrite reads this command's operands; absent when the command takes no `--remote`. */
+  readonly remoteLeaf?: RemoteArgvLeaf | undefined;
 }
 
 export interface CompleteDeps {
@@ -348,12 +353,22 @@ const COMPLETION_NO_FILE_COMP_PATHS: ReadonlySet<string> = new Set([
   "completion powershell",
 ]);
 
+/** Offered instead of a bare `--remote`, so the next word is typed as its value rather than read as an operand. */
+const REMOTE_FLAG_CANDIDATE = `--${REMOTE_FLAG_NAME}=`;
+
+/** `--remote=` takes its value right after the `=`, so the shell must not add a space. */
+function flagNameDirective(candidates: ReadonlyArray<CompletionCandidate>): number {
+  return candidates.some((candidate) => candidate.name === REMOTE_FLAG_CANDIDATE)
+    ? CompletionDirective.NoFileComp | CompletionDirective.NoSpace
+    : CompletionDirective.NoFileComp;
+}
+
 function flagNameCandidates(
   flag: FlagDescriptor,
   toComplete: string,
 ): ReadonlyArray<CompletionCandidate> {
   const candidates: Array<CompletionCandidate> = [];
-  const long = `--${flag.name}`;
+  const long = flag.name === REMOTE_FLAG_NAME ? REMOTE_FLAG_CANDIDATE : `--${flag.name}`;
   if (long.startsWith(toComplete)) candidates.push({ name: long, description: flag.description });
   for (const alias of flag.aliases) {
     if (alias.length !== 1) continue;
@@ -656,23 +671,19 @@ function outputFlagChoiceKeys(matchedPath: ReadonlyArray<string>): ReadonlyArray
 }
 
 /**
- * `--remote` is tagged as a boolean so a bare `--remote` parses, yet `--remote=<value>` takes any
- * text; the runtime rejects `false` and the empty value with a clear error of its own.
+ * Whether the word being typed after a bare `--remote` would be joined into `--remote=<word>` by
+ * the argv rewrite, so it completes as the flag's value rather than as an operand.
  */
-const REMOTE_FLAG = "remote";
-
-/**
- * Whether the token after a bare `--remote` is read as its value rather than a positional,
- * mirroring the argv rewrite: always for a command with no positional, and for a token past the
- * last positional slot. A variadic positional never runs out of slots.
- */
-function remoteTakesNextToken(
-  finalCommand: Command.Command.Any,
-  leftoverArgs: ReadonlyArray<string>,
+function remoteTakesWord(
+  remoteLeaf: RemoteArgvLeaf | undefined,
+  trimmedArgs: ReadonlyArray<string>,
+  toComplete: string,
 ): boolean {
-  const positionals = commandInternals(finalCommand).config.arguments;
-  if (positionals.some((param) => unwrapParam(param)?.isVariadic === true)) return false;
-  return leftoverArgs.length >= positionals.length;
+  if (remoteLeaf === undefined) return false;
+  // An empty word has no shape yet, so it is read as the branch name it may become.
+  const word = toComplete === "" ? "branch" : toComplete;
+  const joined = joinRemoteOperands([...trimmedArgs, word], remoteLeaf);
+  return joined[joined.length - 1] === `--${REMOTE_FLAG_NAME}=${word}`;
 }
 
 /**
@@ -687,7 +698,7 @@ function isValidFlagValue(
   flag: FlagDescriptor,
   value: string,
 ): boolean {
-  if (flag.name === REMOTE_FLAG) return true;
+  if (flag.name === REMOTE_FLAG_NAME) return true;
   const key = `${matchedPath.join(" ")}:${flag.name}`;
   if (COMPLETION_UINT_FLAGS.has(key)) {
     return "value" in parseUintBase0(value);
@@ -823,7 +834,7 @@ function flagValueCompletion(
   matchedPath: ReadonlyArray<string>,
   flagName: string | undefined,
 ): CompletionResult {
-  if (flagName === REMOTE_FLAG) {
+  if (flagName === REMOTE_FLAG_NAME) {
     return { candidates: [], directive: CompletionDirective.NoFileComp };
   }
   const key = flagName === undefined ? undefined : `${matchedPath.join(" ")}:${flagName}`;
@@ -880,6 +891,7 @@ function helpArgumentCandidates(
  */
 export function classifyCompletion(input: ClassifyCompletionInput): CompletionResult {
   const { finalCommand, matchedPath, leftoverArgs, trimmedArgs, toComplete, inScopeFlags } = input;
+  const { remoteLeaf } = input;
   const isAtRoot = matchedPath.length === 0;
 
   if (findUnresolvedFlagToken(trimmedArgs, toComplete, inScopeFlags, matchedPath) !== undefined) {
@@ -922,12 +934,12 @@ export function classifyCompletion(input: ClassifyCompletionInput): CompletionRe
     );
     // If any required flag is still unset, only required flags are offered.
     if (requiredCandidates.length > 0) {
-      return { candidates: requiredCandidates, directive: CompletionDirective.NoFileComp };
+      return { candidates: requiredCandidates, directive: flagNameDirective(requiredCandidates) };
     }
     const candidates = inScopeFlags
       .filter((flag) => !flag.hidden && (!changedFlagNames.has(flag.name) || flag.isVariadic))
       .flatMap((flag) => flagNameCandidates(flag, toComplete));
-    return { candidates, directive: CompletionDirective.NoFileComp };
+    return { candidates, directive: flagNameDirective(candidates) };
   }
 
   // Case 2: flag-VALUE completion.
@@ -958,7 +970,10 @@ export function classifyCompletion(input: ClassifyCompletionInput): CompletionRe
       if (!resolved.isBoolean) {
         return flagValueCompletion(matchedPath, resolved.name);
       }
-      if (resolved.name === REMOTE_FLAG && remoteTakesNextToken(finalCommand, leftoverArgs)) {
+      if (
+        resolved.name === REMOTE_FLAG_NAME &&
+        remoteTakesWord(remoteLeaf, trimmedArgs, toComplete)
+      ) {
         return flagValueCompletion(matchedPath, resolved.name);
       }
       // A resolved boolean precedingToken falls through to Case 3, since it never
@@ -1045,6 +1060,7 @@ export function respondToComplete(
     trimmedArgs,
     toComplete,
     inScopeFlags,
+    remoteLeaf: remoteArgvLeafFor(root, [...trimmedArgs, toComplete]),
   });
 }
 

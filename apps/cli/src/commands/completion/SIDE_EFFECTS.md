@@ -96,8 +96,10 @@ for this doc — see that file's own doc comments — but its externally-visible
 format, env vars, and exit codes are documented here since it has no `SIDE_EFFECTS.md`
 of its own. The wire format written to stdout: one line per candidate (`name` or, when
 descriptions are enabled and present, `name\t<first line of description>`), followed by
-a final `:<directive>` line (an integer — `0` default, `4` "no file completion", `8`
-"filter by file extension", a subset of the `ShellCompDirective` bits).
+a final `:<directive>` line (an integer — `0` default, `2` "no space after the completion", `4`
+"no file completion", `8` "filter by file extension", a subset of the `ShellCompDirective`
+bits). A flag-name completion that offers `--remote=` carries `2` so the shell leaves the cursor
+right after the `=`.
 
 ## Notes
 
