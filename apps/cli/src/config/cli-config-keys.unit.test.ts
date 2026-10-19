@@ -1,4 +1,6 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- the source scan runs synchronously at module load, before any test provides services.
 import { readdirSync, readFileSync } from "node:fs";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- see above.
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -222,7 +224,7 @@ describe("config key registry", () => {
   it.effect("defaults every key to what the schema decodes from an empty document", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
-      const decoded = Schema.decodeUnknownSync(CliConfigSchema)({});
+      const decoded = yield* Schema.decodeEffect(CliConfigSchema)({});
       const context = {
         workdir: "/work/proj",
         projectRef: Option.none<string>(),

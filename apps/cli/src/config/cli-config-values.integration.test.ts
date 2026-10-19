@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import type { CliConfig } from "@supabase/config";
 import { loadCliConfig } from "@supabase/config/internal";
-import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 
 import { withConfigEnv } from "../../tests/helpers/command-mocks.ts";
 import { definedEnv } from "../../tests/helpers/config-env-pins.ts";
@@ -37,6 +37,8 @@ const OTHER = "tsrqponmlkjihgfedcba";
 const CIPHERTEXT =
   "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
 const PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const familyKey = (id: CliConfigFamilyId, name: string, field: string) => {
   const family = CLI_CONFIG_FAMILIES.find((candidate) => candidate.id === id);
@@ -901,7 +903,10 @@ describe("CliConfigValues reads", () => {
               typeof node === "object" && node !== null ? Reflect.get(node, segment) : undefined,
             resolvedConfig.materialized.config,
           );
-        if (JSON.stringify(resolved) !== JSON.stringify(materialized)) mismatches.push(key.path);
+        // Wrapped so an absent value encodes as `{}` rather than failing to encode.
+        const resolvedJson = yield* encodeJson({ value: resolved });
+        const materializedJson = yield* encodeJson({ value: materialized });
+        if (resolvedJson !== materializedJson) mismatches.push(key.path);
       }
 
       expect(compared).toBeGreaterThan(100);

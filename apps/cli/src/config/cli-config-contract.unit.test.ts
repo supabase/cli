@@ -17,11 +17,7 @@ import { pickCliConfigKey, type CliConfigSources } from "./cli-config-key.ts";
 import { CliConfigKeys, cliConfigFamilyKey, cliConfigRegistry } from "./cli-config-keys.ts";
 import type { AnyCliConfigKey } from "./cli-config-keys.ts";
 
-const pathService = Effect.runSync(
-  Effect.gen(function* () {
-    return yield* Path.Path;
-  }).pipe(Effect.provide(Path.layer)),
-);
+const pathService = Effect.runSync(Effect.provide(Path.Path, Path.layer));
 
 const CIPHERTEXT =
   "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";

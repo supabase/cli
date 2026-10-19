@@ -1759,15 +1759,17 @@ describe("withCommandTelemetry", () => {
         ran = true;
       }).pipe(
         withCommandTelemetry(),
-        Effect.provide(Layer.succeed(CreateTicketFlag, true)),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
-        Effect.provide(Stdio.layerTest({ args: Effect.succeed(args) })),
         Effect.provide(
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          Layer.mergeAll(
+            Layer.succeed(CreateTicketFlag, true),
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({ args: Effect.succeed(args) }),
+            commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+            telemetryState.layer,
+          ),
         ),
-        Effect.provide(telemetryState.layer),
         Effect.exit,
       );
       return { run, analytics, telemetryState, didRun: () => ran };

@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Console, Context, Effect, Layer, Option } from "effect";
+import { Console, Context, Effect, Layer, Option, Schema } from "effect";
 import { CliOutput, Command, Flag } from "effect/cli";
 
 import { fakeConsole } from "../../tests/helpers/mocks.ts";
@@ -16,6 +16,9 @@ import {
 } from "./cli-config-flags.ts";
 import { portCodec, requiredCliConfigKey } from "./cli-config-key.ts";
 import { CliConfigKeys } from "./cli-config-keys.ts";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const config = {
   noSeed: CliConfigKeys.db.seed.enabled.flag({
@@ -131,7 +134,7 @@ describe("key.flag", () => {
       const error = yield* run(["--proxy-port", "70000"]).pipe(Effect.flip);
 
       expect(error).toMatchObject({ _tag: "ShowHelp", errors: [{ _tag: "InvalidValue" }] });
-      expect(JSON.stringify(error)).toContain("70000");
+      expect(yield* encodeJson(error)).toContain("70000");
     }),
   );
 
@@ -259,10 +262,16 @@ describe("config-bound flags in machine-readable help", () => {
         ),
       );
 
-      const help = JSON.parse(calls[0]?.replace(/^log:/, "") ?? "{}");
-      const sqlPaths = help.doc.flags.find((flag: { name: string }) => flag.name === "sql-paths");
-      expect(help.doc).not.toHaveProperty("annotations");
-      expect(sqlPaths).toMatchObject({ required: false });
+      const help = yield* decodeJson(calls[0]?.replace(/^log:/, "") ?? "{}");
+      expect(help).toHaveProperty("doc.flags");
+      expect(help).not.toHaveProperty("doc.annotations");
+      expect(help).toMatchObject({
+        doc: {
+          flags: expect.arrayContaining([
+            expect.objectContaining({ name: "sql-paths", required: false }),
+          ]),
+        },
+      });
     }).pipe(Effect.scoped),
   );
 });
