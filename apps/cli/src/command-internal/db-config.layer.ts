@@ -817,7 +817,8 @@ export const dbConfigResolverLayer = Layer.effect(
       Effect.gen(function* () {
         const { target } = input;
         const linkedCheckout =
-          target.kind === "local" && (yield* isCheckoutLinked(fs, path, cliSettings.workdir));
+          target.kind === "local" &&
+          (yield* isCheckoutLinked(fs, path, cliSettings.workdir, cliSettings.projectId));
         if (target.kind !== "linked") {
           yield* rejectTargetPassword(target.kind, input.password, linkedCheckout);
         }
