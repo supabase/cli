@@ -19,11 +19,8 @@ import { inspectDbIndexUsage } from "./index-usage/index-usage.handler.ts";
 import { inspectDbRoleConfigs } from "./role-configs/role-configs.handler.ts";
 import { inspectDbRoleConnections } from "./role-connections/role-connections.handler.ts";
 import { inspectDbSeqScans } from "./seq-scans/seq-scans.handler.ts";
-import { inspectDbTableIndexSizes } from "./table-index-sizes/table-index-sizes.handler.ts";
 import { inspectDbTableRecordCounts } from "./table-record-counts/table-record-counts.handler.ts";
 import { inspectDbTableSizes } from "./table-sizes/table-sizes.handler.ts";
-import { inspectDbTotalIndexSize } from "./total-index-size/total-index-size.handler.ts";
-import { inspectDbTotalTableSizes } from "./total-table-sizes/total-table-sizes.handler.ts";
 import { inspectDbUnusedIndexes } from "./unused-indexes/unused-indexes.handler.ts";
 
 const LOCAL_CONN: PgConnInput = {
@@ -87,7 +84,6 @@ interface AliasCase {
   readonly handler: AliasHandler;
   readonly routedSpec: InspectQuerySpec;
   readonly target: string;
-  readonly removedInV3?: boolean;
 }
 
 // One row per deprecated alias: the deprecation target text and the active
@@ -105,13 +101,6 @@ const cases: ReadonlyArray<AliasCase> = [
     handler: inspectDbIndexUsage,
     routedSpec: indexStatsSpec,
     target: "index-stats",
-  },
-  {
-    alias: "total-index-size",
-    handler: inspectDbTotalIndexSize,
-    routedSpec: indexStatsSpec,
-    target: "index-stats",
-    removedInV3: true,
   },
   {
     alias: "index-sizes",
@@ -144,20 +133,6 @@ const cases: ReadonlyArray<AliasCase> = [
     target: "table-stats",
   },
   {
-    alias: "table-index-sizes",
-    handler: inspectDbTableIndexSizes,
-    routedSpec: tableStatsSpec,
-    target: "table-stats",
-    removedInV3: true,
-  },
-  {
-    alias: "total-table-sizes",
-    handler: inspectDbTotalTableSizes,
-    routedSpec: tableStatsSpec,
-    target: "table-stats",
-    removedInV3: true,
-  },
-  {
     alias: "role-configs",
     handler: inspectDbRoleConfigs,
     routedSpec: roleStatsSpec,
@@ -172,8 +147,8 @@ const cases: ReadonlyArray<AliasCase> = [
 ];
 
 describe("inspect db deprecated aliases", () => {
-  it("covers all 12 deprecated aliases", () => {
-    expect(cases).toHaveLength(12);
+  it("covers all 9 deprecated aliases", () => {
+    expect(cases).toHaveLength(9);
   });
 
   for (const testCase of cases) {
@@ -181,10 +156,9 @@ describe("inspect db deprecated aliases", () => {
       const ctx = setup();
       return Effect.gen(function* () {
         yield* testCase.handler(flags);
-        const expected = testCase.removedInV3
-          ? `Command "${testCase.alias}" is deprecated and will be removed in v3, use "${testCase.target}" instead.\n`
-          : `Command "${testCase.alias}" is deprecated, use "${testCase.target}" instead.\n`;
-        expect(ctx.out.stderrText).toContain(expected);
+        expect(ctx.out.stderrText).toContain(
+          `Command "${testCase.alias}" is deprecated, use "${testCase.target}" instead.\n`,
+        );
         expect(ctx.out.stdoutText).not.toContain("is deprecated");
         expect(ctx.querySql).toBe(testCase.routedSpec.sql);
       }).pipe(Effect.provide(ctx.layer));

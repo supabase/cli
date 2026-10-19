@@ -77,7 +77,7 @@ const runInspectReport = Effect.fnUntraced(function* (
 
   // Validated before any DB work so a malformed config aborts before connecting or writing
   // CSVs; applied later in the summary rendering below.
-  const configRules = yield* readInspectRules(fs, path, cliSettings.workdir);
+  const configRules = yield* readInspectRules(cliSettings.workdir);
 
   // `--linked` is the default, so absence of the others resolves to linked.
   const connType = target.connType ?? "linked";
