@@ -5,11 +5,13 @@ import { Command, Flag } from "effect/cli";
 import { describe, expect, it } from "vitest";
 
 import { ExperimentalFlag } from "../command-internal/global-flags.ts";
+import { remoteFlag } from "../../tests/helpers/remote-flag-fixture.ts";
 
 import { rootCommand } from "../cli/root.ts";
 import { readDocsContent } from "./docs-spec.content.ts";
 import {
   buildDocsSpec,
+  docsFlagDoc,
   docsOverlayPath,
   docsStripOverlayHeading,
   stringifyDocsSpec,
@@ -73,6 +75,19 @@ describe("docsStripOverlayHeading", () => {
     expect(docsStripOverlayHeading("Creates a resource.\nMore.\n")).toBe(
       "Creates a resource.\nMore.\n",
     );
+  });
+});
+
+describe("docsFlagDoc", () => {
+  it("renders --remote with the value hint of the command's target group", () => {
+    const doc = docsFlagDoc(["supabase", "db", "push"], remoteFlag, "<ref|branch|url>");
+
+    expect(doc?.name).toBe("--remote[=<ref|branch|url>]");
+    expect(doc?.id).toBe("remote");
+  });
+
+  it("renders --remote as a bare switch where the command takes no value hint", () => {
+    expect(docsFlagDoc(["supabase", "db", "push"], remoteFlag)?.name).toBe("--remote");
   });
 });
 
