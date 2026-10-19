@@ -18,15 +18,16 @@ export interface RemoteArgvLeaf {
 const LINKED_LITERALS: ReadonlySet<string> = new Set(["true", "yes", "on", "1"]);
 const DB_URL_PATTERN = /^postgres(ql)?:\/\//;
 
-/**
- * Joins a bare `--remote <word>` into `--remote=<word>` when the word cannot be one of the
- * command's operands: the command takes none, the word is a project ref, a database URL or a
- * boolean literal, or the command already has more operands than it takes.
- */
-export function joinRemoteOperands(
-  args: ReadonlyArray<string>,
-  leaf: RemoteArgvLeaf,
-): ReadonlyArray<string> {
+interface RemoteArgvScan {
+  /** Indexes of the bare (non-flag, non-flag-value) tokens ahead of any `--`. */
+  readonly bare: ReadonlyArray<number>;
+  /** Indexes of the `--remote` tokens that carry no inline value. */
+  readonly remotes: ReadonlyArray<number>;
+  /** Index of the first `--`, or `args.length`. */
+  readonly end: number;
+}
+
+const scanRemoteArgv = (args: ReadonlyArray<string>, leaf: RemoteArgvLeaf): RemoteArgvScan => {
   const bare: Array<number> = [];
   const remotes: Array<number> = [];
   let end = args.length;
@@ -50,6 +51,19 @@ export function joinRemoteOperands(
       index += 1;
     }
   }
+  return { bare, remotes, end };
+};
+
+/**
+ * Joins a bare `--remote <word>` into `--remote=<word>` when the word cannot be one of the
+ * command's operands: the command takes none, the word is a project ref, a database URL or a
+ * boolean literal, or the command already has more operands than it takes.
+ */
+export function joinRemoteOperands(
+  args: ReadonlyArray<string>,
+  leaf: RemoteArgvLeaf,
+): ReadonlyArray<string> {
+  const { bare, remotes, end } = scanRemoteArgv(args, leaf);
 
   const operandCount =
     bare.length - leaf.pathLength + (end < args.length ? args.length - end - 1 : 0);
@@ -74,6 +88,32 @@ export function joinRemoteOperands(
     if (joined.has(index)) return [`--remote=${args[index + 1]}`];
     return joined.has(index - 1) ? [] : [arg];
   });
+}
+
+const UNKNOWN_LEAF: RemoteArgvLeaf = {
+  pathLength: 0,
+  operandCapacity: Infinity,
+  consumesNextToken: () => false,
+};
+
+/**
+ * The word a bare `--remote` is directly followed by when the command took it as an operand and
+ * it could name a branch, so it may be meant as `--remote=<word>`. Without a `leaf` no word is
+ * known to be a command-path segment.
+ */
+export function bareRemoteOperand(
+  args: ReadonlyArray<string>,
+  leaf: RemoteArgvLeaf = UNKNOWN_LEAF,
+): string | undefined {
+  const { bare, remotes } = scanRemoteArgv(args, leaf);
+  for (const index of remotes) {
+    const word = args[index + 1];
+    if (word === undefined || word.startsWith("-")) continue;
+    const ordinal = bare.indexOf(index + 1);
+    if (ordinal === -1 || ordinal < leaf.pathLength) continue;
+    if (couldNameBranch(word)) return word;
+  }
+  return undefined;
 }
 
 /**

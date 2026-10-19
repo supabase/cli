@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { rootCommandForFeatures } from "../../cli/root.ts";
-import { joinRemoteOperands, type RemoteArgvLeaf } from "./remote-argv.ts";
-import { rewriteRemoteArgv } from "./run.ts";
+import { bareRemoteOperand, joinRemoteOperands, type RemoteArgvLeaf } from "./remote-argv.ts";
+import { remoteArgvLeafFor, rewriteRemoteArgv } from "./run.ts";
 
 const REF = "abcdefghijklmnopqrst";
 const URL = "postgresql://postgres:secret@db.example.com:5432/postgres";
@@ -125,6 +125,74 @@ describe("joinRemoteOperands", () => {
   });
 });
 
+describe("bareRemoteOperand", () => {
+  const cases: ReadonlyArray<{
+    readonly name: string;
+    readonly leaf: RemoteArgvLeaf | undefined;
+    readonly args: ReadonlyArray<string>;
+    readonly expected: string | undefined;
+  }> = [
+    {
+      name: "returns the branch-shaped word the command took as its operand",
+      leaf: oneOperand,
+      args: ["db", "pull", "--remote", "feature-x"],
+      expected: "feature-x",
+    },
+    {
+      name: "skips a word that is a command-path segment",
+      leaf: noOperands,
+      args: ["seed", "--remote", "buckets"],
+      expected: undefined,
+    },
+    {
+      name: "skips a path segment that follows another path segment",
+      leaf: noOperands,
+      args: ["db", "--remote", "push"],
+      expected: undefined,
+    },
+    {
+      name: "counts path segments past another flag's value",
+      leaf: oneOperand,
+      args: ["db", "-p", "secret", "pull", "--remote", "feature-x"],
+      expected: "feature-x",
+    },
+    {
+      name: "treats every word as an operand when the command is unknown",
+      leaf: undefined,
+      args: ["seed", "--remote", "buckets"],
+      expected: "buckets",
+    },
+    {
+      name: "skips a word that cannot name a branch",
+      leaf: oneOperand,
+      args: ["storage", "ls", "--remote", "ss:///bucket"],
+      expected: undefined,
+    },
+    {
+      name: "skips a flag",
+      leaf: oneOperand,
+      args: ["db", "pull", "--remote", "--dry-run"],
+      expected: undefined,
+    },
+    {
+      name: "skips a word after --",
+      leaf: oneOperand,
+      args: ["db", "pull", "--remote", "--", "feature-x"],
+      expected: undefined,
+    },
+    {
+      name: "ignores an inline value",
+      leaf: oneOperand,
+      args: ["db", "pull", "--remote=feature-x", "other"],
+      expected: undefined,
+    },
+  ];
+
+  it.each(cases)("$name", ({ leaf, args, expected }) => {
+    expect(bareRemoteOperand(args, leaf)).toBe(expected);
+  });
+});
+
 describe("rewriteRemoteArgv", () => {
   const root = rootCommandForFeatures();
   const cases: ReadonlyArray<{
@@ -186,5 +254,28 @@ describe("rewriteRemoteArgv", () => {
 
   it.each(cases)("$name", ({ args, expected }) => {
     expect(rewriteRemoteArgv(root, args)).toEqual(expected);
+  });
+});
+
+describe("bareRemoteOperand on the real command tree", () => {
+  const root = rootCommandForFeatures();
+  const operandOf = (raw: ReadonlyArray<string>) => {
+    const args = rewriteRemoteArgv(root, raw);
+    return bareRemoteOperand(args, remoteArgvLeafFor(root, args));
+  };
+
+  it.each([
+    { name: "seed's subcommand", args: ["seed", "--remote", "buckets"] },
+    { name: "db's subcommand", args: ["db", "--remote", "push"] },
+  ])("does not read $name as an operand", ({ args }) => {
+    expect(operandOf(args)).toBeUndefined();
+  });
+
+  it("reads db pull's migration-name operand, which may be a branch", () => {
+    expect(operandOf(["db", "pull", "--remote", "feature-x"])).toBe("feature-x");
+  });
+
+  it("finds nothing once every word is joined into --remote=<word>", () => {
+    expect(operandOf(["db", "push", "--remote", "feature-x"])).toBeUndefined();
   });
 });

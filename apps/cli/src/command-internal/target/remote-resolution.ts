@@ -2,6 +2,7 @@ import { Effect, Option } from "effect";
 
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { bareRemoteOperand } from "../../shared/cli/remote-argv.ts";
 import { CommandTarget } from "../../shared/output/command-target.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { yellow } from "../colors.ts";
@@ -12,25 +13,11 @@ import {
   resolveLinkBranchRef,
   type BranchResolution,
 } from "./branch-resolution.ts";
-import { couldNameBranch, type RemoteValue } from "./remote-value.ts";
+import type { RemoteValue } from "./remote-value.ts";
 import { deprecationMessages, remoteFlagText } from "./target-deprecation.ts";
 import { renderBranchTarget } from "./target-identity.ts";
 import type { TargetDeprecation } from "./target-selector.ts";
 import { TargetRemoteAmbiguousError } from "./target.errors.ts";
-
-/**
- * The word a bare `--remote` is directly followed by when it could name a branch. A bare
- * `--remote` ahead of an operand reaches the command as a flag plus a positional, so the word may
- * be meant as `--remote=<word>`.
- */
-const bareRemoteOperand = (argv: ReadonlyArray<string>): string | undefined => {
-  const end = argv.indexOf("--");
-  const flags = end === -1 ? argv : argv.slice(0, end);
-  const index = flags.indexOf("--remote");
-  const next = index === -1 ? undefined : flags[index + 1];
-  if (next === undefined || next.startsWith("-")) return undefined;
-  return couldNameBranch(next) ? next : undefined;
-};
 
 /** Prints one warning per deprecated selector flag the run used on stderr in every output format, rebuilt from the real command line when it is known. */
 export const warnTargetDeprecations = Effect.fnUntraced(function* (
@@ -56,7 +43,9 @@ export const rejectAmbiguousRemote = Effect.fn("Target.checkRemoteOperand")(func
 ) {
   if (!Option.exists(remote, (value) => value._tag === "Linked")) return;
   const cliArgs = yield* Effect.serviceOption(CliArgs);
-  const operand = Option.isSome(cliArgs) ? bareRemoteOperand(cliArgs.value.args) : undefined;
+  const operand = Option.isSome(cliArgs)
+    ? bareRemoteOperand(cliArgs.value.args, cliArgs.value.remoteLeaf)
+    : undefined;
   if (operand === undefined) return;
   const parent = yield* resolveLinkedParentRef();
   if (parent.kind !== "resolved") return;

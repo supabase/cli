@@ -59,7 +59,7 @@ import {
   resolveAgentOutputFormatFromArgs,
   ROOT_BOOLEAN_FLAGS,
 } from "./agent-output.ts";
-import { joinRemoteOperands, remoteOperandCapacity } from "./remote-argv.ts";
+import { joinRemoteOperands, remoteOperandCapacity, type RemoteArgvLeaf } from "./remote-argv.ts";
 import { SuccessTrailer, successTrailerLayer } from "./success-trailer.ts";
 import type { CliErrorSuggestionContext } from "./subcommand-flag-suggestions.ts";
 import {
@@ -188,17 +188,17 @@ function valueTakingFlagTokenPredicateForArgv(
   return (token) => isGlobalValueFlagToken(token) || leafPredicate(token);
 }
 
-/** `args` with a bare `--remote <word>` joined to `--remote=<word>` wherever the command's operands leave no other reading. */
-export function rewriteRemoteArgv(
+/** How the command `args` resolves to reads its operands, or `undefined` without `--remote` or when the command takes no `--remote`. */
+export function remoteArgvLeafFor(
   rootCommand: Command.Command.Any,
   args: ReadonlyArray<string>,
-): ReadonlyArray<string> {
-  if (!args.includes("--remote")) return args;
+): RemoteArgvLeaf | undefined {
+  if (!args.includes("--remote")) return undefined;
   const path = resolvedCommandPathForArgv(rootCommand, extractCommandPath(args));
   const operandCapacity = remoteOperandCapacity(rootCommand, path);
-  if (operandCapacity === undefined) return args;
+  if (operandCapacity === undefined) return undefined;
   const isValueTakingToken = valueTakingFlagTokenPredicateForArgv(rootCommand, args);
-  return joinRemoteOperands(args, {
+  return {
     pathLength: path.length - 1,
     operandCapacity,
     consumesNextToken: (token) => {
@@ -208,7 +208,16 @@ export function rewriteRemoteArgv(
         shortClusterConsumesNextToken(token, isValueTakingToken)
       );
     },
-  });
+  };
+}
+
+/** `args` with a bare `--remote <word>` joined to `--remote=<word>` wherever the command's operands leave no other reading. */
+export function rewriteRemoteArgv(
+  rootCommand: Command.Command.Any,
+  args: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  const leaf = remoteArgvLeafFor(rootCommand, args);
+  return leaf === undefined ? args : joinRemoteOperands(args, leaf);
 }
 
 /** Whether `token` is an occurrence of the long or exact-short boolean flag `name`, bare or valued (`--help`, `--help=false`). */
@@ -623,7 +632,9 @@ function cliProgramFor<
     Layer.provideMerge(projectLinkStateLayer),
     Layer.provideMerge(runtimeLayer),
     Layer.provideMerge(fallbackCommandLayer),
-    Layer.provideMerge(Layer.succeed(CliArgs, { args })),
+    Layer.provideMerge(
+      Layer.succeed(CliArgs, { args, remoteLeaf: remoteArgvLeafFor(rootCommand, args) }),
+    ),
     Layer.provideMerge(BunServices.layer),
   );
   return withoutParseErrorHelpDump(

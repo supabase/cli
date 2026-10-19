@@ -10,10 +10,12 @@ import {
 } from "../../../tests/helpers/command-mocks.ts";
 import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import { rootCommandForFeatures } from "../../cli/root.ts";
 import { ProjectRefNotLinkedError } from "../../config/project-ref.errors.ts";
 import { ProjectRefResolver } from "../../config/project-ref.service.ts";
 import type { ProjectRefSource } from "../../config/project-ref.service.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { remoteArgvLeafFor, rewriteRemoteArgv } from "../../shared/cli/run.ts";
 import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 import { announceTarget } from "../../shared/output/command-target.service.ts";
 import type { OutputFormat } from "../../shared/output/types.ts";
@@ -55,6 +57,13 @@ const branchRow = (name: string, projectRef = BRANCH_REF) => ({
   with_data: true,
 });
 
+const root = rootCommandForFeatures();
+
+const cliArgsFor = (raw: ReadonlyArray<string>) => {
+  const args = rewriteRemoteArgv(root, raw);
+  return { args, remoteLeaf: remoteArgvLeafFor(root, args) };
+};
+
 const projectRefResolver = (options: { readonly linked: boolean }) => {
   const flags: Array<Option.Option<string>> = [];
   const layer = Layer.succeed(ProjectRefResolver, {
@@ -87,6 +96,7 @@ const run = (
     readonly savedRef?: string;
     readonly cache?: { readonly ref: string; readonly name?: string };
     readonly args?: ReadonlyArray<string>;
+    readonly cliArgs?: ReturnType<typeof cliArgsFor>;
     readonly format?: OutputFormat;
     readonly branches?: ReadonlyArray<ReturnType<typeof branchRow>> | "unavailable";
   } = {},
@@ -139,7 +149,11 @@ const run = (
             workdir: dir,
             projectId: options.projectId ?? Option.none(),
           }),
-          options.args === undefined ? Layer.empty : Layer.succeed(CliArgs, { args: options.args }),
+          options.cliArgs !== undefined
+            ? Layer.succeed(CliArgs, options.cliArgs)
+            : options.args === undefined
+              ? Layer.empty
+              : Layer.succeed(CliArgs, { args: options.args }),
         ),
       ),
       Effect.withTracer(tracer),
@@ -353,6 +367,35 @@ describe("resolveTarget", () => {
         });
         expect(succeeded(result.exit)).toMatchObject({ kind: "linked" });
         expect(result.apiRequests).toEqual([]);
+      }),
+    );
+
+    it.effect.each([
+      { name: "seed buckets", raw: ["seed", "--remote", "buckets"] },
+      { name: "db push", raw: ["db", "--remote", "push"] },
+    ])("does not look up the $name subcommand as a branch", ({ raw }) =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          cliArgs: cliArgsFor(raw),
+          savedRef: FILE_REF,
+          branches: "unavailable",
+        });
+        expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FILE_REF });
+        expect(result.apiRequests).toEqual([]);
+      }),
+    );
+
+    it.effect("still fails for a branch the command would otherwise take as its operand", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          cliArgs: cliArgsFor(["db", "pull", "--remote", "feature-x"]),
+          savedRef: FILE_REF,
+          branches: [branchRow("feature-x")],
+        });
+        expect(failureOf(result.exit)).toMatchObject({
+          _tag: "TargetRemoteAmbiguousError",
+          message: `feature-x is a branch of project ${FILE_REF}. Did you mean --remote=feature-x?`,
+        });
       }),
     );
 
