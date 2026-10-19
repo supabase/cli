@@ -41,7 +41,12 @@ export const parseNamedRemote = (
 ): Result.Result<NamedRemoteValue, ForeignUrlRejection> => {
   const value = raw.trim();
   if (BRANCH_PROJECT_REF_PATTERN.test(value)) return Result.succeed({ _tag: "Ref", ref: value });
-  if (DB_URL_PATTERN.test(value)) return Result.succeed({ _tag: "DbUrl", url: value });
+  if (DB_URL_PATTERN.test(value)) {
+    return Result.succeed({
+      _tag: "DbUrl",
+      url: value.replace(DB_URL_PATTERN, (scheme) => scheme.toLowerCase()),
+    });
+  }
   if (value.includes("://")) {
     return Result.fail({ _tag: "ForeignUrl", ref: refOfProjectUrl(value) });
   }

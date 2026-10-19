@@ -179,8 +179,8 @@ describe("targetFlags", () => {
 
   it.effect.each([
     { value: ` ${URL} `, expected: { _tag: "DbUrl", url: URL } },
-    { value: "POSTGRESQL://u:pw@h/db", expected: { _tag: "DbUrl", url: "POSTGRESQL://u:pw@h/db" } },
-    { value: "Postgres://h/db", expected: { _tag: "DbUrl", url: "Postgres://h/db" } },
+    { value: "POSTGRESQL://u:pw@h/db", expected: { _tag: "DbUrl", url: "postgresql://u:pw@h/db" } },
+    { value: "Postgres://h/db", expected: { _tag: "DbUrl", url: "postgres://h/db" } },
     { value: ` ${REF} `, expected: { _tag: "Ref", ref: REF } },
     { value: " staging ", expected: { _tag: "Branch", name: "staging" } },
   ])("trims and classifies the value %j", ({ value, expected }) =>

@@ -11,7 +11,8 @@ describe("parseRemoteValue", () => {
     { raw: " true ", expected: { _tag: "Linked" } },
     { raw: "YES", expected: { _tag: "Linked" } },
     { raw: ` ${REF} `, expected: { _tag: "Ref", ref: REF } },
-    { raw: "Postgres://h/db", expected: { _tag: "DbUrl", url: "Postgres://h/db" } },
+    { raw: "Postgres://h/db", expected: { _tag: "DbUrl", url: "postgres://h/db" } },
+    { raw: " POSTGRESQL://u@h/db", expected: { _tag: "DbUrl", url: "postgresql://u@h/db" } },
     { raw: " staging ", expected: { _tag: "Branch", name: "staging" } },
   ])("reads $raw as $expected", ({ raw, expected }) => {
     expect(parseRemoteValue(raw)).toEqual(Result.succeed(expected));

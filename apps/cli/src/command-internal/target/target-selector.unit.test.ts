@@ -192,7 +192,7 @@ describe("parseTargetSelector", () => {
     it("treats a postgres URL in any case as a database", () => {
       expect(success({ projectRef: Option.some("POSTGRESQL://h/db") }).selection).toEqual({
         _tag: "DbUrl",
-        url: "POSTGRESQL://h/db",
+        url: "postgresql://h/db",
       });
     });
   });
