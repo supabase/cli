@@ -65,18 +65,17 @@ Same structured `files` result delivered as an NDJSON `result` event.
 ## Notes
 
 - `--linked` (default true), `--local`, and `--db-url` are mutually exclusive.
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
-  overrides ONLY the linked-ref resolution used for the connection (flag >
+- **`--project-ref`** overrides ONLY the linked-ref resolution used for the connection (flag >
   `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies `--linked`:
   passing it with a resolved `--local`/`--db-url` target is a hard error rather
   than a silently discarded flag (deliberately stricter than
-  `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
+  `SUPABASE_PROJECT_ID`, which is simply left unused on
   a non-linked target).
 - Fetches migration file contents from the `supabase_migrations.schema_migrations` history table.
 - **Empty-statements rows:** a row whose `statements` array is empty
   (NULL/`{}` — possible on older projects or manually-inserted rows) is written as
   exactly `;\n`, not an empty file.
-- **Path-traversal hardening (TS-only):** before writing, each row's `version`/`name`
+- **Path-traversal hardening :** before writing, each row's `version`/`name`
   is validated (`version` is all digits; `name` has no `/`, `\`, or `..` segment).
   A tampered/hostile remote could otherwise supply separators to escape the
   migrations directory (CWE-22). This is a new check with no effect on legitimate

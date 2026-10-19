@@ -8,11 +8,11 @@ Requires your local project to be linked to a remote database by running `supaba
 
 Optionally, a new row can be inserted into the migration history table to reflect the current state of the remote database.
 
-If no entries exist in the migration history table, the behavior depends on the diff engine. Under `pg-delta`, the CLI diffs the remote database against an empty shadow database. Under the legacy `migra` engine, the CLI uses `pg_dump` to capture all contents of the remote schemas you have created. Otherwise the command behaves like `db diff --linked` and only diffs schema changes against the remote database.
+If no entries exist in the migration history table, pg-delta (the default diff engine) produces the full migration from the shadow diff alone; with `--diff-engine migra`, the initial pull instead uses `pg_dump` to capture all contents of the remote schemas you have created. Otherwise, this command will only diff schema changes against the remote database, similar to running `db diff --linked`.
 
-Pass `--diff-engine pg-delta` to use pg-delta for a single run on a project that hasn't enabled it. The migration-file workflow is unchanged. On an initial pull, the full migration comes from the shadow diff alone. Pass `--declarative` to export the selected database into the declarative schema tree instead of creating a migration. The tree lives in `supabase/schemas` by default. Change the location with `experimental.pgdelta.declarative_schema_path`.
+Pass `--declarative` to switch to the declarative pg-delta export workflow instead of writing a migration file. The tree lives in `supabase/schemas` by default. Change the location with `experimental.pgdelta.declarative_schema_path`.
 
-On a project without pg-delta enabled, don't use `--declarative`. The export also points `[db.migrations].schema_paths` at the tree it writes. The next local `db diff` applies those files in lexicographic order without resolving dependencies between them, so it fails when a file sorts before an object it depends on. If you've already run it, enable pg-delta, or undo both changes:
+On a project that falls back to the legacy migra engine, don't use `--declarative`. The export also points `[db.migrations].schema_paths` at the tree it writes. The next local `db diff` applies those files in lexicographic order without resolving dependencies between them, so it fails when a file sorts before an object it depends on. If you've already run it, re-enable pg-delta, or undo both changes:
 
 1. Delete the files the export wrote to the declarative directory (`supabase/schemas/` by default). Files that were already there are left in place.
 2. Restore `[db.migrations].schema_paths` in `config.toml` to its previous value, or remove it if the export added it.
@@ -21,7 +21,7 @@ pg-delta plans are execution-aware: when a plan crosses a transaction boundary â
 
 By default the emitted SQL is formatted with the same settings the declarative export uses (uppercase keywords, wrapped at a max width of 180, indented and column-aligned). Configure overrides with `[experimental.pgdelta] format_options` in `config.toml`, or set `format_options = "null"` to opt out and emit raw, unformatted statements.
 
-When `[experimental.pgdelta] enabled = true` (the default for projects created by a recent `supabase init`), the migration-file `db pull` workflow uses pg-delta for the shadow diff step by default; it does not switch to declarative output. Existing projects without the section are unaffected and keep using migra. To fall back to the legacy migra engine, set `enabled = false` under `[experimental.pgdelta]`, or pass `--diff-engine migra` for a single run.
+pg-delta is the default diff engine: the migration-file `db pull` workflow uses pg-delta for the shadow diff step unless configured otherwise; it does not switch to declarative output. With pg-delta, `[db.migrations] schema_paths` does not affect this workflow (migra still reads it, for local targets only); use `supabase db schema declarative sync` for declarative schema files. To fall back to the legacy migra engine, set `enabled = false` under `[experimental.pgdelta]` in `config.toml`, or pass `--diff-engine migra` for a single run.
 
 Under the pg-delta engine, the pull captures your own customizations in Supabase-managed schemas automatically. Examples are triggers on managed tables like `auth.users` and RLS policies on `storage.objects` and `storage.buckets`. Under the legacy migra engine, the initial pull's `pg_dump` skips managed schemas. The diff pass that follows appends your trigger and RLS policy changes there to the same migration. If an older CLI reports that `auth` and `storage` were excluded, capture existing customizations there with `--schema auth,storage`.
 
@@ -29,10 +29,10 @@ When pulling from a remote database with `--db-url`, prefer a direct connection 
 
 ## Debugging empty pg-delta pulls
 
-If `db pull --diff-engine pg-delta` reports `No schema changes found` but you expect schema output, set `PGDELTA_DEBUG=1` before running the command. Unlike `--debug`, this keeps SSL enabled for remote Supabase connections.
+If `db pull` reports `No schema changes found` but you expect schema output, set `PGDELTA_DEBUG=1` before running the command. Unlike `--debug`, this keeps SSL enabled for remote Supabase connections.
 
 ```sh
-PGDELTA_DEBUG=1 supabase db pull --db-url "$DATABASE_URL" --diff-engine pg-delta
+PGDELTA_DEBUG=1 supabase db pull --db-url "$DATABASE_URL"
 ```
 
 When pg-delta returns zero statements, the CLI writes a debug bundle under `supabase/.temp/pgdelta/v2/debug/<timestamp>-diff/` containing the source/desired catalog snapshots, the plan, and coverage diagnostics. Catalog files are not written during normal `db pull` runs.

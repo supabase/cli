@@ -14,7 +14,7 @@ import {
 /**
  * Raised when `supabase/config.toml` cannot be parsed, or a config-load-time
  * validation fails before any Storage call (bucket name regex, `file_size_limit`
- * numeral), or by `loadCliConfig` for `env(...)` refs over numeric/bool fields.
+ * numeral), or by the config load for `env(...)` refs over numeric/bool fields.
  */
 export class SeedConfigLoadError extends Data.TaggedError("SeedConfigLoadError")<{
   readonly message: string;

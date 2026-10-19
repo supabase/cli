@@ -4,7 +4,7 @@ import { START_KONG_YML_TEMPLATE } from "../templates/kong.yml.ts";
 import { START_POOLER_EXS_TEMPLATE } from "../templates/pooler.exs.ts";
 import { START_VECTOR_YAML_TEMPLATE } from "../templates/vector.yaml.ts";
 import {
-  renderGoTemplate,
+  renderTemplate,
   renderStartKongYml,
   renderStartPoolerExs,
   renderStartVectorYaml,
@@ -53,25 +53,25 @@ const poolerFields: StartPoolerExsFields = {
   defaultPoolSize: 20,
 };
 
-describe("renderGoTemplate", () => {
+describe("renderTemplate", () => {
   it("substitutes bare {{ .Field }} placeholders", () => {
-    expect(renderGoTemplate("hello {{ .Name }}", { Name: "world" })).toBe("hello world");
+    expect(renderTemplate("hello {{ .Name }}", { Name: "world" })).toBe("hello world");
   });
 
   it("tolerates any amount of whitespace inside the braces", () => {
-    expect(renderGoTemplate("{{.Name}} {{  .Name  }} {{ .Name }}", { Name: "x" })).toBe("x x x");
+    expect(renderTemplate("{{.Name}} {{  .Name  }} {{ .Name }}", { Name: "x" })).toBe("x x x");
   });
 
   it("renders numeric fields as base-10 strings with no added quotes or decimals", () => {
-    expect(renderGoTemplate("port={{ .Port }}", { Port: 6543 })).toBe("port=6543");
+    expect(renderTemplate("port={{ .Port }}", { Port: 6543 })).toBe("port=6543");
   });
 
   it("throws when a referenced field is missing (missingkey=error parity)", () => {
-    expect(() => renderGoTemplate("{{ .Missing }}", {})).toThrow(/\.Missing/);
+    expect(() => renderTemplate("{{ .Missing }}", {})).toThrow(/\.Missing/);
   });
 
   it("does not error on struct fields that exist but are never referenced", () => {
-    expect(renderGoTemplate("{{ .Used }}", { Used: "a", Unused: "b" })).toBe("a");
+    expect(renderTemplate("{{ .Used }}", { Used: "a", Unused: "b" })).toBe("a");
   });
 });
 
@@ -107,7 +107,7 @@ describe("renderStartKongYml", () => {
     );
   });
 
-  it("throws referencing the missing Go struct field when a placeholder has no value", () => {
+  it("throws referencing the missing template field when a placeholder has no value", () => {
     const { gotrueId: _gotrueId, ...withoutGotrue } = kongFields;
     const rawFields: Record<string, string | number> = {
       RestId: withoutGotrue.restId,
@@ -123,7 +123,7 @@ describe("renderStartKongYml", () => {
       BearerToken: withoutGotrue.bearerToken,
       QueryToken: withoutGotrue.queryToken,
     };
-    expect(() => renderGoTemplate(START_KONG_YML_TEMPLATE, rawFields)).toThrow(/\.GotrueId/);
+    expect(() => renderTemplate(START_KONG_YML_TEMPLATE, rawFields)).toThrow(/\.GotrueId/);
   });
 });
 
@@ -152,7 +152,7 @@ describe("renderStartVectorYaml", () => {
     );
   });
 
-  it("throws referencing the missing Go struct field when a placeholder has no value", () => {
+  it("throws referencing the missing template field when a placeholder has no value", () => {
     const { apiKey: _apiKey, ...withoutApiKey } = vectorFields;
     const rawFields: Record<string, string | number> = {
       VectorId: withoutApiKey.vectorId,
@@ -165,7 +165,7 @@ describe("renderStartVectorYaml", () => {
       EdgeRuntimeId: withoutApiKey.edgeRuntimeId,
       DbId: withoutApiKey.dbId,
     };
-    expect(() => renderGoTemplate(START_VECTOR_YAML_TEMPLATE, rawFields)).toThrow(/\.ApiKey/);
+    expect(() => renderTemplate(START_VECTOR_YAML_TEMPLATE, rawFields)).toThrow(/\.ApiKey/);
   });
 });
 
@@ -216,7 +216,7 @@ end
     expect(rendered).not.toMatch(/"db_port" => 6543\.0/);
   });
 
-  it("throws referencing the missing Go struct field when a placeholder has no value", () => {
+  it("throws referencing the missing template field when a placeholder has no value", () => {
     const { dbHost: _dbHost, ...withoutDbHost } = poolerFields;
     const rawFields: Record<string, string | number> = {
       DbPort: withoutDbHost.dbPort,
@@ -227,6 +227,6 @@ end
       DefaultMaxClients: withoutDbHost.defaultMaxClients,
       DefaultPoolSize: withoutDbHost.defaultPoolSize,
     };
-    expect(() => renderGoTemplate(START_POOLER_EXS_TEMPLATE, rawFields)).toThrow(/\.DbHost/);
+    expect(() => renderTemplate(START_POOLER_EXS_TEMPLATE, rawFields)).toThrow(/\.DbHost/);
   });
 });

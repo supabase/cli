@@ -9,12 +9,13 @@ import {
 } from "../../../command-internal/command-permissions/model.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbReset } from "./reset.handler.ts";
 import { dbResetRuntimeLayer } from "./reset.layers.ts";
-
-const noSqlPaths: ReadonlyArray<string> = [];
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 
 const config = {
   dbUrl: Flag.String("db-url").pipe(
@@ -35,17 +36,17 @@ const config = {
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  noSeed: Flag.Boolean("no-seed").pipe(
-    Flag.withDescription("Skip running the seed script after reset."),
-    Flag.withDefault(false),
-  ),
-  sqlPaths: Flag.String("sql-paths").pipe(
-    Flag.atLeast(0),
-    Flag.withDescription(
+  noSeed: CliConfigKeys.db.seed.enabled.flag({
+    name: "no-seed",
+    description: "Skip running the seed script after reset.",
+    map: (skip) => (skip ? false : undefined),
+  }),
+  sqlPaths: CliConfigKeys.db.seed.sqlPaths.flag({
+    name: "sql-paths",
+    description:
       "Override [db.seed].sql_paths for this reset. May be repeated; each value accepts a SQL file path or glob pattern relative to the supabase directory and force-enables seeding.",
-    ),
-    Flag.withDefault(noSqlPaths),
-  ),
+    also: [[CliConfigKeys.db.seed.enabled, true]],
+  }),
   version: Flag.String("version").pipe(
     Flag.withDescription("Reset up to the specified version."),
     Flag.optional,
@@ -91,4 +92,6 @@ export const dbResetCommand = Command.make("reset", config).pipe(
     ),
   ),
   Command.provide(dbResetRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

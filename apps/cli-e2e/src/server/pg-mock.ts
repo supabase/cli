@@ -367,7 +367,7 @@ function processMessages(socket: Bun.Socket<SocketData>, getState: () => PgMockS
     socket.data.buf = buf.slice(totalLen);
 
     if (msgType === 0x51) {
-      // 'Q' — simple query (used by pgconn.CopyTo and simple-protocol callers)
+      // 'Q' — simple query (used by COPY and simple-protocol callers)
       const query = payload.slice(0, payload.length - 1).toString("utf8");
       const isProbe = /^\s*select\s+1\s*;?\s*$/i.test(query);
       const isCopy = /^\s*COPY\s+/i.test(query);

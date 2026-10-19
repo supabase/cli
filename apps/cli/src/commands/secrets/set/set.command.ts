@@ -3,6 +3,8 @@ import { Argument, Command, Flag } from "effect/cli";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -54,4 +56,6 @@ export const secretsSetCommand = Command.make("set", config).pipe(
     secretsSet(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["secrets", "set"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

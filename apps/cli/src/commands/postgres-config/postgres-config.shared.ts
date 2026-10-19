@@ -6,8 +6,8 @@ import { block } from "../../command-internal/command-permissions/model.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { renderGlamourTable } from "../../output/glamour-table.ts";
-import { encodeEnv, encodeGoJson, encodeYaml } from "../../command-internal/go-output.encoders.ts";
-import { goFormatFloat } from "../../command-internal/go-float.ts";
+import { encodeEnv, encodeSortedJson, encodeYaml } from "../../command-internal/output.encoders.ts";
+import { formatGeneralFloat } from "../../command-internal/format-float.ts";
 import {
   mapHttpError,
   sanitizeErrorBody,
@@ -30,7 +30,7 @@ function formatPrettyValue(value: unknown): string {
   if (typeof value === "string") return value;
   // Every number renders using float64 formatting, matching established output, so e.g.
   // 1000000 prints as 1e+06, not 1000000.
-  if (typeof value === "number") return goFormatFloat(value);
+  if (typeof value === "number") return formatGeneralFloat(value);
   if (typeof value === "boolean") return String(value);
   if (value === null) return "<nil>";
   return JSON.stringify(value);
@@ -70,8 +70,8 @@ const INT64_MAX = 2n ** 63n - 1n;
 
 // The literal sets that count as boolean values. `1`/`0` also match, but the integer branch
 // above claims them first.
-const GO_TRUE_LITERALS = new Set(["1", "t", "T", "TRUE", "true", "True"]);
-const GO_FALSE_LITERALS = new Set(["0", "f", "F", "FALSE", "false", "False"]);
+const TRUE_LITERALS = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+const FALSE_LITERALS = new Set(["0", "f", "F", "FALSE", "false", "False"]);
 
 /**
  * Coerces a `--config key=value` value: integer, then boolean, then string.
@@ -89,8 +89,8 @@ export function parseConfigValue(value: string): string | number | boolean {
     }
     return value;
   }
-  if (GO_TRUE_LITERALS.has(value)) return true;
-  if (GO_FALSE_LITERALS.has(value)) return false;
+  if (TRUE_LITERALS.has(value)) return true;
+  if (FALSE_LITERALS.has(value)) return false;
   return value;
 }
 
@@ -153,7 +153,7 @@ export const fetchCurrentPostgresConfig = Effect.fn("postgres-config.fetch-curre
     Effect.mapError(
       (error) =>
         new PostgresConfigGetUnmarshalError({
-          message: `failed to unmarshal response body: ${error.message}`,
+          message: `failed to parse response body: ${error.message}`,
         }),
     ),
   );
@@ -222,10 +222,10 @@ export interface PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr> {
   readonly serializeError: (args: { readonly message: string }) => SerErr;
   readonly networkError: NetworkErrorFactory<NetErr>;
   readonly statusError: StatusErrorFactory<StatErr>;
-  readonly unmarshalError: (args: { readonly message: string }) => UnmErr;
+  readonly parseError: (args: { readonly message: string }) => UnmErr;
   readonly networkMessage: (description: string) => string;
   readonly statusMessage: (status: number, body: string) => string;
-  readonly unmarshalMessage: (description: string) => string;
+  readonly parseMessage: (description: string) => string;
 }
 
 /**
@@ -284,9 +284,7 @@ export const putPostgresConfig = Effect.fn("postgres-config.put")(function* <
   }
 
   const stored = yield* decodeJsonObject(rawBody).pipe(
-    Effect.mapError((error) =>
-      errors.unmarshalError({ message: errors.unmarshalMessage(error.message) }),
-    ),
+    Effect.mapError((error) => errors.parseError({ message: errors.parseMessage(error.message) })),
   );
   return { ...stored } satisfies PostgresConfigMap;
 });
@@ -296,23 +294,23 @@ export const writePostgresConfigOutput = Effect.fn("postgres-config.write-output
 ) {
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
-  const goOutput = Option.getOrUndefined(outputFlag);
+  const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
   // --output takes priority over --output-format; pretty (or unset) falls through to the
   // table / structured-success path below.
-  if (goOutput === "json") {
-    yield* output.raw(encodeGoJson(config));
+  if (outputFlagFormat === "json") {
+    yield* output.raw(encodeSortedJson(config));
     return;
   }
-  if (goOutput === "yaml") {
+  if (outputFlagFormat === "yaml") {
     yield* output.raw(encodeYaml(config));
     return;
   }
-  if (goOutput === "toml") {
+  if (outputFlagFormat === "toml") {
     yield* output.raw(encodePostgresConfigToml(config));
     return;
   }
-  if (goOutput === "env") {
+  if (outputFlagFormat === "env") {
     yield* output.raw(encodeEnv(config) + "\n");
     return;
   }
