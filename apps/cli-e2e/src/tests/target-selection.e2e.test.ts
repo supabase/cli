@@ -36,7 +36,7 @@ describe("deprecated target aliases", () => {
       "--local isn't needed (local is the default) and will be removed in v4: supabase db push",
     );
     expect(result.stderr).toContain("Target: local stack");
-    expect(result.stderr).toContain("connect");
+    expect(result.stderr).toContain("failed to connect to postgres");
   });
 
   testBehaviour(
