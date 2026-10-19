@@ -104,9 +104,7 @@ export const projectRefLayer = Layer.effect(
             const chosen = yield* promptForProjectRef("Select a project:");
             return yield* assertValid(chosen);
           }
-          return yield* Effect.fail(
-            new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
-          );
+          return yield* new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE });
         }),
       resolveForLink: (flagValue) =>
         Effect.gen(function* () {
@@ -121,11 +119,9 @@ export const projectRefLayer = Layer.effect(
             const chosen = yield* promptForProjectRef("Select a project:");
             return yield* assertValid(chosen);
           }
-          return yield* Effect.fail(
-            new ProjectRefRequiredError({
-              message: `required flag(s) "project-ref" not set`,
-            }),
-          );
+          return yield* new ProjectRefRequiredError({
+            message: `required flag(s) "project-ref" not set`,
+          });
         }),
       resolveOptional: (flagValue) =>
         Effect.gen(function* () {
@@ -151,9 +147,7 @@ export const projectRefLayer = Layer.effect(
           if (Option.isSome(fileValue)) {
             return yield* assertValid(fileValue.value);
           }
-          return yield* Effect.fail(
-            new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
-          );
+          return yield* new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE });
         }),
       promptProjectRef: promptForProjectRef,
     });
