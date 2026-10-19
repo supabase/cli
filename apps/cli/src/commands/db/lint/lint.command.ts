@@ -15,6 +15,7 @@ import { dbLint } from "./lint.handler.ts";
 import { dbLintRuntimeLayer } from "./lint.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
@@ -50,6 +51,7 @@ export const dbLintCommand = Command.make("lint", config).pipe(
         { operations: [], noApiEffectFlags: ["schema", "level", "fail-on"] },
         dbConfig,
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+        branchResolution,
       ),
       { default: "local" },
     ),

@@ -212,7 +212,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     // waits for `ready`. See docs/stack-commands.md#storage-and-bucket-seeding.
     const skipSeeding = (
       reason: string,
-      nextStep = "Run supabase seed buckets --local once Storage is available.",
+      nextStep = "Run supabase seed buckets once Storage is available.",
     ) =>
       output.raw(
         `${yellow("WARNING:")} skipped seeding storage buckets: ${reason} ${nextStep}\n`,
@@ -230,7 +230,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
         yield* skipSeeding(
           describeStorageCapability(capability),
           decision === "disabled"
-            ? "Set [storage] enabled = true in supabase/config.toml, run supabase stack stop followed by supabase stack start without -x storage, then supabase seed buckets --local."
+            ? "Set [storage] enabled = true in supabase/config.toml, run supabase stack stop followed by supabase stack start without -x storage, then supabase seed buckets."
             : undefined,
         );
         return;

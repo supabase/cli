@@ -16,6 +16,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbPush } from "./push.handler.ts";
 import { dbPushRuntimeLayer } from "./push.layers.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
@@ -73,6 +74,7 @@ export const dbPushCommand = Command.make("push", config).pipe(
         },
         dbConfig,
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+        branchResolution,
       ),
       { default: "local" },
     ),

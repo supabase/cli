@@ -62,6 +62,7 @@ export const testDbRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
     dockerRunLayer,
     cliSettings,
     projectRef,
+    platformApiFactory,
     // Exposed at top level so `withCommandTelemetry` can read
     // `stitchedDistinctId()`. The same reference is provided to `dbConfig`
     // above, so the lazy linked stack shares a single stitch attempt.
