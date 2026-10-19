@@ -22,19 +22,19 @@ supabase-login:
 supabase-link:
   - id: basic-usage
     name: Basic usage
-    code: supabase link --project-ref ********************
+    code: supabase link ********************
     response: |
       Enter your database password (or leave blank to skip): ********
       Finished supabase link.
   - id: without-password
     name: Link without database password
-    code: supabase link --project-ref ******************** <<< ""
+    code: supabase link ******************** <<< ""
     response: |
       Enter your database password (or leave blank to skip):
       Finished supabase link.
   - id: using-alternate-dns
     name: Link using DNS-over-HTTPS resolver
-    code: supabase link --project-ref ******************** --dns-resolver https
+    code: supabase link ******************** --dns-resolver https
     response: |
       Enter your database password (or leave blank to skip):
       Finished supabase link.
@@ -120,7 +120,7 @@ supabase-migration-list:
         20230222032233 │                │ 2023-02-22 03:22:33
   - id: with-db-url
     name: Connect to self-hosted database
-    code: supabase migration list --remote='postgres://postgres[:percent_encoded_password]@127.0.0.1[:port]/postgres'
+    code: supabase migration list --remote='postgres://postgres[:percent_encoded_password]@db.example.com[:port]/postgres'
     response: |2
             LOCAL      │     REMOTE     │     TIME (UTC)
       ─────────────────┼────────────────┼──────────────────────
@@ -280,7 +280,7 @@ supabase-db-push:
       Linked project is up to date.
   - id: self-hosted
     name: Self hosted
-    code: supabase db push --remote="postgres://user:pass@127.0.0.1:5432/postgres"
+    code: supabase db push --remote="postgres://user:pass@db.example.com:5432/postgres"
     response: |
       Pushing migration 20230410135622_create_employees_table.sql...
       Finished supabase db push.

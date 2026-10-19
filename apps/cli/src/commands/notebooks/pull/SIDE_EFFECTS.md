@@ -72,19 +72,19 @@ size.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                      |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                        |
-| `1`  | no project ref — not linked and no `--remote`                                                                                                                                                                  |
-| `1`  | the supplied notebook id is not a UUID                                                                                                                                                                         |
-| `1`  | the project holds two notebooks of one name during a broad pull                                                                                                                                                |
-| `1`  | the notebooks path exists but cannot be read as a directory                                                                                                                                                    |
-| `1`  | an explicitly requested notebook name cannot be stored safely as a local file                                                                                                                                  |
-| `1`  | a Management API call failed (transport, unexpected status, or undecodable body)                                                                                                                               |
-| `1`  | a local file the user chose to create in the project is not a readable notebook                                                                                                                                |
-| `1`  | a local notebook file cannot be written                                                                                                                                                                        |
-| `1`  | `-o env`, which cannot represent the payload                                                                                                                                                                   |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
+| Code | Condition                                                                                                                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                |
+| `1`  | no project ref — not linked and no `--remote`                                                                                                                                                                          |
+| `1`  | the supplied notebook id is not a UUID                                                                                                                                                                                 |
+| `1`  | the project holds two notebooks of one name during a broad pull                                                                                                                                                        |
+| `1`  | the notebooks path exists but cannot be read as a directory                                                                                                                                                            |
+| `1`  | an explicitly requested notebook name cannot be stored safely as a local file                                                                                                                                          |
+| `1`  | a Management API call failed (transport, unexpected status, or undecodable body)                                                                                                                                       |
+| `1`  | a local file the user chose to create in the project is not a readable notebook                                                                                                                                        |
+| `1`  | a local notebook file cannot be written                                                                                                                                                                                |
+| `1`  | `-o env`, which cannot represent the payload                                                                                                                                                                           |
+| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
 
 ## Environment Variables
 
@@ -138,9 +138,10 @@ After the project ref resolves, one `Target: …` banner naming the resolved pro
   project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
   (`supabase notebooks pull` takes a project, not a database); `false|no|off|0`, `--no-remote` and an
   empty value fail with `Leave out --remote to use the linked project.`
-- A bare `--remote` followed by a word that is a branch of the linked project fails before any
-  other work with a `Did you mean --remote=<word>?` hint, since the word may have been meant as
-  the flag's value.
+- A bare `--remote` followed by a word that exactly matches a branch of the linked project, is
+  within a small edit distance of one, or can't be checked because the branch listing failed stops
+  the run before any other work with an error that offers both readings: `--remote=<word>` for the
+  branch, `<word> --remote` for the operand. Any other word runs as the operand.
 - The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
   branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
   be combined with `--remote=<value>`.

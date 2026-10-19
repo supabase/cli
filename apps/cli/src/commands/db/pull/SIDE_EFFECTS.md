@@ -213,8 +213,10 @@ resolved `target` object is merged into the payload.
 - **Target selection.** `--remote` is read as the linked project (bare), a project ref (20
   lowercase letters), a Postgres URL, or else a branch of the linked project by name or UUID;
   `--remote=false` and `--remote=` fail with `Leave out --remote to target the local database.` A
-  bare `--remote` followed by a word that is a branch of the linked project fails with a
-  `Did you mean --remote=<word>?` hint, since the word may have been meant as the flag's value.
+  bare `--remote` followed by a word that exactly matches a branch of the linked project, is within
+  a small edit distance of one, or can't be checked because the branch listing failed stops the run
+  with an error that offers both readings: `--remote=<word>` for the branch, `<word> --remote` for
+  the operand. Any other word runs as the operand.
 - **Deprecated aliases.** `--linked`, `--project-ref=<ref>`, `--db-url=<url>` and `--local` still
   work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
   warns that local is the default). They are mutually exclusive with each other and with

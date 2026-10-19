@@ -204,9 +204,9 @@ stdout and a terminal `result`/`error` event is emitted.
   otherwise the name of a branch of the linked project, which resolves to that branch's own project.
   A database URL (`--remote=<db-url>`) fails with a `needs a project, not a database URL` error and
   sends no request. `false|no|off|0`, `--no-remote` and an empty value fail with
-  `Leave out --remote to target the local Storage API.` A bare `--remote` followed by a word that is
-  a branch of the linked project fails with a `Did you mean --remote=<word>?` hint, since the word
-  may have been meant as the flag's value. The resolved target is announced on stderr (`Target: …`)
+  `Leave out --remote to target the local Storage API.` A word after a bare `--remote` is read as
+  its value, `--remote=<word>`, because the command takes no operands. The resolved target is
+  announced on stderr (`Target: …`)
   in every output format and, in JSON results, as a `target` object. `--remote`, `--linked` and
   `--local` are scoped globals on the `seed` group, so they are also accepted before the subcommand
   token.

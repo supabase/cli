@@ -138,9 +138,8 @@ instead a structured result is emitted. The stderr `Target:` banner is still pri
   is read as a project ref (20 lowercase letters), a database URL (`postgres://` or
   `postgresql://`), `true|yes|on|1` (the linked project), or otherwise the name of a branch of the
   linked project, which resolves to that branch's own project. `false|no|off|0`, `--no-remote` and
-  an empty value fail with `Leave out --remote to target the local database.` A bare `--remote`
-  followed by a word that is a branch of the linked project fails with a
-  `Did you mean --remote=<word>?` hint, since the word may have been meant as the flag's value. The
+  an empty value fail with `Leave out --remote to target the local database.` A word after a bare
+  `--remote` is read as its value, `--remote=<word>`, because the command takes no operands. The
   resolved target is announced on stderr (`Target: …`) in every output format and, in JSON results,
   as a `target` object.
 - **Deprecated selectors.** `--linked`, `--project-ref`, `--db-url` and `--local` are hidden aliases

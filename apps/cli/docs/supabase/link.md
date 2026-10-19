@@ -1,6 +1,6 @@
 ## supabase-link
 
-Link your local development project to a hosted Supabase project.
+Link your local development project to a hosted Supabase project. Pass the project ref, or the name of one of its branches, as the argument: `supabase link <ref>`. The `--project-ref` flag still works.
 
 PostgREST configurations are fetched from the Supabase platform and validated against your local configuration file.
 
@@ -8,4 +8,4 @@ Optionally, database settings can be validated if you provide a password. Your d
 
 > If you do not want to be prompted for the database password, such as in a CI environment, you may specify it explicitly via the `SUPABASE_DB_PASSWORD` environment variable.
 
-Some commands like `db dump`, `db push`, and `db pull` require your project to be linked first.
+Passing `--remote` to commands like `db dump`, `db push`, and `db pull` targets the linked project, so it must be linked first.

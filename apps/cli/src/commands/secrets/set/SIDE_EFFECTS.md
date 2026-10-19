@@ -43,30 +43,30 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                      |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — secrets set on the linked project                                                                                                                                                                    |
-| `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                                                                                                                                                      |
-| `1`  | `InvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`                                                                                                                                  |
-| `1`  | `ProjectRefNotLinkedError` — `--remote=<ref>` unset, env/file empty, and stdin not a TTY                                                                                                                       |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
-| `1`  | `InvalidProjectRefError` — a `SUPABASE_PROJECT_ID` or link-file ref violates `^[a-z]{20}$`                                                                                                                     |
-| `1`  | `SecretsNoArgumentsError` — no positional pairs and no entries from env-file or config                                                                                                                         |
-| `1`  | `InvalidSecretPairError` — positional argument missing `=`                                                                                                                                                     |
-| `1`  | `SecretsEnvFileOpenError` — `--env-file` cannot be opened                                                                                                                                                      |
-| `1`  | `SecretsEnvFileParseError` — `--env-file` cannot be parsed                                                                                                                                                     |
-| `1`  | `HostedMutationDeclinedError` — the confirmation was declined; nothing is sent                                                                                                                                 |
-| `1`  | `HostedMutationConsentRequiredError` — no `--yes`/shell `SUPABASE_YES` on a non-interactive or machine-output run; nothing is sent                                                                             |
-| `1`  | `SecretsSetUnexpectedStatusError` — non-2xx response from POST                                                                                                                                                 |
-| `1`  | `SecretsSetNetworkError` — transport-level network failure                                                                                                                                                     |
-| `1`  | `CliConfigRemovedKeyError` — config uses a removed key, named with its replacement                                                                                                                             |
-| `1`  | `CliConfigRemovedEnvError` — non-empty `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` set                                                                                                                            |
+| Code | Condition                                                                                                                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — secrets set on the linked project                                                                                                                                                                            |
+| `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                                                                                                                                                              |
+| `1`  | `InvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`                                                                                                                                          |
+| `1`  | `ProjectRefNotLinkedError` — `--remote=<ref>` unset, env/file empty, and stdin not a TTY                                                                                                                               |
+| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
+| `1`  | `InvalidProjectRefError` — a `SUPABASE_PROJECT_ID` or link-file ref violates `^[a-z]{20}$`                                                                                                                             |
+| `1`  | `SecretsNoArgumentsError` — no positional pairs and no entries from env-file or config                                                                                                                                 |
+| `1`  | `InvalidSecretPairError` — positional argument missing `=`                                                                                                                                                             |
+| `1`  | `SecretsEnvFileOpenError` — `--env-file` cannot be opened                                                                                                                                                              |
+| `1`  | `SecretsEnvFileParseError` — `--env-file` cannot be parsed                                                                                                                                                             |
+| `1`  | `HostedMutationDeclinedError` — the confirmation was declined; nothing is sent                                                                                                                                         |
+| `1`  | `HostedMutationConsentRequiredError` — no `--yes`/shell `SUPABASE_YES` on a non-interactive or machine-output run; nothing is sent                                                                                     |
+| `1`  | `SecretsSetUnexpectedStatusError` — non-2xx response from POST                                                                                                                                                         |
+| `1`  | `SecretsSetNetworkError` — transport-level network failure                                                                                                                                                             |
+| `1`  | `CliConfigRemovedKeyError` — config uses a removed key, named with its replacement                                                                                                                                     |
+| `1`  | `CliConfigRemovedEnvError` — non-empty `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` set                                                                                                                                    |
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                                                                                               |
-| ---------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--remote` → `true` (bare), the ref, or `<redacted>`; `--project-ref` / `--env-file` → `<redacted>`) |
+| Event                  | When                                       | Notable properties / groups                                                                                                                                                           |
+| ---------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--remote` → `true` (bare), the ref, or `<redacted>`; `--project-ref` → the ref when ref-shaped, else `<redacted>`; `--env-file` → `<redacted>`) |
 
 ## Output
 
@@ -101,9 +101,10 @@ One `result` NDJSON event on success containing `{project_ref, count}` and `targ
   project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
   (`supabase secrets set` takes a project, not a database); `false|no|off|0`, `--no-remote` and an
   empty value fail with `Leave out --remote to use the linked project.`
-- A bare `--remote` followed by a word that is a branch of the linked project fails before any
-  other work with a `Did you mean --remote=<word>?` hint, since the word may have been meant as
-  the flag's value.
+- A bare `--remote` followed by a word that exactly matches a branch of the linked project, is
+  within a small edit distance of one, or can't be checked because the branch listing failed stops
+  the run before any other work with an error that offers both readings: `--remote=<word>` for the
+  branch, `<word> --remote` for the operand. Any other word runs as the operand.
 - The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
   branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
   be combined with `--remote=<value>`.

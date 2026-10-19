@@ -111,8 +111,8 @@ the process exits non-zero (no error envelope is written over the payload).
 - **Target selection.** `--remote` is read as the linked project (bare), a project ref (20
   lowercase letters), a Postgres URL, or else a branch of the linked project by name or UUID;
   `--remote=false` and `--remote=` fail with `Leave out --remote to target the local database.` A
-  bare `--remote` followed by a word that is a branch of the linked project fails with a
-  `Did you mean --remote=<word>?` hint, since the word may have been meant as the flag's value.
+  word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes no
+  operands.
 - **Deprecated aliases.** `--linked`, `--project-ref=<ref>`, `--db-url=<url>` and `--local` still
   work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
   warns that local is the default). They are mutually exclusive with each other and with

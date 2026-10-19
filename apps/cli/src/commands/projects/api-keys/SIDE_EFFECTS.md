@@ -41,14 +41,14 @@ Management API to return the full secret keys (`sb_secret_...`) in `api_key` ins
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                      |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — API keys printed to stdout                                                                                                                                                                           |
-| `1`  | authentication error — no valid token found                                                                                                                                                                    |
-| `1`  | API error — non-2xx response from `/v1/projects/{ref}/api-keys`                                                                                                                                                |
-| `1`  | network / connection failure                                                                                                                                                                                   |
-| `1`  | project ref not provided and no linked project found                                                                                                                                                           |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
+| Code | Condition                                                                                                                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — API keys printed to stdout                                                                                                                                                                                   |
+| `1`  | authentication error — no valid token found                                                                                                                                                                            |
+| `1`  | API error — non-2xx response from `/v1/projects/{ref}/api-keys`                                                                                                                                                        |
+| `1`  | network / connection failure                                                                                                                                                                                           |
+| `1`  | project ref not provided and no linked project found                                                                                                                                                                   |
+| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
 
 ## Telemetry Events Fired
 
@@ -113,9 +113,8 @@ On failure, an `error` event is emitted instead:
   project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
   (`supabase projects api-keys` takes a project, not a database); `false|no|off|0`, `--no-remote` and an
   empty value fail with `Leave out --remote to use the linked project.`
-- A bare `--remote` followed by a word that is a branch of the linked project fails before any
-  other work with a `Did you mean --remote=<word>?` hint, since the word may have been meant as
-  the flag's value.
+- A word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes
+  no operands.
 - The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
   branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
   be combined with `--remote=<value>`.

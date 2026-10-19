@@ -3,9 +3,10 @@
 Writes flat state files under `<workdir>/supabase/.temp/`.
 
 `link` accepts an optional `[ref-or-branch]` positional
-argument, and `--project-ref` also accepts a branch name instead of a project ref. A value is
-treated as a ref when it matches `PROJECT_REF_PATTERN` (20 lowercase letters); any other
-non-empty value is looked up as a branch name of the currently-linked parent project.
+argument (`supabase link <ref>`), and `--project-ref` still works and also accepts a branch name
+instead of a project ref. A value is treated as a ref when it matches `PROJECT_REF_PATTERN` (20
+lowercase letters); any other non-empty value is looked up as a branch name of the
+currently-linked parent project. `link` takes no `--remote`: the argument is its target.
 
 ## Files Read
 

@@ -125,7 +125,7 @@ guaranteed and is deduplicated on the Logflare-minted `id`.
 
 `--kind` is a choice flag, so its value is logged verbatim (a closed enum carries
 no user data). `--remote=<ref>` is logged as the ref and a bare `--remote` as `true`; any other
-`--remote` value, and `--project-ref`, is redacted. No custom events.
+`--remote` value is redacted, and `--project-ref` is logged only when it is ref-shaped. No custom events.
 
 ## Output Formats
 
@@ -170,5 +170,5 @@ preserved so a stack trace survives intact.
 ## Notes
 
 - Targets the linked project unless `--remote=<ref>` is given; a bare `--remote` also targets the linked project. `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked project (by name or UUID, resolved through `GET /v1/projects/{parent}/branches`), or `true|yes|on|1` for the linked project. A database URL is rejected (`supabase experimental compute logs` takes a project, not a database); `false|no|off|0`, `--no-remote` and an empty value fail with `Leave out --remote to use the linked project.`
-- A bare `--remote` followed by a word that is a branch of the linked project fails before any other work with a `Did you mean --remote=<word>?` hint, since the word may have been meant as the flag's value.
+- A bare `--remote` followed by a word that exactly matches a branch of the linked project, is within a small edit distance of one, or can't be checked because the branch listing failed stops the run before any other work with an error that offers both readings: `--remote=<word>` for the branch, `<word> --remote` for the operand. Any other word runs as the operand.
 - The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.

@@ -36,16 +36,16 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                      |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                        |
-| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) — checked before ref resolution/API/telemetry                                                                      |
-| `1`  | project ref unresolved (`ProjectRefNotLinkedError`; `InvalidProjectRefError` for a malformed `SUPABASE_PROJECT_ID` or link-file ref)                                                                           |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
-| `1`  | API non-2xx (`VanitySubdomainsDeleteUnexpectedStatusError`)                                                                                                                                                    |
-| `1`  | transport failure (`VanitySubdomainsDeleteNetworkError`)                                                                                                                                                       |
-| `1`  | `HostedMutationConsentRequiredError` — no `--yes` / shell `SUPABASE_YES` and the run cannot prompt; nothing is changed                                                                                         |
-| `1`  | `HostedMutationDeclinedError` — the confirmation prompt was declined                                                                                                                                           |
+| Code | Condition                                                                                                                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) — checked before ref resolution/API/telemetry                                                                              |
+| `1`  | project ref unresolved (`ProjectRefNotLinkedError`; `InvalidProjectRefError` for a malformed `SUPABASE_PROJECT_ID` or link-file ref)                                                                                   |
+| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
+| `1`  | API non-2xx (`VanitySubdomainsDeleteUnexpectedStatusError`)                                                                                                                                                            |
+| `1`  | transport failure (`VanitySubdomainsDeleteNetworkError`)                                                                                                                                                               |
+| `1`  | `HostedMutationConsentRequiredError` — no `--yes` / shell `SUPABASE_YES` and the run cannot prompt; nothing is changed                                                                                                 |
+| `1`  | `HostedMutationDeclinedError` — the confirmation prompt was declined                                                                                                                                                   |
 
 ## Telemetry Events Fired
 
@@ -91,9 +91,8 @@ One `result` event when the `--output` flag is unset.
   project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
   (`supabase vanity-subdomains delete` takes a project, not a database); `false|no|off|0`, `--no-remote` and an
   empty value fail with `Leave out --remote to use the linked project.`
-- A bare `--remote` followed by a word that is a branch of the linked project fails before any
-  other work with a `Did you mean --remote=<word>?` hint, since the word may have been meant as
-  the flag's value.
+- A word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes
+  no operands.
 - The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
   branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
   be combined with `--remote=<value>`.

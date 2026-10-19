@@ -118,7 +118,7 @@
 ## Notes
 
 <!-- Anything else an implementer or reviewer needs to know:
-     - Behaviour differences between --local / --linked / --project-ref modes
+     - Behaviour differences between local and --remote targets
      - Idempotency characteristics
      - Intentional output quirks
      - Side effects of retries or partial failures -->

@@ -67,7 +67,7 @@ export const linkCommand = Command.make("link", config).pipe(
   Command.withShortDescription("Link to a Supabase project"),
   Command.withExamples([
     {
-      command: "supabase link --project-ref abcdefghijklmnopqrst",
+      command: "supabase link abcdefghijklmnopqrst",
       description: "Link to a project by ref",
     },
     {

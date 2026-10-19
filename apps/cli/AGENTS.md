@@ -186,10 +186,12 @@ property shape (`flags`, `is_agent`, and `env_signals`), use canonical names and
 [event catalog](src/shared/telemetry/event-catalog.ts), and redact sensitive values.
 
 `safeFlags` may include only values that carry no user data. Keep the established safe project,
-project-id, org-id, and version cases. When `--project-ref` also accepts branch names, whitelist
-only values matching `PROJECT_REF_PATTERN`; never log a user-created branch name. Global boolean
-and choice flags are resolved by the wrapper from `globalFlagValues`; a command-local flag wins,
-so a local path-valued `--output` remains redacted. Keep free-form user content redacted.
+project-id, org-id, and version cases. `withCommandTelemetry` reports the target flags itself for
+every command, so never list them in a command's `safeFlags`: `--remote`, `--linked`, `--local`,
+`--project-ref`/`--project-id` (the value only when it matches `PROJECT_REF_PATTERN`, since it can
+be a user-created branch name) and `--db-url` (always redacted). Global boolean and choice flags
+are resolved by the wrapper from `globalFlagValues`; a command-local flag wins, so a local
+path-valued `--output` remains redacted. Keep free-form user content redacted.
 
 Do not remove, rename, or reshape custom events. Preserve login aliasing after token persistence,
 link project and organization identity after the link write (including branch-link metadata),
