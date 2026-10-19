@@ -140,6 +140,7 @@ const CONN: PgConnInput = {
 
 const DEFAULT_FLAGS: DbResetFlags = {
   dbUrl: Option.none(),
+  remote: Option.none(),
   linked: false,
   local: false,
   projectRef: Option.none(),
@@ -1868,8 +1869,8 @@ describe("db reset", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
-              _tag: "CliConfigLoadError",
-              message: expect.stringContaining("failed to parse supabase"),
+              _tag: "DbConfigLoadError",
+              message: expect.stringContaining("failed to load config"),
             });
           }
           expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
@@ -3012,7 +3013,6 @@ describe("db reset", () => {
     it.effect(
       "applies configured schema files instead of replaying migrations on an experimental remote reset",
       () => {
-        // `--linked=false` is absent, so the remote workspace target selects the linked project.
         const { layer, out, conn, resolver, linkedCache } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
@@ -3021,13 +3021,14 @@ describe("db reset", () => {
             "supabase/seed.sql": "insert into t values (1);",
           },
           experimental: true,
-          args: ["db", "reset", "--linked=false"],
+          args: ["db", "reset", "--remote"],
           confirm: [true],
-          env: { SUPABASE_TARGET: "remote" },
           ref: VALID_REF,
         });
         return Effect.gen(function* () {
-          yield* dbReset({ ...DEFAULT_FLAGS, linked: false }).pipe(Effect.provide(layer));
+          yield* dbReset({ ...DEFAULT_FLAGS, remote: Option.some({ _tag: "Linked" }) }).pipe(
+            Effect.provide(layer),
+          );
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
           expect(out.stderrText).not.toContain("Applying migration");

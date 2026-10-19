@@ -31,6 +31,7 @@ function mvFlags(opts: {
     src: opts.src,
     dst: opts.dst,
     recursive: opts.recursive ?? false,
+    remote: Option.none(),
     linked: opts.local === false,
     local: opts.local ?? true,
     projectRef: Option.none(),
@@ -327,7 +328,7 @@ describe("storage mv", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain(
-          "--project-ref selects a linked project and cannot be combined with --local.",
+          "--project-ref selects a remote project and cannot be combined with --local.",
         );
       }
       expect(requests).toHaveLength(0);

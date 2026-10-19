@@ -1887,10 +1887,10 @@ describe("pull integration", () => {
           expect(stepLine(out.stdoutText, "functions")).toContain("unchanged");
 
           expect(out.stdoutText).toContain(
-            `To retry just this step, run: supabase migration fetch --project-ref ${VALID_REF}`,
+            `To retry just this step, run: supabase migration fetch --remote=${VALID_REF}`,
           );
           expect(out.stdoutText).toContain(
-            `To retry just this step, run: supabase db pull --project-ref ${VALID_REF} --experimental=false`,
+            `To retry just this step, run: supabase db pull --experimental=false --remote=${VALID_REF}`,
           );
         }).pipe(Effect.provide(layer));
       },
@@ -1961,7 +1961,7 @@ describe("pull integration", () => {
           expect(stepLine(out.stdoutText, "functions")).toContain("unchanged");
 
           expect(out.stdoutText).toContain(
-            `To retry just this step, run: supabase db pull --project-ref ${VALID_REF} --experimental=false`,
+            `To retry just this step, run: supabase db pull --experimental=false --remote=${VALID_REF}`,
           );
         }).pipe(Effect.provide(layer));
       },
@@ -1998,7 +1998,7 @@ describe("pull integration", () => {
             `Alternatively, rerun \`supabase pull --with-migration-history --project-ref ${VALID_REF}\``,
           );
           const retryHintIndex = suggestion.indexOf(
-            `To retry just this step, run: supabase db pull --project-ref ${VALID_REF}`,
+            `To retry just this step, run: supabase db pull --experimental=false --remote=${VALID_REF}`,
           );
           expect(migrationHistoryHintIndex).toBeGreaterThan(-1);
           expect(retryHintIndex).toBeGreaterThan(migrationHistoryHintIndex);

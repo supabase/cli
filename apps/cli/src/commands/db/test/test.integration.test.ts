@@ -263,6 +263,7 @@ function setup(opts: SetupOpts = {}) {
 
 const flags = (over: Partial<TestDbFlags> = {}): TestDbFlags => ({
   paths: [],
+  remote: Option.none(),
   dbUrl: Option.none(),
   linked: false,
   local: false,

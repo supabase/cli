@@ -231,6 +231,7 @@ function setupReport(opts: SetupOpts = {}) {
 
 const flags = (over: Partial<InspectReportFlags> = {}): InspectReportFlags => ({
   dbUrl: over.dbUrl ?? Option.none<string>(),
+  remote: over.remote ?? Option.none(),
   linked: over.linked ?? false,
   local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none<string>(),

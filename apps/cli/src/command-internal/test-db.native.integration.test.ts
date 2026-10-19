@@ -47,6 +47,7 @@ const databaseCreation = {
 
 const flags = (path: string) => ({
   paths: [path],
+  remote: Option.none(),
   dbUrl: Option.none<string>(),
   linked: false,
   local: true,

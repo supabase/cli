@@ -447,6 +447,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 const flags = (over: Partial<MigrationSquashFlags> = {}): MigrationSquashFlags => ({
   version: over.version ?? Option.none(),
   dbUrl: over.dbUrl ?? Option.none(),
+  remote: over.remote ?? Option.none(),
   linked: over.linked ?? false,
   local: over.local ?? false,
   password: over.password ?? Option.none(),

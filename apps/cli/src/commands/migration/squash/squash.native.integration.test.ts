@@ -40,6 +40,7 @@ const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
 const flags: MigrationSquashFlags = {
   version: Option.none(),
   dbUrl: Option.none(),
+  remote: Option.none(),
   linked: false,
   local: true,
   password: Option.none(),

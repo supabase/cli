@@ -75,6 +75,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/abstract.pdf", "ss:///private/docs/readme.md"],
         recursive: false,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -98,6 +99,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -122,6 +124,7 @@ describe("storage rm", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
+          remote: Option.none(),
           linked: false,
           local: true,
           projectRef: Option.none(),
@@ -145,6 +148,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -166,6 +170,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
+        remote: Option.none(),
         linked: true,
         local: false,
         projectRef: Option.none(),
@@ -195,6 +200,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -216,6 +222,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -238,6 +245,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -267,6 +275,7 @@ describe("storage rm", () => {
             const exit = yield* storageRm({
               files: ["ss:///private/a.pdf"],
               recursive: false,
+              remote: Option.none(),
               linked: false,
               local: true,
               projectRef: Option.none(),
@@ -301,6 +310,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: [],
         recursive: true,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -330,6 +340,7 @@ describe("storage rm", () => {
         const exit = yield* storageRm({
           files: [],
           recursive: false,
+          remote: Option.none(),
           linked: false,
           local: true,
           projectRef: Option.none(),
@@ -370,6 +381,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files,
         recursive: false,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -393,6 +405,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///"],
         recursive: false,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -414,6 +427,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/"],
         recursive: false,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -437,6 +451,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: [],
         recursive: false,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -466,6 +481,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: [],
         recursive: true,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -501,6 +517,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///test"],
         recursive: true,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -559,6 +576,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/dir"],
         recursive: true,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -591,6 +609,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///test"],
         recursive: true,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -615,6 +634,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/dir"],
         recursive: true,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -638,6 +658,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -669,6 +690,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -691,6 +713,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: [],
         recursive: true,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -713,6 +736,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
+        remote: Option.none(),
         linked: true,
         local: false,
         projectRef: Option.none(),
@@ -736,6 +760,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
+        remote: Option.none(),
         linked: true,
         local: false,
         projectRef: Option.some(FLAG_REF),
@@ -759,6 +784,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.some(FLAG_REF),
@@ -766,7 +792,7 @@ describe("storage rm", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain(
-          "--project-ref selects a linked project and cannot be combined with --local.",
+          "--project-ref selects a remote project and cannot be combined with --local.",
         );
       }
       expect(requests).toHaveLength(0);
@@ -796,6 +822,7 @@ describe("storage rm", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
+          remote: Option.none(),
           linked: false,
           local: true,
           projectRef: Option.none(),
@@ -821,6 +848,7 @@ describe("storage rm", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
+          remote: Option.none(),
           linked: false,
           local: true,
           projectRef: Option.none(),
@@ -845,6 +873,7 @@ describe("storage rm", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
+          remote: Option.none(),
           linked: false,
           local: true,
           projectRef: Option.none(),
@@ -871,6 +900,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -898,6 +928,7 @@ describe("storage rm", () => {
           yield* storageRm({
             files: ["ss:///private/a.pdf"],
             recursive: false,
+            remote: Option.none(),
             linked: true,
             local: false,
             projectRef: Option.none(),
@@ -936,6 +967,7 @@ describe("stack backend", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.none(),
@@ -965,6 +997,7 @@ describe("stack backend", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
+          remote: Option.none(),
           linked: false,
           local: true,
           projectRef: Option.none(),
@@ -988,6 +1021,7 @@ describe("stack backend", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
+          remote: Option.none(),
           linked: false,
           local: true,
           projectRef: Option.none(),
@@ -1021,6 +1055,7 @@ describeHostedConsent("storage rm", {
       run: storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
+        remote: Option.none(),
         linked: false,
         local: false,
         projectRef: Option.some(VALID_REF),

@@ -177,7 +177,7 @@ describe("db pull removed surfaces through command dispatch", () => {
 
   it.live("does not reject a plain db pull", () =>
     Effect.gen(function* () {
-      const { exit } = yield* runDbPull([]);
+      const { exit } = yield* runDbPull(["--remote"]);
 
       expectNotLinked(exit);
     }),
@@ -185,7 +185,7 @@ describe("db pull removed surfaces through command dispatch", () => {
 
   it.live("does not reject --experimental=false over SUPABASE_EXPERIMENTAL=true", () =>
     Effect.gen(function* () {
-      const { exit } = yield* runDbPull(["--experimental=false"], {
+      const { exit } = yield* runDbPull(["--remote", "--experimental=false"], {
         env: { SUPABASE_EXPERIMENTAL: "true" },
       });
 
@@ -195,7 +195,7 @@ describe("db pull removed surfaces through command dispatch", () => {
 
   it.live("does not reject --experimental --declarative", () =>
     Effect.gen(function* () {
-      const { exit } = yield* runDbPull(["--experimental", "--declarative"]);
+      const { exit } = yield* runDbPull(["--remote", "--experimental", "--declarative"]);
 
       expectNotLinked(exit);
     }),

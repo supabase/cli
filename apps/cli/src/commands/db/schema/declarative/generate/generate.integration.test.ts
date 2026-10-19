@@ -447,6 +447,7 @@ const flags = (
   reset: over.reset ?? false,
   schema: over.schema ?? [],
   dbUrl: over.dbUrl ?? Option.none(),
+  remote: over.remote ?? Option.none(),
   linked: over.linked ?? false,
   local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none(),
@@ -498,7 +499,8 @@ describe("db schema declarative generate integration", () => {
       );
       expect(error).toMatchObject({
         _tag: "TargetSelectorConflictError",
-        message: "Only one of --local, --linked and --db-url can be set; got --local and --linked.",
+        message:
+          "Only one of --remote, --linked, --db-url and --local can be set; got --linked and --local.",
       });
     }).pipe(Effect.provide(layer));
   });
@@ -530,7 +532,7 @@ describe("db schema declarative generate integration", () => {
         expect(error).toMatchObject({
           _tag: "TargetSelectorConflictError",
           message:
-            "Only one of --local, --linked and --db-url can be set; got --local and --linked.",
+            "Only one of --remote, --linked, --db-url and --local can be set; got --linked and --local.",
         });
       }).pipe(Effect.provide(layer));
     },
@@ -574,7 +576,7 @@ describe("db schema declarative generate integration", () => {
           expect(error).toMatchObject({
             _tag: "TargetSelectorConflictError",
             message:
-              "Only one of --local, --linked and --db-url can be set; got --local and --linked.",
+              "Only one of --remote, --linked, --db-url and --local can be set; got --linked and --local.",
           });
         }).pipe(Effect.provide(layer)),
       );
@@ -652,17 +654,10 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("selects the linked project when the workspace target is remote", () => {
+  it.effect("selects the linked project for a bare --remote", () => {
     const s = setup(tmp.current, { experimental: true, projectId: Option.some(VALID_REF) });
     return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
-      yield* fs.writeFileString(
-        path.join(tmp.current, "supabase", "config.toml"),
-        'project_id = "test"\ntarget = "remote"\n',
-      );
-      yield* dbSchemaDeclarativeGenerate(flags());
+      yield* dbSchemaDeclarativeGenerate(flags({ remote: Option.some({ _tag: "Linked" }) }));
       expect(s.resolverCalls.map((call) => call.target)).toEqual([
         expect.objectContaining({ kind: "linked", ref: VALID_REF }),
       ]);

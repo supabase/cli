@@ -791,7 +791,7 @@ describe("batchFailureError", () => {
     expect("suggestion" in remote).toBe(false);
   });
 
-  it("adds the --linked pointer to the local-stack hint on a linked checkout", () => {
+  it("adds the --remote pointer to the local-stack hint on a linked checkout", () => {
     const error = batchFailureError(
       new Error("socket died"),
       { completed: 0, outcome: "unsent" },
@@ -800,7 +800,7 @@ describe("batchFailureError", () => {
     );
 
     expect(error).toMatchObject({
-      suggestion: `${SUGGEST_LOCAL_STACK}\nTo use the linked project instead, pass --linked.`,
+      suggestion: `${SUGGEST_LOCAL_STACK}\nTo use the linked project instead, pass --remote.`,
     });
   });
 

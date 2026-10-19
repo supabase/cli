@@ -132,11 +132,11 @@ describe("linkedAlternativeHint", () => {
   it("names the cached project when the cache matches the linked ref", () => {
     expect(
       linkedAlternativeHint({ ref: REF, cache: Option.some({ ref: REF, name: "alpha" }) }),
-    ).toBe(`default; pass --linked for alpha (${REF})`);
+    ).toBe(`default; pass --remote for alpha (${REF})`);
   });
 
   it("falls back to the ref when the cache is absent or names another project", () => {
-    const expected = `default; pass --linked for ${REF}`;
+    const expected = `default; pass --remote for ${REF}`;
     expect(linkedAlternativeHint({ ref: REF, cache: Option.none() })).toBe(expected);
     expect(
       linkedAlternativeHint({ ref: REF, cache: Option.some({ ref: OTHER_REF, name: "beta" }) }),

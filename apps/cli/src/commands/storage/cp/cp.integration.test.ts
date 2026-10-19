@@ -39,6 +39,7 @@ function cpFlags(opts: {
     cacheControl: opts.cacheControl === undefined ? Option.none() : Option.some(opts.cacheControl),
     contentType: opts.contentType === undefined ? Option.none() : Option.some(opts.contentType),
     jobs: opts.jobs === undefined ? Option.none() : Option.some(opts.jobs),
+    remote: Option.none(),
     linked: opts.local === false,
     local: opts.local ?? true,
     projectRef: Option.none(),
@@ -606,7 +607,7 @@ describe("storage cp", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain(
-          "--project-ref selects a linked project and cannot be combined with --local.",
+          "--project-ref selects a remote project and cannot be combined with --local.",
         );
       }
       expect(requests).toHaveLength(0);

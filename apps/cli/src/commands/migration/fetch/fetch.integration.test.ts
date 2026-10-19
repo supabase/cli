@@ -167,7 +167,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(CliArgs, { args: ["migration", "fetch"] }),
     Layer.succeed(OutputFlag, Option.none()),
-    Layer.succeed(TargetPolicy, { group: "sync", consent: "none" }),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
     mockTty({ stdinIsTty: opts.isTTY ?? true }),
     mockStdin(
       opts.isTTY ?? true,
@@ -181,6 +181,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
 const flags = (over: Partial<MigrationFetchFlags> = {}): MigrationFetchFlags => ({
   dbUrl: over.dbUrl ?? Option.none(),
+  remote: over.remote ?? Option.none(),
   linked: over.linked ?? false,
   local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none(),
@@ -460,10 +461,10 @@ describe("migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("targets the linked project by default and caches its ref", () => {
+  it.effect("targets the linked project for a bare --remote and caches its ref", () => {
     const { layer, resolveCalls, cache } = setup(tmp.current, { rows: [] });
     return Effect.gen(function* () {
-      yield* migrationFetch(flags());
+      yield* migrationFetch(flags({ remote: Option.some({ _tag: "Linked" }) }));
       expect(resolveCalls).toHaveLength(1);
       expect(resolveCalls[0]?.target).toMatchObject({ kind: "linked", ref: VALID_REF });
       expect(Option.isNone(resolveCalls[0]?.networkBanRemoval ?? Option.none())).toBe(true);

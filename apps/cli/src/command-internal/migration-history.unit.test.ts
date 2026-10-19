@@ -29,31 +29,31 @@ const failingSession = (error: DbExecError): DbSession => ({
 
 describe("reconcileMigrations", () => {
   it("reports in-sync when remote and local match", () => {
-    expect(reconcileMigrations(["20240101000000"], ["20240101000000"], "--linked")).toEqual({
+    expect(reconcileMigrations(["20240101000000"], ["20240101000000"], "--remote")).toEqual({
       kind: "in-sync",
     });
   });
 
   it("reports missing only when both histories are empty", () => {
-    expect(reconcileMigrations([], [], "--linked")).toEqual({ kind: "missing" });
-    expect(reconcileMigrations(["20240101000000"], [], "--linked").kind).toBe("conflict");
+    expect(reconcileMigrations([], [], "--remote")).toEqual({ kind: "missing" });
+    expect(reconcileMigrations(["20240101000000"], [], "--remote").kind).toBe("conflict");
   });
 
   it("reports a conflict with an extra remote migration", () => {
-    const result = reconcileMigrations(["20240101000000"], ["20240102000000"], "--linked");
+    const result = reconcileMigrations(["20240101000000"], ["20240102000000"], "--remote");
     expect(result.kind).toBe("conflict");
     if (result.kind === "conflict") {
       expect(stripAnsi(result.suggestion)).toContain(
-        "supabase migration repair --linked --status reverted 20240101000000",
+        "supabase migration repair --status reverted 20240101000000 --remote",
       );
       expect(stripAnsi(result.suggestion)).toContain(
-        "supabase migration repair --linked --status applied 20240102000000",
+        "supabase migration repair --status applied 20240102000000 --remote",
       );
     }
   });
 
   it("reports a conflict with an extra local migration", () => {
-    const result = reconcileMigrations([], ["20240102000000"], "--linked");
+    const result = reconcileMigrations([], ["20240102000000"], "--remote");
     expect(result.kind).toBe("conflict");
   });
 
@@ -62,14 +62,14 @@ describe("reconcileMigrations", () => {
       reconcileMigrations(
         ["20260420", "20260420010000"],
         ["20260420010000", "20260420"],
-        "--linked",
+        "--remote",
       ),
     ).toEqual({ kind: "in-sync" });
   });
 
   it("skips versions that do not parse as integers", () => {
     expect(
-      reconcileMigrations(["bogus", "20240101000000"], ["20240101000000"], "--linked"),
+      reconcileMigrations(["bogus", "20240101000000"], ["20240101000000"], "--remote"),
     ).toEqual({
       kind: "in-sync",
     });
@@ -77,14 +77,14 @@ describe("reconcileMigrations", () => {
 
   it("skips empty / whitespace versions (not Number() coercion)", () => {
     expect(
-      reconcileMigrations(["", "20240101000000"], [" ", "20240101000000"], "--linked"),
+      reconcileMigrations(["", "20240101000000"], [" ", "20240101000000"], "--remote"),
     ).toEqual({
       kind: "in-sync",
     });
   });
 
   it("treats a version within the int64 range as a real conflict", () => {
-    expect(reconcileMigrations(["9999999999999999"], [], "--linked").kind).toBe("conflict");
+    expect(reconcileMigrations(["9999999999999999"], [], "--remote").kind).toBe("conflict");
   });
 
   it("skips a version beyond the int64 range instead of hanging the scan", () => {
@@ -92,7 +92,7 @@ describe("reconcileMigrations", () => {
       reconcileMigrations(
         ["20240101000000", "9999999999999999999"],
         ["20240101000000"],
-        "--linked",
+        "--remote",
       ),
     ).toEqual({ kind: "in-sync" });
   });
@@ -187,27 +187,27 @@ describe("findPendingMigrations", () => {
 
 describe("suggestMigrationRepair", () => {
   it("lists reverted (remote) then applied (local) repair commands for the target", () => {
-    const out = stripAnsi(suggestMigrationRepair(["111"], ["222"], "--linked"));
+    const out = stripAnsi(suggestMigrationRepair(["111"], ["222"], "--remote"));
     expect(out).toContain("try repairing the migration history table:");
-    expect(out).toContain("supabase migration repair --linked --status reverted 111");
-    expect(out).toContain("supabase migration repair --linked --status applied 222");
+    expect(out).toContain("supabase migration repair --status reverted 111 --remote");
+    expect(out).toContain("supabase migration repair --status applied 222 --remote");
   });
 
-  it("carries a local or db-url target into every repair command", () => {
+  it("puts the target last in every repair command, so --remote cannot swallow a version", () => {
     expect(stripAnsi(suggestMigrationRepair(["111"], [], "--local"))).toContain(
-      "supabase migration repair --local --status reverted 111",
+      "supabase migration repair --status reverted 111 --local",
     );
-    expect(stripAnsi(suggestMigrationRepair([], ["222"], "--db-url <redacted>"))).toContain(
-      "supabase migration repair --db-url <redacted> --status applied 222",
+    expect(stripAnsi(suggestMigrationRepair([], ["222"], "--remote=<db-url>"))).toContain(
+      "supabase migration repair --status applied 222 --remote=<db-url>",
     );
   });
 });
 
 describe("suggestRevertHistory", () => {
   it("builds the revert-history suggestion with a trailing newline per line", () => {
-    const out = stripAnsi(suggestRevertHistory(["0002", "0003"], "--linked"));
-    expect(out).toContain("supabase migration repair --linked --status reverted 0002 0003");
-    expect(out).toContain("supabase db pull --linked");
+    const out = stripAnsi(suggestRevertHistory(["0002", "0003"], "--remote"));
+    expect(out).toContain("supabase migration repair --status reverted 0002 0003 --remote");
+    expect(out).toContain("supabase db pull --remote");
     expect(out).toMatch(/\n$/u);
   });
 });

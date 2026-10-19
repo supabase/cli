@@ -78,7 +78,12 @@ interface MockRoute {
   readonly transportDescription?: string;
 }
 
-const DEFAULT_FLAGS: BucketsFlags = { linked: false, local: true, projectRef: Option.none() };
+const DEFAULT_FLAGS: BucketsFlags = {
+  remote: Option.none(),
+  linked: false,
+  local: true,
+  projectRef: Option.none(),
+};
 
 function failureErrors<A, E>(exit: Exit.Exit<A, E>): ReadonlyArray<E> {
   if (!Exit.isFailure(exit)) return [];
@@ -831,7 +836,12 @@ describe("seed buckets", () => {
       // A linked run never short-circuits on empty config: even with no config
       // file, the remote client is built, the service-role key fetched, and
       // buckets listed — failures surface instead of a silent success.
-      const flags: BucketsFlags = { linked: true, local: false, projectRef: Option.none() };
+      const flags: BucketsFlags = {
+        remote: Option.none(),
+        linked: true,
+        local: false,
+        projectRef: Option.none(),
+      };
       const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
         projectRef: VALID_REF,
         apiKeys: [
@@ -1164,6 +1174,7 @@ describe("seed buckets", () => {
         routes: [{ method: "GET", match: "/storage/v1/bucket", transport: true }],
       });
       const exit = yield* seedBuckets({
+        remote: Option.none(),
         linked: true,
         local: false,
         projectRef: Option.none(),
@@ -2124,7 +2135,12 @@ describe("seed buckets", () => {
 
   it.effect("--linked seeds the remote storage project", () =>
     Effect.gen(function* () {
-      const flags: BucketsFlags = { linked: true, local: false, projectRef: Option.none() };
+      const flags: BucketsFlags = {
+        remote: Option.none(),
+        linked: true,
+        local: false,
+        projectRef: Option.none(),
+      };
       const { layer, out, requests } = yield* setupSeedBuckets(tmp.current, {
         toml: "[storage.buckets.test]\npublic = true\n",
         projectRef: VALID_REF,
@@ -2163,9 +2179,12 @@ describe("seed buckets", () => {
         ],
       });
       const fs = yield* FileSystem.FileSystem;
-      yield* seedBuckets({ linked: true, local: false, projectRef: Option.none() }).pipe(
-        Effect.provide(layer),
-      );
+      yield* seedBuckets({
+        remote: Option.none(),
+        linked: true,
+        local: false,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer));
       expect(
         managementRequests.map(({ method, urlWithParams }) => `${method} ${urlWithParams}`),
       ).toEqual([
@@ -2199,9 +2218,12 @@ describe("seed buckets", () => {
               { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
             ],
           });
-          yield* seedBuckets({ linked: true, local: false, projectRef: Option.none() }).pipe(
-            Effect.provide(layer),
-          );
+          yield* seedBuckets({
+            remote: Option.none(),
+            linked: true,
+            local: false,
+            projectRef: Option.none(),
+          }).pipe(Effect.provide(layer));
           expect(managementRequests.map(({ method, url }) => `${method} ${url}`)).toEqual([
             `GET https://api.supabase.com/v1/projects/${VALID_REF}`,
           ]);
@@ -2255,6 +2277,7 @@ describe("seed buckets", () => {
           ],
         });
         const exit = yield* seedBuckets({
+          remote: Option.none(),
           linked: true,
           local: false,
           projectRef: Option.some(FLAG_REF),
@@ -2279,6 +2302,7 @@ describe("seed buckets", () => {
         toml: "[storage.buckets.test]\npublic = true\n",
       });
       const exit = yield* seedBuckets({
+        remote: Option.none(),
         linked: false,
         local: true,
         projectRef: Option.some(FLAG_REF),
@@ -2286,7 +2310,7 @@ describe("seed buckets", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain(
-          "--project-ref selects a linked project and cannot be combined with --local.",
+          "--project-ref selects a remote project and cannot be combined with --local.",
         );
       }
       expect(requests).toEqual([]);
@@ -2305,6 +2329,7 @@ describe("seed buckets", () => {
         ],
       });
       const exit = yield* seedBuckets({
+        remote: Option.none(),
         linked: false,
         local: false,
         projectRef: Option.none(),
@@ -2328,6 +2353,7 @@ describe("seed buckets", () => {
         routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
       });
       const exit = yield* seedBuckets({
+        remote: Option.none(),
         linked: true,
         local: false,
         projectRef: Option.none(),
@@ -2353,6 +2379,7 @@ describe("seed buckets", () => {
         routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
       });
       const exit = yield* seedBuckets({
+        remote: Option.none(),
         linked: true,
         local: false,
         projectRef: Option.none(),
@@ -2390,10 +2417,12 @@ describe("seed buckets", () => {
           { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
         ],
       });
-      yield* seedBuckets({ linked: true, local: false, projectRef: Option.none() }).pipe(
-        Effect.provide(linked.layer),
-        Effect.exit,
-      );
+      yield* seedBuckets({
+        remote: Option.none(),
+        linked: true,
+        local: false,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(linked.layer), Effect.exit);
       expect(linked.linkedCache.cached).toBe(true);
       expect(linked.linkedCache.cachedRef).toBe(VALID_REF);
 
@@ -2408,7 +2437,12 @@ describe("seed buckets", () => {
         "SUPABASE_AUTH_SERVICE_ROLE_KEY",
         "env-service-role-key",
         Effect.gen(function* () {
-          const flags: BucketsFlags = { linked: true, local: false, projectRef: Option.none() };
+          const flags: BucketsFlags = {
+            remote: Option.none(),
+            linked: true,
+            local: false,
+            projectRef: Option.none(),
+          };
           const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
             toml: "[storage.buckets.test]\npublic = true\n",
             projectRef: VALID_REF,
@@ -2432,7 +2466,12 @@ describe("seed buckets", () => {
         "SUPABASE_AUTH_SERVICE_ROLE_KEY",
         "",
         Effect.gen(function* () {
-          const flags: BucketsFlags = { linked: true, local: false, projectRef: Option.none() };
+          const flags: BucketsFlags = {
+            remote: Option.none(),
+            linked: true,
+            local: false,
+            projectRef: Option.none(),
+          };
           const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
             toml: "[storage.buckets.test]\npublic = true\n",
             projectRef: VALID_REF,
@@ -2453,7 +2492,12 @@ describe("seed buckets", () => {
 
   it.effect("upserts analytics buckets when analytics.enabled and --linked", () =>
     Effect.gen(function* () {
-      const flags: BucketsFlags = { linked: true, local: false, projectRef: Option.none() };
+      const flags: BucketsFlags = {
+        remote: Option.none(),
+        linked: true,
+        local: false,
+        projectRef: Option.none(),
+      };
       const { layer, out, requests } = yield* setupSeedBuckets(tmp.current, {
         toml: [
           "[storage.analytics]",
@@ -2504,7 +2548,12 @@ describe("seed buckets", () => {
 
   it.effect("prunes a stale analytics bucket after the single hosted confirmation", () =>
     Effect.gen(function* () {
-      const flags: BucketsFlags = { linked: true, local: false, projectRef: Option.none() };
+      const flags: BucketsFlags = {
+        remote: Option.none(),
+        linked: true,
+        local: false,
+        projectRef: Option.none(),
+      };
       const { layer, out, requests } = yield* setupSeedBuckets(tmp.current, {
         toml: [
           "[storage.analytics]",
@@ -2559,6 +2608,7 @@ describe("seed buckets", () => {
           ],
         });
         const exit = yield* seedBuckets({
+          remote: Option.none(),
           linked: true,
           local: false,
           projectRef: Option.none(),
@@ -2585,6 +2635,7 @@ describe("seed buckets", () => {
         routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
       });
       const exit = yield* seedBuckets({
+        remote: Option.none(),
         linked: true,
         local: false,
         projectRef: Option.none(),
@@ -2612,7 +2663,12 @@ describe("seed buckets", () => {
 
   it.effect("--linked fails when the project is not linked", () =>
     Effect.gen(function* () {
-      const flags: BucketsFlags = { linked: true, local: false, projectRef: Option.none() };
+      const flags: BucketsFlags = {
+        remote: Option.none(),
+        linked: true,
+        local: false,
+        projectRef: Option.none(),
+      };
       const { layer } = yield* setupSeedBuckets(tmp.current, {
         toml: "[storage.buckets.test]\npublic = true\n",
         linkedFails: true,
@@ -2708,7 +2764,12 @@ describe("seed buckets", () => {
       // bucket; `mergeRemoteConfig` merges subtrees recursively rather than
       // replacing [storage.buckets] wholesale, so both buckets are seeded.
       const remoteRef = VALID_REF;
-      const flags: BucketsFlags = { linked: true, local: false, projectRef: Option.none() };
+      const flags: BucketsFlags = {
+        remote: Option.none(),
+        linked: true,
+        local: false,
+        projectRef: Option.none(),
+      };
       const { layer, out, requests } = yield* setupSeedBuckets(tmp.current, {
         toml: [
           'project_id = "test"',
@@ -3189,6 +3250,7 @@ describeHostedConsent("seed buckets", {
     ]);
     return {
       run: seedBuckets({
+        remote: Option.none(),
         linked: false,
         local: false,
         projectRef: Option.some(VALID_REF),

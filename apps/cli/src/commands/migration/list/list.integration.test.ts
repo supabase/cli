@@ -162,6 +162,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
 const flags = (over: Partial<MigrationListFlags> = {}): MigrationListFlags => ({
   dbUrl: over.dbUrl ?? Option.none(),
+  remote: over.remote ?? Option.none(),
   linked: over.linked ?? false,
   local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none(),
@@ -174,13 +175,6 @@ const seedMigrations = Effect.fnUntraced(function* (workdir: string, names: Read
   const dir = path.join(workdir, "supabase", "migrations");
   yield* fs.makeDirectory(dir, { recursive: true });
   for (const name of names) yield* fs.writeFileString(path.join(dir, name), "select 1;\n");
-});
-
-const writeConfig = Effect.fnUntraced(function* (workdir: string, body: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
-  yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), body);
 });
 
 const tmp = useTempWorkdir();
@@ -205,22 +199,18 @@ describe("migration list", () => {
     }).pipe(Effect.provide(ctx.layer));
   });
 
-  it.effect(
-    "lists the linked project and fills the cache when the workspace target is remote",
-    () => {
-      const ctx = setup(tmp.current, { remote: ["20240101000000"] });
-      return Effect.gen(function* () {
-        yield* seedMigrations(tmp.current, ["20240101000000_a.sql"]);
-        yield* writeConfig(tmp.current, 'target = "remote"\n');
-        yield* migrationList(flags());
-        expect(ctx.resolverCalls[0]?.target).toMatchObject({ kind: "linked", ref: VALID_REF });
-        expect(ctx.cache.cachedRef).toBe(VALID_REF);
-        const stdout = stripAnsi(ctx.out.stdoutText);
-        expect(stdout).toContain("Remote");
-        expect(stdout).not.toContain("Local DB");
-      }).pipe(Effect.provide(ctx.layer));
-    },
-  );
+  it.effect("lists the linked project and fills the cache for a bare --remote", () => {
+    const ctx = setup(tmp.current, { remote: ["20240101000000"] });
+    return Effect.gen(function* () {
+      yield* seedMigrations(tmp.current, ["20240101000000_a.sql"]);
+      yield* migrationList(flags({ remote: Option.some({ _tag: "Linked" }) }));
+      expect(ctx.resolverCalls[0]?.target).toMatchObject({ kind: "linked", ref: VALID_REF });
+      expect(ctx.cache.cachedRef).toBe(VALID_REF);
+      const stdout = stripAnsi(ctx.out.stdoutText);
+      expect(stdout).toContain("Remote");
+      expect(stdout).not.toContain("Local DB");
+    }).pipe(Effect.provide(ctx.layer));
+  });
 
   it.effect("shows an empty Remote column when the history table is absent (42P01)", () => {
     const { layer, out } = setup(tmp.current, {

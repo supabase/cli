@@ -50,7 +50,6 @@ import {
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
   useTempWorkdir,
-  withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
@@ -539,6 +538,7 @@ const flags = (over: Partial<DbDumpFlags> = {}): DbDumpFlags => ({
   keepComments: over.keepComments ?? Option.none(),
   file: over.file ?? Option.none(),
   dbUrl: over.dbUrl ?? Option.none(),
+  remote: over.remote ?? Option.none(),
   linked: over.linked ?? false,
   local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none(),
@@ -846,10 +846,10 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("follows a remote workspace target when no selector flag is given", () => {
+  it.effect("targets the linked project for a bare --remote", () => {
     const { layer, resolver } = setup({ conn: REMOTE_CONN, isLocal: false });
     return Effect.gen(function* () {
-      yield* withConfigEnv({ SUPABASE_TARGET: "remote" }, dbDump(flags({ dryRun: true })));
+      yield* dbDump(flags({ dryRun: true, remote: Option.some({ _tag: "Linked" }) }));
       expect(resolver.calls[0]?.target.kind).toBe("linked");
     }).pipe(Effect.provide(layer));
   });
@@ -1019,17 +1019,15 @@ describe("db dump integration", () => {
   });
 
   it.effect(
-    "rejects a malformed --project-ref on the linked path before resolving or caching",
+    "reads a --project-ref that is not a ref as a branch name and fails before resolving or caching",
     () => {
-      // The ref is validated before the connection is resolved, so a malformed flag fails
-      // fast with no connection/API work and no cache write.
       const { layer, cache, resolver } = setup();
       return Effect.gen(function* () {
         const exit = yield* dbDump(flags({ linked: true, projectRef: Option.some("BADREF") })).pipe(
           Effect.exit,
         );
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(failMessage(exit)).toBe(INVALID_PROJECT_REF_MESSAGE);
+        expect(failMessage(exit)).toContain('Cannot resolve "BADREF"');
         expect(resolver.calls).toEqual([]);
         expect(cache.cached).toBe(false);
       }).pipe(Effect.provide(layer));

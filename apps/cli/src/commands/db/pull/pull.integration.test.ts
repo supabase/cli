@@ -543,7 +543,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     ),
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(OutputFlag, Option.none()),
-    Layer.succeed(TargetPolicy, { group: "sync", consent: "no" }),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
   );
   return {
@@ -578,6 +578,11 @@ const flags = (over: Partial<DbPullFlags> = {}): DbPullFlags => ({
   strictCoverage: over.strictCoverage ?? false,
   schema: over.schema ?? [],
   dbUrl: over.dbUrl ?? Option.none(),
+  remote:
+    over.remote ??
+    (over.local === true || over.linked === true || Option.isSome(over.dbUrl ?? Option.none())
+      ? Option.none()
+      : Option.some({ _tag: "Linked" as const })),
   linked: over.linked ?? false,
   local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none(),
@@ -1843,7 +1848,7 @@ describe("db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("db pull --local keeps migration repair suggestions local", () => {
+  it.effect("db pull --local suggests repair commands without a target flag", () => {
     const s = setup(tmp.current, {
       migrations: ["20240102000000"],
       remoteVersions: ["20240101000000"],
@@ -1855,10 +1860,10 @@ describe("db pull", () => {
         ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
         : undefined;
       expect(failure).toMatchObject({
-        suggestion: expect.stringContaining("migration repair --local --status reverted"),
+        suggestion: expect.stringContaining("migration repair --status reverted 20240101000000\n"),
       });
       expect(failure).toMatchObject({
-        suggestion: expect.stringContaining("migration repair --local --status applied"),
+        suggestion: expect.stringContaining("migration repair --status applied 20240102000000\n"),
       });
     }).pipe(Effect.provide(s.layer));
   });
@@ -2314,6 +2319,7 @@ describe("db pull permissions through the real resolver and cache", () => {
       expect(asLines(requests)).toEqual([loginRoleRequest, poolerRequest, loginRoleRequest]);
       assertPermissionDrift({
         command: "db pull",
+        activeFlags: { remote: true },
         requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
         exact: true,
       });

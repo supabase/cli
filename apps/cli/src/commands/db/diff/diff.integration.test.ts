@@ -562,6 +562,7 @@ const flags = (over: Partial<DbDiffFlags> = {}): DbDiffFlags => ({
   to: over.to ?? Option.none(),
   output: over.output ?? Option.none(),
   dbUrl: over.dbUrl ?? Option.none(),
+  remote: over.remote ?? Option.none(),
   linked: over.linked ?? false,
   local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none(),

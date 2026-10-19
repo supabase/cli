@@ -438,15 +438,15 @@ describe("pullRetryHint", () => {
     );
   });
 
-  it("names 'supabase migration fetch --project-ref <ref>' for the migration_history step", () => {
+  it("names 'supabase migration fetch --remote=<ref>' for the migration_history step", () => {
     expect(pullRetryHint("migration_history", ref, undefined)).toBe(
-      "To retry just this step, run: supabase migration fetch --project-ref abcdefghijklmnopqrst",
+      "To retry just this step, run: supabase migration fetch --remote=abcdefghijklmnopqrst",
     );
   });
 
-  it("names 'supabase db pull --project-ref <ref> --experimental=false' so the db step avoids the structured-dump rejection", () => {
+  it("names 'supabase db pull --experimental=false --remote=<ref>' so the db step avoids the structured-dump rejection", () => {
     expect(pullRetryHint("db", ref, undefined)).toBe(
-      "To retry just this step, run: supabase db pull --project-ref abcdefghijklmnopqrst --experimental=false",
+      "To retry just this step, run: supabase db pull --experimental=false --remote=abcdefghijklmnopqrst",
     );
   });
 

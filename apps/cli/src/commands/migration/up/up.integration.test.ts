@@ -185,6 +185,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 const flags = (over: Partial<MigrationUpFlags> = {}): MigrationUpFlags => ({
   includeAll: over.includeAll ?? false,
   dbUrl: over.dbUrl ?? Option.none(),
+  remote: over.remote ?? Option.none(),
   linked: over.linked ?? false,
   local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none(),
@@ -241,10 +242,10 @@ describe("migration up", () => {
       const error = yield* migrationUp(flags()).pipe(Effect.flip);
       expect(error).toBeInstanceOf(MigrationMissingLocalError);
       expect(error).toMatchObject({
-        suggestion: expect.stringContaining("migration repair --local --status reverted"),
+        suggestion: expect.stringContaining("migration repair --status reverted 20240199000000\n"),
       });
       expect(error).toMatchObject({
-        suggestion: expect.stringContaining("supabase db pull --local"),
+        suggestion: expect.stringContaining("supabase db pull\n"),
       });
     }).pipe(Effect.provide(layer));
   });

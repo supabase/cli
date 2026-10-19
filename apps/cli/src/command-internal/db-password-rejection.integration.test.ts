@@ -31,8 +31,10 @@ const passwordCommands = walkCommandTree(root).filter(
   (entry) => hasFlag(entry, "password") && !isTombstone(entry),
 );
 
-const withSelector = (selector: "db-url" | "local") =>
-  passwordCommands.filter((entry) => hasFlag(entry, selector));
+type Selector = "db-url" | "remote-url" | "local" | "none";
+
+const withSelector = (selector: Exclude<Selector, "none">) =>
+  passwordCommands.filter((entry) => hasFlag(entry, selector === "local" ? "local" : "db-url"));
 
 const requiredFlagArgs = (entry: WalkedCommand): ReadonlyArray<string> =>
   entry.flags.flatMap((flag) => {
@@ -47,16 +49,24 @@ const requiredFlagArgs = (entry: WalkedCommand): ReadonlyArray<string> =>
     return [`--${flag.name}`, firstChoice ?? "value"];
   });
 
-const selectorArgs = (selector: "db-url" | "local" | "none") =>
-  selector === "db-url"
-    ? ["--db-url", "postgres://user:secret@127.0.0.1:1/postgres"]
-    : selector === "local"
-      ? ["--local"]
-      : [];
+const DIRECT_URL = "postgres://user:secret@127.0.0.1:1/postgres";
+
+const selectorArgs = (selector: Selector) => {
+  switch (selector) {
+    case "db-url":
+      return ["--db-url", DIRECT_URL];
+    case "remote-url":
+      return [`--remote=${DIRECT_URL}`];
+    case "local":
+      return ["--local"];
+    case "none":
+      return [];
+  }
+};
 
 const runCommand = (
   entry: WalkedCommand,
-  selector: "db-url" | "local" | "none",
+  selector: Selector,
   options: { readonly linked?: boolean } = {},
 ) =>
   Effect.gen(function* () {
@@ -105,28 +115,31 @@ describe("--password with a direct database target", () => {
   it("is discovered on commands that accept a direct target", () => {
     expect(passwordCommands.length).toBeGreaterThan(5);
     expect(withSelector("db-url").length).toBeGreaterThan(5);
+    expect(withSelector("remote-url").length).toBeGreaterThan(5);
     expect(withSelector("local").length).toBeGreaterThan(5);
   });
 
-  for (const selector of ["db-url", "local"] as const) {
+  for (const selector of ["db-url", "remote-url", "local"] as const) {
     for (const entry of withSelector(selector)) {
-      it.effect(`rejects ${entry.path.join(" ")} --password with --${selector}`, () =>
-        Effect.gen(function* () {
-          const failure = yield* runCommand(entry, selector);
+      it.effect(
+        `rejects ${entry.path.join(" ")} --password with ${selector === "remote-url" ? "--remote=<url>" : `--${selector}`}`,
+        () =>
+          Effect.gen(function* () {
+            const failure = yield* runCommand(entry, selector);
 
-          expect(failure).toMatchObject({
-            _tag: "TargetPasswordConflictError",
-            message:
-              selector === "db-url"
-                ? "--password can't be used with --db-url. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres"
-                : "--password only applies to a linked project. The local database uses [db].password from supabase/config.toml.",
-          });
-        }),
+            expect(failure).toMatchObject({
+              _tag: "TargetPasswordConflictError",
+              message:
+                selector === "local"
+                  ? "--password only applies to a linked project. The local database uses [db].password from supabase/config.toml."
+                  : "--password can't be used with --remote=<db-url>. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres",
+            });
+          }),
       );
     }
   }
 
-  it.effect("rejects migration squash --password when the workspace target is local", () =>
+  it.effect("rejects migration squash --password when no target is selected", () =>
     Effect.gen(function* () {
       const entry = passwordCommands.find(
         (candidate) => candidate.path.join(" ") === "migration squash",
@@ -142,7 +155,7 @@ describe("--password with a direct database target", () => {
     }),
   );
 
-  it.effect("points a local --password rejection at --linked when the checkout is linked", () =>
+  it.effect("points a local --password rejection at --remote when the checkout is linked", () =>
     Effect.gen(function* () {
       const entry = passwordCommands.find(
         (candidate) => candidate.path.join(" ") === "migration list",
@@ -153,7 +166,7 @@ describe("--password with a direct database target", () => {
       expect(failure).toMatchObject({
         _tag: "TargetPasswordConflictError",
         message:
-          "--password only applies to a linked project. The local database uses [db].password from supabase/config.toml. To use the linked project instead, pass --linked.",
+          "--password only applies to a linked project. The local database uses [db].password from supabase/config.toml. To use the linked project instead, pass --remote.",
       });
     }),
   );

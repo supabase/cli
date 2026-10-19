@@ -28,6 +28,8 @@ import { ConfigDiffLoadConfigError } from "../commands/config/diff/diff.errors.t
 import { DbDumpRunError } from "../commands/db/dump/dump.errors.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import { RemovedSurfaceError } from "../command-internal/removed-command.ts";
+import type { RemoteValue } from "../command-internal/target/remote-value.ts";
+import { remoteTelemetryFlag } from "../command-internal/target/target-flags.ts";
 import { withCommandTelemetry } from "./command-telemetry.ts";
 import { recordCommandTelemetry } from "./command-telemetry-attributes.ts";
 import { stackBackendLayer } from "../command-internal/stack-backend.ts";
@@ -570,6 +572,64 @@ describe("withCommandTelemetry", () => {
           });
         }),
       ),
+    );
+  });
+
+  describe("--remote", () => {
+    const REF = "abcdefghijklmnopqrst";
+    const DB_URL = "postgresql://postgres:secret@db.example.com:5432/postgres";
+
+    const recordedFlags = (
+      remote: Option.Option<RemoteValue>,
+      passRemoteTelemetryFlag: boolean,
+    ) => {
+      const analytics = mockContextualAnalytics();
+      return Effect.void.pipe(
+        withCommandTelemetry({
+          flags: { remote: passRemoteTelemetryFlag ? remoteTelemetryFlag(remote) : remote },
+          safeFlags: passRemoteTelemetryFlag ? ["remote"] : [],
+        }),
+        Effect.provide(analytics.layer),
+        Effect.provide(mockProcessControl().layer),
+        Effect.provide(mockOutput({ format: "text" }).layer),
+        Effect.provide(
+          Stdio.layerTest({ args: Effect.succeed(["functions", "deploy", "--remote"]) }),
+        ),
+        Effect.provide(
+          commandRuntimeLayer(["functions", "deploy"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+        Effect.map(() => analytics.captured[0]?.properties.flags),
+      );
+    };
+
+    it.live("redacts the value when a command passes its raw flags", () =>
+      Effect.gen(function* () {
+        const flags = yield* recordedFlags(
+          Option.some({ _tag: "Branch", name: "customer-acme" }),
+          false,
+        );
+        expect(flags).toEqual({ remote: "<redacted>" });
+      }),
+    );
+
+    it.live.each([
+      { name: "a bare --remote as true", remote: { _tag: "Linked" }, expected: true },
+      { name: "a project ref verbatim", remote: { _tag: "Ref", ref: REF }, expected: REF },
+      {
+        name: "a branch name as redacted",
+        remote: { _tag: "Branch", name: "customer-acme" },
+        expected: "<redacted>",
+      },
+      {
+        name: "a database URL as redacted",
+        remote: { _tag: "DbUrl", url: DB_URL },
+        expected: "<redacted>",
+      },
+    ] as const)("records $name through remoteTelemetryFlag", ({ remote, expected }) =>
+      Effect.gen(function* () {
+        const flags = yield* recordedFlags(Option.some(remote), true);
+        expect(flags).toEqual({ remote: expected });
+      }),
     );
   });
 

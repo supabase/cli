@@ -87,6 +87,7 @@ function setup(rows: ReadonlyArray<Record<string, unknown>>) {
 }
 
 const localFlags = {
+  remote: Option.none(),
   dbUrl: Option.none<string>(),
   linked: false,
   local: true,

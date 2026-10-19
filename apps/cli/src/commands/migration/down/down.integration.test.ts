@@ -202,6 +202,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 const flags = (over: Partial<MigrationDownFlags> = {}): MigrationDownFlags => ({
   last: over.last ?? 1,
   dbUrl: over.dbUrl ?? Option.none(),
+  remote: over.remote ?? Option.none(),
   linked: over.linked ?? false,
   local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none(),

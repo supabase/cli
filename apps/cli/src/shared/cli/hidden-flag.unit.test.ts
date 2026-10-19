@@ -122,7 +122,7 @@ describe("native hidden flags", () => {
     ]);
 
     expect(buildHelpDoc(functionsDeployCommand).flags.map((flag) => flag.name)).toEqual([
-      "project-ref",
+      "remote",
       "no-verify-jwt",
       "use-api",
       "import-map",

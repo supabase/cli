@@ -274,10 +274,10 @@ describe("connectSuggestion", () => {
     expect(connectSuggestion(err, { ...ctx, isLocal: true })).toBe(SUGGEST_LOCAL_STACK);
   });
 
-  it("points a refused local connection at --linked when the checkout is linked", () => {
+  it("points a refused local connection at --remote when the checkout is linked", () => {
     const err = sqlError(systemError("connect ECONNREFUSED 127.0.0.1:54322", "ECONNREFUSED"));
     expect(connectSuggestion(err, { ...ctx, isLocal: true, linkedCheckout: true })).toBe(
-      `${SUGGEST_LOCAL_STACK}\nTo use the linked project instead, pass --linked.`,
+      `${SUGGEST_LOCAL_STACK}\nTo use the linked project instead, pass --remote.`,
     );
   });
 

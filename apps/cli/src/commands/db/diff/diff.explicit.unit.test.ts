@@ -1,30 +1,35 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyExplicitRef, unknownTargetMessage } from "./diff.explicit.ts";
+import { classifyExplicitRef } from "./diff.explicit.ts";
+
+const REF = "abcdefghijklmnopqrst";
+const UUID = "11111111-2222-4333-8444-555555555555";
 
 describe("classifyExplicitRef", () => {
-  it("recognises the named targets", () => {
-    expect(classifyExplicitRef("local")).toBe("local");
-    expect(classifyExplicitRef("linked")).toBe("linked");
-    expect(classifyExplicitRef("migrations")).toBe("migrations");
+  it.each([
+    { value: "local", expected: { _tag: "Local" } },
+    { value: "migrations", expected: { _tag: "Migrations" } },
+    { value: "remote", expected: { _tag: "Remote", viaDeprecatedLinked: false } },
+    { value: "linked", expected: { _tag: "Remote", viaDeprecatedLinked: true } },
+  ])("reads the keyword $value", ({ value, expected }) => {
+    expect(classifyExplicitRef(value)).toEqual(expected);
   });
 
-  it("recognises postgres URLs", () => {
-    expect(classifyExplicitRef("postgres://u:p@h:5432/db")).toBe("url");
-    expect(classifyExplicitRef("postgresql://u@h/db")).toBe("url");
+  it.each([
+    { value: REF, expected: { _tag: "Ref", ref: REF } },
+    {
+      value: "postgres://u:p@h:5432/db",
+      expected: { _tag: "DbUrl", url: "postgres://u:p@h:5432/db" },
+    },
+    { value: "postgresql://u@h/db", expected: { _tag: "DbUrl", url: "postgresql://u@h/db" } },
+    { value: "feature-x", expected: { _tag: "Branch", name: "feature-x" } },
+    { value: UUID, expected: { _tag: "Branch", name: UUID } },
+  ])("classifies $value like a --remote value", ({ value, expected }) => {
+    expect(classifyExplicitRef(value)).toEqual(expected);
   });
 
-  it("rejects anything else as unknown", () => {
-    expect(classifyExplicitRef("remote")).toBe("unknown");
-    expect(classifyExplicitRef("https://h/db")).toBe("unknown");
-    expect(classifyExplicitRef("")).toBe("unknown");
-  });
-});
-
-describe("unknownTargetMessage", () => {
-  it("emits the quoted error byte-for-byte", () => {
-    expect(unknownTargetMessage("remote")).toBe(
-      "unknown target \"remote\": must be one of 'local', 'linked', 'migrations', or a postgres:// URL",
-    );
+  it("reaches a branch named like a keyword through its UUID, not the keyword", () => {
+    expect(classifyExplicitRef("Remote")).toEqual({ _tag: "Branch", name: "Remote" });
+    expect(classifyExplicitRef(UUID)).toEqual({ _tag: "Branch", name: UUID });
   });
 });

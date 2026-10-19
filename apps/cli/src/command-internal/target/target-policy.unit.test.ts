@@ -115,11 +115,11 @@ describe.each(leavesByVariant)(
       expect(offenders).toEqual([]);
     });
 
-    it("gives sync and selectable leaves local, linked and project-ref flags", () => {
+    it("gives selectable leaves remote, local, linked and project-ref flags", () => {
       const offenders = withPolicy
-        .filter(({ policy }) => policy.group === "sync" || policy.group === "selectable")
+        .filter(({ policy }) => policy.group === "selectable")
         .flatMap(({ path, node }) =>
-          (["local", "linked", "project-ref"] as const)
+          (["remote", "local", "linked", "project-ref"] as const)
             .filter((flag) => !node.flags.has(flag))
             .map((flag) => `${path} lacks --${flag}`),
         );
@@ -128,7 +128,6 @@ describe.each(leavesByVariant)(
 
     it("matches a declared database-target default to the group", () => {
       const expected: Partial<Record<TargetGroup, "linked" | "local">> = {
-        sync: "linked",
         selectable: "local",
       };
       const offenders = withPolicy.flatMap(({ path, node, policy }) => {
@@ -159,9 +158,9 @@ describe.each(leavesByVariant)(
       expect([...new Set(offenders)]).toEqual([]);
     });
 
-    it("requires an exemption reason on a sync or selectable leaf that never asks for consent", () => {
+    it("requires an exemption reason on a selectable leaf that never asks for consent", () => {
       const offenders = withPolicy
-        .filter(({ policy }) => policy.group === "sync" || policy.group === "selectable")
+        .filter(({ policy }) => policy.group === "selectable")
         .filter(
           ({ policy }) =>
             policy.consent === "none" && (policy.consentExemptReason ?? "").trim() === "",
@@ -224,9 +223,7 @@ describe("withTargetPolicy", () => {
     expect(readTargetPolicy(leaf)).toEqual(Option.some({ group: "hosted", consent: "no" }));
   });
 
-  it("requires a reason from a sync or selectable declaration that never asks for consent", () => {
-    // @ts-expect-error a leaf that can reach a hosted database must say why it never asks
-    withTargetPolicy({ group: "sync", consent: "none" });
+  it("requires a reason from a selectable declaration that never asks for consent", () => {
     // @ts-expect-error a leaf that can reach a hosted database must say why it never asks
     withTargetPolicy({ group: "selectable", consent: "none" });
     withTargetPolicy({ group: "selectable", consent: "none", consentExemptReason: "read-only" });

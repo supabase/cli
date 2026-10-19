@@ -81,6 +81,7 @@ const DEFAULT_FLAGS: DbPushFlags = {
   skipVault: false,
   dryRun: false,
   dbUrl: Option.none(),
+  remote: Option.none(),
   linked: false,
   local: true,
   projectRef: Option.none(),
@@ -290,7 +291,7 @@ function setup(
     Layer.succeed(CliArgs, { args: ["db", "push"] }),
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(OutputFlag, Option.none()),
-    Layer.succeed(TargetPolicy, { group: "sync", consent: "no" }),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
     Layer.succeed(DnsResolverFlag, "native"),
     projectRefLayer,
     telemetry.layer,
@@ -488,8 +489,10 @@ describe("db push", () => {
         expect(Cause.pretty(exit.cause)).toContain(
           "Remote migration versions not found in local migrations directory.",
         );
-        expect(failSuggestion(exit)).toContain("migration repair --local --status reverted");
-        expect(failSuggestion(exit)).toContain("supabase db pull --local");
+        expect(failSuggestion(exit)).toContain(
+          "migration repair --status reverted 20240101000000\n",
+        );
+        expect(failSuggestion(exit)).toContain("supabase db pull\n");
       }
       expect(out).toBeDefined();
     });
@@ -508,9 +511,9 @@ describe("db push", () => {
         local: false,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(failSuggestion(exit)).toContain(
-        "migration repair --db-url <redacted> --status reverted",
+        "migration repair --status reverted 20240101000000 --remote=<db-url>",
       );
-      expect(failSuggestion(exit)).toContain("supabase db pull --db-url <redacted>");
+      expect(failSuggestion(exit)).toContain("supabase db pull --remote=<db-url>");
       expect(failSuggestion(exit)).not.toContain("s3cret");
     });
   });
@@ -525,8 +528,10 @@ describe("db push", () => {
         Effect.provide(layer),
         Effect.exit,
       );
-      expect(failSuggestion(exit)).toContain("migration repair --linked --status reverted");
-      expect(failSuggestion(exit)).toContain("supabase db pull --linked");
+      expect(failSuggestion(exit)).toContain(
+        "migration repair --status reverted 20240101000000 --remote",
+      );
+      expect(failSuggestion(exit)).toContain("supabase db pull --remote");
       expect(failSuggestion(exit)).not.toContain("--local");
     });
   });
@@ -1072,13 +1077,17 @@ describe("db push", () => {
     },
   );
 
-  it.effect("defaults to the linked target when no target flag is set", () => {
+  it.effect("targets the linked project for a bare --remote", () => {
     const { layer, out, resolver } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       projectRef: VALID_REF,
     });
     return Effect.gen(function* () {
-      yield* dbPush({ ...DEFAULT_FLAGS, local: false }).pipe(Effect.provide(layer));
+      yield* dbPush({
+        ...DEFAULT_FLAGS,
+        local: false,
+        remote: Option.some({ _tag: "Linked" } as const),
+      }).pipe(Effect.provide(layer));
       expect(resolver.calls[0]).toMatchObject({
         target: { kind: "linked", ref: VALID_REF, source: "file", matchesLinkedRef: true },
         hasPasswordFlag: true,
@@ -1088,7 +1097,6 @@ describe("db push", () => {
   });
 
   it.effect("mints a login role and fills the cache through the real resolver and cache", () => {
-    // No target flag: push defaults to the linked project.
     const { layer, projectHttp } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       realLayers: true,
@@ -1484,7 +1492,11 @@ describeHostedConsent("db push", {
   invoke: ({ out }) => {
     const conn = mockConnection({});
     return {
-      run: dbPush({ ...DEFAULT_FLAGS, local: false }).pipe(
+      run: dbPush({
+        ...DEFAULT_FLAGS,
+        local: false,
+        remote: Option.some({ _tag: "Linked" } as const),
+      }).pipe(
         Effect.provide(
           Layer.mergeAll(
             conn.layer,

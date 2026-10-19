@@ -22,7 +22,6 @@ import {
   mockTelemetryStateTracked,
   sequentialExecBatch,
   useTempWorkdir,
-  withConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
@@ -331,6 +330,7 @@ function setup(opts: SetupOpts = {}) {
 
 const flags = (over: Partial<DbAdvisorsFlags> = {}): DbAdvisorsFlags => ({
   dbUrl: over.dbUrl ?? Option.none<string>(),
+  remote: over.remote ?? Option.none(),
   linked: over.linked ?? false,
   local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none<string>(),
@@ -478,10 +478,10 @@ describe("db advisors — local", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("follows a remote workspace target when no selector flag is given", () => {
+  it.effect("targets the linked project for a bare --remote", () => {
     const { layer, resolver, cache } = setup({ securityLints: [], performanceLints: [] });
     return Effect.gen(function* () {
-      yield* withConfigEnv({ SUPABASE_TARGET: "remote" }, dbAdvisors(flags()));
+      yield* dbAdvisors(flags({ remote: Option.some({ _tag: "Linked" } as const) }));
       expect(resolver.resolveInputs.map((input) => input.target.kind)).toEqual(["linked"]);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));

@@ -45,6 +45,7 @@ import {
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import {
@@ -88,6 +89,7 @@ const requestLines = (requests: ReadonlyArray<{ readonly method: string; readonl
 
 const baseFlags: FunctionsDeployFlags = {
   functionNames: ["hello-world"],
+  remote: Option.none(),
   projectRef: Option.none(),
   noVerifyJwt: false,
   useApi: true,
@@ -444,68 +446,218 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.effect("uses an explicit project ref when provided", () => {
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi({
-      handler: (request) => {
-        if (request.method === "GET") {
-          return Effect.succeed(jsonResponse(request, 200, []));
-        }
-        return Effect.succeed(
-          jsonResponse(request, 201, {
-            id: "function-id",
-            slug: "hello-world",
-            name: "hello-world",
-            status: "ACTIVE",
-            version: 2,
-            created_at: 1_687_423_025_152,
-            updated_at: 1_687_423_025_152,
-            verify_jwt: true,
-            import_map: true,
-            entrypoint_path: "functions/hello-world/index.ts",
-            import_map_path: "functions/hello-world/deno.json",
-          }),
-        );
-      },
+  describe("project selection", () => {
+    const OTHER_REF = "qrstuvwxyzabcdefghij";
+    const BRANCH_REF = "branchprojectrefabcd";
+    const branchRow = (name: string) => ({
+      id: "11111111-2222-4333-8444-555555555555",
+      name,
+      project_ref: BRANCH_REF,
+      parent_project_ref: VALID_REF,
+      is_default: false,
+      persistent: false,
+      status: "MIGRATIONS_PASSED",
+      created_at: "2026-05-27T01:02:03Z",
+      updated_at: "2026-05-27T01:02:04Z",
+      with_data: true,
     });
-    const layer = Layer.mergeAll(
-      cliConfigValuesTestLayer,
-      buildTestRuntime({
-        out,
-        api,
-        cliSettings: mockCommandSettings({
-          workdir: tempRoot.current,
-          projectId: Option.none(),
-        }),
-        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
-      }),
-      approvedHostedMutation,
-      Stdio.layerTest({
-        args: Effect.succeed([
-          "functions",
-          "deploy",
-          "hello-world",
-          "--use-api",
-          "--project-ref",
-          "qrstuvwxyzabcdefghij",
-        ]),
-      }),
-    );
 
-    return Effect.gen(function* () {
-      yield* writeCliConfig(tempRoot.current);
-      yield* writeLocalFunction(tempRoot.current, "hello-world");
-
-      yield* functionsDeploy({
-        ...baseFlags,
-        projectRef: Option.some("qrstuvwxyzabcdefghij"),
+    const selectionHarness = (args: ReadonlyArray<string>) => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({
+        handler: (request) =>
+          Effect.succeed(
+            request.url.endsWith("/branches")
+              ? jsonResponse(request, 200, [branchRow("feature-x")])
+              : request.method === "GET"
+                ? jsonResponse(request, 200, [])
+                : jsonResponse(request, 201, deployedFunction("hello-world")),
+          ),
       });
-
-      const deployRequest = api.requests.find(
-        (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
+      const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current, projectId: Option.none() }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+          cliArgs: args,
+        }),
+        commandRuntimeLayer(["functions", "deploy"]).pipe(Layer.provide(BunServices.layer)),
+        approvedHostedMutation,
+        Stdio.layerTest({ args: Effect.succeed(args) }),
       );
-      expect(deployRequest?.url).toContain("/projects/qrstuvwxyzabcdefghij/functions/deploy");
-    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+      const deployedTo = () =>
+        api.requests
+          .filter(
+            (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
+          )
+          .map((request) => request.url);
+      const warnings = () =>
+        out.messages.filter((message) => message.type === "warn").map((message) => message.message);
+      return { api, layer, deployedTo, warnings };
+    };
+
+    const linkParent = Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(`${tempRoot.current}/supabase/.temp`, { recursive: true });
+      yield* fs.writeFileString(`${tempRoot.current}/supabase/.temp/project-ref`, VALID_REF);
+    }).pipe(Effect.provide(BunServices.layer));
+
+    it.effect("deploys to the project --remote=<ref> names, with no deprecation warning", () => {
+      const { layer, deployedTo, warnings } = selectionHarness([
+        "functions",
+        "deploy",
+        "hello-world",
+        `--remote=${OTHER_REF}`,
+      ]);
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        yield* functionsDeploy({
+          ...baseFlags,
+          remote: Option.some({ _tag: "Ref", ref: OTHER_REF }),
+        });
+
+        expect(deployedTo()).toEqual([
+          `https://api.supabase.com/v1/projects/${OTHER_REF}/functions/deploy`,
+        ]);
+        expect(warnings()).toEqual([]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("keeps --project-ref working and points at --remote=<ref>", () => {
+      const { layer, deployedTo, warnings } = selectionHarness([
+        "functions",
+        "deploy",
+        "hello-world",
+        "--project-ref",
+        OTHER_REF,
+      ]);
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        yield* functionsDeploy({ ...baseFlags, projectRef: Option.some(OTHER_REF) });
+
+        expect(deployedTo()).toEqual([
+          `https://api.supabase.com/v1/projects/${OTHER_REF}/functions/deploy`,
+        ]);
+        expect(warnings()).toEqual([
+          `--project-ref is deprecated and will be removed in v4. Use --remote instead: supabase functions deploy hello-world --remote=${OTHER_REF}`,
+        ]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("rejects a database URL before any request", () => {
+      const { api, layer } = selectionHarness([
+        "functions",
+        "deploy",
+        "hello-world",
+        "--remote=postgresql://postgres:pw@db.example.com:5432/postgres",
+      ]);
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        const error = yield* functionsDeploy({
+          ...baseFlags,
+          remote: Option.some({
+            _tag: "DbUrl",
+            url: "postgresql://postgres:pw@db.example.com:5432/postgres",
+          }),
+        }).pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "TargetNeedsProjectError",
+          message: "`supabase functions deploy` needs a project, not a database URL.",
+        });
+        expect(api.requests).toEqual([]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("deploys to the project of the branch --remote=<branch> names", () => {
+      const { api, layer, deployedTo } = selectionHarness([
+        "functions",
+        "deploy",
+        "hello-world",
+        "--remote=feature-x",
+      ]);
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* linkParent;
+
+        yield* functionsDeploy({
+          ...baseFlags,
+          remote: Option.some({ _tag: "Branch", name: "feature-x" }),
+        });
+
+        expect(requestLines(api.requests)[0]).toBe(
+          `GET https://api.supabase.com/v1/projects/${VALID_REF}/branches`,
+        );
+        expect(deployedTo()).toEqual([
+          `https://api.supabase.com/v1/projects/${BRANCH_REF}/functions/deploy`,
+        ]);
+        assertPermissionDrift({
+          command: "functions deploy",
+          activeFlags: { ...apiPathFlags, remote: true },
+          requests: api.requests,
+        });
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("fails with the branches that exist when no branch has that name", () => {
+      const { layer, deployedTo } = selectionHarness([
+        "functions",
+        "deploy",
+        "hello-world",
+        "--remote=feature-y",
+      ]);
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* linkParent;
+
+        const error = yield* functionsDeploy({
+          ...baseFlags,
+          remote: Option.some({ _tag: "Branch", name: "feature-y" }),
+        }).pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "LinkBranchNotFoundError",
+          message: expect.stringContaining("Available branches: feature-x"),
+        });
+        expect(deployedTo()).toEqual([]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("stops a bare --remote that swallowed a function name that is also a branch", () => {
+      const { layer, deployedTo } = selectionHarness([
+        "functions",
+        "deploy",
+        "--remote",
+        "feature-x",
+      ]);
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "feature-x");
+        yield* linkParent;
+
+        const error = yield* functionsDeploy({
+          ...baseFlags,
+          functionNames: ["feature-x"],
+          remote: Option.some({ _tag: "Linked" }),
+        }).pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "TargetRemoteAmbiguousError",
+          message: `feature-x is a branch of project ${VALID_REF}. Did you mean --remote=feature-x?`,
+        });
+        expect(deployedTo()).toEqual([]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
   });
 
   it.effect("resolves --import-map relative to the caller cwd", () => {

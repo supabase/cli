@@ -1,6 +1,16 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Schema,
+} from "effect";
 import { vi } from "vitest";
 
 vi.mock("node:net", (importOriginal) =>
@@ -15,7 +25,6 @@ import {
   VALID_REF,
   VALID_TOKEN,
   mockCommandSettings,
-  withConfigEnv,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../tests/helpers/command-mocks.ts";
@@ -339,6 +348,7 @@ function setup(opts: SetupOpts = {}) {
 
 const flags = (over: Partial<Parameters<typeof testDb>[0]> = {}) => ({
   paths: over.paths ?? [],
+  remote: over.remote ?? Option.none(),
   dbUrl: over.dbUrl ?? Option.none<string>(),
   linked: over.linked ?? false,
   local: over.local ?? false,
@@ -714,10 +724,10 @@ describe("test db integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("follows a remote workspace target when no selector flag is given", () => {
+  it.live("targets the linked project for a bare --remote", () => {
     const { layer, resolver } = setup({ conn: REMOTE_CONN, isLocal: false });
     return Effect.gen(function* () {
-      yield* withConfigEnv({ SUPABASE_TARGET: "remote" }, testDb(flags()));
+      yield* testDb(flags({ remote: Option.some({ _tag: "Linked" }) }));
       expect(resolver.inputs[0]?.target.kind).toBe("linked");
     }).pipe(Effect.provide(layer));
   });

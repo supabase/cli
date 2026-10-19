@@ -146,6 +146,7 @@ class ApiCallFailure extends Data.TaggedError("ApiCallFailure")<{
 
 function defaultFlags(overrides: Partial<GenTypesFlags> = {}): GenTypesFlags {
   return {
+    remote: Option.none(),
     local: false,
     linked: false,
     dbUrl: Option.none(),
@@ -527,6 +528,7 @@ const setup = Effect.fnUntraced(function* (
     }),
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
+    cliArgs: opts.args ?? ["gen", "types"],
   });
 
   const layer = Layer.mergeAll(
@@ -969,19 +971,15 @@ describe("gen types", () => {
   });
 
   describe("target selection", () => {
-    it.effect("follows a workspace target of remote to the linked project", () =>
+    it.effect("targets the linked project for a bare --remote", () =>
       Effect.gen(function* () {
-        const workdir = yield* makeWorkdir("supabase-gen-types-target-remote-");
-        yield* writeConfig(
-          workdir,
-          ['project_id = "demo"', 'target = "remote"', "", "[api]", "schemas = []"].join("\n"),
-        );
         const { layer, api, out } = yield* setup({
-          workdir,
           projectId: Option.some(VALID_REF),
           projectTypes: "ok",
         });
-        yield* genTypes(defaultFlags()).pipe(Effect.provide(layer));
+        yield* genTypes(defaultFlags({ remote: Option.some({ _tag: "Linked" } as const) })).pipe(
+          Effect.provide(layer),
+        );
 
         expect(out.stderrText).toContain(unverifiedTargetBanner());
         expect(api.requests).toContainEqual({
@@ -991,25 +989,7 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.effect("lets --local override a workspace target of remote", () =>
-      Effect.gen(function* () {
-        const workdir = yield* makeWorkdir("supabase-gen-types-target-override-");
-        yield* writeConfig(
-          workdir,
-          ['project_id = "demo"', 'target = "remote"', "", "[api]", "schemas = []"].join("\n"),
-        );
-        const { layer, api, generator } = yield* setup({
-          workdir,
-          projectId: Option.some(VALID_REF),
-        });
-        yield* genTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
-
-        expect(generator.calls[0]?.isLocal).toBe(true);
-        expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
-
-    it.effect("treats --project-id as a deprecated alias of --project-ref", () =>
+    it.effect("treats --project-id as a deprecated alias of --remote=<ref>", () =>
       Effect.gen(function* () {
         const { layer, out, api } = yield* setup({
           args: ["gen", "types", "--project-id", VALID_REF],
@@ -1019,9 +999,10 @@ describe("gen types", () => {
           Effect.provide(layer),
         );
 
-        expect(out.stderrText).toContain(
-          "--project-id is deprecated and will be removed in v4; use --project-ref instead.",
-        );
+        expect(out.messages).toContainEqual({
+          type: "warn",
+          message: `--project-id is deprecated and will be removed in v4. Use --remote instead: supabase gen types --remote=${VALID_REF}`,
+        });
         expect(out.stderrText).toContain(unverifiedTargetBanner());
         expect(api.requests).toContainEqual({
           method: "generateTypescriptTypes",
@@ -1156,7 +1137,7 @@ describe("gen types", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain(
-            "Only one of --local, --linked and --db-url can be set; got --local and --linked.",
+            "Only one of --remote, --linked, --db-url and --local can be set; got --linked and --local.",
           );
           expect(
             Option.exists(
@@ -1203,7 +1184,7 @@ describe("gen types", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain(
-            "if any flags in the group [linked project-ref swift-access-control] are set none of the others can be; [linked swift-access-control] were all set",
+            "if any flags in the group [remote linked project-ref swift-access-control] are set none of the others can be; [linked swift-access-control] were all set",
           );
         }
       }).pipe(Effect.provide(BunServices.layer)),
@@ -1234,7 +1215,7 @@ describe("gen types", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain(
-            "if any flags in the group [linked project-ref swift-access-control] are set none of the others can be; [project-ref swift-access-control] were all set",
+            "if any flags in the group [remote linked project-ref swift-access-control] are set none of the others can be; [project-ref swift-access-control] were all set",
           );
         }
       }).pipe(Effect.provide(BunServices.layer)),
@@ -1253,7 +1234,7 @@ describe("gen types", () => {
         if (Exit.isFailure(exit)) {
           // Established guard, including its "must used" typo — do not "fix" the grammar.
           expect(String(exit.cause)).toContain(
-            "--postgrest-v9-compat must used together with --db-url",
+            "--postgrest-v9-compat must used together with --remote=<db-url>",
           );
           expect(
             Option.exists(
@@ -1278,7 +1259,7 @@ describe("gen types", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain(
-            "--postgrest-v9-compat must used together with --db-url",
+            "--postgrest-v9-compat must used together with --remote=<db-url>",
           );
         }
         expect(telemetry.flushed).toBe(true);
@@ -1321,7 +1302,7 @@ describe("gen types", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain(
-            "if any flags in the group [linked project-ref query-timeout] are set none of the others can be; [linked project-ref query-timeout] were all set",
+            "if any flags in the group [remote linked project-ref query-timeout] are set none of the others can be; [linked project-ref query-timeout] were all set",
           );
         }
         expect(api.requests).toHaveLength(0);
@@ -1362,7 +1343,7 @@ describe("gen types", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain(
-            "if any flags in the group [linked project-ref query-timeout] are set none of the others can be; [project-ref query-timeout] were all set",
+            "if any flags in the group [remote linked project-ref query-timeout] are set none of the others can be; [project-ref query-timeout] were all set",
           );
         }
       }).pipe(Effect.provide(BunServices.layer)),
@@ -1382,7 +1363,7 @@ describe("gen types", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain(
-            "if any flags in the group [linked project-ref query-timeout] are set none of the others can be; [linked query-timeout] were all set",
+            "if any flags in the group [remote linked project-ref query-timeout] are set none of the others can be; [linked query-timeout] were all set",
           );
         }
       }).pipe(Effect.provide(BunServices.layer)),
@@ -1436,7 +1417,7 @@ describe("gen types", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain(
-            "--postgrest-v9-compat must used together with --db-url",
+            "--postgrest-v9-compat must used together with --remote=<db-url>",
           );
         }
       }).pipe(Effect.provide(BunServices.layer)),
@@ -1490,7 +1471,7 @@ describe("gen types", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain(
-            "if any flags in the group [linked project-ref postgrest-v9-compat] are set none of the others can be; [postgrest-v9-compat project-ref] were all set",
+            "if any flags in the group [remote linked project-ref postgrest-v9-compat] are set none of the others can be; [postgrest-v9-compat project-ref] were all set",
           );
         }
       }).pipe(Effect.provide(BunServices.layer)),
@@ -3622,7 +3603,7 @@ describe("gen types permissions through the real layers", () => {
         expect(Exit.isSuccess(exit)).toBe(scenario.generates);
         if (Exit.isFailure(exit)) {
           expect(String(exit.cause)).toContain(
-            "--postgrest-v9-compat must used together with --db-url",
+            "--postgrest-v9-compat must used together with --remote=<db-url>",
           );
         }
         expect(ctx.generator.calls).toHaveLength(scenario.generates ? 1 : 0);

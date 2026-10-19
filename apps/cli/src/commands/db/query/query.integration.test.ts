@@ -25,7 +25,6 @@ vi.mock("node:net", (importOriginal) =>
 
 import {
   VALID_TOKEN,
-  withConfigEnv,
   mockCommandPlatformApi,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
@@ -385,6 +384,7 @@ function setup(opts: SetupOpts = {}) {
 const flags = (over: Partial<DbQueryFlags> = {}): DbQueryFlags => ({
   sql: over.sql ?? Option.none(),
   dbUrl: over.dbUrl ?? Option.none(),
+  remote: over.remote ?? Option.none(),
   linked: over.linked ?? false,
   local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none(),
@@ -971,15 +971,14 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("follows a remote workspace target when no selector flag is given", () => {
+  it.effect("targets the linked project for a bare --remote", () => {
     const { layer, out, cache } = setup({
       linkedStatus: 201,
       linkedBody: '[{"name":"alice","id":1}]',
     });
     return Effect.gen(function* () {
-      yield* withConfigEnv(
-        { SUPABASE_TARGET: "remote" },
-        dbQuery(flags({ sql: Option.some("select 1"), linked: false })),
+      yield* dbQuery(
+        flags({ sql: Option.some("select 1"), remote: Option.some({ _tag: "Linked" }) }),
       );
       expect(out.stdoutText).toContain("│ name  │ id │");
       expect(cache.cached).toBe(true);

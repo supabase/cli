@@ -190,6 +190,7 @@ const input = (over: Partial<MigrationRepairInput> = {}): MigrationRepairInput =
   versions: over.versions ?? [],
   status: over.status ?? "applied",
   dbUrl: over.dbUrl ?? Option.none(),
+  remote: over.remote ?? Option.none(),
   linked: over.linked ?? false,
   local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none(),
