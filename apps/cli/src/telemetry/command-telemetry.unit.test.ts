@@ -26,6 +26,7 @@ import {
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import { ConfigDiffLoadConfigError } from "../commands/config/diff/diff.errors.ts";
 import { DbDumpRunError } from "../commands/db/dump/dump.errors.ts";
+import { StdoutClosedError } from "../shared/output/errors.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import { RemovedSurfaceError } from "../command-internal/removed-command.ts";
 import type { RemoteValue } from "../command-internal/target/remote-value.ts";
@@ -901,6 +902,27 @@ describe("withCommandTelemetry", () => {
           expect(event?.properties.flags).toBeUndefined();
         }),
       ),
+    );
+  });
+
+  it.live("records exit 0 when a closed stdout alone ended the command", () => {
+    const analytics = mockContextualAnalytics();
+
+    return withCommandTelemetry()(Effect.die(new StdoutClosedError())).pipe(
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
+      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.exit,
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured).toHaveLength(1);
+          expect(analytics.captured[0]?.properties.exit_code).toBe(0);
+          expect(analytics.captured[0]?.properties).not.toHaveProperty("error_kind");
+        }),
+      ),
+      Effect.asVoid,
     );
   });
 

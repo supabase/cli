@@ -197,7 +197,7 @@ function v2Response(
       mailer_notifications_mfa_factor_enrolled_enabled: false,
       mailer_notifications_mfa_factor_unenrolled_enabled: false,
       external_phone_enabled: false,
-      sms_autoconfirm: false,
+      sms_autoconfirm: true,
       sms_max_frequency: 5,
       sms_otp_exp: 60,
       sms_otp_length: 6,

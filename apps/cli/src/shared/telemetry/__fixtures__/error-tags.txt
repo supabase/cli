@@ -506,6 +506,7 @@ StatusInvalidConfigError
 StatusListError
 StatusOverrideParseError
 StatusWorkdirError
+StdoutClosedError
 StopConfigLoadError
 StopContainerError
 StopContainerPruneError

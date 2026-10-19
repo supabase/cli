@@ -3,9 +3,10 @@
 Generates PostgREST client types against a direct PostgreSQL connection. Introspection runs
 in-process via `@supabase/postgrest-typegen`; the language comes from the `@supabase/typegen`
 registry, which lists every `--lang` value and either calls that language's generator in-process
-(TypeScript, Go, Python, Swift today) or runs the language's own tool in the directory the command
+(TypeScript, Go, Python today) or runs the language's own tool in the directory the command
 was run from, with the introspected document on stdin (`--lang dart` runs
-`dart run supabase_typegen --output -`). A bump of that dependency can add a `--lang` value or a
+`dart run supabase_typegen --output -`, `--lang swift` runs supabase-swift's
+`supabase-typegen`). A bump of that dependency can add a `--lang` value or a
 language flag; the CLI names no language itself. The command is `selectable` and never asks for
 hosted-mutation consent. With no selector it targets the local database; `--remote` targets a remote
 project: bare for the linked project, `--remote=<ref>`, `--remote=<branch>` for a branch of the
@@ -27,15 +28,17 @@ instead of inspecting `supabase_db_*`. `--linked`, `--project-ref`, `--project-i
 | `<workdir>/supabase/config.json` or `config.toml` (`[db]` values only)  | JSON/TOML          | every `--remote=<db-url>` resolution, regardless of `--schema` — `DbConfigResolver` reads it through `readDbToml` (`config.json` preferred when both exist) to fill a passwordless local DSN's `[db].password` and to classify the target host as local vs. remote. A present-but-unparseable config file fails the command (`DbConfigLoadError`) even on this path, independent of the schema-selecting load above.                                                                                                                                                                                                                                                                |
 | `<workdir>{/supabase}/.env*`                                            | dotenv             | the local target; resolves the same nested environment overrides as the CLI. Every `--remote=<db-url>` resolution also reads it (same `.env.<SUPABASE_ENV>.local`/`.env.local`/`.env.<SUPABASE_ENV>`/`.env` search) to populate the `PG*` fallbacks used while parsing the DSN.                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `~/.pg_service.conf` (or a `PGSERVICEFILE`/DSN `servicefile=` override) | libpq service file | `--remote=<db-url>`, only when the DSN or `PGSERVICE` names a `service` — its settings fill in for connection fields the DSN itself omits                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `Package.resolved` (nearest)                                            | JSON               | `--lang swift` without `SUPABASE_TYPEGEN`, on macOS or Linux x86_64: the first one found walking up from the working directory, including the copies inside an `.xcodeproj` or `.xcworkspace`; the supabase-swift version it pins picks the `supabase-typegen` release                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `<workdir>/supabase/.temp/rest-version`                                 | plain text         | the local target only, when `db.major_version > 14` — forces v9 compat if the tag contains `v9`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 ## Files Written
 
-| Path                                           | Format | When                                                                                                                                      |
-| ---------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | a remote project (`--remote`, `--remote=<ref>`, `--remote=<branch>` or an alias), via `LinkedProjectCache.cache`, when the file is absent |
+| Path                                                                     | Format     | When                                                                                                                                                               |
+| ------------------------------------------------------------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/.temp/linked-project.json`                           | JSON       | a remote project (`--remote`, `--remote=<ref>`, `--remote=<branch>` or an alias), via `LinkedProjectCache.cache`, when the file is absent                          |
+| `${XDG_CACHE_HOME:-<cache>}/supabase/typegen/<version>/supabase-typegen` | executable | `--lang swift`, when the release binary for the pinned supabase-swift version is not cached yet; `<cache>` is `~/Library/Caches` on macOS and `~/.cache` elsewhere |
 
-The local target and `--remote=<db-url>` write no files.
+Apart from the Swift binary cache, the local target and `--remote=<db-url>` write no files.
 
 ## API Routes
 
@@ -74,11 +77,16 @@ local target and `--remote=<db-url>` do not call the Management API.
 | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `docker`/`podman container inspect supabase_db_<project_id>` | the local target, only when the selected backend is the legacy Docker Compose stack (`[experimental].stack` off) | assert `supabase start` is running, against the shell-selected daemon (a project `.env*` is not forwarded to the spawn) |
 | `dart run supabase_typegen --output -`                       | `--lang dart` on every target, in the directory the command was run from                                         | generate the types from the `GeneratorMetadata` JSON on stdin                                                           |
+| `supabase-typegen --access-control <internal\|public>`       | `--lang swift` on every target, in the directory the command was run from                                        | generate the types from the `GeneratorMetadata` JSON on stdin                                                           |
 
 Any other `--lang` whose registry entry is out-of-process runs its own tool
 the same way: stdout is the output, stderr is folded into the error on
 failure. The tool inherits the CLI's entire environment, so a `PUB_CACHE` or
-proxy setting reaches it unchanged. Introspection and the in-process
+proxy setting reaches it unchanged. For `--lang swift` the binary is
+`SUPABASE_TYPEGEN` when set, else the cached release binary of the
+supabase-swift version `Package.resolved` pins, downloaded once from
+`https://github.com/supabase/supabase-swift/releases/download/v<version>/`,
+else `supabase-typegen` from `PATH`. Introspection and the in-process
 languages never shell out. On a native or Docker-based managed stack
 (`[experimental].stack` on), the local target never inspects a container; it
 resolves the stack's database connection through `DbConfigResolver` the same
@@ -99,6 +107,8 @@ way `--remote=<db-url>` does.
 | `SUPABASE_DB_PASSWORD`                                                                                                                                                                           | database password for a remote project (shell env > project `.env*` > config); withheld, with a stderr `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN).` line, when the target differs from `.temp/project-ref`, which mints a temporary login role instead. **Not read by the local target**, which uses `[db].password` (default `postgres`) | no                                                                                                                                                                                                     |
 | `SUPABASE_SERVICES_HOSTNAME`                                                                                                                                                                     | host used to reach the local database on the legacy Docker Compose stack; read from the shell env first, then project `.env*`                                                                                                                                                                                                                                                                                                                                            | no (defaults to the shell `DOCKER_HOST`'s tcp host, else `127.0.0.1`)                                                                                                                                  |
 | `SUPABASE_WORKDIR`                                                                                                                                                                               | working directory `supabase/config.toml`/`config.json` is read from (`--workdir` takes priority)                                                                                                                                                                                                                                                                                                                                                                         | no — when unset, the CLI walks up from cwd looking for `supabase/config.toml` or `supabase/config.json`; when SET (flag or env) the directory is used exactly as given and **no ancestor is searched** |
+| `SUPABASE_TYPEGEN`                                                                                                                                                                               | path of the `supabase-typegen` binary `--lang swift` runs, skipping the version lookup and download                                                                                                                                                                                                                                                                                                                                                                      | no                                                                                                                                                                                                     |
+| `XDG_CACHE_HOME`, `HOME`                                                                                                                                                                         | locate the cache directory of the `--lang swift` release binary                                                                                                                                                                                                                                                                                                                                                                                                          | no                                                                                                                                                                                                     |
 | `PATH`, `PATHEXT`, `ComSpec`                                                                                                                                                                     | find the tool of an out-of-process `--lang`; `PATHEXT` and `ComSpec` matter on Windows only                                                                                                                                                                                                                                                                                                                                                                              | no (`PATHEXT` defaults to `.COM;.EXE;.BAT;.CMD`, `ComSpec` to `cmd.exe`; without `PATH` the tool is reported as not installed)                                                                         |
 
 ## Exit Codes
@@ -211,7 +221,8 @@ Not applicable.
   these three flags.
 - **Output compatibility with the previous pg-meta-based generator.** Measured against
   pg-meta's reference generators on the same schema:
-  - Go and Swift output is byte-identical to the reference generators.
+  - Go output is byte-identical. Swift output comes from supabase-swift's
+    `supabase-typegen` instead and emits `@Table` structs for the PostgREST v3 typed API.
   - TypeScript: a `NOT NULL` jsonb column now generates `NonNullable<Json>` instead of
     `Json` — the old type wrongly admitted `null` on a column the schema declares
     non-nullable.
@@ -224,7 +235,7 @@ Not applicable.
     on these jsonb cases until the hosted service adopts the same generator.
 - `--schema` / `-s` accepts a comma-separated list of schemas to include.
 - Language flags are rendered from the registry's user-facing option specs; today that is
-  `--swift-access-control`, which accepts `internal` (default), `public`, `private` or `package`.
+  `--swift-access-control`, which accepts `internal` (default) or `public`.
   Every such flag is mutually exclusive with a remote project selector; on the local and
   `--remote=<db-url>` paths the flags are parsed regardless of `--lang`, and only the values the
   chosen language declares reach its generator.
