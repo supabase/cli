@@ -30,10 +30,10 @@ artifacts (`./schema.json`, `./project-schema.json`).
   project-environment resolution, and `inferFunctionsManifest` (discovers and validates
   `supabase/functions/*` on disk).
 - `@supabase/config/internal` (CLI-2234) — NOT covered by semver, and only `apps/cli` may import it
-  (enforced by `src/monorepo-import-contract.unit.test.ts`). Carries `apps/cli`'s own Go-parity
-  call sites and contract-guard tests: `loadCliConfig`/`resolveCliConfigValue`/
+  (enforced by `src/monorepo-import-contract.unit.test.ts`). Carries `apps/cli`'s own
+  config-loading entrypoints and contract-guard tests: `loadCliConfig`/`resolveCliConfigValue`/
   `resolveCliConfigSubtree` — the SAME runtime functions `./effect` exports, re-typed here to
-  additionally accept the internal-only `goViperCompat` option (`InternalLoadCliConfigOptions` for
+  additionally accept the internal-only `cliCompat` option (`InternalLoadCliConfigOptions` for
   `loadCliConfig`; `resolveCliConfigValue`/`resolveCliConfigSubtree`'s own widened options type,
   `InternalResolveCliConfigOptions`, is package-internal and not itself re-exported) — plus the
   otherwise-internal registry data (`AUTH_HOOK_NAMES`, `unmappedSecretApiPaths`,
@@ -45,8 +45,11 @@ artifacts (`./schema.json`, `./project-schema.json`).
   `ConfigChange`/`ConfigChangeClass`/`ConfigChangeCounts`/`ConfigChangeSet`/
   `DiffProjectConfigOptions` types, lives on `.`, not here — see above),
   `dualScopeProjectConfigPaths`, the raw `[remotes.*]` helpers `remoteNameForProjectRef`/
-  `remoteProjectIdEntries`, and the atomic single-file writer `writeCliConfigDocumentText`/
-  `CliConfigWriteError` — kept off `./effect`'s public surface deliberately (no consumer outside
+  `remoteProjectIdEntries`, the atomic single-file writer `writeCliConfigDocumentText`/
+  `CliConfigWriteError`, and the two pipeline stages `loadCliConfig` is built from —
+  `parseCliConfigDocumentFile` (discover and parse) with `mergeParsedCliConfig` (merge the
+  `[remotes.*]` block a caller-supplied `selectRemote` picks) and `decodeMergedCliConfig` (interpolate `env()` against a caller-supplied
+  env record, then decode and validate, optionally on an overlaid document) — kept off `./effect`'s public surface deliberately (no consumer outside
   `apps/cli` needs them, and internal-only keeps the published semver surface unchanged). Anything
   here can change or vanish in any release.
 - `@supabase/config/schema.json` — generated JSON Schema (draft 2020-12) for `CliConfig` (a
@@ -65,8 +68,8 @@ artifacts (`./schema.json`, `./project-schema.json`).
   from `@supabase/config`.
 - `@supabase/config/io` is exclusively for external consumers outside this monorepo that aren't
   Effect-native. Do not add an internal consumer of it.
-- `@supabase/config/internal` is for `apps/cli`'s own Go-parity call sites and contract-guard
-  tests only — a symbol that needs the internal-only `goViperCompat` typings, or the internal
+- `@supabase/config/internal` is for `apps/cli`'s own config-loading entrypoints and contract-guard
+  tests only — a symbol that needs the internal-only `cliCompat` typings, or the internal
   registry data, imports it from there; every other symbol in the same import statement stays on
   its public specifier (`.`/`./effect`). Enforced: every `@supabase/config/internal` occurrence
   outside this package must be under `apps/cli/`.

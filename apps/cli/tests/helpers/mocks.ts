@@ -2,6 +2,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
+import { ConfigEnvPins, definedEnv } from "./config-env-pins.ts";
 import { Console, ConfigProvider, Deferred, Effect, Layer, Option, Stream } from "effect";
 import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
 import { testRunEnvVar as stackTestRunEnvVar } from "@supabase/stack/internal/test-run-label";
@@ -567,7 +568,7 @@ function applyProcessEnv(values: Readonly<Record<string, string | undefined>>) {
 export function processEnvLayer(
   values: Readonly<Record<string, string | undefined>> = {},
 ): Layer.Layer<never> {
-  return ConfigProvider.layer(
+  const providerLayer = ConfigProvider.layer(
     Effect.acquireRelease(
       Effect.sync(() => {
         const ambientTestRun = process.env[stackTestRunEnvVar];
@@ -587,6 +588,11 @@ export function processEnvLayer(
         }),
     ).pipe(Effect.map(({ provider }) => provider)),
   );
+  const pinsLayer = Layer.effect(
+    ConfigEnvPins,
+    Effect.sync(() => definedEnv(process.env)),
+  );
+  return pinsLayer.pipe(Layer.provideMerge(providerLayer));
 }
 
 export function mockCliProjectContext(

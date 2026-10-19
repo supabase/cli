@@ -1,0 +1,365 @@
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
+
+import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
+import { loadCliProjectEnvFiles, readShellEnvironment } from "./cli-config-env.ts";
+import { CliEnvNameSource } from "./cli-config-provider.layer.ts";
+
+const withShell = (shell: Record<string, string>) =>
+  Layer.merge(
+    ConfigProvider.layer(ConfigProvider.fromEnvRecord(shell, { preserveEmptyStrings: true })),
+    Layer.succeed(CliEnvNameSource, () => Object.keys(shell)),
+  );
+
+describe("ambient ConfigProvider", () => {
+  it.effect("yields Some('') for a set-but-empty variable when empty strings are preserved", () =>
+    Effect.gen(function* () {
+      const value = yield* Config.option(Config.String("SUPABASE_EMPTY"));
+
+      expect(value).toEqual(Option.some(""));
+    }).pipe(Effect.provide(withShell({ SUPABASE_EMPTY: "" }))),
+  );
+
+  it.effect(
+    "reports only the requested and prefix-matched names, keeping a requested empty value",
+    () =>
+      Effect.gen(function* () {
+        const shell = yield* readShellEnvironment({
+          names: ["SUPABASE_EMPTY", "SUPABASE_DB__PORT", "SUPABASE_MISSING"],
+          namesWithPrefix: ["DOTENV_PRIVATE_KEY"],
+        });
+
+        expect(Object.fromEntries(shell.entries())).toEqual({
+          SUPABASE_EMPTY: "",
+          SUPABASE_DB__PORT: "1",
+          DOTENV_PRIVATE_KEY: "a",
+          DOTENV_PRIVATE_KEY_PRODUCTION: "b",
+        });
+      }).pipe(
+        Effect.provide(
+          withShell({
+            SUPABASE_EMPTY: "",
+            SUPABASE_DB__PORT: "1",
+            DOTENV_PRIVATE_KEY: "a",
+            DOTENV_PRIVATE_KEY_PRODUCTION: "b",
+            DOTENV_PRIVATE_KEYS_EXTRA: "c",
+            PLAIN: "d",
+          }),
+        ),
+      ),
+  );
+});
+
+describe("shell snapshot", () => {
+  it.effect("reads names an orElse fallback provider holds", () =>
+    Effect.gen(function* () {
+      const shell = yield* readShellEnvironment({ names: ["SUPABASE_X", "SUPABASE_DB_PORT"] });
+
+      expect(shell.get("SUPABASE_X")).toBe("1");
+      expect(shell.get("SUPABASE_DB_PORT")).toBe("2");
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.orElse(
+            ConfigProvider.fromEnvRecord({ SUPABASE_X: "1" }),
+            ConfigProvider.fromEnvRecord({ SUPABASE_DB_PORT: "2" }),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("reads requested names from a lookup-only provider", () =>
+    Effect.gen(function* () {
+      const shell = yield* readShellEnvironment({ names: ["SUPABASE_DB_PORT"] });
+
+      expect(Object.fromEntries(shell.entries())).toEqual({ SUPABASE_DB_PORT: "3" });
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.make((path) =>
+            Effect.succeed(
+              path.join("_") === "SUPABASE_DB_PORT" ? ConfigProvider.makeValue("3") : undefined,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("sees a name added after the provider was built once it is loaded by name", () =>
+    Effect.gen(function* () {
+      const record: Record<string, string> = { SUPABASE_DB_PORT: "4" };
+      const provider = ConfigProvider.fromEnvRecord(record);
+      record["SUPABASE_API_PORT"] = "5";
+
+      const shell = yield* readShellEnvironment({ names: ["SUPABASE_API_PORT"] }).pipe(
+        Effect.provide(ConfigProvider.layer(provider)),
+      );
+
+      expect(shell.get("SUPABASE_API_PORT")).toBe("5");
+    }),
+  );
+
+  it.effect("never enumerates the provider", () =>
+    Effect.gen(function* () {
+      const loaded: Array<string> = [];
+      const inner = ConfigProvider.fromEnvRecord({ RUN_2000000: "x", SUPABASE_DB_PORT: "4" });
+      const counting = ConfigProvider.make((path) =>
+        Effect.suspend(() => {
+          loaded.push(path.join("_"));
+          return inner.load(path);
+        }),
+      );
+
+      const shell = yield* readShellEnvironment({
+        names: ["SUPABASE_DB_PORT", "SUPABASE_DB_PORT", "SUPABASE_API_PORT"],
+      }).pipe(Effect.provide(ConfigProvider.layer(counting)));
+
+      expect(shell.get("RUN_2000000")).toBeUndefined();
+      expect(shell.get("SUPABASE_DB_PORT")).toBe("4");
+      expect(loaded.sort()).toEqual(["SUPABASE_API_PORT", "SUPABASE_DB_PORT"]);
+    }),
+  );
+
+  it.effect("finds every shell-only dotenvx key by name, whatever its numeric suffix", () =>
+    Effect.gen(function* () {
+      const shell = yield* readShellEnvironment({ namesWithPrefix: ["DOTENV_PRIVATE_KEY"] });
+
+      expect(shell.get("DOTENV_PRIVATE_KEY_2025")).toBe("a");
+      expect(shell.get("DOTENV_PRIVATE_KEY_2026")).toBe("b");
+    }).pipe(
+      Effect.provide(
+        withShell({
+          DOTENV_PRIVATE_KEY_2025: "a",
+          DOTENV_PRIVATE_KEY_2026: "b",
+        }),
+      ),
+    ),
+  );
+
+  it.effect("loads nominated names through the provider, so an ambient-only name stays unset", () =>
+    Effect.gen(function* () {
+      const shell = yield* readShellEnvironment({ namesWithPrefix: ["DOTENV_PRIVATE_KEY"] });
+
+      expect(shell.get("DOTENV_PRIVATE_KEY_2026")).toBeUndefined();
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          withShell({}),
+          Layer.succeed(CliEnvNameSource, () => ["DOTENV_PRIVATE_KEY_2026"]),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("loads each requested name once", () =>
+    Effect.gen(function* () {
+      let loads = 0;
+      const provider = ConfigProvider.make((path) =>
+        Effect.sync(() => {
+          if (path.join("_") === "SUPABASE_ONCE") loads += 1;
+          return path.join("_") === "SUPABASE_ONCE" ? ConfigProvider.makeValue("1") : undefined;
+        }),
+      );
+
+      yield* Effect.gen(function* () {
+        const shell = yield* readShellEnvironment();
+        yield* shell.load(["SUPABASE_ONCE"]);
+        yield* shell.load(["SUPABASE_ONCE"]);
+      }).pipe(Effect.provide(ConfigProvider.layer(provider)));
+
+      expect(loads).toBe(1);
+    }),
+  );
+});
+
+describe("project env loader", () => {
+  const workdir = useTempWorkdir("supabase-cli-config-env-");
+
+  const write = (relative: string, contents: string) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const target = path.join(workdir.current, relative);
+      yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+      yield* fs.writeFileString(target, contents);
+    });
+
+  const fixtures: ReadonlyArray<{
+    readonly name: string;
+    readonly files: Readonly<Record<string, string>>;
+    readonly shell: Readonly<Record<string, string>>;
+    readonly expected: Readonly<Record<string, string>>;
+  }> = [
+    {
+      name: "first writer wins across the env-specific, local and plain files",
+      files: {
+        "supabase/.env": "A=plain\nB=plain\nC=plain",
+        "supabase/.env.local": "A=local\nB=local",
+        "supabase/.env.development": "A=dev",
+        "supabase/.env.development.local": "A=dev-local",
+      },
+      shell: {},
+      expected: { A: "dev-local", B: "local", C: "plain" },
+    },
+    {
+      name: "supabase/ is read before the project root",
+      files: { "supabase/.env": "A=nested", ".env": "A=root\nB=root" },
+      shell: {},
+      expected: { A: "nested", B: "root" },
+    },
+    {
+      name: "SUPABASE_ENV selects the env-specific files",
+      files: { "supabase/.env.staging": "A=staging", "supabase/.env.development": "A=dev" },
+      shell: { SUPABASE_ENV: "staging" },
+      expected: { A: "staging" },
+    },
+    {
+      name: "the test env skips .env.local",
+      files: { "supabase/.env.local": "A=local", "supabase/.env.test": "A=test" },
+      shell: { SUPABASE_ENV: "test" },
+      expected: { A: "test" },
+    },
+    {
+      name: "an empty SUPABASE_ENV falls back to development",
+      files: { "supabase/.env.development": "A=dev" },
+      shell: { SUPABASE_ENV: "" },
+      expected: { A: "dev" },
+    },
+    {
+      name: "a shell variable shadows the files even when it is empty",
+      files: { "supabase/.env": "A=file\nB=file\nC=file" },
+      shell: { A: "shell", B: "" },
+      expected: { C: "file" },
+    },
+    {
+      name: "godotenv quoting and variable expansion",
+      files: { "supabase/.env": 'BASE=one\nQUOTED="two words"\nCOMBINED="${BASE}-x"\nexport E=1' },
+      shell: {},
+      expected: { BASE: "one", QUOTED: "two words", COMBINED: "one-x", E: "1" },
+    },
+  ];
+
+  for (const fixture of fixtures) {
+    it.effect(`loads ${fixture.name}`, () =>
+      Effect.gen(function* () {
+        for (const [relative, contents] of Object.entries(fixture.files)) {
+          yield* write(relative, contents);
+        }
+
+        const loaded = yield* loadCliProjectEnvFiles(workdir.current);
+
+        expect(loaded.values).toEqual(fixture.expected);
+        expect(Object.keys(loaded.files).sort()).toEqual(Object.keys(fixture.expected).sort());
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell(fixture.shell)))),
+    );
+  }
+
+  it.effect("records the file each value came from", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      yield* write("supabase/.env.local", "A=local");
+      yield* write(".env", "B=root");
+
+      const loaded = yield* loadCliProjectEnvFiles(workdir.current);
+
+      expect(loaded.files).toEqual({
+        A: path.join(workdir.current, "supabase", ".env.local"),
+        B: path.join(workdir.current, ".env"),
+      });
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
+  );
+
+  it.effect("lets a lookup-only shell variable shadow a file key", () =>
+    Effect.gen(function* () {
+      yield* write("supabase/.env", "A=file\nB=file");
+
+      const loaded = yield* loadCliProjectEnvFiles(workdir.current);
+
+      expect(loaded.values).toEqual({ B: "file" });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          ConfigProvider.layer(
+            ConfigProvider.make((path) =>
+              Effect.succeed(
+                path.join("_") === "A" ? ConfigProvider.makeValue("shell") : undefined,
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("fails with the workdir-relative path when a file is unreadable", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(workdir.current, "supabase", ".env"), { recursive: true });
+      const unreadable = yield* Effect.flip(loadCliProjectEnvFiles(workdir.current));
+      expect(unreadable.message).toBe("failed to read environment file: supabase/.env");
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
+  );
+
+  it.effect("skips a symlink loop like a missing file", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* write("supabase/placeholder", "");
+      yield* fs.symlink(".env", path.join(workdir.current, "supabase", ".env"));
+      yield* fs.symlink(".env", path.join(workdir.current, ".env"));
+      yield* write(".env.local", "C=local");
+
+      const loaded = yield* loadCliProjectEnvFiles(workdir.current);
+
+      expect(loaded.values).toEqual({ C: "local" });
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
+  );
+
+  it.effect("skips a supabase path that is a regular file", () =>
+    Effect.gen(function* () {
+      yield* write("supabase", "not a directory");
+      yield* write(".env", "A=root");
+
+      const loaded = yield* loadCliProjectEnvFiles(workdir.current);
+
+      expect(loaded.values).toEqual({ A: "root" });
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
+  );
+
+  it.effect("still fails when a dotenv path is a directory", () =>
+    Effect.gen(function* () {
+      yield* write(".env/keep", "");
+
+      const failure = yield* Effect.flip(loadCliProjectEnvFiles(workdir.current));
+
+      expect(failure.message).toBe("failed to read environment file: .env");
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
+  );
+
+  it.effect("parses a file that starts with a byte-order mark", () =>
+    Effect.gen(function* () {
+      yield* write(".env", "\uFEFFA=1\nB=2");
+
+      const loaded = yield* loadCliProjectEnvFiles(workdir.current);
+
+      expect(loaded.values).toEqual({ A: "1", B: "2" });
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
+  );
+
+  for (const file of ["supabase/.env.local", ".env.local"]) {
+    it.effect(`names ${file} on a malformed line without echoing its contents`, () =>
+      Effect.gen(function* () {
+        yield* write(file, "not a valid line\n");
+
+        const failure = yield* Effect.flip(loadCliProjectEnvFiles(workdir.current));
+
+        expect(failure.message).toBe(`failed to parse environment file: ${file}`);
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, withShell({})))),
+    );
+  }
+});

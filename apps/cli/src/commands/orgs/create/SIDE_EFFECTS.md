@@ -62,9 +62,9 @@ instead. `--output` wins over `--output-format` when both are supplied.
 
 ### `--output pretty` (default) / `--output-format text`
 
-`Created organization: <id>` followed by a Glamour-styled markdown table with columns
+`Created organization: <id>` followed by a styled markdown table with columns
 `ID`, `NAME` for the created organization. The rendered table always ends with a trailing
-newline (Glamour appends one).
+newline.
 
 ### `--output json`
 
@@ -106,9 +106,8 @@ message. No preamble line.
 
 ## Security Notes
 
-- The `Created organization: <id>` preamble and the rendered Glamour table interpolate the
-  API-supplied `id` and `name` strings without ANSI / control-character sanitization
-  (inherited from the old Go CLI's behavior). A malicious or compromised Management API
+- The `Created organization: <id>` preamble and the rendered table interpolate the
+  API-supplied `id` and `name` strings without ANSI / control-character sanitization. A malicious or compromised Management API
   could in principle return values containing terminal escape sequences. If sanitization
   is added later it should land at the renderer (and at any shared preamble helper) so
   every caller inherits the fix.
