@@ -4,9 +4,9 @@ import { Flag, GlobalFlag, Param, Primitive } from "effect/cli";
 import {
   classifyRemoteValue,
   LEAVE_OUT_REMOTE_PREFIX,
-  REMOTE_FLAG_NAME,
   type RemoteValue,
 } from "./remote-value.ts";
+import { REMOTE_FLAG_NAME } from "./remote-vocabulary.ts";
 import type { ResolvedTarget } from "./resolve-target.ts";
 
 type TargetSubject = "database" | "Storage API";
@@ -33,17 +33,24 @@ const leaveOutMessage = (variant: RemoteFlagVariant): string =>
     ? `${LEAVE_OUT_REMOTE_PREFIX}to use the linked project.`
     : `${LEAVE_OUT_REMOTE_PREFIX}to target the local ${variant.subject}.`;
 
+const REMOTE_PRIMITIVE = Symbol.for("supabase/cli/RemotePrimitive");
+
 /**
  * Keeps the `Boolean` primitive tag so the parser accepts a bare `--remote` and never takes the
  * next token as its value; only `--remote=<value>` (or a boolean literal) reaches `parse`.
  */
 const remotePrimitive = (variant: RemoteFlagVariant): Primitive.Primitive<RemoteValue> =>
   Object.assign(Object.create(Primitive.Boolean), {
+    [REMOTE_PRIMITIVE]: true,
     parse: (raw: string) => {
       const value = classifyRemoteValue(raw);
       return value === undefined ? Effect.fail(leaveOutMessage(variant)) : Effect.succeed(value);
     },
   });
+
+/** Whether a flag was declared by {@link targetFlags}, {@link projectTargetFlags} or the `seed` globals as `--remote`. */
+export const isRemoteFlag = (single: Param.Single<Param.ParamKind, unknown>): boolean =>
+  REMOTE_PRIMITIVE in single.primitiveType;
 
 /** `--remote`: the linked project when bare, else the project, branch or database named by its value. */
 const remoteFlag = (variant: RemoteFlagVariant) =>

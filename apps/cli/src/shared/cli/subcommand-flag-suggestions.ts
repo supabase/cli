@@ -1,7 +1,7 @@
 import { Predicate } from "effect";
 import type { CliError, Command, HelpDoc, Param } from "effect/cli";
 import { unwrapToSingleParam } from "../../command-internal/param-introspection.ts";
-import { REMOTE_FLAG_NAME } from "../../command-internal/target/remote-value.ts";
+import { isRemoteFlag } from "../../command-internal/target/target-flags.ts";
 import { commandInternals } from "../../docs/docs-introspection.ts";
 import { formatInvalidValueMessage } from "./invalid-value-message.ts";
 
@@ -58,7 +58,7 @@ export function helpDocFor(
 
 const flagArityOf = (single: Param.Single<Param.ParamKind, unknown>): FlagArity => {
   if (single.primitiveType._tag !== "Boolean") return "value";
-  return single.name === REMOTE_FLAG_NAME ? "optional-value" : "switch";
+  return isRemoteFlag(single) ? "optional-value" : "switch";
 };
 
 /** Every flag the command parses, hidden aliases included: parsing consumes their values like any other flag's. */

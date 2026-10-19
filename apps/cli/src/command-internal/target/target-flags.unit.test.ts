@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Redacted } from "effect";
-import { CliError, CliOutput, Command, type Flag } from "effect/cli";
+import { CliError, CliOutput, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { formatInvalidValueMessage } from "../../shared/cli/invalid-value-message.ts";
@@ -9,6 +9,7 @@ import { unwrapParam } from "../param-introspection.ts";
 import {
   deprecatedProjectIdFlag,
   flagsForTarget,
+  isRemoteFlag,
   projectTargetFlags,
   seedTargetGlobalFlags,
   targetFlags,
@@ -216,6 +217,29 @@ describe("deprecatedProjectIdFlag", () => {
       ).toEqual({ projectId: Option.some("abc") });
     }),
   );
+});
+
+describe("isRemoteFlag", () => {
+  const singleOf = (flag: Flag.Flag<unknown>) => {
+    const single = unwrapParam(flag)?.single;
+    if (single === undefined) throw new Error("expected a single flag");
+    return single;
+  };
+
+  it("recognises every declaration of --remote by its primitive, not its name", () => {
+    expect(isRemoteFlag(singleOf(targetFlags({ subject: "database", dbUrl: true }).remote))).toBe(
+      true,
+    );
+    expect(isRemoteFlag(singleOf(projectTargetFlags().remote))).toBe(true);
+    expect(isRemoteFlag(singleOf(seedTargetGlobalFlags.remote.flag))).toBe(true);
+  });
+
+  it("does not take a boolean flag for --remote", () => {
+    expect(isRemoteFlag(singleOf(targetFlags({ subject: "database", dbUrl: true }).linked))).toBe(
+      false,
+    );
+    expect(isRemoteFlag(singleOf(Flag.Boolean("remote")))).toBe(false);
+  });
 });
 
 describe("seedTargetGlobalFlags", () => {

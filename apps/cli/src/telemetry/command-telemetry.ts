@@ -48,11 +48,8 @@ import {
 } from "../shared/cli/value-consuming-flags.ts";
 import { unwrapToSingleParam } from "../command-internal/param-introspection.ts";
 import { StackBackendContext } from "../command-internal/stack-backend.ts";
-import {
-  isRemoteValue,
-  REMOTE_FLAG_NAME,
-  type RemoteValue,
-} from "../command-internal/target/remote-value.ts";
+import { isRemoteValue, type RemoteValue } from "../command-internal/target/remote-value.ts";
+import { REMOTE_FLAG_NAME } from "../command-internal/target/remote-vocabulary.ts";
 import {
   CommandTelemetryAttributes,
   type CommandTelemetryAttributeValues,

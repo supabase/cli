@@ -47,6 +47,12 @@ describe("joinRemoteOperands", () => {
       expected: ["functions", "deploy", "--remote=yes", "--remote=on", "--remote=1"],
     },
     {
+      name: "joins a linked boolean literal in any case, as --remote=<literal> reads it",
+      leaf: oneOperand,
+      args: ["storage", "ls", "--remote", "YES"],
+      expected: ["storage", "ls", "--remote=YES"],
+    },
+    {
       name: "leaves an off literal for the parser to reject",
       leaf: noOperands,
       args: ["db", "push", "--remote", "false"],

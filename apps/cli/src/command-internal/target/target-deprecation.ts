@@ -1,6 +1,7 @@
 import { BRANCH_PROJECT_REF_PATTERN } from "../ref-patterns.ts";
 import type { RemoteValue } from "./remote-value.ts";
-import type { RemoteAliasFlag, TargetDeprecation } from "./target-selector.ts";
+import { DB_URL_PATTERN, isBooleanLiteral } from "./remote-vocabulary.ts";
+import { joinFlags, type TargetDeprecation } from "./target-selector.ts";
 
 const ALIAS_VALUE_FLAGS: ReadonlySet<string> = new Set([
   "--db-url",
@@ -9,17 +10,6 @@ const ALIAS_VALUE_FLAGS: ReadonlySet<string> = new Set([
 ]);
 const ALIAS_SWITCH_FLAGS: ReadonlySet<string> = new Set(["--linked", "--local"]);
 const SECRET_VALUE_FLAGS: ReadonlySet<string> = new Set(["--password", "-p", "--db-password"]);
-const BOOLEAN_LITERALS: ReadonlySet<string> = new Set([
-  "true",
-  "false",
-  "yes",
-  "no",
-  "on",
-  "off",
-  "1",
-  "0",
-]);
-const DB_URL_PATTERN = /^postgres(ql)?:\/\//;
 const SAFE_TOKEN = /^[\w@%+=:,./-]+$/;
 
 const shellQuote = (token: string): string =>
@@ -66,7 +56,7 @@ export const rebuildCommand = (argv: ReadonlyArray<string>, remote: string | und
       const consumesNext =
         !token.includes("=") &&
         ((ALIAS_VALUE_FLAGS.has(alias) && next !== undefined) ||
-          (ALIAS_SWITCH_FLAGS.has(alias) && next !== undefined && BOOLEAN_LITERALS.has(next)));
+          (ALIAS_SWITCH_FLAGS.has(alias) && next !== undefined && isBooleanLiteral(next)));
       if (consumesNext) index += 1;
       continue;
     }
@@ -100,11 +90,6 @@ export const refFromDbUrl = (url: string, projectHost: string): string | undefin
     return undefined;
   }
 };
-
-const joinFlags = (flags: ReadonlyArray<RemoteAliasFlag>): string =>
-  flags.length <= 2
-    ? flags.join(" and ")
-    : `${flags.slice(0, -1).join(", ")} and ${flags[flags.length - 1]}`;
 
 /**
  * The warning for each deprecated selector the run used. `argv` is the real command line, so the

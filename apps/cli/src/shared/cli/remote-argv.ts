@@ -1,8 +1,14 @@
 import type { Command } from "effect/cli";
 
+import { unwrapToSingleParam } from "../../command-internal/param-introspection.ts";
 import { BRANCH_PROJECT_REF_PATTERN } from "../../command-internal/ref-patterns.ts";
-import { couldNameBranch } from "../../command-internal/target/remote-value.ts";
-import { commandInternals } from "../../docs/docs-introspection.ts";
+import {
+  couldNameBranch,
+  DB_URL_PATTERN,
+  LINKED_LITERAL,
+} from "../../command-internal/target/remote-vocabulary.ts";
+import { isRemoteFlag } from "../../command-internal/target/target-flags.ts";
+import { commandInternals, userGlobalFlagParams } from "../../docs/docs-introspection.ts";
 import { BOOLEAN_FLAG_VALUES } from "./agent-output.ts";
 import { helpDocFor } from "./subcommand-flag-suggestions.ts";
 
@@ -14,9 +20,6 @@ export interface RemoteArgvLeaf {
   /** Whether a flag token takes the next argv token as its value. */
   readonly consumesNextToken: (token: string) => boolean;
 }
-
-const LINKED_LITERALS: ReadonlySet<string> = new Set(["true", "yes", "on", "1"]);
-const DB_URL_PATTERN = /^postgres(ql)?:\/\//;
 
 interface RemoteArgvScan {
   /** Indexes of the bare (non-flag, non-flag-value) tokens ahead of any `--`. */
@@ -45,7 +48,7 @@ const scanRemoteArgv = (args: ReadonlyArray<string>, leaf: RemoteArgvLeaf): Remo
     const next = args[index + 1];
     const isLiteral = next !== undefined && BOOLEAN_FLAG_VALUES.has(next);
     if (arg === "--remote") {
-      if (!isLiteral || LINKED_LITERALS.has(next)) remotes.push(index);
+      if (!isLiteral || LINKED_LITERAL.test(next)) remotes.push(index);
       if (isLiteral) index += 1;
     } else if (leaf.consumesNextToken(arg) || (isLiteral && !arg.includes("="))) {
       index += 1;
@@ -74,7 +77,7 @@ export function joinRemoteOperands(
     const ordinal = bare.indexOf(index + 1);
     if (ordinal !== -1 && ordinal < leaf.pathLength) continue;
     if (
-      LINKED_LITERALS.has(word) ||
+      LINKED_LITERAL.test(word) ||
       leaf.operandCapacity === 0 ||
       BRANCH_PROJECT_REF_PATTERN.test(word) ||
       DB_URL_PATTERN.test(word) ||
@@ -116,6 +119,12 @@ export function bareRemoteOperand(
   return undefined;
 }
 
+const declaresRemoteFlag = (command: Command.Command.Any): boolean =>
+  [...commandInternals(command).config.flags, ...userGlobalFlagParams(command)].some((param) => {
+    const single = unwrapToSingleParam(param);
+    return single !== undefined && isRemoteFlag(single);
+  });
+
 /**
  * The operand capacity of the command `path` resolves to, or `undefined` when it does not accept
  * `--remote` (as its own flag, or as a persistent flag of an ancestor such as `seed`).
@@ -135,15 +144,7 @@ export function remoteOperandCapacity(
   }
   const leaf = commands[commands.length - 1];
   if (leaf === undefined) return undefined;
-  const doc = helpDocFor(leaf, path);
-  const acceptsRemote =
-    doc?.flags.some((flag) => flag.name === "remote") === true ||
-    commands.some((command) =>
-      commandInternals(command).globalFlags.some(
-        (flag) => flag._tag === "Setting" && flag.id === "remote",
-      ),
-    );
-  if (!acceptsRemote) return undefined;
-  const operands = doc?.args ?? [];
+  if (!commands.some(declaresRemoteFlag)) return undefined;
+  const operands = helpDocFor(leaf, path)?.args ?? [];
   return operands.some((operand) => operand.variadic) ? Infinity : operands.length;
 }

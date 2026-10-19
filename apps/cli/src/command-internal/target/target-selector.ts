@@ -48,7 +48,8 @@ export interface TargetSelectorOptions {
   readonly commandName?: string;
 }
 
-const joinFlags = (flags: ReadonlyArray<string>): string =>
+/** Lists flag names as `a`, `a and b` or `a, b and c`. */
+export const joinFlags = (flags: ReadonlyArray<string>): string =>
   flags.length <= 2
     ? flags.join(" and ")
     : `${flags.slice(0, -1).join(", ")} and ${flags[flags.length - 1]}`;

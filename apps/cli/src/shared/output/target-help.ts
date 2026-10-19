@@ -1,5 +1,6 @@
 import { Array as Arr, Context, Option } from "effect";
 import type { Command, HelpDoc } from "effect/cli";
+import { REMOTE_FLAG_NAME } from "../../command-internal/target/remote-vocabulary.ts";
 import { TargetPolicyAnnotation } from "../../command-internal/target/target-policy.ts";
 
 type TargetKind = "selectable" | "hosted" | "local-only";
@@ -32,15 +33,12 @@ const TARGET_COPY: Readonly<Record<TargetKind, TargetCopy>> = {
 
 const KIND_BY_GROUP: Readonly<Record<string, TargetKind | undefined>> = {
   selectable: "selectable",
-  sync: "selectable",
   hosted: "hosted",
   "local-only": "local-only",
 };
 
-const REMOTE_FLAG = "remote";
-
 /** The flag's display name once its value hint is known: `remote[=<ref|branch>]`. */
-export const remoteFlagName = (hint: string): string => `${REMOTE_FLAG}[=${hint}]`;
+export const remoteFlagName = (hint: string): string => `${REMOTE_FLAG_NAME}[=${hint}]`;
 
 export interface TargetHelp {
   readonly scope: string;
@@ -54,7 +52,7 @@ const kindOf = (annotations: Context.Context<never>): TargetKind | undefined =>
   );
 
 const declaresRemoteFlag = (doc: HelpDoc.HelpDoc): boolean =>
-  [...doc.flags, ...(doc.globalFlags ?? [])].some((flag) => flag.name === REMOTE_FLAG);
+  [...doc.flags, ...(doc.globalFlags ?? [])].some((flag) => flag.name === REMOTE_FLAG_NAME);
 
 /** What a leaf's help says about its target; `undefined` for account, removed and group commands. */
 export function targetHelpFor(doc: HelpDoc.HelpDoc): TargetHelp | undefined {
@@ -78,7 +76,7 @@ export function withRemoteFlagUsage(doc: HelpDoc.HelpDoc): HelpDoc.HelpDoc {
   const hint = remoteValueHint(doc.annotations);
   if (hint === undefined || !declaresRemoteFlag(doc)) return doc;
   const rename = (flag: HelpDoc.FlagDoc): HelpDoc.FlagDoc =>
-    flag.name === REMOTE_FLAG ? { ...flag, name: remoteFlagName(hint) } : flag;
+    flag.name === REMOTE_FLAG_NAME ? { ...flag, name: remoteFlagName(hint) } : flag;
   return {
     ...doc,
     flags: doc.flags.map(rename),

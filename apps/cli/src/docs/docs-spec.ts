@@ -9,6 +9,7 @@ import {
   userGlobalFlagParams,
 } from "./docs-introspection.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
+import { isRemoteFlag } from "../command-internal/target/target-flags.ts";
 import { remoteFlagName, remoteValueHint } from "../shared/output/target-help.ts";
 import {
   DOCS_ARG_OVERRIDES,
@@ -210,7 +211,7 @@ export function docsFlagDoc(
 
   const shorthand = single.aliases.find((alias) => alias.length === 1);
   const longName =
-    single.name === "remote" && remoteHint !== undefined
+    isRemoteFlag(single) && remoteHint !== undefined
       ? remoteFlagName(remoteHint)
       : `${single.name}${varname === undefined ? "" : ` <${varname}>`}`;
   const name = `${shorthand === undefined ? "" : `-${shorthand}, `}--${longName}`;
