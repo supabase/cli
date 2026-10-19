@@ -1,8 +1,10 @@
 ## supabase-db-dump
 
-Dumps contents from the target database.
+Dumps contents from a database.
 
-Dumps the local database by default, unless `SUPABASE_TARGET` or `target` in `config.toml` selects the linked project. Pass `--linked` to dump the linked project, which requires your local project to be linked by running `supabase link`. For self-hosted databases, you can pass in the connection parameters using `--db-url` flag. The command prints a `Target:` line on stderr naming the database it resolved, and never asks for confirmation.
+Dumps the local database by default. Pass `--remote` to dump the linked project, which requires your local project to be linked by running `supabase link`. Pass `--remote=<ref|branch|url>` to dump another project, a branch of the linked project, or a database URL such as a self-hosted database. The command prints a `Target:` line on stderr naming the database it resolved, and never asks for confirmation.
+
+`--linked`, `--project-ref`, `--db-url` and `--local` still work in v3 but are deprecated and removed in v4; use `--remote`.
 
 Runs `pg_dump` in a container with additional flags to exclude Supabase managed schemas. The ignored schemas include auth, storage, and those created by extensions.
 
