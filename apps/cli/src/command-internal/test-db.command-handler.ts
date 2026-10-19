@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect } from "effect";
 import { Argument } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
