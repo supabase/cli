@@ -6,7 +6,7 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 
-/** More than one of `--local`, `--linked` and `--db-url` was set. */
+/** More than one of `--remote`, `--linked`, `--db-url` and `--local` was set. */
 export class TargetSelectorConflictError extends Data.TaggedError("TargetSelectorConflictError")<{
   readonly flags: ReadonlyArray<string>;
   readonly message: string;
@@ -16,11 +16,11 @@ export class TargetSelectorConflictError extends Data.TaggedError("TargetSelecto
   }
 }
 
-/** `--project-ref` selects a linked project, so it cannot be combined with `--local` or `--db-url`. */
+/** `--project-ref` names a project, so it cannot be combined with `--remote=<value>`, `--local` or `--db-url`. */
 export class TargetProjectRefConflictError extends Data.TaggedError(
   "TargetProjectRefConflictError",
 )<{
-  readonly conflictsWith: "--local" | "--db-url";
+  readonly conflictsWith: "--remote" | "--local" | "--db-url";
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -28,11 +28,29 @@ export class TargetProjectRefConflictError extends Data.TaggedError(
   }
 }
 
-/** `--db-url` or `--project-ref` was passed an empty value. */
+/** `--db-url`, `--project-ref` or `--project-id` was passed an empty value. */
 export class TargetEmptyValueError extends Data.TaggedError("TargetEmptyValueError")<{
-  readonly flag: "--db-url" | "--project-ref";
+  readonly flag: "--db-url" | "--project-ref" | "--project-id";
   readonly message: string;
   readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+/** A command that acts on a project was given a database URL. */
+export class TargetNeedsProjectError extends Data.TaggedError("TargetNeedsProjectError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+/** A bare `--remote` is followed by a word that names a branch (or whose branches could not be listed), so the word is probably the branch. */
+export class TargetRemoteAmbiguousError extends Data.TaggedError("TargetRemoteAmbiguousError")<{
+  readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
@@ -52,4 +70,5 @@ export class TargetPasswordConflictError extends Data.TaggedError("TargetPasswor
 export type TargetSelectorError =
   | TargetSelectorConflictError
   | TargetProjectRefConflictError
-  | TargetEmptyValueError;
+  | TargetEmptyValueError
+  | TargetNeedsProjectError;

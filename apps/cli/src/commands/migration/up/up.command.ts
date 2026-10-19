@@ -23,7 +23,7 @@ const config = {
     Flag.withDescription("Include all migrations not found on remote history table."),
     Flag.withDefault(false),
   ),
-  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
+  ...targetFlags({ subject: "database", dbUrl: true }),
 } as const;
 
 export type MigrationUpFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -46,6 +46,7 @@ export const migrationUpCommand = Command.make("up", config).pipe(
       withCommandTelemetry({
         flags: {
           "include-all": flags.includeAll,
+          remote: flags.remote,
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,

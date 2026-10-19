@@ -225,7 +225,10 @@ export function reconcileMigrations(
   return { kind: "in-sync" };
 }
 
-/** `targetFlags` are the flags that select the resolved target (see `flagsForTarget`). */
+const withTargetFlags = (command: string, targetFlags: string): string =>
+  targetFlags === "" ? command : `${command} ${targetFlags}`;
+
+/** `targetFlags` are the flags that select the resolved target (see `flagsForTarget`), appended last. */
 export function suggestMigrationRepair(
   extraRemote: ReadonlyArray<string>,
   extraLocal: ReadonlyArray<string>,
@@ -234,10 +237,10 @@ export function suggestMigrationRepair(
   let result =
     "\nMake sure your local git repo is up-to-date. If the error persists, try repairing the migration history table:\n";
   for (const version of extraRemote) {
-    result += `${bold(`supabase migration repair ${targetFlags} --status reverted ${version}`)}\n`;
+    result += `${bold(withTargetFlags(`supabase migration repair --status reverted ${version}`, targetFlags))}\n`;
   }
   for (const version of extraLocal) {
-    result += `${bold(`supabase migration repair ${targetFlags} --status applied ${version}`)}\n`;
+    result += `${bold(withTargetFlags(`supabase migration repair --status applied ${version}`, targetFlags))}\n`;
   }
   return result;
 }
@@ -246,9 +249,9 @@ export function suggestMigrationRepair(
 export function suggestRevertHistory(versions: ReadonlyArray<string>, targetFlags: string): string {
   return (
     "\nMake sure your local git repo is up-to-date. If the error persists, try repairing the migration history table:\n" +
-    `${bold(`supabase migration repair ${targetFlags} --status reverted ${versions.join(" ")}`)}\n` +
+    `${bold(withTargetFlags(`supabase migration repair --status reverted ${versions.join(" ")}`, targetFlags))}\n` +
     "\nAnd update local migrations to match remote database:\n" +
-    `${bold(`supabase db pull ${targetFlags}`)}\n`
+    `${bold(withTargetFlags("supabase db pull", targetFlags))}\n`
   );
 }
 

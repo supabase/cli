@@ -38,6 +38,7 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
 
   const body = Effect.gen(function* () {
     const target = yield* resolveTarget({
+      remote: flags.remote,
       local: flags.local,
       linked: flags.linked,
       dbUrl: flags.dbUrl,

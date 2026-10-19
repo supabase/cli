@@ -12,11 +12,7 @@ import type { InspectConnectionFlags } from "./inspect-query.ts";
  * The `inspect` persistent flag set, inherited by every `inspect db` subcommand. Shared
  * verbatim across all 25 commands so flag names and descriptions live in one place.
  */
-export const INSPECT_DB_FLAGS = targetFlags({
-  group: "selectable",
-  subject: "database",
-  dbUrl: true,
-});
+export const INSPECT_DB_FLAGS = targetFlags({ subject: "database", dbUrl: true });
 
 /** The Management API calls every `inspect db` subcommand makes, all through the database-config resolver. */
 export const INSPECT_DB_PERMISSIONS = withDbTarget(dbConfig, { default: "local" });
@@ -38,6 +34,7 @@ export function inspectDbCommandHandler<E, R>(
     handler(flags).pipe(
       withCommandTelemetry({
         flags: {
+          remote: flags.remote,
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,

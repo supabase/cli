@@ -84,7 +84,6 @@ export function shouldChmodBundleOutputDirectory(platform: NodeJS.Platform) {
 
 interface FunctionsDeployFlags {
   readonly functionNames: ReadonlyArray<string>;
-  readonly projectRef: Option.Option<string>;
   readonly noVerifyJwt: boolean;
   readonly useApi: boolean;
   readonly importMap: Option.Option<string>;
@@ -108,9 +107,7 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
   readonly localConfigLoader: FunctionsLocalConfigLoader;
   readonly rawArgs: ReadonlyArray<string>;
   readonly edgeRuntimeVersion: string;
-  readonly resolveProjectRef: (
-    projectRef: Option.Option<string>,
-  ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
+  readonly resolveProjectRef: () => Effect.Effect<string, ResolveError, ResolveRequirements>;
   /**
    * Optional shell-specific styling hooks. All default to identity (plain text); keeping them
    * injected keeps this shared module free of CLI-specific rendering.
@@ -2510,7 +2507,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
     });
   }
 
-  const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
+  const projectRef = yield* dependencies.resolveProjectRef();
   // `@supabase/config` merges the matching `[remotes.*]` block over the base config, so this
   // already reflects any remote function/edge_runtime overrides, through the same
   // `Config.Validate`/dotenv/env-override pipeline `start`/`stop`/`status` use (see

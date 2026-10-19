@@ -42,7 +42,7 @@ const config = {
     ),
     Flag.withDefault(false),
   ),
-  ...targetFlags({ group: "sync", subject: "database", dbUrl: true }),
+  ...targetFlags({ subject: "database", dbUrl: true }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
@@ -74,7 +74,7 @@ export const dbPushCommand = Command.make("push", config).pipe(
         dbConfig,
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
       ),
-      { default: "linked" },
+      { default: "local" },
     ),
   ),
   Command.withHandler((flags) =>
@@ -86,6 +86,7 @@ export const dbPushCommand = Command.make("push", config).pipe(
           "include-seed": flags.includeSeed,
           "skip-vault": flags.skipVault,
           "dry-run": flags.dryRun,
+          remote: flags.remote,
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,
@@ -102,5 +103,5 @@ export const dbPushCommand = Command.make("push", config).pipe(
   Command.provide(dbPushRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
-  withTargetPolicy({ group: "sync", consent: "no" }),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

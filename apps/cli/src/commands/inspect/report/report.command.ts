@@ -16,7 +16,7 @@ import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
+  ...targetFlags({ subject: "database", dbUrl: true }),
   outputDir: Flag.String("output-dir").pipe(
     Flag.withDescription("Path to save CSV files in."),
     Flag.withDefault("."),
@@ -39,6 +39,7 @@ export const inspectReportCommand = Command.make("report", config).pipe(
     inspectReport(flags).pipe(
       withCommandTelemetry({
         flags: {
+          remote: flags.remote,
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,

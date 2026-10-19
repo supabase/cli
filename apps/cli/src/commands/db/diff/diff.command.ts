@@ -49,11 +49,15 @@ const config = {
     Flag.withDefault(false),
   ),
   from: Flag.String("from").pipe(
-    Flag.withDescription("Diff from local, linked, migrations, or a Postgres URL."),
+    Flag.withDescription(
+      "Diff from local, migrations, remote, a project ref, a branch, or a Postgres URL.",
+    ),
     Flag.optional,
   ),
   to: Flag.String("to").pipe(
-    Flag.withDescription("Diff to local, linked, migrations, or a Postgres URL."),
+    Flag.withDescription(
+      "Diff to local, migrations, remote, a project ref, a branch, or a Postgres URL.",
+    ),
     Flag.optional,
   ),
   output: Flag.String("output").pipe(
@@ -63,7 +67,7 @@ const config = {
     ),
     Flag.optional,
   ),
-  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
+  ...targetFlags({ subject: "database", dbUrl: true }),
   file: Flag.String("file").pipe(
     Flag.withAlias("f"),
     Flag.withDescription(
@@ -86,9 +90,9 @@ const config = {
 
 export type DbDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// An explicit `--from`/`--to linked` side resolves the linked project without `--linked`.
+// An explicit `--from`/`--to` of `remote` or the deprecated `linked` resolves the linked project without `--remote`. A project ref, branch or URL side is not modelled: `oneOf` only matches fixed values.
 const explicitLinkedSide = (flag: "from" | "to") =>
-  withCondition(compose(dbConfigLinked, linkedProjectCache), { flag, oneOf: ["linked"] });
+  withCondition(compose(dbConfigLinked, linkedProjectCache), { flag, oneOf: ["linked", "remote"] });
 
 export const dbDiffCommand = Command.make("diff", config).pipe(
   Command.withDescription(
@@ -131,6 +135,7 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
           from: flags.from,
           to: flags.to,
           output: flags.output,
+          remote: flags.remote,
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,

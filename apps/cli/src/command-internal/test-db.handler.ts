@@ -117,6 +117,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
 
   yield* Effect.gen(function* () {
     const target = yield* resolveTarget({
+      remote: flags.remote,
       local: flags.local,
       linked: flags.linked,
       dbUrl: flags.dbUrl,

@@ -1,7 +1,7 @@
 import { Context, Layer, Option } from "effect";
 import { Command } from "effect/cli";
 
-export type TargetGroup = "local-only" | "account" | "hosted" | "sync" | "selectable" | "removed";
+export type TargetGroup = "local-only" | "account" | "hosted" | "selectable" | "removed";
 
 export interface TargetPolicyShape {
   readonly group: TargetGroup;
@@ -11,16 +11,16 @@ export interface TargetPolicyShape {
 
 /**
  * What a leaf declares. `consentExemptReason` explains why a leaf never asks for hosted-mutation
- * consent; a `sync` or `selectable` leaf must give one because it can reach a hosted database.
+ * consent; a `selectable` leaf must give one because it can reach a hosted database.
  */
 export type TargetPolicyDeclaration =
   | {
-      readonly group: "sync" | "selectable";
+      readonly group: "selectable";
       readonly consent: "none";
       readonly consentExemptReason: string;
     }
   | {
-      readonly group: Exclude<TargetGroup, "sync" | "selectable">;
+      readonly group: Exclude<TargetGroup, "selectable">;
       readonly consent: "none";
       readonly consentExemptReason?: string;
     }

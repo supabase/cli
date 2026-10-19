@@ -18,7 +18,7 @@ import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
-const config = targetFlags({ group: "sync", subject: "database", dbUrl: true });
+const config = targetFlags({ subject: "database", dbUrl: true });
 
 export type MigrationFetchFlags = CliCommand.Command.Config.Infer<typeof config>;
 
@@ -32,13 +32,14 @@ export const migrationFetchCommand = Command.make("fetch", config).pipe(
         dbConfig,
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
       ),
-      { default: "linked" },
+      { default: "local" },
     ),
   ),
   Command.withHandler((flags) =>
     migrationFetch(flags).pipe(
       withCommandTelemetry({
         flags: {
+          remote: flags.remote,
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,
@@ -53,7 +54,7 @@ export const migrationFetchCommand = Command.make("fetch", config).pipe(
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
   withTargetPolicy({
-    group: "sync",
+    group: "selectable",
     consent: "none",
     consentExemptReason: "reads the remote migration history and writes only local migration files",
   }),

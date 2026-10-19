@@ -1,7 +1,5 @@
 import { Effect, FileSystem, Option, Path, Redacted, Result } from "effect";
 
-import { CliConfigKeys } from "../../config/cli-config-keys.ts";
-import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import {
   PROJECT_REF_PATTERN,
@@ -9,11 +7,19 @@ import {
   type ProjectRefSource,
   type ResolvedProjectRef,
 } from "../../config/project-ref.service.ts";
-import { CliConfigLoadError } from "../../shared/config/cli-config-load.errors.ts";
 import { readProjectRefFile } from "../../shared/config/temp-paths.ts";
 import { CommandTarget } from "../../shared/output/command-target.service.ts";
 import { readCachedLinkedProject } from "../parent-project-ref.ts";
-import { describeConfigParseError } from "../workdir-project.ts";
+import {
+  CommandRuntime,
+  getCommandRuntimeCommand,
+} from "../../shared/runtime/command-runtime.service.ts";
+import {
+  rejectAmbiguousRemote,
+  resolveRemoteBranch,
+  warnTargetDeprecations,
+} from "./remote-resolution.ts";
+import type { RemoteValue } from "./remote-value.ts";
 import { linkedAlternativeHint } from "./target-identity.ts";
 import { parseTargetSelector, type TargetSelectorInput } from "./target-selector.ts";
 import { TargetPolicy } from "./target-policy.ts";
@@ -30,7 +36,7 @@ export type ResolvedTarget =
 
 export type LinkedTarget = Extract<ResolvedTarget, { readonly kind: "linked" }>;
 
-type TargetSelection = "flag" | "env" | "config" | "default";
+type SelectedBy = "flag" | "default";
 
 /** The linked target for a ref the ref chain has already resolved and announced. */
 export const linkedTarget = (resolved: ResolvedProjectRef): LinkedTarget => ({
@@ -40,33 +46,59 @@ export const linkedTarget = (resolved: ResolvedProjectRef): LinkedTarget => ({
   matchesLinkedRef: resolved.matchesLinkedRef,
 });
 
+/** The linked target for one hosted `--remote` value; announces it, as a branch when the value names one. */
+export const resolveRemoteTarget = Effect.fn("Target.resolveRemote")(function* (
+  remote: Exclude<RemoteValue, { readonly _tag: "DbUrl" }>,
+) {
+  if (remote._tag === "Branch") {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const { workdir } = yield* CommandSettings;
+    const found = yield* resolveRemoteBranch(remote.name);
+    const linkedRef = yield* readProjectRefFile(fs, path, workdir).pipe(
+      Effect.orElseSucceed(() => Option.none<string>()),
+    );
+    return linkedTarget({
+      ref: found.projectRef,
+      source: "flag",
+      matchesLinkedRef: Option.isSome(linkedRef) && linkedRef.value === found.projectRef,
+    });
+  }
+  const projectRef = yield* ProjectRefResolver;
+  return linkedTarget(
+    yield* projectRef.resolveRef(remote._tag === "Ref" ? Option.some(remote.ref) : Option.none()),
+  );
+});
+
 /**
- * Resolves the target a `sync` or `selectable` command acts on: a selector flag wins, then
- * `sync` means the linked project and `selectable` follows the workspace `target`. Linked goes
- * through {@link ProjectRefResolver.resolveRef}, which announces it.
+ * Resolves the target a `selectable` command acts on: `--remote` (or a deprecated alias) picks a
+ * linked project, a branch or a database URL, and no selector means the local stack.
  */
 export const resolveTarget = Effect.fn("Target.resolve")(function* (input: TargetSelectorInput) {
   const policy = yield* TargetPolicy;
-  if (policy.group !== "sync" && policy.group !== "selectable") {
+  if (policy.group !== "selectable") {
     return yield* Effect.die(
-      new Error(`resolveTarget needs a sync or selectable command, not "${policy.group}"`),
+      new Error(`resolveTarget needs a selectable command, not "${policy.group}"`),
     );
   }
-  const selection = yield* Result.match(parseTargetSelector(input), {
-    onFailure: Effect.fail,
-    onSuccess: Effect.succeed,
-  });
-  const projectRef = yield* ProjectRefResolver;
+  const runtime = yield* Effect.serviceOption(CommandRuntime);
+  const { selection, deprecations } = yield* Result.match(
+    parseTargetSelector(
+      input,
+      Option.isSome(runtime)
+        ? { commandName: `\`supabase ${getCommandRuntimeCommand(runtime.value)}\`` }
+        : {},
+    ),
+    { onFailure: Effect.fail, onSuccess: Effect.succeed },
+  );
+  yield* warnTargetDeprecations(deprecations);
 
-  const finish = Effect.fnUntraced(function* (target: ResolvedTarget, selectedBy: TargetSelection) {
+  const finish = Effect.fnUntraced(function* (target: ResolvedTarget, selectedBy: SelectedBy) {
     yield* Effect.annotateCurrentSpan({
       "target.kind": target.kind,
       "target.selection": selectedBy,
     });
     return target;
-  });
-  const linked = Effect.fnUntraced(function* (flag: Option.Option<string>) {
-    return linkedTarget(yield* projectRef.resolveRef(flag));
   });
   const hintLinkedAlternative = Effect.fnUntraced(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -88,32 +120,20 @@ export const resolveTarget = Effect.fn("Target.resolve")(function* (input: Targe
       return yield* finish({ kind: "local" }, "flag");
     case "db-url":
       return yield* finish({ kind: "db-url", url: Redacted.make(selection.url) }, "flag");
-    case "linked":
-      return yield* finish(yield* linked(selection.projectRef), "flag");
+    case "linked": {
+      if (Option.isNone(selection.ref)) yield* rejectAmbiguousRemote(input.remote);
+      const remote: RemoteValue = Option.isSome(selection.ref)
+        ? { _tag: "Ref", ref: selection.ref.value }
+        : { _tag: "Linked" };
+      return yield* finish(yield* resolveRemoteTarget(remote), "flag");
+    }
+    case "branch":
+      return yield* finish(
+        yield* resolveRemoteTarget({ _tag: "Branch", name: selection.name }),
+        "flag",
+      );
     case undefined:
+      yield* hintLinkedAlternative();
+      return yield* finish({ kind: "local" }, "default");
   }
-
-  if (policy.group === "sync") {
-    return yield* finish(yield* linked(Option.none()), "default");
-  }
-  const { workdir } = yield* CommandSettings;
-  const resolvedConfig = yield* (yield* CliConfigValues)
-    .load({ workdir, projectRef: Option.none() })
-    .pipe(
-      Effect.catchTag("CliConfigParseError", (error) =>
-        Effect.fail(new CliConfigLoadError({ message: describeConfigParseError(workdir, error) })),
-      ),
-    );
-  const workspaceTarget = yield* resolvedConfig.get(CliConfigKeys.target);
-  const selectedBy: TargetSelection =
-    workspaceTarget.origin.tier === "shell" || workspaceTarget.origin.tier === "projectEnv"
-      ? "env"
-      : workspaceTarget.origin.tier === "config"
-        ? "config"
-        : "default";
-  if (workspaceTarget.value === "remote") {
-    return yield* finish(yield* linked(Option.none()), selectedBy);
-  }
-  if (selectedBy === "default") yield* hintLinkedAlternative();
-  return yield* finish({ kind: "local" }, selectedBy);
 });

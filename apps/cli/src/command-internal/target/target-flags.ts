@@ -1,51 +1,85 @@
-import type { Option } from "effect";
-import { Flag, GlobalFlag } from "effect/cli";
+import { Effect, Option } from "effect";
+import { Flag, GlobalFlag, Param, Primitive } from "effect/cli";
 
+import { classifyRemoteValue, LEAVE_OUT_REMOTE_PREFIX, type RemoteValue } from "./remote-value.ts";
 import type { ResolvedTarget } from "./resolve-target.ts";
 
-type TargetFlagGroup = "sync" | "selectable";
 type TargetSubject = "database" | "Storage API";
 
 interface TargetFlagOptions {
-  readonly group: TargetFlagGroup;
   readonly subject: TargetSubject;
 }
 
-const localFlag = ({ group, subject }: TargetFlagOptions) =>
+type RemoteFlagVariant =
+  | { readonly kind: "selectable"; readonly subject: TargetSubject; readonly dbUrl: boolean }
+  | { readonly kind: "hosted" };
+
+const remoteDescription = (variant: RemoteFlagVariant): string => {
+  if (variant.kind === "hosted") {
+    return "Target another project: --remote=<ref|branch>. Defaults to the linked project.";
+  }
+  return variant.dbUrl
+    ? "Target a remote database: the linked project, or --remote=<ref|branch|url>."
+    : `Target a remote ${variant.subject}: the linked project, or --remote=<ref|branch>.`;
+};
+
+const leaveOutMessage = (variant: RemoteFlagVariant): string =>
+  variant.kind === "hosted"
+    ? `${LEAVE_OUT_REMOTE_PREFIX}to use the linked project.`
+    : `${LEAVE_OUT_REMOTE_PREFIX}to target the local ${variant.subject}.`;
+
+/**
+ * Keeps the `Boolean` primitive tag so the parser accepts a bare `--remote` and never takes the
+ * next token as its value; only `--remote=<value>` (or a boolean literal) reaches `parse`.
+ */
+const remotePrimitive = (variant: RemoteFlagVariant): Primitive.Primitive<RemoteValue> =>
+  Object.assign(Object.create(Primitive.Boolean), {
+    parse: (raw: string) => {
+      const value = classifyRemoteValue(raw);
+      return value === undefined ? Effect.fail(leaveOutMessage(variant)) : Effect.succeed(value);
+    },
+  });
+
+/** `--remote`: the linked project when bare, else the project, branch or database named by its value. */
+const remoteFlag = (variant: RemoteFlagVariant) =>
+  Param.makeSingle({
+    kind: Param.flagKind,
+    name: "remote",
+    primitiveType: remotePrimitive(variant),
+  }).pipe(Flag.withDescription(remoteDescription(variant)), Flag.optional);
+
+const localFlag = () =>
   Flag.Boolean("local").pipe(
     Flag.withDescription(
-      group === "sync"
-        ? `Target the local ${subject}.`
-        : `Target the local ${subject} (default unless target = "remote" is set in config.toml or SUPABASE_TARGET).`,
+      "Deprecated, removed in v4: local is the default, so --local is not needed.",
     ),
     Flag.withDefault(false),
+    Flag.withHidden,
   );
 
-const linkedFlag = ({ group }: TargetFlagOptions) =>
+const linkedFlag = () =>
   Flag.Boolean("linked").pipe(
-    Flag.withDescription(
-      group === "sync"
-        ? "Target the linked project (default)."
-        : 'Target the linked project (default when target = "remote" is set in config.toml or SUPABASE_TARGET).',
-    ),
+    Flag.withDescription("Deprecated, removed in v4: use --remote."),
     Flag.withDefault(false),
+    Flag.withHidden,
   );
 
 const dbUrlFlag = () =>
   Flag.String("db-url").pipe(
-    Flag.withDescription(
-      "Target the database specified by the connection string (must be percent-encoded).",
-    ),
+    Flag.withDescription("Deprecated, removed in v4: use --remote=<db-url>."),
     Flag.optional,
+    Flag.withHidden,
   );
 
 const projectRefFlag = () =>
   Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project. Implies --linked."),
+    Flag.withDescription("Deprecated, removed in v4: use --remote=<ref>."),
     Flag.optional,
+    Flag.withHidden,
   );
 
 export type TargetFlagsWithDbUrl = {
+  readonly remote: Flag.Flag<Option.Option<RemoteValue>>;
   readonly local: Flag.Flag<boolean>;
   readonly linked: Flag.Flag<boolean>;
   readonly dbUrl: Flag.Flag<Option.Option<string>>;
@@ -54,7 +88,7 @@ export type TargetFlagsWithDbUrl = {
 
 export type TargetFlagsWithoutDbUrl = Omit<TargetFlagsWithDbUrl, "dbUrl">;
 
-/** The only declaration of `--local`, `--linked`, `--db-url` and `--project-ref` for sync and selectable commands. */
+/** The only declaration of `--remote` and its deprecated `--local`, `--linked`, `--db-url` and `--project-ref` aliases for selectable commands. */
 export function targetFlags(
   options: TargetFlagOptions & { readonly dbUrl: true },
 ): TargetFlagsWithDbUrl;
@@ -65,22 +99,44 @@ export function targetFlags(
   options: TargetFlagOptions & { readonly dbUrl: boolean },
 ): TargetFlagsWithDbUrl | TargetFlagsWithoutDbUrl {
   const base = {
-    local: localFlag(options),
-    linked: linkedFlag(options),
+    remote: remoteFlag({ kind: "selectable", subject: options.subject, dbUrl: options.dbUrl }),
+    local: localFlag(),
+    linked: linkedFlag(),
     projectRef: projectRefFlag(),
   };
   return options.dbUrl ? { ...base, dbUrl: dbUrlFlag() } : base;
 }
 
-/** The flags that point a suggested follow-up command at `target`; a `--db-url` value is never echoed. */
+/** The flags of a hosted-only command: `--remote=<ref|branch>` and the deprecated `--project-ref` alias. */
+export const projectTargetFlags = () => ({
+  remote: remoteFlag({ kind: "hosted" }),
+  projectRef: projectRefFlag(),
+});
+
+/** The `--remote` value as telemetry records it: a project ref verbatim, a bare `--remote` as `true`, a branch name or database URL redacted. */
+export const remoteTelemetryFlag = (
+  remote: Option.Option<RemoteValue>,
+): Option.Option<string | boolean> =>
+  Option.map(remote, (value) => {
+    switch (value._tag) {
+      case "Linked":
+        return true;
+      case "Ref":
+        return value.ref;
+      default:
+        return "<redacted>";
+    }
+  });
+
+/** The flags that point a suggested follow-up command at `target`; a database URL is never echoed. */
 export const flagsForTarget = (target: ResolvedTarget): string => {
   switch (target.kind) {
     case "local":
-      return "--local";
+      return "";
     case "db-url":
-      return "--db-url <redacted>";
+      return "--remote=<db-url>";
     case "linked":
-      return target.matchesLinkedRef ? "--linked" : `--linked --project-ref ${target.ref}`;
+      return target.matchesLinkedRef ? "--remote" : `--remote=${target.ref}`;
   }
 };
 
@@ -89,17 +145,16 @@ export const flagsForTarget = (target: ResolvedTarget): string => {
  * share their definitions with {@link targetFlags}.
  */
 export const seedTargetGlobalFlags = {
-  linked: GlobalFlag.Setting("linked")({
-    flag: linkedFlag({ group: "selectable", subject: "Storage API" }),
+  remote: GlobalFlag.Setting("remote")({
+    flag: remoteFlag({ kind: "selectable", subject: "Storage API", dbUrl: false }),
   }),
-  local: GlobalFlag.Setting("local")({
-    flag: localFlag({ group: "selectable", subject: "Storage API" }),
-  }),
+  linked: GlobalFlag.Setting("linked")({ flag: linkedFlag() }),
+  local: GlobalFlag.Setting("local")({ flag: localFlag() }),
 };
 
-/** Hidden alias of `--project-ref`, accepted only by `gen types`. */
+/** Hidden alias of `--remote=<ref>`, accepted only by `gen types`. */
 export const deprecatedProjectIdFlag = Flag.String("project-id").pipe(
-  Flag.withDescription("Deprecated, removed in v4: use --project-ref."),
+  Flag.withDescription("Deprecated, removed in v4: use --remote=<ref>."),
   Flag.optional,
   Flag.withHidden,
 );

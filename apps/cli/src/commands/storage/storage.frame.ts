@@ -15,6 +15,7 @@ import {
   makeStorageGateway,
   type StorageGateway,
 } from "../../command-internal/storage-gateway.ts";
+import type { RemoteValue } from "../../command-internal/target/remote-value.ts";
 import { resolveTarget } from "../../command-internal/target/resolve-target.ts";
 import {
   UrlParseError,
@@ -35,6 +36,7 @@ import {
 } from "./storage.errors.ts";
 
 interface StorageTargetFlags {
+  readonly remote: Option.Option<RemoteValue>;
   readonly local: boolean;
   readonly linked: boolean;
   readonly projectRef: Option.Option<string>;
@@ -43,9 +45,9 @@ interface StorageTargetFlags {
 /** The resolved target and its project ref, empty for the local stack. */
 export const resolveStorageTarget = Effect.fnUntraced(function* (flags: StorageTargetFlags) {
   const target = yield* resolveTarget({
+    remote: flags.remote,
     local: flags.local,
     linked: flags.linked,
-    dbUrl: Option.none(),
     projectRef: flags.projectRef,
   });
   return { target, projectRef: target.kind === "linked" ? target.ref : "" };

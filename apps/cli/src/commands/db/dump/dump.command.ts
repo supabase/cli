@@ -77,7 +77,7 @@ const config = {
     Flag.withDescription("File path to save the dumped contents."),
     Flag.optional,
   ),
-  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
+  ...targetFlags({ subject: "database", dbUrl: true }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
@@ -135,6 +135,7 @@ export const dbDumpCommand = Command.make("dump", config).pipe(
           "role-only": flags.roleOnly,
           "keep-comments": flags.keepComments,
           file: flags.file,
+          remote: flags.remote,
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,

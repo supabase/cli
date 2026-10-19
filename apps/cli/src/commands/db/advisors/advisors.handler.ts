@@ -203,6 +203,7 @@ const runAdvisors = Effect.fnUntraced(function* (
   dnsResolver: "native" | "https",
 ) {
   const target = yield* resolveTarget({
+    remote: flags.remote,
     local: flags.local,
     linked: flags.linked,
     dbUrl: flags.dbUrl,

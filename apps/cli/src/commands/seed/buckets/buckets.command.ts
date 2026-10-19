@@ -20,14 +20,16 @@ import {
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import { seedBuckets } from "./buckets.handler.ts";
+import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  projectRef: targetFlags({ group: "selectable", subject: "Storage API", dbUrl: false }).projectRef,
+  projectRef: targetFlags({ subject: "Storage API", dbUrl: false }).projectRef,
 };
 
-// `--linked`/`--local` are scoped globals on the `seed` group (`seedTargetGlobalFlags`).
+// `--remote`/`--linked`/`--local` are scoped globals on the `seed` group (`seedTargetGlobalFlags`).
 export type BucketsFlags = {
+  readonly remote: Option.Option<RemoteValue>;
   readonly linked: boolean;
   readonly local: boolean;
   readonly projectRef: Option.Option<string>;
@@ -48,6 +50,7 @@ export const bucketsCommand = Command.make("buckets", config).pipe(
   Command.withHandler((leafFlags) =>
     Effect.gen(function* () {
       const flags: BucketsFlags = {
+        remote: yield* seedTargetGlobalFlags.remote,
         linked: yield* seedTargetGlobalFlags.linked,
         local: yield* seedTargetGlobalFlags.local,
         projectRef: leafFlags.projectRef,
@@ -55,6 +58,7 @@ export const bucketsCommand = Command.make("buckets", config).pipe(
       return yield* seedBuckets(flags).pipe(
         withCommandTelemetry({
           flags: {
+            remote: flags.remote,
             linked: flags.linked,
             local: flags.local,
             "project-ref": flags.projectRef,

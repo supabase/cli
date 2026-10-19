@@ -154,6 +154,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     }
 
     const target = yield* resolveTarget({
+      remote: flags.remote,
       local: flags.local,
       linked: flags.linked,
       dbUrl: flags.dbUrl,

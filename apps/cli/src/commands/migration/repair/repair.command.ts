@@ -26,7 +26,7 @@ const config = {
   status: Flag.Literals("status", ["applied", "reverted"] as const).pipe(
     Flag.withDescription("Version status to update."),
   ),
-  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
+  ...targetFlags({ subject: "database", dbUrl: true }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
@@ -52,6 +52,7 @@ export const migrationRepairCommand = Command.make("repair", config).pipe(
     migrationRepair({
       versions: flags.versions.map(String),
       status: flags.status,
+      remote: flags.remote,
       dbUrl: flags.dbUrl,
       linked: flags.linked,
       local: flags.local,
@@ -61,6 +62,7 @@ export const migrationRepairCommand = Command.make("repair", config).pipe(
       withCommandTelemetry({
         flags: {
           status: flags.status,
+          remote: flags.remote,
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,

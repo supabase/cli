@@ -20,7 +20,7 @@ import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
+  ...targetFlags({ subject: "database", dbUrl: true }),
   noSeed: CliConfigKeys.db.seed.enabled.flag({
     name: "no-seed",
     description: "Skip running the seed script after reset.",
@@ -61,6 +61,7 @@ export const dbResetCommand = Command.make("reset", config).pipe(
     dbReset(flags).pipe(
       withCommandTelemetry({
         flags: {
+          remote: flags.remote,
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,

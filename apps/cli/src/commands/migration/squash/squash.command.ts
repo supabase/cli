@@ -24,7 +24,7 @@ const config = {
     Flag.withDescription("Squash up to the specified version."),
     Flag.optional,
   ),
-  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
+  ...targetFlags({ subject: "database", dbUrl: true }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
@@ -53,6 +53,7 @@ export const migrationSquashCommand = Command.make("squash", config).pipe(
       withCommandTelemetry({
         flags: {
           version: flags.version,
+          remote: flags.remote,
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,

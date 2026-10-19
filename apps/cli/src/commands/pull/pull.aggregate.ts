@@ -265,10 +265,10 @@ export function pullRetryHint(
   const remoteLabelFlag = pullRemoteLabelFlag(remoteLabel);
   const commandByStep: Record<PullStepId, string> = {
     config: `supabase config pull --project-ref ${ref}${remoteLabelFlag}`,
-    migration_history: `supabase migration fetch --project-ref ${ref}`,
+    migration_history: `supabase migration fetch --remote=${ref}`,
     // `db pull` rejects an ambient `--experimental`/`SUPABASE_EXPERIMENTAL` without `--declarative`;
     // `--experimental=false` keeps this suggested command from failing on it.
-    db: `supabase db pull --project-ref ${ref} --experimental=false`,
+    db: `supabase db pull --experimental=false --remote=${ref}`,
     functions: `supabase functions download --project-ref ${ref}`,
   };
   return `To retry just this step, run: ${commandByStep[step]}`;

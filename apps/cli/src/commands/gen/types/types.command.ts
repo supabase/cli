@@ -34,13 +34,14 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import {
   deprecatedProjectIdFlag,
+  remoteTelemetryFlag,
   targetFlags,
 } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
 
 const config = {
-  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
+  ...targetFlags({ subject: "database", dbUrl: true }),
   projectId: deprecatedProjectIdFlag,
   lang: Flag.Literals("lang", GEN_TYPES_LANGUAGES).pipe(
     Flag.withDescription("Output language of the generated types. (default typescript)"),
@@ -179,9 +180,10 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
   Command.withHandler((flags) =>
     genTypes(flags).pipe(
       withCommandTelemetry({
-        flags,
+        flags: { ...flags, remote: remoteTelemetryFlag(flags.remote) },
         safeFlags: [
           "project-id",
+          "remote",
           ...(Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
             ? ["project-ref"]
             : []),

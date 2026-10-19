@@ -135,6 +135,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
 
     // 3. Resolve the target (a selector flag, else the workspace target) and connect to it.
     const target = yield* resolveTarget({
+      remote: flags.remote,
       local: flags.local,
       linked: flags.linked,
       dbUrl: flags.dbUrl,

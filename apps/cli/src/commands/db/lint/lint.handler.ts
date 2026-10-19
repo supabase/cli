@@ -102,6 +102,7 @@ const runLint = Effect.fnUntraced(function* (flags: DbLintFlags, dnsResolver: "n
   const processControl = yield* ProcessControl;
 
   const target = yield* resolveTarget({
+    remote: flags.remote,
     local: flags.local,
     linked: flags.linked,
     dbUrl: flags.dbUrl,

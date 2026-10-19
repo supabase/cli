@@ -30,7 +30,6 @@ import {
   type ResolvedTarget,
 } from "../../../command-internal/target/resolve-target.ts";
 import { renderLocalTarget } from "../../../command-internal/target/target-identity.ts";
-import { TargetSelectorConflictError } from "../../../command-internal/target/target.errors.ts";
 import type { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
 import { tempPaths } from "../../../shared/config/temp-paths.ts";
@@ -115,18 +114,15 @@ function isPoolerHost(host: string, poolerHost: string): boolean {
 
 const GEN_TYPES_COMMAND_PATH = ["gen", "types"] as const;
 
-// `--project-ref` refines `--linked`, so the pair counts as one member of a mutex group.
-const REMOTE_TARGET_FLAGS: ReadonlySet<string> = new Set(["linked", "project-ref"]);
+// The hosted-project selectors name one project, so they count as one member of a mutex group.
+const REMOTE_TARGET_FLAGS: ReadonlySet<string> = new Set(["remote", "linked", "project-ref"]);
 
 // Validation reports only the first violated group, in this listed order.
 const GEN_TYPES_MUTEX_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
-  ["linked", "project-ref", "postgrest-v9-compat"],
-  ["linked", "project-ref", "query-timeout"],
-  ...GEN_TYPES_LANGUAGE_FLAG_NAMES.map((name) => ["linked", "project-ref", name]),
+  ["remote", "linked", "project-ref", "postgrest-v9-compat"],
+  ["remote", "linked", "project-ref", "query-timeout"],
+  ...GEN_TYPES_LANGUAGE_FLAG_NAMES.map((name) => ["remote", "linked", "project-ref", name]),
 ];
-
-const PROJECT_ID_DEPRECATION_LINE =
-  "--project-id is deprecated and will be removed in v4; use --project-ref instead.";
 
 const POSTGREST_V9_COMPAT_DEPRECATION_LINE =
   "Flag --postgrest-v9-compat has been deprecated, PostgREST 9 reached end of life; the flag still disables one-to-one relationship detection.";
@@ -569,7 +565,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       return yield* new GenTypesNetworkIdUnsupportedError({
         message:
           "gen types now generates types in-process and cannot join a Docker network via " +
-          "--network-id; use a host-reachable --db-url instead.",
+          "--network-id; use a host-reachable --remote=<db-url> instead.",
       });
     }
 
@@ -577,25 +573,17 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       yield* output.raw(`${POSTGREST_V9_COMPAT_DEPRECATION_LINE}\n`, "stderr");
     }
 
-    if (Option.isSome(flags.projectId)) {
-      yield* output.raw(`${PROJECT_ID_DEPRECATION_LINE}\n`, "stderr");
-      if (Option.isSome(flags.projectRef)) {
-        return yield* new TargetSelectorConflictError({
-          flags: ["--project-id", "--project-ref"],
-          message: "--project-id is a deprecated alias of --project-ref; pass only one of them.",
-        });
-      }
-    }
     const projectRefFlag = Option.orElse(flags.projectRef, () => flags.projectId);
+    const remoteIsDatabase = Option.exists(flags.remote, (value) => value._tag === "DbUrl");
 
     // This guard runs before flag-group validation, so its error wins when both apply. Both
     // run after the telemetry context is installed, so every return here must stay inside the
     // `Effect.ensuring(telemetryState.flush)` below.
-    if (flags.postgrestV9Compat && Option.isNone(flags.dbUrl)) {
+    if (flags.postgrestV9Compat && Option.isNone(flags.dbUrl) && !remoteIsDatabase) {
       // Established error text, including the "must used" typo — do not
       // "fix" the grammar.
       return yield* new GenTypesFlagUsageError({
-        message: "--postgrest-v9-compat must used together with --db-url",
+        message: "--postgrest-v9-compat must used together with --remote=<db-url>",
       });
     }
     const positionalLang = findPositionalLanguage(rawArgs);
@@ -611,6 +599,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
     // `--linked=false` counts as absent; every other flag counts once passed, whatever its value.
     const changedMutexFlags: Record<string, boolean> = {
+      remote: Option.isSome(flags.remote) && !remoteIsDatabase,
       linked: flags.linked,
       "project-ref": Option.isSome(projectRefFlag),
       "postgrest-v9-compat": occurrences.has("postgrest-v9-compat"),
@@ -634,10 +623,12 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     yield* Effect.annotateCurrentSpan("typegen.lang", lang);
 
     const target = yield* resolveTarget({
+      remote: flags.remote,
       local: flags.local,
       linked: flags.linked,
       dbUrl: flags.dbUrl,
-      projectRef: projectRefFlag,
+      projectRef: flags.projectRef,
+      projectId: flags.projectId,
     });
 
     if (target.kind === "local") {

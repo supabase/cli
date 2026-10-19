@@ -41,6 +41,7 @@ export const storageMvCommand = Command.make("mv", config).pipe(
       yield* requireExperimental;
       const telemetryFlags = {
         recursive: flags.recursive,
+        remote: flags.remote,
         linked: flags.linked,
         local: flags.local,
         "project-ref": flags.projectRef,

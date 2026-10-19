@@ -63,7 +63,7 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  ...targetFlags({ group: "sync", subject: "database", dbUrl: true }),
+  ...targetFlags({ subject: "database", dbUrl: true }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
@@ -91,6 +91,7 @@ const telemetryOptions = (flags: DbPullFlags) => ({
     "diff-engine": flags.diffEngine,
     "strict-coverage": flags.strictCoverage,
     schema: flags.schema,
+    remote: flags.remote,
     "db-url": flags.dbUrl,
     linked: flags.linked,
     local: flags.local,
@@ -125,7 +126,7 @@ export const dbPullCommand = Command.make("pull", config).pipe(
         dbConfigPoolerFallback,
         withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
       ),
-      { default: "linked" },
+      { default: "local" },
     ),
   ),
   Command.withHandler((flags) => {
@@ -160,5 +161,5 @@ export const dbPullCommand = Command.make("pull", config).pipe(
   }),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
-  withTargetPolicy({ group: "sync", consent: "no" }),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

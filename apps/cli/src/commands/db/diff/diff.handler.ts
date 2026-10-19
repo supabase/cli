@@ -22,9 +22,11 @@ import {
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { hostedMutationPreapproval } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import {
+  resolveRemoteTarget,
   resolveTarget,
-  type ResolvedTarget,
+  type LinkedTarget,
 } from "../../../command-internal/target/resolve-target.ts";
+import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import { makeDir } from "../../../command-internal/make-dir.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
@@ -77,12 +79,11 @@ import { writePgDeltaMigrations } from "../shared/pgdelta-migrations.write.ts";
 import { type PgDeltaContext, isPgDeltaDebugEnabled } from "../../../command-internal/pgdelta.ts";
 import { prepareShadowSource } from "../shared/shadow-source.ts";
 import type { DbDiffFlags } from "./diff.command.ts";
-import { classifyExplicitRef, unknownTargetMessage } from "./diff.explicit.ts";
+import { classifyExplicitRef } from "./diff.explicit.ts";
 import {
   DbDiffDbNotRunningError,
   DbDiffEngineConflictError,
   DbDiffExplicitFlagsError,
-  DbDiffUnknownTargetError,
   DbDiffWriteError,
 } from "./diff.errors.ts";
 import { diffSchemaPgAdmin } from "./pgadmin-diff.ts";
@@ -178,20 +179,23 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // The first migrations endpoint resolved wins: the engine provisions a single migrations
       // shadow/catalog, so only refs resolved before that point should influence it.
       let migrationsToml: DbTomlValues | undefined;
-      // The linked project resolves once, so `--from linked --to linked` announces it once.
-      let linkedTarget: ResolvedTarget | undefined;
-      // Each linked resolution mints a temporary login role that invalidates the previous one,
-      // so every `linked` ref shares a single connection.
-      let linkedEndpoint: PgDeltaDatabaseEndpoint | undefined;
-      // A target flag validates the selection and, for the linked project, merges
+      // The project `remote` names resolves once, so `--from remote --to remote` announces it once.
+      let linkedTarget: LinkedTarget | undefined;
+      const namedTargets = new Map<string, LinkedTarget>();
+      // Each hosted resolution mints a temporary login role that invalidates the previous one for
+      // that project, so every ref to a project shares a single connection.
+      const hostedEndpoints = new Map<string, PgDeltaDatabaseEndpoint>();
+      // A target flag validates the selection and, for a hosted project, merges
       // `[remotes.<ref>]` so the explicit `local`/`migrations` refs below see that override.
       if (
         flags.local ||
         flags.linked ||
+        Option.isSome(flags.remote) ||
         Option.isSome(flags.dbUrl) ||
         Option.isSome(flags.projectRef)
       ) {
         const preflight = yield* resolveTarget({
+          remote: flags.remote,
           local: flags.local,
           linked: flags.linked,
           dbUrl: flags.dbUrl,
@@ -204,19 +208,62 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         }
       }
       // Read config once, after the preflight: the `[remotes.<ref>]`-merged config
-      // when a changed `--linked` resolved a ref (so base config isn't validated
+      // when a target flag resolved a ref (so base config isn't validated
       // before the merge), else the base config.
       let cfg =
         mergedLinkedRef !== undefined
           ? yield* readDbToml(fs, path, cliSettings.workdir, mergedLinkedRef)
           : yield* readDbToml(fs, path, cliSettings.workdir);
-      // Each ref resolves in order; the `linked` branch re-merges the matching
-      // `[remotes.<ref>]` block so a later `local` ref read and the trailing
-      // `pgDeltaFormatOptions()` see the override. Thread the merged config through.
-      const resolveRef = (ref: string) =>
+      const hostedTarget = Effect.fnUntraced(function* (
+        remote: Exclude<RemoteValue, { readonly _tag: "DbUrl" }>,
+      ) {
+        if (remote._tag === "Linked") {
+          linkedTarget ??= yield* resolveRemoteTarget(remote);
+          return linkedTarget;
+        }
+        const key = remote._tag === "Ref" ? remote.ref : `branch:${remote.name}`;
+        const known = namedTargets.get(key);
+        if (known !== undefined) return known;
+        const resolvedTarget = yield* resolveRemoteTarget(remote);
+        namedTargets.set(key, resolvedTarget);
+        return resolvedTarget;
+      });
+      const hostedEndpoint = Effect.fnUntraced(function* (
+        remote: Exclude<RemoteValue, { readonly _tag: "DbUrl" }>,
+      ) {
+        const target = yield* hostedTarget(remote);
+        const existing = hostedEndpoints.get(target.ref);
+        if (existing !== undefined) return existing;
+        const resolved = yield* resolver.resolveConnection({
+          target,
+          dnsResolver,
+          password: Option.none(),
+          networkBanRemoval: yield* hostedMutationPreapproval,
+        });
+        const ref2 = Option.getOrUndefined(resolved.ref ?? Option.none());
+        if (ref2 !== undefined) {
+          yield* Ref.set(linkedRefForCache, Option.some(ref2));
+          if (mergedLinkedRef === undefined) {
+            mergedLinkedRef = ref2;
+            cfg = yield* readDbToml(fs, path, cliSettings.workdir, ref2);
+          }
+        }
+        const endpoint = {
+          kind: "database",
+          ref: toPostgresURL(resolved.conn),
+          connection: resolved.conn,
+          connectOptions: { isLocal: resolved.isLocal, dnsResolver },
+        } satisfies PgDeltaDatabaseEndpoint;
+        hostedEndpoints.set(target.ref, endpoint);
+        return endpoint;
+      });
+      // Each ref resolves in order; the first hosted project re-merges its `[remotes.<ref>]` block
+      // so a later `local` ref read and the trailing `pgDeltaFormatOptions()` see the override.
+      const resolveRef = (ref: string, flag: "--from" | "--to") =>
         Effect.gen(function* () {
-          switch (classifyExplicitRef(ref)) {
-            case "local": {
+          const explicit = classifyExplicitRef(ref);
+          switch (explicit._tag) {
+            case "Local": {
               const backend = yield* currentStackBackend;
               if (backend.kind !== "stack") {
                 const hostConfig = yield* configValues.load({
@@ -262,35 +309,17 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                 connectOptions: { isLocal: true, dnsResolver },
               } satisfies PgDeltaDatabaseEndpoint;
             }
-            case "linked": {
-              if (linkedEndpoint !== undefined) return linkedEndpoint;
-              linkedTarget ??= yield* resolveTarget({
-                local: false,
-                linked: true,
-                dbUrl: Option.none(),
-                projectRef: flags.projectRef,
-              });
-              const resolved = yield* resolver.resolveConnection({
-                target: linkedTarget,
-                dnsResolver,
-                password: Option.none(),
-                networkBanRemoval: yield* hostedMutationPreapproval,
-              });
-              const ref2 = Option.getOrUndefined(resolved.ref ?? Option.none());
-              if (ref2 !== undefined) {
-                yield* Ref.set(linkedRefForCache, Option.some(ref2));
-                mergedLinkedRef = ref2;
-                cfg = yield* readDbToml(fs, path, cliSettings.workdir, ref2);
+            case "Remote":
+              if (explicit.viaDeprecatedLinked) {
+                yield* output.warn(
+                  `${flag} linked is deprecated and will be removed in v4. Use ${flag} remote instead.`,
+                );
               }
-              linkedEndpoint = {
-                kind: "database",
-                ref: toPostgresURL(resolved.conn),
-                connection: resolved.conn,
-                connectOptions: { isLocal: resolved.isLocal, dnsResolver },
-              };
-              return linkedEndpoint;
-            }
-            case "migrations":
+              return yield* hostedEndpoint({ _tag: "Linked" });
+            case "Ref":
+            case "Branch":
+              return yield* hostedEndpoint(explicit);
+            case "Migrations":
               // Preserve resolution order: the migrations shadow/catalog config must reflect
               // only refs resolved before this endpoint.
               migrationsToml ??= cfg;
@@ -298,20 +327,18 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                 kind: "migrations",
                 ...(mergedLinkedRef !== undefined ? { projectRef: mergedLinkedRef } : {}),
               } satisfies PgDeltaEndpoint;
-            case "url":
+            case "DbUrl":
               return {
                 kind: "database",
-                ref,
+                ref: explicit.url,
                 // The next engine parses arbitrary explicit URLs itself; they connect as remote
                 // by default, so TLS is used.
                 connectOptions: { isLocal: false, dnsResolver },
               } satisfies PgDeltaDatabaseEndpoint;
-            case "unknown":
-              return yield* new DbDiffUnknownTargetError({ message: unknownTargetMessage(ref) });
           }
         });
-      const source = yield* resolveRef(from);
-      const desired = yield* resolveRef(to);
+      const source = yield* resolveRef(from, "--from");
+      const desired = yield* resolveRef(to, "--to");
       const explicitResolvedConfig = yield* configValues.load({
         workdir: cliSettings.workdir,
         projectRef: Option.fromNullishOr(mergedLinkedRef),
@@ -373,6 +400,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
 
     // Native path: resolve the target, provision a live shadow source, then diff.
     const diffTarget = yield* resolveTarget({
+      remote: flags.remote,
       local: flags.local,
       linked: flags.linked,
       dbUrl: flags.dbUrl,

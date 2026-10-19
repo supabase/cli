@@ -76,7 +76,7 @@ import { updateMigrationHistory } from "../commands/db/pull/pull.sync.ts";
  */
 export type DbPullRunFlags = Omit<
   DbPullCommandFlags,
-  "usePgDelta" | "dbUrl" | "linked" | "local" | "projectRef"
+  "usePgDelta" | "remote" | "dbUrl" | "linked" | "local" | "projectRef"
 >;
 
 /**

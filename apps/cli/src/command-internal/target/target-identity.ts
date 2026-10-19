@@ -66,14 +66,14 @@ export const describeLinkedTarget = (input: {
   };
 };
 
-/** The suffix a default-local banner carries when the checkout is linked, naming the project `--linked` would use. */
+/** The suffix a default-local banner carries when the checkout is linked, naming the project `--remote` would use. */
 export const linkedAlternativeHint = (input: {
   readonly ref: string;
   readonly cache: Option.Option<CachedLinkedProject>;
 }): string => {
   const cached = Option.getOrUndefined(input.cache);
   const name = cached?.ref === input.ref ? cached.name : undefined;
-  return `default; pass --linked for ${named(name, input.ref)}`;
+  return `default; pass --remote for ${named(name, input.ref)}`;
 };
 
 /** A branch resolved to its own project ref; `branch` is absent for a UUID lookup and `parentRef` for anything but a name lookup. */

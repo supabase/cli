@@ -16,25 +16,28 @@ export type PermissionVariant = Parameters<typeof rootCommandForFeatures>[0];
 /**
  * The flags one run uses, keyed by name without the leading `--`: a switch's effective value
  * (its default included) where an `is` condition checks it, a string where a `oneOf` condition
- * checks the value, otherwise `true`. List only the database-target flags (`db-url`, `local`,
- * `linked`) the run was given: the CLI treats one as set whenever it appears on the command line.
+ * checks the value, otherwise `true`. List only the database-target flags (`remote`, `db-url`,
+ * `local`, `linked`) the run was given: the CLI treats one as set whenever it appears on the
+ * command line. `remote` is `true` when bare, else the value it was given.
  */
 export type ActiveFlags = Readonly<Record<string, boolean | string>>;
 
 /** The flags that select a database target, in precedence order. */
-export const DB_TARGET_FLAGS = [
-  "db-url",
-  "local",
-  "linked",
-] as const satisfies ReadonlyArray<DbTarget>;
+export const DB_TARGET_FLAGS = ["db-url", "local", "linked", "remote"] as const;
 
-/** The target `activeFlags` selects (`db-url`, `local`, `linked`, or `project-ref`, which implies linked), else `fallback`. */
+const DB_URL_PREFIX = /^postgres(ql)?:\/\//;
+
+/** The target `activeFlags` selects (`db-url`, `local`, `linked`, `remote`, or `project-ref`, which imply linked unless `remote` is a database URL), else `fallback`. */
 function dbTargetOf(
   activeFlags: ActiveFlags,
   fallback: DbTarget | undefined,
 ): DbTarget | undefined {
-  for (const flag of DB_TARGET_FLAGS) {
+  for (const flag of ["db-url", "local", "linked"] as const satisfies ReadonlyArray<DbTarget>) {
     if (Object.hasOwn(activeFlags, flag)) return flag;
+  }
+  if (Object.hasOwn(activeFlags, "remote")) {
+    const remote = activeFlags["remote"];
+    return typeof remote === "string" && DB_URL_PREFIX.test(remote) ? "db-url" : "linked";
   }
   if (Object.hasOwn(activeFlags, "project-ref")) return "linked";
   return fallback;
@@ -87,7 +90,7 @@ export function applicableEntries(
     const target = dbTargetOf(activeFlags, permissions.dbTargetDefault);
     if (target === undefined) {
       throw new Error(
-        "an entry checks the database target, but activeFlags names none of --db-url, --local, --linked and the declaration sets no default (withDbTarget)",
+        "an entry checks the database target, but activeFlags names none of --remote, --db-url, --local, --linked and the declaration sets no default (withDbTarget)",
       );
     }
     return target;

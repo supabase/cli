@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Ref } from "effect";
+import { Effect, FileSystem, Ref } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { requireTargetMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
@@ -44,9 +44,9 @@ export const seedBuckets = Effect.fn("seed.buckets")(function* (flags: BucketsFl
     // Resolved before the config load so the matching `[remotes.<name>]` override
     // (whose `project_id == ref`) is merged over the base config.
     const target = yield* resolveTarget({
+      remote: flags.remote,
       local: flags.local,
       linked: flags.linked,
-      dbUrl: Option.none(),
       projectRef: flags.projectRef,
     });
     const projectRef = target.kind === "linked" ? target.ref : "";

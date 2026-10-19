@@ -50,15 +50,15 @@ interface ValueCondition extends FlagConditionBase {
 type FlagCondition = PresenceCondition | SwitchCondition | ValueCondition;
 
 /**
- * The target a command talks to: `--local`, `--db-url`, or the linked project. `seed buckets` uses
- * it for its Storage target, which `--linked`/`--local` select the same way.
+ * The target a command talks to: the local stack, a database URL, or a hosted project. `seed
+ * buckets` uses it for its Storage target, which `--remote`/`--local` select the same way.
  */
 export type DbTarget = "local" | "db-url" | "linked";
 
 /**
  * The run's database target must be one of `dbTarget` for an entry to apply. The target is
- * `--db-url` if given, else `--local`, else `--linked`, else the default set with
- * {@link withDbTarget}. As with {@link FlagCondition}, `source` marks a building block's condition.
+ * `--db-url` (or `--remote=<url>`) if given, else `--local`, else `--linked`, `--project-ref` or
+ * any other `--remote`, else the default set with {@link withDbTarget}. As with {@link FlagCondition}, `source` marks a building block's condition.
  */
 interface DbTargetCondition {
   readonly dbTarget: ReadonlyArray<DbTarget>;

@@ -16,7 +16,7 @@ export const rejectTargetPassword = (
           target,
           message:
             target === "db-url"
-              ? "--password can't be used with --db-url. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres"
+              ? "--password can't be used with --remote=<db-url>. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres"
               : `--password only applies to a linked project. The local database uses [db].password from supabase/config.toml.${linkedCheckout ? ` ${SUGGEST_LINKED_PROJECT}` : ""}`,
         }),
       );

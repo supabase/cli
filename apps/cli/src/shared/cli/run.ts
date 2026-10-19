@@ -59,6 +59,7 @@ import {
   resolveAgentOutputFormatFromArgs,
   ROOT_BOOLEAN_FLAGS,
 } from "./agent-output.ts";
+import { joinRemoteOperands, remoteOperandCapacity } from "./remote-argv.ts";
 import { SuccessTrailer, successTrailerLayer } from "./success-trailer.ts";
 import type { CliErrorSuggestionContext } from "./subcommand-flag-suggestions.ts";
 import {
@@ -185,6 +186,29 @@ function valueTakingFlagTokenPredicateForArgv(
     resolvedCommandPathForArgv(rootCommand, extractCommandPath(args)),
   );
   return (token) => isGlobalValueFlagToken(token) || leafPredicate(token);
+}
+
+/** `args` with a bare `--remote <word>` joined to `--remote=<word>` wherever the command's operands leave no other reading. */
+export function rewriteRemoteArgv(
+  rootCommand: Command.Command.Any,
+  args: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  if (!args.includes("--remote")) return args;
+  const path = resolvedCommandPathForArgv(rootCommand, extractCommandPath(args));
+  const operandCapacity = remoteOperandCapacity(rootCommand, path);
+  if (operandCapacity === undefined) return args;
+  const isValueTakingToken = valueTakingFlagTokenPredicateForArgv(rootCommand, args);
+  return joinRemoteOperands(args, {
+    pathLength: path.length - 1,
+    operandCapacity,
+    consumesNextToken: (token) => {
+      const [flag] = token.split("=", 1);
+      return (
+        (!token.includes("=") && flag !== undefined && isValueTakingToken(flag)) ||
+        shortClusterConsumesNextToken(token, isValueTakingToken)
+      );
+    },
+  });
 }
 
 /** Whether `token` is an occurrence of the long or exact-short boolean flag `name`, bare or valued (`--help`, `--help=false`). */
@@ -635,10 +659,11 @@ export const runCli = Effect.fnUntraced(function* <
   options: RunCliOptions<BeforeParseError>,
 ) {
   const bootMs = Math.round(performance.now());
-  const args = yield* Effect.gen(function* () {
+  const rawArgs = yield* Effect.gen(function* () {
     const stdio = yield* Stdio.Stdio;
     return yield* stdio.args;
   }).pipe(Effect.provide(BunServices.layer));
+  const args = rewriteRemoteArgv(rootCommand, rawArgs);
 
   // Same shape `formatterLayerFor` builds below, so `normalizeCause`'s fallback path can reuse
   // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the formatters would.

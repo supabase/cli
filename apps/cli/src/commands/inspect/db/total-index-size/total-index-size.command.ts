@@ -17,7 +17,7 @@ export const inspectDbTotalIndexSizeCommand = Command.make(
   // Removed: fails before any Management API call, so no flag changes what it calls.
   withPermissions({
     operations: [],
-    noApiEffectFlags: ["db-url", "linked", "local", "project-ref"],
+    noApiEffectFlags: ["db-url", "linked", "local", "project-ref", "remote"],
   }),
   Command.withHandler(() =>
     removedCommand("Use `supabase inspect db index-stats` instead.").pipe(

@@ -7,6 +7,7 @@ import { Output } from "../shared/output/output.service.ts";
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import { withCommandTelemetry } from "../telemetry/command-telemetry.ts";
 import type { TestDbNoTestsError, TestDbRunError } from "./test-db.errors.ts";
+import type { RemoteValue } from "./target/remote-value.ts";
 import { targetFlags } from "./target/target-flags.ts";
 import { testDb } from "./test-db.handler.ts";
 
@@ -43,11 +44,12 @@ export const testDbConfig = {
     Argument.withDescription("Paths to test files or directories."),
     Argument.variadic(),
   ),
-  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
+  ...targetFlags({ subject: "database", dbUrl: true }),
 } as const;
 
 export interface TestDbFlags {
   readonly paths: ReadonlyArray<string>;
+  readonly remote: Option.Option<RemoteValue>;
   readonly dbUrl: Option.Option<string>;
   readonly linked: boolean;
   readonly local: boolean;
@@ -62,6 +64,7 @@ export interface TestDbFlags {
 export function runTestDbCommand(flags: CliCommand.Command.Config.Infer<typeof testDbConfig>) {
   return testDb({
     paths: flags.paths,
+    remote: flags.remote,
     dbUrl: flags.dbUrl,
     linked: flags.linked,
     local: flags.local,
@@ -69,6 +72,7 @@ export function runTestDbCommand(flags: CliCommand.Command.Config.Infer<typeof t
   }).pipe(
     withCommandTelemetry({
       flags: {
+        remote: flags.remote,
         "db-url": flags.dbUrl,
         linked: flags.linked,
         local: flags.local,

@@ -25,7 +25,7 @@ import { targetFlags } from "../../../../../command-internal/target/target-flags
 import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
 
 const config = {
-  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
+  ...targetFlags({ subject: "database", dbUrl: true }),
   overwrite: Flag.Boolean("overwrite").pipe(
     Flag.withDescription("Overwrite declarative schema files without confirmation."),
     Flag.withDefault(false),
@@ -124,6 +124,7 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
             "output-dir": merged.outputDir,
             reset: merged.reset,
             schema: merged.schema,
+            remote: merged.remote,
             "db-url": merged.dbUrl,
             linked: merged.linked,
             local: merged.local,

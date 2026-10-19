@@ -18,7 +18,7 @@ import { targetFlags } from "../../../command-internal/target/target-flags.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
-  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
+  ...targetFlags({ subject: "database", dbUrl: true }),
   type: Flag.Literals("type", ["all", "security", "performance"] as const).pipe(
     Flag.withDescription("Type of advisors to check: all, security, performance."),
     Flag.optional,
@@ -76,6 +76,7 @@ export const dbAdvisorsCommand = Command.make("advisors", config).pipe(
     dbAdvisors(flags).pipe(
       withCommandTelemetry({
         flags: {
+          remote: flags.remote,
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,

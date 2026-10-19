@@ -1,4 +1,3 @@
-import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { Duration, Effect, FileSystem, Option, Path, Ref, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
@@ -21,45 +20,28 @@ import {
 import { classifyProjectLookupError } from "../../command-internal/branch-target.ts";
 import {
   type CachedLinkedProject,
-  parentNotLinkedMessage,
-  parentRefInvalidMessage,
-  parentRefTypoHint,
   parseCachedLinkedProject,
-  resolveLinkedParentRef,
 } from "../../command-internal/parent-project-ref.ts";
 import { dashboardUrl } from "../../command-internal/profile.ts";
 import { mapTenantApiKeysError } from "../../command-internal/get-tenant-api-keys.ts";
-import { sanitizeInlineName, mapHttpError } from "../../command-internal/http-errors.ts";
+import { sanitizeInlineName } from "../../command-internal/http-errors.ts";
 import { linkServicesCore } from "../../command-internal/link-services-core.ts";
 import { extractServiceKeys } from "../../command-internal/tenant-keys.ts";
 import { tempPaths } from "../../shared/config/temp-paths.ts";
 import {
   LinkApiKeysNetworkError,
   LinkAuthTokenError,
-  LinkBranchListNetworkError,
-  LinkBranchListStatusError,
-  LinkBranchNotFoundError,
-  LinkBranchNotLinkedError,
-  LinkBranchNotReadyError,
   LinkMissingKeyError,
-  LinkParentRefInvalidError,
   LinkProjectStatusError,
   LinkProjectStatusNetworkError,
   LinkRefArgConflictError,
   ProjectPausedError,
 } from "./link.errors.ts";
+import {
+  type BranchResolution,
+  resolveLinkBranchRef,
+} from "../../command-internal/target/branch-resolution.ts";
 import type { LinkFlags } from "./link.command.ts";
-
-type LinkBranches = typeof V1ListAllBranchesOutput.Type;
-type LinkBranch = LinkBranches[number];
-
-/** Result of resolving a branch name/UUID to its project ref, threaded into the
- * machine payload (`branch`, `parent_project_ref`) alongside the plain ref. */
-interface LinkBranchResolution {
-  readonly projectRef: string;
-  readonly branchName: string;
-  readonly parentRef: string;
-}
 
 // Classify a `getProject` failure: a 404 means the project is a branch (resolve
 // to `None`, link continues); any other status surfaces the body; transport
@@ -82,8 +64,6 @@ const mapApiKeysError = mapTenantApiKeysError({
 // on the generated client's default 60s×5 retries.
 const LINK_CACHE_CORRELATION_TIMEOUT = Duration.seconds(5);
 
-const LINK_MAX_LISTED_BRANCHES = 20;
-
 const encodeLinkedProjectCache = Schema.encodeEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -98,107 +78,6 @@ const encodeLinkedProjectCache = Schema.encodeEffect(
 const encodeLinkedParentCache = Schema.encodeEffect(
   Schema.fromJsonString(Schema.Struct({ ref: Schema.String })),
 );
-
-function linkBranchNotFoundMessage(
-  value: string,
-  parentRef: string,
-  branches: LinkBranches,
-): string {
-  if (branches.length === 0) {
-    return `Branch "${value}" not found: project ${parentRef} has no branches.${parentRefTypoHint(value)}`;
-  }
-
-  const sortedNames = branches.map((branch) => branch.name).toSorted();
-  const shown = sortedNames.slice(0, LINK_MAX_LISTED_BRANCHES);
-  const remaining = sortedNames.length - shown.length;
-  // Branch names are API-provided; sanitize them the same way response bodies are before
-  // embedding them in an error message.
-  const shownSanitized = sanitizeInlineName(shown.join(", "));
-  const namesList =
-    remaining > 0
-      ? `${shownSanitized}, … (${remaining} more — run supabase branches list)`
-      : shownSanitized;
-
-  const trimmedLower = value.trim().toLowerCase();
-  const nearMiss = branches.find((branch) => branch.name.toLowerCase() === trimmedLower);
-  // Sanitized like the list above — an API-provided name must not be able to inject
-  // ANSI/OSC/newline controls into the terminal.
-  const didYouMean =
-    nearMiss !== undefined ? ` Did you mean "${sanitizeInlineName(nearMiss.name)}"?` : "";
-
-  return (
-    `Branch "${value}" not found for project ${parentRef}. Available branches: ${namesList}` +
-    `${didYouMean}${parentRefTypoHint(value)}`
-  );
-}
-
-/**
- * Resolves a non-ref-shaped `[ref-or-branch]`/`--project-ref` value to the branch's project ref
- * by looking it up (by name or UUID) against the parent project's branches. A ref-shaped value
- * (20 lowercase letters) is always treated as a ref and never looked up as a branch name.
- *
- * Uses the list endpoint (`GET /v1/projects/{ref}/branches`) rather than a single-branch lookup
- * so the full list can power the available-branches error enrichment below.
- */
-const resolveLinkBranchRef = Effect.fn("link.resolveBranch")(function* (value: string) {
-  const output = yield* Output;
-  const api = yield* CommandPlatformApi;
-
-  const parent = yield* resolveLinkedParentRef();
-  if (parent.kind === "absent") {
-    return yield* new LinkBranchNotLinkedError({ message: parentNotLinkedMessage(value) });
-  }
-  if (parent.kind === "invalid") {
-    return yield* new LinkParentRefInvalidError({ message: parentRefInvalidMessage(value) });
-  }
-  const parentRef = parent.ref;
-
-  const mapBranchListError = mapHttpError({
-    networkError: LinkBranchListNetworkError,
-    statusError: LinkBranchListStatusError,
-    networkMessage: (cause) => `failed to list branches: ${cause}`,
-    statusMessage: (status, body) =>
-      status === 404
-        ? `Cannot list branches for project ${parentRef} (HTTP 404). If ${parentRef} is itself a preview branch, link its parent project first: supabase link --project-ref <parent-ref>`
-        : `unexpected list branches status ${status}: ${body}`,
-  });
-
-  const task = output.format === "text" ? yield* output.task("Resolving branch...") : undefined;
-  const branches: LinkBranches = yield* api.v1.listAllBranches({ ref: parentRef }).pipe(
-    Effect.tapError(() => task?.fail() ?? Effect.void),
-    Effect.catch(mapBranchListError),
-  );
-  yield* task?.clear ?? Effect.void;
-  yield* Effect.annotateCurrentSpan({
-    "project.parent_ref": parentRef,
-    "branch.count": branches.length,
-  });
-
-  const found: LinkBranch | undefined = branches.find(
-    // UUID matching is case-insensitive (canonical ids are lowercase hex, but uppercase input
-    // is a valid UUID spelling); name matching stays exact, with the did-you-mean hint covering
-    // near misses.
-    (branch) => branch.name === value || branch.id.toLowerCase() === value.toLowerCase(),
-  );
-  if (found === undefined) {
-    return yield* new LinkBranchNotFoundError({
-      message: linkBranchNotFoundMessage(value, parentRef, branches),
-    });
-  }
-
-  if (!PROJECT_REF_PATTERN.test(found.project_ref)) {
-    return yield* new LinkBranchNotReadyError({
-      branch: found.name,
-      status: found.status,
-      message: `Branch "${sanitizeInlineName(found.name)}" has no project ref yet (status: ${found.status}). Wait for it to finish provisioning, then retry.`,
-    });
-  }
-
-  const line = `Resolved branch "${sanitizeInlineName(found.name)}" of project ${parentRef} to project ref ${found.project_ref}.`;
-  yield* output.format === "text" ? output.raw(`${line}\n`, "stderr") : output.info(line);
-
-  return { projectRef: found.project_ref, branchName: found.name, parentRef };
-});
 
 export const link = Effect.fn("link")(function* (flags: LinkFlags) {
   const output = yield* Output;
@@ -234,12 +113,19 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
 
     const requested = Option.isSome(refArg) ? refArg : projectRefFlag;
 
+    const resolveBranch = Effect.fnUntraced(function* (value: string) {
+      const found = yield* resolveLinkBranchRef(value);
+      const line = `Resolved branch "${sanitizeInlineName(found.branchName)}" of project ${found.parentRef} to project ref ${found.projectRef}.`;
+      yield* output.format === "text" ? output.raw(`${line}\n`, "stderr") : output.info(line);
+      return found;
+    });
+
     // A ref-shaped value (20 lowercase letters) is always treated as a ref and
     // never looked up as a branch name (see `resolveLinkBranchRef`).
     const branchResolution =
       Option.isSome(requested) && !PROJECT_REF_PATTERN.test(requested.value)
-        ? Option.some(yield* resolveLinkBranchRef(requested.value))
-        : Option.none<LinkBranchResolution>();
+        ? Option.some(yield* resolveBranch(requested.value))
+        : Option.none<BranchResolution>();
 
     const resolvedRefOrBranch = Option.isSome(branchResolution)
       ? Option.some(branchResolution.value.projectRef)

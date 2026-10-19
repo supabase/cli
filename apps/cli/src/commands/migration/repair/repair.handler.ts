@@ -22,6 +22,7 @@ import {
   UPSERT_MIGRATION_VERSION,
 } from "../../../command-internal/migration-history.ts";
 import { parseMigrationVersion } from "../../../command-internal/migration-timestamp.format.ts";
+import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
 import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -31,6 +32,7 @@ import { MigrationRepairUpdateError } from "./repair.errors.ts";
 export interface MigrationRepairInput {
   readonly versions: ReadonlyArray<string>;
   readonly status: "applied" | "reverted";
+  readonly remote: Option.Option<RemoteValue>;
   readonly dbUrl: Option.Option<string>;
   readonly linked: boolean;
   readonly local: boolean;

@@ -32,18 +32,6 @@ export class DbDiffExplicitFlagsError extends Data.TaggedError("DbDiffExplicitFl
 }
 
 /**
- * An explicit `--from`/`--to` ref was neither `local`/`linked`/`migrations` nor a
- * postgres URL; message text is an established output contract.
- */
-export class DbDiffUnknownTargetError extends Data.TaggedError("DbDiffUnknownTargetError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
  * Writing the diff output failed — a `--file` migration, or an explicit-mode
  * `--output` file.
  */

@@ -269,6 +269,7 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
 
   yield* Effect.gen(function* () {
     const target = yield* resolveTarget({
+      remote: flags.remote,
       local: flags.local,
       linked: flags.linked,
       dbUrl: flags.dbUrl,

@@ -1,7 +1,14 @@
+import { Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import {
+  projectTargetFlags,
+  remoteTelemetryFlag,
+} from "../../../command-internal/target/target-flags.ts";
+import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
@@ -18,10 +25,7 @@ const config = {
     Argument.withDescription("Names of Functions to deploy. Deploys all if omitted."),
     Argument.variadic(),
   ),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   noVerifyJwt: Flag.Boolean("no-verify-jwt").pipe(
     Flag.withDescription("Disable JWT verification for the Function."),
     Flag.withDefault(false),
@@ -148,11 +152,18 @@ export const functionsDeployCommand = Command.make("deploy", config).pipe(
       },
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
     functionsDeploy(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: FUNCTIONS_PROJECT_REF_SAFE_FLAGS }),
+      withCommandTelemetry({
+        flags: { ...flags, remote: remoteTelemetryFlag(flags.remote) },
+        safeFlags:
+          Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
+            ? [...FUNCTIONS_PROJECT_REF_SAFE_FLAGS, "remote"]
+            : ["remote"],
+      }),
       withJsonErrorHandling,
     ),
   ),

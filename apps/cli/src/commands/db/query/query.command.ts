@@ -29,7 +29,7 @@ const config = {
     Argument.withDescription("SQL query to execute."),
     Argument.optional,
   ),
-  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
+  ...targetFlags({ subject: "database", dbUrl: true }),
   file: Flag.String("file").pipe(
     Flag.withAlias("f"),
     Flag.withDescription("Path to a SQL file to execute."),
@@ -66,6 +66,7 @@ export const dbQueryCommand = Command.make("query", config).pipe(
     dbQuery(flags).pipe(
       withCommandTelemetry({
         flags: {
+          remote: flags.remote,
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,

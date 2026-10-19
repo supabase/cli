@@ -12,13 +12,12 @@ import { aqua } from "./colors.ts";
 
 /**
  * Command-agnostic hint shown when a direct connection fails because the host is IPv6-only,
- * pointing users at the IPv4 transaction pooler via `--db-url`. Reproduces the established
- * message text exactly, including the aqua-coloured `--db-url`.
+ * pointing users at the IPv4 transaction pooler via `--remote=<db-url>`.
  */
 export function ipv6Suggestion(): string {
   return (
     "Your network does not support IPv6, which is required for direct connections to the database.\n" +
-    `Retry with your project's IPv4 transaction pooler connection string via ${aqua("--db-url")}.\n` +
+    `Retry with your project's IPv4 transaction pooler connection string via ${aqua("--remote=<db-url>")}.\n` +
     "You can copy it from the dashboard under Connect > Transaction pooler."
   );
 }
@@ -64,9 +63,9 @@ export const SUGGEST_ENV_VAR =
 export const SUGGEST_LOCAL_STACK = "Make sure Docker is running, then run: supabase start";
 
 /** Appended to the local-stack hint when the checkout is linked to a hosted project. */
-export const SUGGEST_LINKED_PROJECT = "To use the linked project instead, pass --linked.";
+export const SUGGEST_LINKED_PROJECT = "To use the linked project instead, pass --remote.";
 
-/** The local-stack hint, plus the `--linked` pointer when the checkout is linked. */
+/** The local-stack hint, plus the `--remote` pointer when the checkout is linked. */
 export function localStackSuggestion(linkedCheckout: boolean | undefined): string {
   return linkedCheckout === true
     ? `${SUGGEST_LOCAL_STACK}\n${SUGGEST_LINKED_PROJECT}`
@@ -88,7 +87,7 @@ export interface ConnectSuggestionContext {
   readonly dashboardUrl: string;
   /** Active profile name. */
   readonly profileName: string;
-  /** Whether the checkout is linked to a hosted project, so a local failure can point at `--linked`. */
+  /** Whether the checkout is linked to a hosted project, so a local failure can point at `--remote`. */
   readonly linkedCheckout?: boolean;
 }
 

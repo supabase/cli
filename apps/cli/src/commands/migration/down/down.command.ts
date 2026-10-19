@@ -34,7 +34,7 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  ...targetFlags({ group: "selectable", subject: "database", dbUrl: true }),
+  ...targetFlags({ subject: "database", dbUrl: true }),
 } as const;
 
 export type MigrationDownFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -57,6 +57,7 @@ export const migrationDownCommand = Command.make("down", config).pipe(
       withCommandTelemetry({
         flags: {
           last: flags.last,
+          remote: flags.remote,
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,

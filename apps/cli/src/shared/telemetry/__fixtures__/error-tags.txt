@@ -159,7 +159,6 @@ DbDiffDbNotRunningError
 DbDiffEngineConflictError
 DbDiffExplicitFlagsError
 DbDiffPgAdminError
-DbDiffUnknownTargetError
 DbDiffWriteError
 DbDumpMutuallyExclusiveFlagsError
 DbDumpOpenFileError
@@ -559,8 +558,10 @@ StorageWorkdirError
 TarFieldOutOfRangeError
 TarPathTooLongError
 TargetEmptyValueError
+TargetNeedsProjectError
 TargetPasswordConflictError
 TargetProjectRefConflictError
+TargetRemoteAmbiguousError
 TargetSelectorConflictError
 TestDbEnablePgtapError
 TestDbNoTestsError
