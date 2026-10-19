@@ -17,7 +17,9 @@ describe("CLI feature routing", () => {
 
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toBe("");
-      expect(result.stderr).toContain("SUPABASE_EXPERIMENTAL_STACK must be 0 or 1");
+      expect(result.stderr).toContain(
+        'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.',
+      );
     } finally {
       await project.cleanup();
       home[Symbol.dispose]();

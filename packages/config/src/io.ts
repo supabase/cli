@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { Console, Effect, FileSystem, Path, Predicate, Redacted } from "effect";
+import { Effect, FileSystem, Path, Predicate, Redacted } from "effect";
 import * as SmolToml from "smol-toml";
 import { CliConfigSchema, type CliConfig } from "./base.ts";
 import {
@@ -21,6 +21,7 @@ import {
 } from "./errors.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
 import { findCliProjectPaths } from "./paths.ts";
+import { rejectRemovedConfigKeys } from "./removed-config-keys.ts";
 import { setOwnProperty } from "./sparse.ts";
 import { loadCliProjectEnvironment } from "./project.ts";
 import { validateCliConfig } from "./validate.ts";
@@ -87,7 +88,7 @@ function pathKey(path: ReadonlyArray<string>): string {
 
 /**
  * Builds a `project_id -> "[remotes.<name>]"` map across every `[remotes.*]` block, failing on
- * the first duplicate. {@link applyRemoteOverride} only invokes this when `goViperCompat` is
+ * the first duplicate. {@link applyRemoteOverride} only invokes this when `validateRemotes` is
  * set, so it runs even for callers that don't request a specific `projectRef`. A missing
  * `project_id` reads as `""`, so two remotes that both omit it collide on the empty key.
  */
@@ -174,7 +175,8 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
   rawDocument: Record<string, unknown>,
   interpolatedRemotes: Record<string, unknown> | undefined,
   projectRef: string | undefined,
-  goViperCompat: boolean,
+  validateRemotes: boolean,
+  selectRemote?: (remotes: Record<string, unknown>) => string | undefined,
 ) {
   const remotes = rawDocument["remotes"];
   if (!isObject(remotes)) {
@@ -184,11 +186,17 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
       remoteLeafPaths: [],
     };
   }
-  if (goViperCompat) {
+  if (validateRemotes) {
     yield* checkDuplicateRemoteProjectIds(remotes);
     yield* checkRemoteProjectIdFormat(interpolatedRemotes ?? remotes);
   }
-  const name = remoteNameForProjectRef(remotes, projectRef);
+  const selected = selectRemote?.(remotes);
+  const name =
+    selectRemote === undefined
+      ? remoteNameForProjectRef(remotes, projectRef)
+      : selected !== undefined && Object.hasOwn(remotes, selected)
+        ? selected
+        : undefined;
   if (name === undefined) {
     return {
       document: rawDocument,
@@ -210,206 +218,6 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
 
 function parseCliConfigDocument(content: string, format: ConfigFormat): unknown {
   return format === "json" ? JSON.parse(content) : SmolToml.parse(content);
-}
-
-interface NormalizedSMTPDocument {
-  readonly document: unknown;
-  /** Section paths that used the deprecated `inbucket` key, e.g. `inbucket`, `remotes.staging.inbucket`. */
-  readonly deprecatedSections: ReadonlyArray<string>;
-}
-
-/**
- * Rewrites the deprecated `[inbucket]` config section (top-level and per `[remotes.*]`) to its
- * preferred `[local_smtp]` name; when both are present, the explicit `local_smtp` wins.
- */
-function normalizeDeprecatedSMTPSections(document: unknown): NormalizedSMTPDocument {
-  if (!isObject(document)) {
-    return { document, deprecatedSections: [] };
-  }
-  const deprecatedSections: Array<string> = [];
-  const normalized = { ...document };
-  if ("inbucket" in normalized) {
-    deprecatedSections.push("inbucket");
-    if (!("local_smtp" in normalized)) {
-      normalized.local_smtp = normalized.inbucket;
-    }
-    delete normalized.inbucket;
-  }
-  if (isObject(normalized.remotes)) {
-    normalized.remotes = Object.fromEntries(
-      Object.entries(normalized.remotes).map(([name, remote]) => {
-        if (!isObject(remote) || !("inbucket" in remote)) {
-          return [name, remote];
-        }
-        deprecatedSections.push(`remotes.${name}.inbucket`);
-        const normalizedRemote = { ...remote };
-        if (!("local_smtp" in normalizedRemote)) {
-          normalizedRemote.local_smtp = normalizedRemote.inbucket;
-        }
-        delete normalizedRemote.inbucket;
-        return [name, normalizedRemote];
-      }),
-    );
-  }
-  return { document: normalized, deprecatedSections };
-}
-
-export interface NormalizedOrioleDBVersionDocument {
-  readonly document: unknown;
-  /**
-   * Dotted paths whose legacy `experimental.orioledb_version` was non-empty, e.g.
-   * `experimental.orioledb_version` or `remotes.staging.experimental.orioledb_version`. Emitted
-   * whether or not the value was actually promoted (an explicit `db.orioledb_version` still
-   * wins, but the legacy key is deprecated either way).
-   */
-  readonly deprecatedPaths: ReadonlyArray<string>;
-}
-
-/**
- * Moves a section's string `experimental.orioledb_version` out of `experimental`, promoting a
- * non-empty value to `db.orioledb_version` when that is absent or `""` (the init template always
- * writes `""`). Non-string values, a non-empty `db.orioledb_version`, and a non-table `db` are
- * left untouched so schema validation still sees them.
- */
-function promoteOrioleDBVersion(section: Record<string, unknown>): {
-  readonly section: Record<string, unknown>;
-  readonly warned: boolean;
-} {
-  const experimental = section.experimental;
-  if (!isObject(experimental) || !("orioledb_version" in experimental)) {
-    return { section, warned: false };
-  }
-  const legacyValue = experimental.orioledb_version;
-  if (typeof legacyValue !== "string") {
-    return { section, warned: false };
-  }
-  const legacyNonEmpty = legacyValue.length > 0;
-
-  const normalizedExperimental = { ...experimental };
-  delete normalizedExperimental.orioledb_version;
-  const normalizedSection: Record<string, unknown> = {
-    ...section,
-    experimental: normalizedExperimental,
-  };
-
-  if (!legacyNonEmpty) {
-    return { section: normalizedSection, warned: false };
-  }
-  if ("db" in section && !isObject(section.db)) {
-    return { section: normalizedSection, warned: true };
-  }
-
-  const db = isObject(section.db) ? section.db : undefined;
-  const dbValue = db?.orioledb_version;
-  const dbCanBePromotedOver = dbValue === undefined || dbValue === "";
-  if (dbCanBePromotedOver) {
-    normalizedSection.db = { ...db, orioledb_version: legacyValue };
-  }
-
-  return { section: normalizedSection, warned: true };
-}
-
-/**
- * Rewrites the deprecated `experimental.orioledb_version` (top-level and per `[remotes.*]`) to
- * `db.orioledb_version`, following the same shape as {@link normalizeDeprecatedSMTPSections}.
- * Exposed via `@supabase/config/internal` so `apps/cli`'s raw TOML reader
- * (`db-config.toml-read.ts`) can apply the same precedence before its own `[remotes.*]` merge.
- */
-export function normalizeDeprecatedOrioleDBVersion(
-  document: unknown,
-): NormalizedOrioleDBVersionDocument {
-  if (!isObject(document)) {
-    return { document, deprecatedPaths: [] };
-  }
-  const deprecatedPaths: Array<string> = [];
-  let normalized: Record<string, unknown> = { ...document };
-
-  const top = promoteOrioleDBVersion(normalized);
-  normalized = top.section;
-  if (top.warned) {
-    deprecatedPaths.push("experimental.orioledb_version");
-  }
-
-  if (isObject(normalized.remotes)) {
-    normalized = {
-      ...normalized,
-      remotes: Object.fromEntries(
-        Object.entries(normalized.remotes).map(([name, remote]) => {
-          if (!isObject(remote)) {
-            return [name, remote];
-          }
-          const result = promoteOrioleDBVersion(remote);
-          if (result.warned) {
-            deprecatedPaths.push(`remotes.${name}.experimental.orioledb_version`);
-          }
-          return [name, result.section];
-        }),
-      ),
-    };
-  }
-
-  return { document: normalized, deprecatedPaths };
-}
-
-interface NormalizedExternalProvidersDocument {
-  readonly document: unknown;
-  /** Provider ids (`"linkedin"` | `"slack"`) whose deprecated top-level block was `enabled`. */
-  readonly deprecatedProviders: ReadonlyArray<string>;
-  /**
-   * The removed top-level `auth.external.{linkedin,slack}` sub-objects (provider id → the
-   * removed object), regardless of `enabled`. A caller checking these for an `encrypted:`
-   * secret against the already-stripped {@link LoadedCliConfig.document} can fold this back in.
-   * Only the top-level blocks are captured, not any surviving `remotes.*.auth.external.*`.
-   */
-  readonly removedProviders: Readonly<Record<string, unknown>>;
-}
-
-const DEPRECATED_EXTERNAL_PROVIDERS = ["linkedin", "slack"] as const;
-
-/**
- * Strips the deprecated `auth.external.{linkedin,slack}` providers, unconditionally, reporting
- * one only when it was `enabled`. Runs on the post-remote-merge document, since only the final
- * merged config's `auth.external` matters. Also strips (without reporting) any surviving
- * `remotes.*.auth.external.{linkedin,slack}`, purely so an unselected remote's deprecated block
- * doesn't get rejected by this package's eager, whole-map schema decode.
- */
-function normalizeDeprecatedExternalProviders(
-  document: unknown,
-): NormalizedExternalProvidersDocument {
-  if (!isObject(document)) {
-    return { document, deprecatedProviders: [], removedProviders: {} };
-  }
-  const normalized = { ...document };
-  const deprecatedProviders: Array<string> = [];
-  const removedProviders: Record<string, unknown> = {};
-  if (isObject(normalized.auth) && isObject(normalized.auth.external)) {
-    const external = { ...normalized.auth.external };
-    for (const ext of DEPRECATED_EXTERNAL_PROVIDERS) {
-      const provider = external[ext];
-      if (provider === undefined) continue;
-      removedProviders[ext] = provider;
-      if (isObject(provider) && provider.enabled === true) {
-        deprecatedProviders.push(ext);
-      }
-      delete external[ext];
-    }
-    normalized.auth = { ...normalized.auth, external };
-  }
-  if (isObject(normalized.remotes)) {
-    normalized.remotes = Object.fromEntries(
-      Object.entries(normalized.remotes).map(([name, remote]) => {
-        if (!isObject(remote) || !isObject(remote.auth) || !isObject(remote.auth.external)) {
-          return [name, remote];
-        }
-        const external = { ...remote.auth.external };
-        for (const ext of DEPRECATED_EXTERNAL_PROVIDERS) {
-          delete external[ext];
-        }
-        return [name, { ...remote, auth: { ...remote.auth, external } }];
-      }),
-    );
-  }
-  return { document: normalized, deprecatedProviders, removedProviders };
 }
 
 /**
@@ -482,7 +290,7 @@ export interface DecodeCliConfigDocumentForValidationEffectOptions {
    */
   readonly path: string;
   readonly format: ConfigFormat;
-  readonly goViperCompat?: boolean;
+  readonly cliCompat?: boolean;
   /**
    * When set, merges the `[remotes.<remoteName>]` block over the root before decoding, so it's
    * checked against the root's full business rules instead of the relaxed treatment an
@@ -535,10 +343,11 @@ export const decodeCliConfigDocumentForValidationEffect = Effect.fn(
     cwd: projectRoot,
     baseEnv: process.env,
   });
-  const goViperCompat = options.goViperCompat ?? false;
+  const cliCompat = options.cliCompat ?? false;
 
+  const withoutTolerated = yield* rejectRemovedConfigKeys(document, options.path, options.format);
   const { document: documentForDecode, appliedRemote } = mergeSelectedRemoteForValidation(
-    document,
+    withoutTolerated,
     options.remoteName,
   );
 
@@ -546,10 +355,9 @@ export const decodeCliConfigDocumentForValidationEffect = Effect.fn(
     documentForDecode,
     cliProjectEnv?.values ?? {},
     CliConfigSchema,
-    { goViperCompat },
+    { cliCompat },
   );
-  const { document: normalizedForDecode } = normalizeDeprecatedExternalProviders(interpolated);
-  return yield* parseCliConfig(normalizedForDecode, options.format, options.path, appliedRemote);
+  return yield* parseCliConfig(interpolated, options.format, options.path, appliedRemote);
 });
 
 export const configJsonPath = Effect.fnUntraced(function* (cwd: string) {
@@ -564,121 +372,156 @@ export const configTomlPath = Effect.fnUntraced(function* (cwd: string) {
   return configTomlPathWith(path, project?.projectRoot ?? cwd);
 });
 
-export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
-  filePath: string,
-  options?: InternalLoadCliConfigOptions,
-) {
+const readCliConfigDocumentFile = Effect.fnUntraced(function* (filePath: string) {
   const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const format = filePath.endsWith(".json") ? "json" : "toml";
   const content = yield* fs.readFileString(filePath);
   const document = yield* Effect.try({
     try: () => parseCliConfigDocument(content, format),
     catch: (cause) => new CliConfigParseError({ path: filePath, format, cause }),
   });
-  const { document: smtpNormalized, deprecatedSections } =
-    normalizeDeprecatedSMTPSections(document);
-  const { document: normalized, deprecatedPaths: deprecatedOrioleDBPaths } =
-    normalizeDeprecatedOrioleDBVersion(smtpNormalized);
-  // Warn on stderr, writing directly to the real console (bypassing whatever `Console.Console`
-  // is ambient) so a caller wrapping this in a deferred/buffered console can't delay or
-  // swallow it.
-  for (const section of deprecatedSections) {
-    const replacement = section.replace(/inbucket$/, "local_smtp");
-    yield* Console.error(
-      `WARN: config section [${section}] is deprecated and will be removed in v3, use [${replacement}] instead.`,
-    ).pipe(Effect.provideService(Console.Console, globalThis.console));
-  }
-  for (const path of deprecatedOrioleDBPaths) {
-    const replacement = path.replace(/experimental\.orioledb_version$/, "db.orioledb_version");
-    yield* Console.error(
-      `WARN: ${path} is deprecated and will be removed in v3, use ${replacement} instead.`,
-    ).pipe(Effect.provideService(Console.Console, globalThis.console));
-  }
+  return { format, content, document } as const;
+});
 
-  // Substitute `env(VAR)` references against `.env`/`.env.local`/ambient env before schema
-  // decode, since a numeric/boolean field would otherwise crash the strict decoder on a string.
-  // The config file lives two directories under the project root `loadCliProjectEnvironment` expects.
-  const projectRoot = path.dirname(path.dirname(filePath));
-  const cliProjectEnv =
-    options?.cliProjectEnv ??
-    (yield* loadCliProjectEnvironment({
-      cwd: projectRoot,
-      baseEnv: process.env,
-      search: options?.search,
-    }));
-  const goViperCompat = options?.goViperCompat ?? false;
+const readAndNormalizeCliConfigFile = Effect.fnUntraced(function* (filePath: string) {
+  const { format, content, document } = yield* readCliConfigDocumentFile(filePath);
+  const normalized = isObject(document)
+    ? yield* rejectRemovedConfigKeys(document, filePath, format)
+    : document;
+  return { format, content, document, normalized } as const;
+});
+
+/**
+ * Not covered by semver — exported from `@supabase/config/internal` only. The output of the
+ * parse + merge stage: the raw document with the selected `[remotes.*]` block merged in, still
+ * pre-`env()`-interpolation and pre-decode.
+ */
+export interface MergedCliConfigDocument {
+  readonly path: string;
+  readonly format: ConfigFormat;
+  readonly rawText: string;
+  readonly schemaRef: string | undefined;
+  readonly ignoredPaths: ReadonlyArray<string>;
+  /** The document as parsed, before any `[remotes.*]` merge. */
+  readonly rawDocument: Record<string, unknown> | undefined;
+  /** The merged document; `remotes` is stripped when a block matched. */
+  readonly document: unknown;
+  readonly appliedRemote: string | undefined;
+  readonly remoteLeafPaths: ReadonlyArray<ReadonlyArray<string>>;
+  /** Present when the producing stage already interpolated the `remotes` table. */
+  readonly interpolatedRemotes?: Record<string, unknown>;
+}
+
+/**
+ * Not covered by semver — exported from `@supabase/config/internal` only.
+ */
+export interface ParseMergeCliConfigOptions {
+  /** Picks the `[remotes.<name>]` block to merge from the raw `remotes` table. */
+  readonly selectRemote: (remotes: Record<string, unknown>) => string | undefined;
+  /**
+   * Run the duplicate and format checks on every `[remotes.*]` `project_id`, as `loadCliConfig`
+   * does with `cliCompat`. They read the literal values, so a caller that resolves
+   * `project_id` another way, such as an env override, leaves this off and validates itself.
+   */
+  readonly validateRemotes?: boolean;
+}
+
+const mergeRemoteForLoad = (
+  normalized: unknown,
+  interpolatedRemotes: Record<string, unknown> | undefined,
+  projectRef: string | undefined,
+  validateRemotes: boolean,
+  selectRemote?: (remotes: Record<string, unknown>) => string | undefined,
+): Effect.Effect<
+  {
+    readonly document: unknown;
+    readonly appliedRemote: string | undefined;
+    readonly remoteLeafPaths: ReadonlyArray<string[]>;
+  },
+  DuplicateRemoteProjectIdError | InvalidRemoteProjectIdError
+> =>
+  isObject(normalized)
+    ? applyRemoteOverride(
+        normalized,
+        interpolatedRemotes,
+        projectRef,
+        validateRemotes,
+        selectRemote,
+      )
+    : Effect.succeed({ document: normalized, appliedRemote: undefined, remoteLeafPaths: [] });
+
+/**
+ * Not covered by semver — exported from `@supabase/config/internal` only. Stage two of the
+ * pipeline: interpolates `env()` references against `options.envValues`, then decodes +
+ * validates. `options.document` replaces the merged document, so a caller can decode a document
+ * it has overlaid with effective values.
+ */
+export interface DecodeMergedCliConfigOptions {
+  readonly envValues: Readonly<Record<string, string>>;
+  readonly cliCompat?: boolean;
+  readonly document?: Record<string, unknown>;
+  /** Paths whose values are already resolved: the decode keeps them verbatim instead of expanding `env()` again. */
+  readonly resolvedPaths?: ReadonlyArray<ReadonlyArray<string>>;
+}
+
+export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(function* (
+  merged: MergedCliConfigDocument,
+  options: DecodeMergedCliConfigOptions,
+) {
+  const cliCompat = options.cliCompat ?? false;
+  const resolvedPathKeys = new Set((options.resolvedPaths ?? []).map(pathKey));
   const interpolateDocument = (
     document: unknown,
     onResolvedEnv?: (path: ReadonlyArray<string>, envNames: ReadonlyArray<string>) => void,
+    skip?: (path: ReadonlyArray<string>) => boolean,
   ): unknown =>
-    interpolateEnvReferencesAgainstSchema(document, cliProjectEnv?.values ?? {}, CliConfigSchema, {
-      goViperCompat,
+    interpolateEnvReferencesAgainstSchema(document, options.envValues, CliConfigSchema, {
+      cliCompat,
       onResolvedEnv,
+      skip,
     });
 
-  // Interpolated once here purely to give `applyRemoteOverride`'s format check (not its
-  // match/merge) the resolved `remotes.*.project_id`.
-  const interpolatedForValidation = interpolateDocument(normalized);
-  const interpolatedRemotes =
-    isObject(interpolatedForValidation) && isObject(interpolatedForValidation["remotes"])
-      ? interpolatedForValidation["remotes"]
-      : undefined;
-
-  // Merge the matching `[remotes.*]` override over the raw, pre-`env()` document (see
-  // `applyRemoteOverride`). The match/merge always runs; the duplicate-`project_id`/format
-  // checks only run when `goViperCompat` is set.
-  let documentForDecode: unknown = normalized;
-  let appliedRemote: string | undefined;
-  let remoteLeafPaths: Array<string[]> = [];
-  if (isObject(normalized)) {
-    const resolved = yield* applyRemoteOverride(
-      normalized,
-      interpolatedRemotes,
-      options?.projectRef,
-      goViperCompat,
-    );
-    documentForDecode = resolved.document;
-    appliedRemote = resolved.appliedRemote;
-    remoteLeafPaths = resolved.remoteLeafPaths;
+  let interpolatedRemotes = merged.interpolatedRemotes;
+  if (interpolatedRemotes === undefined) {
+    const interpolated = interpolateDocument(merged.rawDocument);
+    interpolatedRemotes =
+      isObject(interpolated) && isObject(interpolated["remotes"])
+        ? interpolated["remotes"]
+        : undefined;
   }
 
-  // The merge above ran on the raw document, so any `env(...)` reference in the winning
+  // The merge ran on the raw document, so any `env(...)` reference in the winning
   // remote's subtree (or elsewhere in the base) still needs resolving before decode. When no
-  // remote matched this redundantly recomputes `interpolatedForValidation`'s substitutions, but
-  // correctness on the match+`env()` path matters more than avoiding that.
+  // remote matched this redundantly recomputes the substitutions the legacy caller already did,
+  // but correctness on the match+`env()` path matters more than avoiding that.
   const resolvedEnvironmentPaths: Array<string[]> = [];
   const resolvedEnvironmentNames = new Map<string, ReadonlyArray<string>>();
-  documentForDecode = isObject(documentForDecode)
-    ? interpolateDocument(documentForDecode, (path, envNames) => {
-        resolvedEnvironmentPaths.push(Array.from(path));
-        resolvedEnvironmentNames.set(pathKey(Array.from(path)), envNames);
-      })
-    : documentForDecode;
+  const documentToDecode: unknown = isObject(merged.document)
+    ? (options.document ?? merged.document)
+    : merged.document;
+  const documentForDecode = isObject(documentToDecode)
+    ? interpolateDocument(
+        documentToDecode,
+        (path, envNames) => {
+          resolvedEnvironmentPaths.push(Array.from(path));
+          resolvedEnvironmentNames.set(pathKey(Array.from(path)), envNames);
+        },
+        (path) => resolvedPathKeys.has(pathKey(path)),
+      )
+    : documentToDecode;
 
-  // Strip the deprecated `auth.external.{linkedin,slack}` provider ids from the post-remote-merge
-  // document (see `normalizeDeprecatedExternalProviders`).
-  const {
-    document: normalizedForDecode,
-    deprecatedProviders,
-    removedProviders,
-  } = normalizeDeprecatedExternalProviders(documentForDecode);
-  // Pinned to the real console, same as the `[inbucket]` warning above.
-  if (goViperCompat) {
-    for (const ext of deprecatedProviders) {
-      yield* Console.error(
-        `WARN: disabling deprecated "${ext}" provider. It will be removed in v3, use [auth.external.${ext}_oidc] instead.`,
-      ).pipe(Effect.provideService(Console.Console, globalThis.console));
-    }
-  }
+  const config = yield* parseCliConfig(
+    documentForDecode,
+    merged.format,
+    merged.path,
+    merged.appliedRemote,
+  );
 
-  const config = yield* parseCliConfig(normalizedForDecode, format, filePath, appliedRemote);
-
-  const localPathKeys = new Set(collectLeafPaths(normalized).map(pathKey));
-  const remotePathKeys = new Set(remoteLeafPaths.map(pathKey));
+  const localPathKeys = new Set(collectLeafPaths(merged.rawDocument).map(pathKey));
+  const remotePathKeys = new Set(merged.remoteLeafPaths.map(pathKey));
   const environmentPathKeys = new Set(resolvedEnvironmentPaths.map(pathKey));
-  const valueOrigins = isObject(normalizedForDecode)
-    ? collectLeafPaths(normalizedForDecode).flatMap((path) => {
+  const valueOrigins = isObject(documentForDecode)
+    ? collectLeafPaths(documentForDecode).flatMap((path) => {
         const key = pathKey(path);
         const source: CliConfigValueSource | undefined = environmentPathKeys.has(key)
           ? "environment"
@@ -697,24 +540,84 @@ export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
     : [];
 
   return {
-    path: filePath,
-    format,
+    path: merged.path,
+    format: merged.format,
     config,
-    schemaRef: getSchemaRef(document),
-    ignoredPaths: [],
-    rawText: content,
-    document: isObject(normalizedForDecode) ? normalizedForDecode : undefined,
-    rawDocument: isObject(normalized) ? normalized : undefined,
+    schemaRef: merged.schemaRef,
+    ignoredPaths: merged.ignoredPaths,
+    rawText: merged.rawText,
+    document: isObject(documentForDecode) ? documentForDecode : undefined,
+    rawDocument: merged.rawDocument,
     interpolatedRemotes,
-    appliedRemote,
-    removedDeprecatedExternalProviders: removedProviders,
+    appliedRemote: merged.appliedRemote,
     valueOrigins,
   } satisfies LoadedCliConfig;
 });
 
-export const loadCliConfig = Effect.fn("CliConfig.load")(function* (
-  cwd: string,
+export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
+  filePath: string,
   options?: InternalLoadCliConfigOptions,
+) {
+  const path = yield* Path.Path;
+  const { format, content, document, normalized } = yield* readAndNormalizeCliConfigFile(filePath);
+
+  // Substitute `env(VAR)` references against `.env`/`.env.local`/ambient env before schema
+  // decode, since a numeric/boolean field would otherwise crash the strict decoder on a string.
+  // The config file lives two directories under the project root `loadCliProjectEnvironment` expects.
+  const projectRoot = path.dirname(path.dirname(filePath));
+  const cliProjectEnv =
+    options?.cliProjectEnv ??
+    (yield* loadCliProjectEnvironment({
+      cwd: projectRoot,
+      baseEnv: process.env,
+      search: options?.search,
+    }));
+  const cliCompat = options?.cliCompat ?? false;
+  const envValues = cliProjectEnv?.values ?? {};
+
+  // Interpolated once here purely to give `applyRemoteOverride`'s format check (not its
+  // match/merge) the resolved `remotes.*.project_id`.
+  const interpolatedForValidation = interpolateEnvReferencesAgainstSchema(
+    normalized,
+    envValues,
+    CliConfigSchema,
+    { cliCompat },
+  );
+  const interpolatedRemotes =
+    isObject(interpolatedForValidation) && isObject(interpolatedForValidation["remotes"])
+      ? interpolatedForValidation["remotes"]
+      : undefined;
+
+  // Merge the matching `[remotes.*]` override over the raw, pre-`env()` document (see
+  // `applyRemoteOverride`). The match/merge always runs; the duplicate-`project_id`/format
+  // checks only run when `cliCompat` is set.
+  const resolved = yield* mergeRemoteForLoad(
+    normalized,
+    interpolatedRemotes,
+    options?.projectRef,
+    cliCompat,
+  );
+
+  return yield* decodeMergedCliConfig(
+    {
+      path: filePath,
+      format,
+      rawText: content,
+      schemaRef: getSchemaRef(document),
+      ignoredPaths: [],
+      rawDocument: isObject(normalized) ? normalized : undefined,
+      document: resolved.document,
+      appliedRemote: resolved.appliedRemote,
+      remoteLeafPaths: resolved.remoteLeafPaths,
+      ...(interpolatedRemotes === undefined ? {} : { interpolatedRemotes }),
+    },
+    { envValues, cliCompat },
+  );
+});
+
+const locateCliConfigFile = Effect.fnUntraced(function* (
+  cwd: string,
+  options: { readonly search?: boolean; readonly tomlOnly?: boolean } | undefined,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const project = yield* findCliProjectPaths(cwd, { search: options?.search });
@@ -731,19 +634,108 @@ export const loadCliConfig = Effect.fn("CliConfig.load")(function* (
     : project.configPath.replace(/config\.json$/, "config.toml");
 
   if (!options?.tomlOnly && (yield* fs.exists(jsonPath))) {
-    const json = yield* loadCliConfigFile(jsonPath, options);
-
     return {
-      ...json,
+      filePath: jsonPath,
       ignoredPaths: (yield* fs.exists(tomlPath)) ? [tomlPath] : [],
-    } satisfies LoadedCliConfig;
+    };
   }
 
   if (yield* fs.exists(tomlPath)) {
-    return yield* loadCliConfigFile(tomlPath, options);
+    return { filePath: tomlPath, ignoredPaths: [] };
   }
 
   return null;
+});
+
+export const loadCliConfig = Effect.fn("CliConfig.load")(function* (
+  cwd: string,
+  options?: InternalLoadCliConfigOptions,
+) {
+  const located = yield* locateCliConfigFile(cwd, options);
+
+  if (located === null) {
+    return null;
+  }
+
+  const loaded = yield* loadCliConfigFile(located.filePath, options);
+  return { ...loaded, ignoredPaths: located.ignoredPaths } satisfies LoadedCliConfig;
+});
+
+/**
+ * Not covered by semver — exported from `@supabase/config/internal` only. The output of the parse
+ * half of stage one: the config file read and checked for removed keys, before any `[remotes.*]`
+ * merge.
+ */
+export interface ParsedCliConfigDocument {
+  readonly path: string;
+  readonly format: ConfigFormat;
+  readonly rawText: string;
+  readonly schemaRef: string | undefined;
+  readonly ignoredPaths: ReadonlyArray<string>;
+  readonly rawDocument: Record<string, unknown> | undefined;
+  readonly normalized: unknown;
+}
+
+/**
+ * Not covered by semver — exported from `@supabase/config/internal` only. Discovers and parses the
+ * config file without merging a remote, so a caller can inspect the document before choosing one.
+ * Returns `null` when no config file exists.
+ */
+export const parseCliConfigDocumentFile = Effect.fn("CliConfig.parseDocument")(function* (
+  cwd: string,
+  options?: {
+    readonly search?: boolean;
+    readonly tomlOnly?: boolean;
+  },
+) {
+  const located = yield* locateCliConfigFile(cwd, options);
+
+  if (located === null) {
+    return null;
+  }
+
+  const { format, content, document, normalized } = yield* readAndNormalizeCliConfigFile(
+    located.filePath,
+  );
+
+  return {
+    path: located.filePath,
+    format,
+    rawText: content,
+    schemaRef: getSchemaRef(document),
+    ignoredPaths: located.ignoredPaths,
+    rawDocument: isObject(normalized) ? normalized : undefined,
+    normalized,
+  } satisfies ParsedCliConfigDocument;
+});
+
+/**
+ * Not covered by semver — exported from `@supabase/config/internal` only. The merge half of stage
+ * one: merges the `[remotes.*]` block chosen by `options.selectRemote` over a parsed document.
+ */
+export const mergeParsedCliConfig = Effect.fn("CliConfig.mergeParsed")(function* (
+  parsed: ParsedCliConfigDocument,
+  options: Pick<ParseMergeCliConfigOptions, "selectRemote" | "validateRemotes">,
+) {
+  const resolved = yield* mergeRemoteForLoad(
+    parsed.normalized,
+    undefined,
+    undefined,
+    options.validateRemotes ?? false,
+    options.selectRemote,
+  );
+
+  return {
+    path: parsed.path,
+    format: parsed.format,
+    rawText: parsed.rawText,
+    schemaRef: parsed.schemaRef,
+    ignoredPaths: parsed.ignoredPaths,
+    rawDocument: parsed.rawDocument,
+    document: resolved.document,
+    appliedRemote: resolved.appliedRemote,
+    remoteLeafPaths: resolved.remoteLeafPaths,
+  } satisfies MergedCliConfigDocument;
 });
 
 const resolveSaveFormat = Effect.fnUntraced(function* (
@@ -790,15 +782,27 @@ const writeFileAtomic = Effect.fnUntraced(function* (filePath: string, content: 
   }).pipe(Effect.ensuring(fs.remove(tmpPath).pipe(Effect.ignore)));
 });
 
+/** Reads `$schema` from the existing file without decoding it, so a legacy document can be overwritten. */
+const readExistingSchemaRef = Effect.fnUntraced(function* (cwd: string) {
+  const located = yield* locateCliConfigFile(cwd, undefined);
+  if (located === null) {
+    return undefined;
+  }
+  const { document } = yield* readCliConfigDocumentFile(located.filePath);
+  return getSchemaRef(document);
+});
+
 export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: SaveCliConfigOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const project = yield* findCliProjectPaths(options.cwd);
   const baseCwd = project?.projectRoot ?? options.cwd;
   const format = yield* resolveSaveFormat(baseCwd, options.format);
-  const existingConfig =
-    options.schemaRef !== undefined || project === null ? null : yield* loadCliConfig(baseCwd);
-  const schemaRef = options.schemaRef ?? existingConfig?.schemaRef;
+  const existingSchemaRef =
+    options.schemaRef !== undefined || project === null
+      ? undefined
+      : yield* readExistingSchemaRef(baseCwd);
+  const schemaRef = options.schemaRef ?? existingSchemaRef;
   const filePath =
     format === "json" ? configJsonPathWith(path, baseCwd) : configTomlPathWith(path, baseCwd);
   const siblingPath = siblingConfigPathWith(path, baseCwd, format);
