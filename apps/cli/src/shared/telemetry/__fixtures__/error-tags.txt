@@ -226,6 +226,7 @@ DockerRemoveAllNetworkPruneError
 DockerRemoveAllStopError
 DockerRemoveAllVolumePruneError
 DockerRunError
+DocsExamplesError
 DomainsCnameError
 DomainsNetworkError
 DomainsUnexpectedStatusError
@@ -541,6 +542,7 @@ StatusInvalidConfigError
 StatusListError
 StatusOverrideParseError
 StatusWorkdirError
+StdoutClosedError
 StopConfigLoadError
 StopContainerError
 StopContainerPruneError

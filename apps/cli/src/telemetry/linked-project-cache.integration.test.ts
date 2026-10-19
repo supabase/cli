@@ -1,9 +1,6 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, FileSystem, Layer, Path, Schema } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { mockAnalytics, mockTelemetryRuntime } from "../../tests/helpers/mocks.ts";
@@ -18,11 +15,14 @@ import { linkedProjectCache, linkedProjectCacheLayer } from "./linked-project-ca
 import { identityStitchLayer } from "../command-internal/identity-stitch.ts";
 import { LinkedProjectCache } from "./linked-project-cache.service.ts";
 
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 describe("linkedProjectCacheLayer", () => {
-  it.live(
-    "stitches session identity from the cache GET's X-Gotrue-Id (Go identityTransport)",
-    () => {
-      const workdir = mkdtempSync(join(tmpdir(), "linked-cache-"));
+  it.live("stitches session identity from the cache GET's X-Gotrue-Id (Go identityTransport)", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "linked-cache-" });
       const analytics = mockAnalytics();
       const api = mockCommandPlatformApi({
         handler: (request) =>
@@ -61,7 +61,7 @@ describe("linkedProjectCacheLayer", () => {
         Layer.provide(analytics.layer),
         Layer.provide(
           mockTelemetryRuntime({
-            configDir: join(workdir, ".supabase"),
+            configDir: path.join(workdir, ".supabase"),
             consent: "granted",
             distinctId: undefined,
             isCi: false,
@@ -81,7 +81,7 @@ describe("linkedProjectCacheLayer", () => {
         Layer.provide(analytics.layer),
         Layer.provide(BunServices.layer),
       );
-      return Effect.gen(function* () {
+      yield* Effect.gen(function* () {
         const cache = yield* LinkedProjectCache;
         yield* cache.cache(VALID_REF, workdir);
         expect(api.requests).toHaveLength(1);
@@ -89,11 +89,12 @@ describe("linkedProjectCacheLayer", () => {
           activeFlags: {},
           requests: api.requests,
         });
-        expect(JSON.stringify(analytics.aliased)).toContain("gotrue-abc");
-        const written: unknown = JSON.parse(
-          readFileSync(join(workdir, "supabase", ".temp", "linked-project.json"), "utf8"),
+        expect(yield* encodeJson(analytics.aliased)).toContain("gotrue-abc");
+        expect(
+          yield* fs.readFileString(path.join(workdir, "supabase", ".temp", "linked-project.json")),
+        ).toBe(
+          `{"ref":"${VALID_REF}","name":"proj","organization_id":"org-1","organization_slug":"acme"}`,
         );
-        expect((written as { ref: string }).ref).toBe(VALID_REF);
         expect(analytics.groupIdentified).toEqual([
           {
             groupType: "organization",
@@ -106,71 +107,33 @@ describe("linkedProjectCacheLayer", () => {
             properties: { name: "proj", organization_slug: "acme" },
           },
         ]);
-        rmSync(workdir, { recursive: true, force: true });
       }).pipe(Effect.provide(layer));
-    },
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("does not re-identify groups when the linked-project cache already exists", () => {
-    const workdir = mkdtempSync(join(tmpdir(), "linked-cache-hit-"));
-    mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-    writeFileSync(
-      join(workdir, "supabase", ".temp", "linked-project.json"),
-      JSON.stringify({
-        ref: VALID_REF,
-        name: "proj",
-        organization_id: "org-1",
-        organization_slug: "acme",
-      }),
-    );
-    const analytics = mockAnalytics();
-    const api = mockCommandPlatformApi({
-      handler: () => Effect.die("cache GET must not run on a cache hit"),
-    });
-    const identityStitch = identityStitchLayer.pipe(
-      Layer.provide(analytics.layer),
-      Layer.provide(
-        mockTelemetryRuntime({ configDir: join(workdir, ".supabase"), consent: "granted" }),
-      ),
-      Layer.provide(BunServices.layer),
-    );
-    const layer = linkedProjectCacheLayer.pipe(
-      Layer.provide(api.httpClientLayer),
-      Layer.provide(mockCommandSettings({ workdir })),
-      Layer.provide(mockCommandCredentialsLayer),
-      Layer.provide(identityStitch),
-      Layer.provide(analytics.layer),
-      Layer.provide(BunServices.layer),
-    );
-    return Effect.gen(function* () {
-      const cache = yield* LinkedProjectCache;
-      yield* cache.cache(VALID_REF, workdir);
-      expect(api.requests).toEqual([]);
-      expect(analytics.groupIdentified).toEqual([]);
-      expect(analytics.aliased).toEqual([]);
-      rmSync(workdir, { recursive: true, force: true });
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live(
-    "skips the fill when project-ref names a DIFFERENT ref: the cache must describe the linked workdir, not the resolved ref (PR #6168 review)",
-    () => {
-      // A mid-flight `link --project-ref B` failure still reaches the fill via `Effect.ensuring`
-      // while `project-ref` holds the old link — caching B would make the parent chain prefer a
-      // never-linked project. The guard runs before any token/network work, so the GET must
-      // never fire.
-      const OTHER_REF = "otherprojectrefabcde";
-      const workdir = mkdtempSync(join(tmpdir(), "linked-cache-diverge-"));
-      mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-      writeFileSync(join(workdir, "supabase", ".temp", "project-ref"), VALID_REF);
+  it.live("does not re-identify groups when the linked-project cache already exists", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "linked-cache-hit-" });
+      yield* fs.makeDirectory(path.join(workdir, "supabase", ".temp"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workdir, "supabase", ".temp", "linked-project.json"),
+        yield* encodeJson({
+          ref: VALID_REF,
+          name: "proj",
+          organization_id: "org-1",
+          organization_slug: "acme",
+        }),
+      );
       const analytics = mockAnalytics();
       const api = mockCommandPlatformApi({
-        handler: () => Effect.die("cache GET must not run when project-ref diverges"),
+        handler: () => Effect.die("cache GET must not run on a cache hit"),
       });
       const identityStitch = identityStitchLayer.pipe(
         Layer.provide(analytics.layer),
         Layer.provide(
-          mockTelemetryRuntime({ configDir: join(workdir, ".supabase"), consent: "granted" }),
+          mockTelemetryRuntime({ configDir: path.join(workdir, ".supabase"), consent: "granted" }),
         ),
         Layer.provide(BunServices.layer),
       );
@@ -182,44 +145,99 @@ describe("linkedProjectCacheLayer", () => {
         Layer.provide(analytics.layer),
         Layer.provide(BunServices.layer),
       );
-      return Effect.gen(function* () {
+      yield* Effect.gen(function* () {
         const cache = yield* LinkedProjectCache;
-        yield* cache.cache(OTHER_REF, workdir);
-        expect(existsSync(join(workdir, "supabase", ".temp", "linked-project.json"))).toBe(false);
+        yield* cache.cache(VALID_REF, workdir);
+        expect(api.requests).toEqual([]);
         expect(analytics.groupIdentified).toEqual([]);
-        rmSync(workdir, { recursive: true, force: true });
+        expect(analytics.aliased).toEqual([]);
       }).pipe(Effect.provide(layer));
-    },
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("leaves the command's result alone when the project lookup is forbidden", () => {
-    const workdir = mkdtempSync(join(tmpdir(), "linked-cache-forbidden-"));
-    const analytics = mockAnalytics();
-    const api = mockCommandPlatformApi({
-      response: { status: 403, body: { message: "Forbidden" } },
-    });
-    const identityStitch = identityStitchLayer.pipe(
-      Layer.provide(analytics.layer),
-      Layer.provide(
-        mockTelemetryRuntime({ configDir: join(workdir, ".supabase"), consent: "granted" }),
-      ),
-      Layer.provide(BunServices.layer),
-    );
-    const layer = linkedProjectCacheLayer.pipe(
-      Layer.provide(api.httpClientLayer),
-      Layer.provide(mockCommandSettings({ workdir })),
-      Layer.provide(mockCommandCredentialsLayer),
-      Layer.provide(identityStitch),
-      Layer.provide(analytics.layer),
-      Layer.provide(BunServices.layer),
-    );
-    return Effect.gen(function* () {
-      const cache = yield* LinkedProjectCache;
-      yield* cache.cache(VALID_REF, workdir);
-      expect(api.requests).toHaveLength(1);
-      expect(existsSync(join(workdir, "supabase", ".temp", "linked-project.json"))).toBe(false);
-      expect(analytics.groupIdentified).toEqual([]);
-      rmSync(workdir, { recursive: true, force: true });
-    }).pipe(Effect.provide(layer));
-  });
+  it.live(
+    "skips the fill when project-ref names a DIFFERENT ref: the cache must describe the linked workdir, not the resolved ref (PR #6168 review)",
+    () =>
+      Effect.gen(function* () {
+        // A mid-flight `link --project-ref B` failure still reaches the fill via `Effect.ensuring`
+        // while `project-ref` holds the old link — caching B would make the parent chain prefer a
+        // never-linked project. The guard runs before any token/network work, so the GET must
+        // never fire.
+        const OTHER_REF = "otherprojectrefabcde";
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "linked-cache-diverge-" });
+        yield* fs.makeDirectory(path.join(workdir, "supabase", ".temp"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(workdir, "supabase", ".temp", "project-ref"),
+          VALID_REF,
+        );
+        const analytics = mockAnalytics();
+        const api = mockCommandPlatformApi({
+          handler: () => Effect.die("cache GET must not run when project-ref diverges"),
+        });
+        const identityStitch = identityStitchLayer.pipe(
+          Layer.provide(analytics.layer),
+          Layer.provide(
+            mockTelemetryRuntime({
+              configDir: path.join(workdir, ".supabase"),
+              consent: "granted",
+            }),
+          ),
+          Layer.provide(BunServices.layer),
+        );
+        const layer = linkedProjectCacheLayer.pipe(
+          Layer.provide(api.httpClientLayer),
+          Layer.provide(mockCommandSettings({ workdir })),
+          Layer.provide(mockCommandCredentialsLayer),
+          Layer.provide(identityStitch),
+          Layer.provide(analytics.layer),
+          Layer.provide(BunServices.layer),
+        );
+        yield* Effect.gen(function* () {
+          const cache = yield* LinkedProjectCache;
+          yield* cache.cache(OTHER_REF, workdir);
+          expect(
+            yield* fs.exists(path.join(workdir, "supabase", ".temp", "linked-project.json")),
+          ).toBe(false);
+          expect(analytics.groupIdentified).toEqual([]);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("leaves the command's result alone when the project lookup is forbidden", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "linked-cache-forbidden-" });
+      const analytics = mockAnalytics();
+      const api = mockCommandPlatformApi({
+        response: { status: 403, body: { message: "Forbidden" } },
+      });
+      const identityStitch = identityStitchLayer.pipe(
+        Layer.provide(analytics.layer),
+        Layer.provide(
+          mockTelemetryRuntime({ configDir: path.join(workdir, ".supabase"), consent: "granted" }),
+        ),
+        Layer.provide(BunServices.layer),
+      );
+      const layer = linkedProjectCacheLayer.pipe(
+        Layer.provide(api.httpClientLayer),
+        Layer.provide(mockCommandSettings({ workdir })),
+        Layer.provide(mockCommandCredentialsLayer),
+        Layer.provide(identityStitch),
+        Layer.provide(analytics.layer),
+        Layer.provide(BunServices.layer),
+      );
+      yield* Effect.gen(function* () {
+        const cache = yield* LinkedProjectCache;
+        yield* cache.cache(VALID_REF, workdir);
+        expect(api.requests).toHaveLength(1);
+        expect(
+          yield* fs.exists(path.join(workdir, "supabase", ".temp", "linked-project.json")),
+        ).toBe(false);
+        expect(analytics.groupIdentified).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 });

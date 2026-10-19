@@ -1,4 +1,4 @@
-import { describe, expect, test } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { Console, Effect, Layer, Option } from "effect";
 import { CliOutput, Command } from "effect/cli";
 import { emptyEnv, fakeConsole, mockOutput } from "../../tests/helpers/mocks.ts";
@@ -33,46 +33,46 @@ const layerFor = (args: ReadonlyArray<string>, console: Console.Console) =>
 // `start`/`status`/`stop` commands (root.ts) — their `--help` text must describe the
 // top-level command, not leak the `stack <name>` invocation it is built from.
 describe("stack backend top-level alias help text", () => {
-  test("`start --help` describes the top-level command, not `stack start`", async () => {
-    const { console, calls } = fakeConsole();
-    await Effect.runPromise(
-      Effect.scoped(
+  it.effect("`start --help` describes the top-level command, not `stack start`", () =>
+    Effect.gen(function* () {
+      const { console, calls } = fakeConsole();
+      yield* Effect.scoped(
         Command.runWith(stackStartAliasCommand, { version: "0.0.0-test" })(["--help"]).pipe(
           Effect.provide(layerFor(["--help"], console)),
         ),
-      ),
-    );
-    const text = calls.join("\n");
-    expect(text).toContain("supabase start");
-    expect(text).not.toContain("stack start");
-    expect(text).not.toContain("Start a managed local stack");
-  });
+      );
+      const text = calls.join("\n");
+      expect(text).toContain("supabase start");
+      expect(text).not.toContain("stack start");
+      expect(text).not.toContain("Start a managed local stack");
+    }),
+  );
 
-  test("`status --help` describes the top-level command, not `stack status`", async () => {
-    const { console, calls } = fakeConsole();
-    await Effect.runPromise(
-      Effect.scoped(
+  it.effect("`status --help` describes the top-level command, not `stack status`", () =>
+    Effect.gen(function* () {
+      const { console, calls } = fakeConsole();
+      yield* Effect.scoped(
         Command.runWith(stackStatusAliasCommand, { version: "0.0.0-test" })(["--help"]).pipe(
           Effect.provide(layerFor(["--help"], console)),
         ),
-      ),
-    );
-    const text = calls.join("\n");
-    expect(text).toContain("supabase status");
-    expect(text).not.toContain("stack status");
-  });
+      );
+      const text = calls.join("\n");
+      expect(text).toContain("supabase status");
+      expect(text).not.toContain("stack status");
+    }),
+  );
 
-  test("`stop --help` describes the top-level command, not `stack stop`", async () => {
-    const { console, calls } = fakeConsole();
-    await Effect.runPromise(
-      Effect.scoped(
+  it.effect("`stop --help` describes the top-level command, not `stack stop`", () =>
+    Effect.gen(function* () {
+      const { console, calls } = fakeConsole();
+      yield* Effect.scoped(
         Command.runWith(stackStopAliasCommand, { version: "0.0.0-test" })(["--help"]).pipe(
           Effect.provide(layerFor(["--help"], console)),
         ),
-      ),
-    );
-    const text = calls.join("\n");
-    expect(text).toContain("supabase stop");
-    expect(text).not.toContain("stack stop");
-  });
+      );
+      const text = calls.join("\n");
+      expect(text).toContain("supabase stop");
+      expect(text).not.toContain("stack stop");
+    }),
+  );
 });
