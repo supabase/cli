@@ -42,7 +42,7 @@ export const functionsDeleteCommand = Command.make("delete", config).pipe(
       description: "Delete a deployed function from the linked project",
     },
     {
-      command: "supabase functions delete hello-world --project-ref abcdefghijklmnopqrst",
+      command: "supabase functions delete hello-world --remote=abcdefghijklmnopqrst",
       description: "Delete a deployed function from a specific project",
     },
   ]),

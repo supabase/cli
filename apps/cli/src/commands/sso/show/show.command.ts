@@ -34,7 +34,7 @@ export const ssoShowCommand = Command.make("show", config).pipe(
   Command.withExamples([
     {
       command:
-        "supabase sso show b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz",
+        "supabase sso show b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --remote=mwjylndxudmiehsxhmmz",
       description: "Show SSO provider details",
     },
   ]),

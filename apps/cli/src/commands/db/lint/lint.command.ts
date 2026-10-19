@@ -42,8 +42,8 @@ const config = {
 export type DbLintFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const dbLintCommand = Command.make("lint", config).pipe(
-  Command.withDescription("Checks local database for typing error."),
-  Command.withShortDescription("Checks local database for typing error"),
+  Command.withDescription("Checks a database for typing error."),
+  Command.withShortDescription("Checks a database for typing error"),
   withPermissions(
     withDbTarget(
       compose(

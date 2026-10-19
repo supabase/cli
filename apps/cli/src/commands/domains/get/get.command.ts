@@ -39,7 +39,7 @@ export const domainsGetCommand = Command.make("get", config).pipe(
   Command.withShortDescription("Get the current custom hostname config"),
   Command.withExamples([
     {
-      command: "supabase domains get --project-ref abcdefghijklmnopqrst",
+      command: "supabase domains get --remote=abcdefghijklmnopqrst",
       description: "Get the custom hostname config for a project",
     },
   ]),

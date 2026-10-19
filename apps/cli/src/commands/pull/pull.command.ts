@@ -91,7 +91,7 @@ export const pullCommand = Command.make("pull", config).pipe(
       description: "Pull config, schema, and functions from the linked project",
     },
     {
-      command: "supabase pull --project-ref staging",
+      command: "supabase pull --remote=staging",
       description: "Pull from the 'staging' branch of the linked project",
     },
     {

@@ -27,7 +27,7 @@ export type InspectReportFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const inspectReportCommand = Command.make("report", config).pipe(
   Command.withDescription(
-    "Generate a CSV output for all inspect commands. It reports on the local database by default; pass --linked for the linked project or --db-url for another database.",
+    "Generate a CSV output for all inspect commands. It reports on the local database by default; pass --remote for the linked project, or --remote=<ref|branch|url> for another database.",
   ),
   Command.withShortDescription("Generate a CSV output for all inspect commands"),
   withPermissions(

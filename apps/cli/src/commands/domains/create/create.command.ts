@@ -43,7 +43,7 @@ export const domainsCreateCommand = Command.make("create", config).pipe(
   Command.withExamples([
     {
       command:
-        "supabase domains create --custom-hostname example.com --project-ref abcdefghijklmnopqrst",
+        "supabase domains create --custom-hostname example.com --remote=abcdefghijklmnopqrst",
       description: "Create a custom hostname for a project",
     },
   ]),

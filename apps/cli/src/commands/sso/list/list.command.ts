@@ -25,7 +25,7 @@ export const ssoListCommand = Command.make("list", config).pipe(
   Command.withShortDescription("List all SSO identity providers"),
   Command.withExamples([
     {
-      command: "supabase sso list --project-ref mwjylndxudmiehsxhmmz",
+      command: "supabase sso list --remote=mwjylndxudmiehsxhmmz",
       description: "List all SSO providers for a project",
     },
   ]),

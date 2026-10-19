@@ -29,7 +29,7 @@ export const functionsListCommand = Command.make("list", config).pipe(
       description: "List all deployed functions in the linked project",
     },
     {
-      command: "supabase functions list --project-ref abcdefghijklmnopqrst",
+      command: "supabase functions list --remote=abcdefghijklmnopqrst",
       description: "List all deployed functions in a specific project",
     },
   ]),

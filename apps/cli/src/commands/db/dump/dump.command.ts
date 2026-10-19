@@ -82,7 +82,7 @@ const config = {
     name: "password",
     alias: "p",
     description:
-      "Database password for the linked project (--linked/--project-ref). Not used with --local or --db-url.",
+      "Database password for the project selected with --remote. Not used for the local database or a database URL.",
   }),
   schema: Flag.String("schema").pipe(
     Flag.withAlias("s"),
@@ -99,8 +99,8 @@ const config = {
 export type DbDumpFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const dbDumpCommand = Command.make("dump", config).pipe(
-  Command.withDescription("Dumps data or schemas from the target database."),
-  Command.withShortDescription("Dumps data or schemas from the target database"),
+  Command.withDescription("Dumps data or schemas from a database."),
+  Command.withShortDescription("Dumps data or schemas from a database"),
   withPermissions(
     withDbTarget(
       compose(

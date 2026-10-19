@@ -75,7 +75,7 @@ export const configPullCommand = Command.make("pull", config).pipe(
       description: "Pull from the linked project into the config root",
     },
     {
-      command: "supabase config pull --project-ref staging",
+      command: "supabase config pull --remote=staging",
       description: "Pull from the 'staging' branch into [remotes.staging]",
     },
     {

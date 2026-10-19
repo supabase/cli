@@ -26,7 +26,7 @@ export const ssoInfoCommand = Command.make("info", config).pipe(
   Command.withShortDescription("Returns the SAML SSO settings required for the identity provider"),
   Command.withExamples([
     {
-      command: "supabase sso info --project-ref mwjylndxudmiehsxhmmz",
+      command: "supabase sso info --remote=mwjylndxudmiehsxhmmz",
       description: "Get SSO info for a project",
     },
   ]),

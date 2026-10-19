@@ -28,7 +28,7 @@ export const snippetsListCommand = Command.make("list", config).pipe(
       description: "List all SQL snippets",
     },
     {
-      command: "supabase snippets list --project-ref <ref>",
+      command: "supabase snippets list --remote=<ref>",
       description: "List snippets for a specific project",
     },
   ]),

@@ -29,7 +29,7 @@ export const backupsListCommand = Command.make("list", config).pipe(
       description: "List all physical backups",
     },
     {
-      command: "supabase backups list --project-ref <ref>",
+      command: "supabase backups list --remote=<ref>",
       description: "List backups for a specific project",
     },
   ]),

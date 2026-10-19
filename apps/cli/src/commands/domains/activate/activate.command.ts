@@ -39,7 +39,7 @@ export const domainsActivateCommand = Command.make("activate", config).pipe(
   Command.withShortDescription("Activate the custom hostname for a project"),
   Command.withExamples([
     {
-      command: "supabase domains activate --project-ref abcdefghijklmnopqrst",
+      command: "supabase domains activate --remote=abcdefghijklmnopqrst",
       description: "Activate the custom hostname for a project",
     },
   ]),

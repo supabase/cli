@@ -29,7 +29,7 @@ export const secretsListCommand = Command.make("list", config).pipe(
       description: "List all secrets for the linked project",
     },
     {
-      command: "supabase secrets list --project-ref abcdefghijklmnopqrst",
+      command: "supabase secrets list --remote=abcdefghijklmnopqrst",
       description: "List secrets for a specific project",
     },
   ]),

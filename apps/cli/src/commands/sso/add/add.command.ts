@@ -72,7 +72,7 @@ export const ssoAddCommand = Command.make("add", config).pipe(
   Command.withExamples([
     {
       command:
-        "supabase sso add --type saml --project-ref mwjylndxudmiehsxhmmz --metadata-url 'https://...' --domains example.com",
+        "supabase sso add --type saml --metadata-url 'https://...' --domains example.com --remote=mwjylndxudmiehsxhmmz",
       description: "Add a new SAML SSO provider",
     },
   ]),

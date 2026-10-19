@@ -31,7 +31,7 @@ export const ssoRemoveCommand = Command.make("remove", config).pipe(
   Command.withExamples([
     {
       command:
-        "supabase sso remove b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz",
+        "supabase sso remove b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --remote=mwjylndxudmiehsxhmmz",
       description: "Remove an SSO provider by ID",
     },
   ]),

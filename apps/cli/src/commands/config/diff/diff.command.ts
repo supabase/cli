@@ -65,7 +65,7 @@ export const configDiffCommand = Command.make("diff", config).pipe(
       description: "Diff against the linked project",
     },
     {
-      command: "supabase config diff --project-ref staging --exit-code",
+      command: "supabase config diff --exit-code --remote=staging",
       description: "Diff against the 'staging' branch, exiting 2 on drift",
     },
   ]),

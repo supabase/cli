@@ -57,11 +57,11 @@ export const configPushCommand = Command.make("push", config).pipe(
       description: "Push local config to the linked project",
     },
     {
-      command: "supabase config push --project-ref abcdefghijklmnopqrst",
+      command: "supabase config push --remote=abcdefghijklmnopqrst",
       description: "Push local config to a specific project",
     },
     {
-      command: "supabase config push --project-ref staging",
+      command: "supabase config push --remote=staging",
       description: "Push local config to the 'staging' branch",
     },
   ]),
