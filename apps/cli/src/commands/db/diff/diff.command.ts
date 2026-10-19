@@ -9,16 +9,18 @@ import {
 } from "../../../command-internal/command-permissions/model.ts";
 import { dbConfig, dbConfigLinked } from "../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbDiff } from "./diff.handler.ts";
 import { dbDiffRuntimeLayer } from "./diff.layers.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 
 const config = {
-  // The four engine flags are a mutually-exclusive group, and `--use-migra` defaults to true, so
-  // they are modelled as `Option` to track whether the flag was passed: the mutex check and
-  // `resolveDiffEngine`'s `useMigraChanged` key off whether it was passed, not its value.
+  // The engine flags are a mutually-exclusive group, modelled as `Option` so the mutex check keys
+  // off whether the flag was passed; engine selection uses its value.
   useMigra: Flag.Boolean("use-migra").pipe(
     Flag.withDescription("Use migra to generate schema diff."),
     Flag.optional,
@@ -27,20 +29,17 @@ const config = {
     Flag.withDescription("Use pgAdmin to generate schema diff."),
     Flag.optional,
   ),
+  // Kept parsed (and hidden) only so using it produces an actionable removal error instead of
+  // an unknown-flag parse error; see diff.handler.ts.
   usePgSchema: Flag.Boolean("use-pg-schema").pipe(
-    // Deprecated in favor of the pg-delta engine (or the default migra engine): pg-schema-diff
-    // has no TS/container equivalent, so this stays proxied — see SIDE_EFFECTS.md. This
-    // description-only notice isn't enforced by the flag framework; see diff.handler.ts's
-    // runtime warning for the enforced half.
-    Flag.withDescription(
-      "Use pg-schema-diff to generate schema diff. Deprecated: use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.",
-    ),
+    Flag.withDescription("Removed: use the default pg-delta engine or --use-migra instead."),
     Flag.optional,
+    Flag.withHidden,
   ),
-  usePgDelta: Flag.Boolean("use-pg-delta").pipe(
-    Flag.withDescription("Use pg-delta to generate schema diff."),
-    Flag.optional,
-  ),
+  usePgDelta: CliConfigKeys.experimental.pgdelta.enabled.flag({
+    name: "use-pg-delta",
+    description: "Use pg-delta to generate schema diff.",
+  }),
   strictCoverage: Flag.Boolean("strict-coverage").pipe(
     Flag.withDescription(
       "Fail when bundled pg-delta finds schema objects it cannot manage instead of leaving them unmanaged.",
@@ -165,4 +164,6 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
     ),
   ),
   Command.provide(dbDiffRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

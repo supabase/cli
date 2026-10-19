@@ -19,97 +19,94 @@ import { identityStitchLayer } from "../command-internal/identity-stitch.ts";
 import { LinkedProjectCache } from "./linked-project-cache.service.ts";
 
 describe("linkedProjectCacheLayer", () => {
-  it.live(
-    "stitches session identity from the cache GET's X-Gotrue-Id (Go identityTransport)",
-    () => {
-      const workdir = mkdtempSync(join(tmpdir(), "linked-cache-"));
-      const analytics = mockAnalytics();
-      const api = mockCommandPlatformApi({
-        handler: (request) =>
-          Effect.succeed(
-            HttpClientResponse.fromWeb(
-              request,
-              new Response(
-                JSON.stringify({
-                  ref: VALID_REF,
-                  id: VALID_REF,
-                  name: "proj",
-                  organization_id: "org-1",
-                  organization_slug: "acme",
-                  region: "us-east-1",
-                  created_at: "2026-01-01T00:00:00Z",
-                  status: "ACTIVE_HEALTHY",
-                  database: {
-                    host: "db.example.com",
-                    version: "15",
-                    postgres_engine: "15",
-                    release_channel: "ga",
-                  },
-                }),
-                {
-                  status: 200,
-                  headers: { "content-type": "application/json", "x-gotrue-id": "gotrue-abc" },
+  it.live("stitches session identity from the cache GET's X-Gotrue-Id", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "linked-cache-"));
+    const analytics = mockAnalytics();
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              JSON.stringify({
+                ref: VALID_REF,
+                id: VALID_REF,
+                name: "proj",
+                organization_id: "org-1",
+                organization_slug: "acme",
+                region: "us-east-1",
+                created_at: "2026-01-01T00:00:00Z",
+                status: "ACTIVE_HEALTHY",
+                database: {
+                  host: "db.example.com",
+                  version: "15",
+                  postgres_engine: "15",
+                  release_channel: "ga",
                 },
-              ),
+              }),
+              {
+                status: 200,
+                headers: { "content-type": "application/json", "x-gotrue-id": "gotrue-abc" },
+              },
             ),
           ),
-      });
-      // The cache GET stitches identity via the single `IdentityStitch`
-      // service; build it from this test's Analytics / TelemetryRuntime fakes so
-      // the alias assertion below exercises the real stitch path.
-      const identityStitch = identityStitchLayer.pipe(
-        Layer.provide(analytics.layer),
-        Layer.provide(
-          mockTelemetryRuntime({
-            configDir: join(workdir, ".supabase"),
-            consent: "granted",
-            distinctId: undefined,
-            isCi: false,
-            isFirstRun: false,
-            isTty: true,
-          }),
         ),
-        Layer.provide(BunServices.layer),
+    });
+    // The cache GET stitches identity via the single `IdentityStitch`
+    // service; build it from this test's Analytics / TelemetryRuntime fakes so
+    // the alias assertion below exercises the real stitch path.
+    const identityStitch = identityStitchLayer.pipe(
+      Layer.provide(analytics.layer),
+      Layer.provide(
+        mockTelemetryRuntime({
+          configDir: join(workdir, ".supabase"),
+          consent: "granted",
+          distinctId: undefined,
+          isCi: false,
+          isFirstRun: false,
+          isTty: true,
+        }),
+      ),
+      Layer.provide(BunServices.layer),
+    );
+    const layer = linkedProjectCacheLayer.pipe(
+      Layer.provide(api.httpClientLayer),
+      Layer.provide(mockCommandSettings({ workdir })),
+      Layer.provide(mockCommandCredentialsLayer),
+      Layer.provide(identityStitch),
+      // The cache also fires org/project groupIdentify; it reads Analytics directly, so
+      // provide the same mock the stitcher uses.
+      Layer.provide(analytics.layer),
+      Layer.provide(BunServices.layer),
+    );
+    return Effect.gen(function* () {
+      const cache = yield* LinkedProjectCache;
+      yield* cache.cache(VALID_REF, workdir);
+      expect(api.requests).toHaveLength(1);
+      assertBlockDrift(linkedProjectCache, {
+        activeFlags: {},
+        requests: api.requests,
+      });
+      expect(JSON.stringify(analytics.aliased)).toContain("gotrue-abc");
+      const written: unknown = JSON.parse(
+        readFileSync(join(workdir, "supabase", ".temp", "linked-project.json"), "utf8"),
       );
-      const layer = linkedProjectCacheLayer.pipe(
-        Layer.provide(api.httpClientLayer),
-        Layer.provide(mockCommandSettings({ workdir })),
-        Layer.provide(mockCommandCredentialsLayer),
-        Layer.provide(identityStitch),
-        // The cache also fires org/project groupIdentify; it reads Analytics directly, so
-        // provide the same mock the stitcher uses.
-        Layer.provide(analytics.layer),
-        Layer.provide(BunServices.layer),
-      );
-      return Effect.gen(function* () {
-        const cache = yield* LinkedProjectCache;
-        yield* cache.cache(VALID_REF, workdir);
-        expect(api.requests).toHaveLength(1);
-        assertBlockDrift(linkedProjectCache, {
-          activeFlags: {},
-          requests: api.requests,
-        });
-        expect(JSON.stringify(analytics.aliased)).toContain("gotrue-abc");
-        const written: unknown = JSON.parse(
-          readFileSync(join(workdir, "supabase", ".temp", "linked-project.json"), "utf8"),
-        );
-        expect((written as { ref: string }).ref).toBe(VALID_REF);
-        expect(analytics.groupIdentified).toEqual([
-          {
-            groupType: "organization",
-            groupKey: "org-1",
-            properties: { organization_slug: "acme" },
-          },
-          {
-            groupType: "project",
-            groupKey: VALID_REF,
-            properties: { name: "proj", organization_slug: "acme" },
-          },
-        ]);
-        rmSync(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      expect((written as { ref: string }).ref).toBe(VALID_REF);
+      expect(analytics.groupIdentified).toEqual([
+        {
+          groupType: "organization",
+          groupKey: "org-1",
+          properties: { organization_slug: "acme" },
+        },
+        {
+          groupType: "project",
+          groupKey: VALID_REF,
+          properties: { name: "proj", organization_slug: "acme" },
+        },
+      ]);
+      rmSync(workdir, { recursive: true, force: true });
+    }).pipe(Effect.provide(layer));
+  });
 
   it.live("does not re-identify groups when the linked-project cache already exists", () => {
     const workdir = mkdtempSync(join(tmpdir(), "linked-cache-hit-"));

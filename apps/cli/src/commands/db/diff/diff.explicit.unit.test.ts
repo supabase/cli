@@ -22,7 +22,7 @@ describe("classifyExplicitRef", () => {
 });
 
 describe("unknownTargetMessage", () => {
-  it("byte-matches Go's quoted error", () => {
+  it("emits the quoted error byte-for-byte", () => {
     expect(unknownTargetMessage("remote")).toBe(
       "unknown target \"remote\": must be one of 'local', 'linked', 'migrations', or a postgres:// URL",
     );

@@ -23,7 +23,8 @@ describe("isPgDeltaDebugEnabled", () => {
   it.effect("is true for 1/true/yes (case-insensitive, trimmed)", () =>
     Effect.gen(function* () {
       for (const value of ["1", "true", "YES", "  True  "]) {
-        expect(yield* withConfigEnv({ PGDELTA_DEBUG: value }, isPgDeltaDebugEnabled)).toBe(true);
+        const debug = yield* withConfigEnv({ PGDELTA_DEBUG: value }, isPgDeltaDebugEnabled);
+        expect(debug).toBe(true);
       }
     }),
   );
