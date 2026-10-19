@@ -64,7 +64,7 @@ the running tests exercise. The implications:
 import { testBehaviour } from "./test-context.ts";
 
 testBehaviour("does the thing", async ({ run, projectRef, orgId, apiUrl, workspace }) => {
-  const result = await run(["command", "--project-ref", projectRef]);
+  const result = await run(["command", `--remote=${projectRef}`]);
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("Expected output");
 });
@@ -91,7 +91,7 @@ testBehaviour("exits non-zero on 401", async ({ run, apiUrl }) => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
   });
-  const result = await run(["command", "--project-ref", PROJECT_REF]);
+  const result = await run(["command", `--remote=${PROJECT_REF}`]);
   expect(result.exitCode).not.toBe(0);
 });
 ```

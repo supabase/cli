@@ -19,13 +19,12 @@ test("runs SQL against the remote database and returns its rows", ({
         "db",
         "query",
         `select '${marker}' as marker`,
-        "--db-url",
-        project.dbUrl,
         "--read-only",
         "-o",
         "json",
         "--agent",
         "no",
+        `--remote=${project.dbUrl}`,
       ]);
       expect(result.exitCode, result.stderr).toBe(0);
       expect(result.stdout, result.stderr).not.toBe("");
@@ -46,9 +45,8 @@ test("rejects a write against the remote database under --read-only", ({
         "db",
         "query",
         `create table ${table} (id int)`,
-        "--db-url",
-        project.dbUrl,
         "--read-only",
+        `--remote=${project.dbUrl}`,
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("read-only transaction");

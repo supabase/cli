@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
 import { testBehaviour } from "./test-context.ts";
@@ -26,7 +26,7 @@ describe("migrations", () => {
 
   describe("migration:list", () => {
     testBehaviour("exits non-zero on connection refused", async ({ run }) => {
-      const result = await run(["migration", "list", "--local"]);
+      const result = await run(["migration", "list"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("failed to connect");
     });
@@ -34,7 +34,7 @@ describe("migrations", () => {
 
   describe("migration:up", () => {
     testBehaviour("exits non-zero on connection refused", async ({ run }) => {
-      const result = await run(["migration", "up", "--local"]);
+      const result = await run(["migration", "up"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("failed to connect");
     });
@@ -42,13 +42,13 @@ describe("migrations", () => {
 
   describe("migration:down", () => {
     testBehaviour("exits non-zero on connection refused", async ({ run }) => {
-      const result = await run(["migration", "down", "--local"]);
+      const result = await run(["migration", "down"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("failed to connect");
     });
 
     testBehaviour("exits non-zero on connection refused with --last 2", async ({ run }) => {
-      const result = await run(["migration", "down", "--last", "2", "--local"]);
+      const result = await run(["migration", "down", "--last", "2"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("failed to connect");
     });
@@ -56,22 +56,18 @@ describe("migrations", () => {
 
   describe("migration:repair", () => {
     testBehaviour("exits non-zero when --status flag is missing", async ({ run }) => {
-      const result = await run(["migration", "repair", "--local", "20230101000000"]);
+      const result = await run(["migration", "repair", "20230101000000"]);
       expect(result.exitCode).not.toBe(0);
       // A missing required flag's error prints once, without a duplicate
       // usage dump, and spells the flag name without its `--` prefix.
       expect(result.stderr).toContain('"status" not set');
     });
 
-    testBehaviour("exits non-zero on connection refused", async ({ run }) => {
-      const result = await run([
-        "migration",
-        "repair",
-        "--status",
-        "applied",
-        "--local",
-        "20230101000000",
-      ]);
+    testBehaviour("exits non-zero on connection refused", async ({ run, workspace }) => {
+      const migrationsDir = join(workspace.path, "supabase", "migrations");
+      mkdirSync(migrationsDir, { recursive: true });
+      writeFileSync(join(migrationsDir, "20230101000000_x.sql"), "select 1;\n");
+      const result = await run(["migration", "repair", "--status", "applied", "20230101000000"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("failed to connect");
     });
@@ -79,7 +75,7 @@ describe("migrations", () => {
 
   describe("migration:squash", () => {
     testBehaviour("exits non-zero on connection refused", async ({ run }) => {
-      const result = await run(["migration", "squash", "--local"]);
+      const result = await run(["migration", "squash"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).not.toBe("");
     });
@@ -87,7 +83,7 @@ describe("migrations", () => {
 
   describe("migration:fetch", () => {
     testBehaviour("exits non-zero on connection refused", async ({ run }) => {
-      const result = await run(["migration", "fetch", "--local"]);
+      const result = await run(["migration", "fetch"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("failed to connect");
     });

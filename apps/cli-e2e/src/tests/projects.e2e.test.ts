@@ -68,7 +68,7 @@ describe("projects", () => {
 
   describe("projects:api-keys", () => {
     testBehaviour("shows default and anon keys", async ({ run, projectRef }) => {
-      const result = await run(["projects", "api-keys", "--project-ref", projectRef]);
+      const result = await run(["projects", "api-keys", `--remote=${projectRef}`]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("NAME");
       expect(result.stdout).toContain("KEY VALUE");
@@ -82,8 +82,7 @@ describe("projects", () => {
         "api-keys",
         "--output",
         "json",
-        "--project-ref",
-        projectRef,
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
       const parsed = JSON.parse(result.stdout) as unknown[];
@@ -97,7 +96,7 @@ describe("projects", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
       });
-      const result = await run(["projects", "api-keys", "--project-ref", PROJECT_REF]);
+      const result = await run(["projects", "api-keys", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
     });
 
@@ -107,7 +106,7 @@ describe("projects", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 403, body: { message: "Forbidden" } }),
       });
-      const result = await run(["projects", "api-keys", "--project-ref", PROJECT_REF]);
+      const result = await run(["projects", "api-keys", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
     });
 
@@ -117,7 +116,7 @@ describe("projects", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 404, body: { message: "Project not found" } }),
       });
-      const result = await run(["projects", "api-keys", "--project-ref", PROJECT_REF]);
+      const result = await run(["projects", "api-keys", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
     });
   });
@@ -136,13 +135,14 @@ describe("projects", () => {
         "us-east-1",
         "--size",
         "micro",
+        "--yes",
       ]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("REFERENCE ID");
     });
 
     testBehaviour("exits non-zero without required flags in non-TTY", async ({ run }) => {
-      const result = await run(["projects", "create", "--org-id", "test-org-id"]);
+      const result = await run(["projects", "create", "--org-id", "test-org-id", "--yes"]);
       expect(result.exitCode).not.toBe(0);
     });
 
@@ -162,6 +162,7 @@ describe("projects", () => {
         "password123",
         "--region",
         "us-east-1",
+        "--yes",
       ]);
       expect(result.exitCode).not.toBe(0);
     });
@@ -188,6 +189,7 @@ describe("projects", () => {
         "password123",
         "--region",
         "us-east-1",
+        "--yes",
       ]);
       expect(result.exitCode).not.toBe(0);
     });
@@ -208,6 +210,7 @@ describe("projects", () => {
         "password123",
         "--region",
         "us-east-1",
+        "--yes",
       ]);
       expect(result.exitCode).not.toBe(0);
     });
@@ -228,6 +231,7 @@ describe("projects", () => {
         "password123",
         "--region",
         "us-east-1",
+        "--yes",
       ]);
       expect(result.exitCode).not.toBe(0);
     });
@@ -248,6 +252,7 @@ describe("projects", () => {
         "password123",
         "--region",
         "us-east-1",
+        "--yes",
       ]);
       expect(result.exitCode).not.toBe(0);
     });

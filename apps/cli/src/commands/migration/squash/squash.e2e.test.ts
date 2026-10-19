@@ -53,10 +53,9 @@ describe("supabase migration squash", () => {
           "select 1;\n",
         );
 
-        const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["migration", "squash", "--local"],
-          { cwd: workdir },
-        );
+        const { exitCode, stdout, stderr } = yield* runSupabaseEffect(["migration", "squash"], {
+          cwd: workdir,
+        });
 
         expect(exitCode).toBe(0);
         expect(stripAnsi(stderr)).toContain(

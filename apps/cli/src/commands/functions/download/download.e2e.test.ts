@@ -23,7 +23,7 @@ describe("supabase functions download — argument validation", () => {
         withTempHome((home) =>
           Effect.gen(function* () {
             const { exitCode, stderr } = yield* runSupabaseEffect(
-              ["functions", "download", SLUG, "--project-ref", FAKE_REF, ...flags],
+              ["functions", "download", SLUG, ...flags, `--remote=${FAKE_REF}`],
               {
                 home: home.dir,
                 env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },

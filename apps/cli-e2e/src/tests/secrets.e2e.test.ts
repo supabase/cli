@@ -7,7 +7,7 @@ import { testBehaviour } from "./test-context.ts";
 describe("secrets", () => {
   describe("secrets:list", () => {
     testBehaviour("renders fixture data in output", async ({ run, projectRef }) => {
-      const result = await run(["secrets", "list", "--project-ref", projectRef]);
+      const result = await run(["secrets", "list", `--remote=${projectRef}`]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("NAME");
       expect(result.stdout).toContain("DIGEST");
@@ -19,19 +19,12 @@ describe("secrets", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
       });
-      const result = await run(["secrets", "list", "--project-ref", PROJECT_REF]);
+      const result = await run(["secrets", "list", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
     });
 
     testBehaviour("returns json output with --output json", async ({ run, projectRef }) => {
-      const result = await run([
-        "secrets",
-        "list",
-        "--output",
-        "json",
-        "--project-ref",
-        projectRef,
-      ]);
+      const result = await run(["secrets", "list", "--output", "json", `--remote=${projectRef}`]);
       expect(result.exitCode).toBe(0);
       const parsed = JSON.parse(result.stdout) as unknown[];
       expect(Array.isArray(parsed)).toBe(true);
@@ -43,7 +36,7 @@ describe("secrets", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 403, body: { message: "Forbidden" } }),
       });
-      const result = await run(["secrets", "list", "--project-ref", PROJECT_REF]);
+      const result = await run(["secrets", "list", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
     });
 
@@ -53,7 +46,7 @@ describe("secrets", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 404, body: { message: "Project not found" } }),
       });
-      const result = await run(["secrets", "list", "--project-ref", PROJECT_REF]);
+      const result = await run(["secrets", "list", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
     });
 
@@ -63,7 +56,7 @@ describe("secrets", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 429, body: { message: "Too Many Requests" } }),
       });
-      const result = await run(["secrets", "list", "--project-ref", PROJECT_REF]);
+      const result = await run(["secrets", "list", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
     });
 
@@ -73,19 +66,19 @@ describe("secrets", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 500, body: { message: "Internal Server Error" } }),
       });
-      const result = await run(["secrets", "list", "--project-ref", PROJECT_REF]);
+      const result = await run(["secrets", "list", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
     });
 
     testBehaviour("includes debug output with --debug", async ({ run, projectRef }) => {
-      const result = await run(["secrets", "list", "--debug", "--project-ref", projectRef]);
+      const result = await run(["secrets", "list", "--debug", `--remote=${projectRef}`]);
       expect(result.exitCode).toBe(0);
     });
   });
 
   describe("secrets:set", () => {
     testBehaviour("sets a single secret", async ({ run, projectRef }) => {
-      const result = await run(["secrets", "set", "FOO=bar", "--project-ref", projectRef, "--yes"]);
+      const result = await run(["secrets", "set", "FOO=bar", "--yes", `--remote=${projectRef}`]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Finished");
     });
@@ -96,9 +89,8 @@ describe("secrets", () => {
         "set",
         "FOO=bar",
         "BAZ=qux",
-        "--project-ref",
-        projectRef,
         "--yes",
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Finished");
@@ -111,9 +103,8 @@ describe("secrets", () => {
         "set",
         "--env-file",
         ".env.local",
-        "--project-ref",
-        projectRef,
         "--yes",
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Finished");
@@ -128,14 +119,7 @@ describe("secrets", () => {
           body: { message: "Validation failed", errors: [{ message: "Invalid secret name" }] },
         }),
       });
-      const result = await run([
-        "secrets",
-        "set",
-        "FOO=bar",
-        "--project-ref",
-        PROJECT_REF,
-        "--yes",
-      ]);
+      const result = await run(["secrets", "set", "FOO=bar", "--yes", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
     });
 
@@ -145,9 +129,8 @@ describe("secrets", () => {
         "set",
         "--env-file",
         "nonexistent.env",
-        "--project-ref",
-        PROJECT_REF,
         "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
     });
@@ -158,35 +141,27 @@ describe("secrets", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
       });
-      const result = await run([
-        "secrets",
-        "set",
-        "FOO=bar",
-        "--project-ref",
-        PROJECT_REF,
-        "--yes",
-      ]);
+      const result = await run(["secrets", "set", "FOO=bar", "--yes", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
     });
   });
 
   describe("secrets:unset", () => {
     testBehaviour("removes a secret", async ({ run, projectRef }) => {
-      const result = await run(["secrets", "unset", "FOO", "--project-ref", projectRef, "--yes"]);
+      const result = await run(["secrets", "unset", "FOO", "--yes", `--remote=${projectRef}`]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Finished");
     });
 
     testBehaviour("removes multiple secrets", async ({ run, projectRef }) => {
-      await run(["secrets", "set", "FOO=bar", "BAR=baz", "--project-ref", projectRef, "--yes"]);
+      await run(["secrets", "set", "FOO=bar", "BAR=baz", "--yes", `--remote=${projectRef}`]);
       const result = await run([
         "secrets",
         "unset",
         "FOO",
         "BAR",
-        "--project-ref",
-        projectRef,
         "--yes",
+        `--remote=${projectRef}`,
       ]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Finished");
@@ -202,9 +177,8 @@ describe("secrets", () => {
         "secrets",
         "unset",
         "NONEXISTENT",
-        "--project-ref",
-        PROJECT_REF,
         "--yes",
+        `--remote=${PROJECT_REF}`,
       ]);
       expect(result.exitCode).not.toBe(0);
     });
@@ -215,7 +189,7 @@ describe("secrets", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
       });
-      const result = await run(["secrets", "unset", "FOO", "--project-ref", PROJECT_REF, "--yes"]);
+      const result = await run(["secrets", "unset", "FOO", "--yes", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
     });
 
@@ -225,7 +199,7 @@ describe("secrets", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 500, body: { message: "Internal Server Error" } }),
       });
-      const result = await run(["secrets", "unset", "FOO", "--project-ref", PROJECT_REF, "--yes"]);
+      const result = await run(["secrets", "unset", "FOO", "--yes", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
     });
   });

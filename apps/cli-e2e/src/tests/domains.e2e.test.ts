@@ -19,21 +19,21 @@ describe("domains", () => {
         }),
       });
 
-      const result = await run(["domains", "get", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "get", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("400");
     });
 
     testBehaviour.skipIf(isRecording)("no custom domain", async ({ run }) => {
-      const result = await run(["domains", "get", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "get", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("400");
     });
 
     testBehaviour.skipIf(isRecording)("pending verification", async ({ run }) => {
-      const result = await run(["domains", "get", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "get", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toContain(
@@ -42,7 +42,7 @@ describe("domains", () => {
     });
 
     testBehaviour.skipIf(isRecording)("verification completed", async ({ run }) => {
-      const result = await run(["domains", "get", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "get", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toContain(
@@ -51,14 +51,7 @@ describe("domains", () => {
     });
 
     testBehaviour.skipIf(isRecording)("domain activated", async ({ run }) => {
-      const result = await run([
-        "domains",
-        "get",
-        "--project-ref",
-        PROJECT_REF,
-        "--output",
-        "json",
-      ]);
+      const result = await run(["domains", "get", "--output", "json", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).toBe(0);
 
@@ -98,7 +91,7 @@ describe("domains", () => {
         }),
       });
 
-      const result = await run(["domains", "get", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "get", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("403");
     });
@@ -113,7 +106,7 @@ describe("domains", () => {
         }),
       });
 
-      const result = await run(["domains", "get", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "get", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("401");
     });
@@ -128,7 +121,7 @@ describe("domains", () => {
         }),
       });
 
-      const result = await run(["domains", "get", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "get", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("429");
     });
@@ -143,7 +136,7 @@ describe("domains", () => {
         }),
       });
 
-      const result = await run(["domains", "get", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "get", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("500");
@@ -159,7 +152,7 @@ describe("domains", () => {
         }),
       });
 
-      const result = await run(["domains", "get", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "get", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("502");
@@ -168,21 +161,21 @@ describe("domains", () => {
 
   describe("domains:reverify", () => {
     testBehaviour("custom domain disabled", async ({ run }) => {
-      const result = await run(["domains", "reverify", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "reverify", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("400");
     });
 
     testBehaviour.skipIf(isRecording)("no custom domain", async ({ run }) => {
-      const result = await run(["domains", "reverify", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "reverify", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("400");
     });
 
     testBehaviour.skipIf(isRecording)("pending verification", async ({ run }) => {
-      const result = await run(["domains", "reverify", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "reverify", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toContain(
@@ -191,7 +184,7 @@ describe("domains", () => {
     });
 
     testBehaviour.skipIf(isRecording)("verification completed", async ({ run }) => {
-      const result = await run(["domains", "reverify", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "reverify", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("400");
@@ -199,28 +192,34 @@ describe("domains", () => {
   });
   describe("domains:activate", () => {
     testBehaviour("custom domain disabled", async ({ run }) => {
-      const result = await run(["domains", "activate", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "activate", "--yes", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("400");
     });
 
     testBehaviour.skipIf(isRecording)("no custom domain", async ({ run }) => {
-      const result = await run(["domains", "activate", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "activate", "--yes", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("400");
     });
 
     testBehaviour.skipIf(isRecording)("pending verification", async ({ run }) => {
-      const result = await run(["domains", "activate", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "activate", "--yes", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("400");
     });
 
     testBehaviour.skipIf(isRecording)("pending verification in debug mode", async ({ run }) => {
-      const result = await run(["domains", "activate", "--project-ref", PROJECT_REF, "--debug"]);
+      const result = await run([
+        "domains",
+        "activate",
+        "--debug",
+        "--yes",
+        `--remote=${PROJECT_REF}`,
+      ]);
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toMatch(/HTTP.*POST:/);
@@ -228,7 +227,7 @@ describe("domains", () => {
     });
 
     testBehaviour.skipIf(isRecording)("verification completed", async ({ run }) => {
-      const result = await run(["domains", "activate", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "activate", "--yes", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toContain(`completed`);
@@ -236,7 +235,7 @@ describe("domains", () => {
     });
 
     testBehaviour.skipIf(isRecording)("domain activated", async ({ run }) => {
-      const result = await run(["domains", "activate", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "activate", "--yes", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("400");
@@ -245,21 +244,21 @@ describe("domains", () => {
 
   describe("domains:delete", () => {
     testBehaviour("custom domain disabled", async ({ run }) => {
-      const result = await run(["domains", "delete", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "delete", "--yes", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("400");
     });
 
     testBehaviour.skipIf(isRecording)("no custom domain", async ({ run }) => {
-      const result = await run(["domains", "delete", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "delete", "--yes", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("400");
     });
 
     testBehaviour.skipIf(isRecording)("pending verification", async ({ run }) => {
-      const result = await run(["domains", "delete", "--project-ref", PROJECT_REF]);
+      const result = await run(["domains", "delete", "--yes", `--remote=${PROJECT_REF}`]);
 
       expect(result.exitCode).toBe(0);
     });

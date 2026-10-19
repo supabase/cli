@@ -28,7 +28,7 @@ describe("supabase db push --skip-vault", () => {
       Effect.gen(function* () {
         const projectDir = yield* makeVaultProject;
         const { exitCode, stderr } = yield* runSupabaseEffect(
-          ["db", "push", "--db-url", UNREACHABLE_DB_URL],
+          ["db", "push", `--remote=${UNREACHABLE_DB_URL}`],
           { cwd: projectDir },
         );
         expect(exitCode).toBe(1);
@@ -44,7 +44,7 @@ describe("supabase db push --skip-vault", () => {
       Effect.gen(function* () {
         const projectDir = yield* makeVaultProject;
         const { exitCode, stderr } = yield* runSupabaseEffect(
-          ["db", "push", "--db-url", UNREACHABLE_DB_URL, "--skip-vault"],
+          ["db", "push", "--skip-vault", `--remote=${UNREACHABLE_DB_URL}`],
           { cwd: projectDir },
         );
         expect(exitCode).toBe(1);

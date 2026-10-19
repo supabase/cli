@@ -33,7 +33,7 @@ describe("supabase config push", () => {
         yield* fs.makeDirectory(path.join(projectDir, "supabase"), { recursive: true });
         yield* fs.writeFileString(path.join(projectDir, "supabase", "config.toml"), "malformed");
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["config", "push", "--project-ref", TEST_PROJECT_REF],
+          ["config", "push", `--remote=${TEST_PROJECT_REF}`],
           { cwd: projectDir, env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
         );
         expect(exitCode).toBe(1);
@@ -107,7 +107,7 @@ describe("supabase config push", () => {
           `name: config-push-consent-e2e\napi_url: ${server.url.origin}\ndashboard_url: ${server.url.origin}\nproject_host: example.invalid\n`,
         );
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["config", "push", "--project-ref", TEST_PROJECT_REF, ...(yes ? ["--yes"] : [])],
+          ["config", "push", ...(yes ? ["--yes"] : []), `--remote=${TEST_PROJECT_REF}`],
           {
             cwd,
             stdin: "y\n",
