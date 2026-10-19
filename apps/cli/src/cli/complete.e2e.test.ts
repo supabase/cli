@@ -95,7 +95,9 @@ describe("supabase __complete", () => {
         );
         expect(completionFailure.exitCode).toBe(1);
         expect(completionFailure.stdout).toBe("");
-        expect(completionFailure.stderr).toContain("must be 0 or 1");
+        expect(completionFailure.stderr).toContain(
+          'Invalid SUPABASE_EXPERIMENTAL_STACK="invalid" (sets experimental.stack): expected true or false.',
+        );
 
         const invalidEnv = await runSupabase(["start", "--output-format=json"], {
           cwd: project.dir,

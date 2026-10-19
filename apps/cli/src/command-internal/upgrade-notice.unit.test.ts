@@ -20,7 +20,7 @@ import {
 } from "./upgrade-notice.ts";
 
 describe("updateNotifierDisabled", () => {
-  it.each(["1", "t", "T", "TRUE", "true", "True"])("suppresses for ParseBool-true %j", (value) => {
+  it.each(["1", "t", "T", "TRUE", "true", "True"])("suppresses for boolean-true %j", (value) => {
     expect(updateNotifierDisabled(value)).toBe(true);
   });
 
@@ -65,7 +65,7 @@ describe("isNewerCliVersion", () => {
 });
 
 describe("formatUpgradeNotice", () => {
-  it("matches the Go CLI's message bytes modulo styling", () => {
+  it("emits the expected message bytes modulo styling", () => {
     expect(stripVTControlCharacters(formatUpgradeNotice("v2.114.0", "2.113.0"))).toBe(
       "A new version of Supabase CLI is available: v2.114.0 (currently installed v2.113.0)\n" +
         "We recommend updating regularly for new features and bug fixes: " +
@@ -755,6 +755,19 @@ layer(BunServices.layer)("runUpgradeNotice", (it) => {
     }),
   );
 
+  it.effect("a project dotenv with a byte-order mark still opts out", () =>
+    Effect.gen(function* () {
+      const ctx = yield* setup({});
+      yield* ctx.fs.writeFileString(
+        ctx.path.join(ctx.workdir, "supabase", ".env"),
+        `${String.fromCharCode(0xfeff)}SUPABASE_NO_UPDATE_NOTIFIER=1\n`,
+      );
+      yield* notice(ctx.deps);
+      expect(ctx.stderr).toBe("");
+      expect(ctx.fetchCalls).toBe(0);
+    }),
+  );
+
   it.effect("keeps a leading BOM in the cached tag, so it never reads as a release", () =>
     Effect.gen(function* () {
       const ctx = yield* setup({ cacheContent: "\uFEFFv99.99.99", cacheAgeMs: 60 * 1000 });
@@ -836,17 +849,8 @@ const captureStderr = <E, R>(body: Effect.Effect<void, E, R>) =>
       }),
   );
 
-/**
- * `delegatedToGo` is asserted directly rather than via a real proxied
- * command, so this doesn't depend on which commands still delegate to Go —
- * that set only shrinks (`docs/go-cli-porting-status.md`), and a test pinned
- * to one command would break the moment it's ported.
- */
 layer(hookLayer)("upgradeNoticeHook", (it) => {
-  const runHook = Effect.fnUntraced(function* (opts: {
-    readonly delegatedToGo?: boolean;
-    readonly cached?: boolean;
-  }) {
+  const runHook = Effect.fnUntraced(function* (opts: { readonly cached?: boolean }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-upgrade-notice-hook-" });
@@ -874,7 +878,6 @@ layer(hookLayer)("upgradeNoticeHook", (it) => {
           ["db", "branch", "list"],
           {
             cleanShowHelp: false,
-            delegatedToGo: opts.delegatedToGo === true,
             workingDirectory: workdir,
             isValueTakingFlagToken: () => false,
           },
@@ -891,12 +894,6 @@ layer(hookLayer)("upgradeNoticeHook", (it) => {
       expect((yield* runHook({})).stderr).toContain(
         "A new version of Supabase CLI is available: v99.99.99",
       );
-    }),
-  );
-
-  it.effect("stays silent when the run delegated to Go, which printed its own notice", () =>
-    Effect.gen(function* () {
-      expect((yield* runHook({ delegatedToGo: true })).stderr).toBe("");
     }),
   );
 
@@ -973,7 +970,6 @@ layer(hookLayer)("upgradeNoticeHook release lookup", (it) => {
         },
         upgradeNoticeHook(["db", "branch", "list"], {
           cleanShowHelp: false,
-          delegatedToGo: false,
           workingDirectory: opts.workdirFromEnv === true ? undefined : workdir,
           isValueTakingFlagToken: () => false,
         }),

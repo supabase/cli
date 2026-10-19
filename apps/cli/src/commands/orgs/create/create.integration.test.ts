@@ -25,7 +25,7 @@ const tempRoot = useTempWorkdir("supabase-orgs-create-int-");
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   readonly response?: CreatedOrganization;
   readonly status?: number;
   readonly network?: "fail";
@@ -42,7 +42,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -87,8 +87,8 @@ describe("orgs create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("emits Go-byte-exact preamble + indented JSON for --output json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("emits byte-exact preamble + indented JSON for --output json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion\n");
@@ -98,7 +98,7 @@ describe("orgs create integration", () => {
   });
 
   it.effect("emits preamble + YAML object for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion\n");
@@ -107,7 +107,7 @@ describe("orgs create integration", () => {
   });
 
   it.effect("emits preamble + TOML for --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion\n");
@@ -117,7 +117,7 @@ describe("orgs create integration", () => {
   });
 
   it.effect("emits preamble + env vars for --output env (create-only branch)", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion\n");
@@ -145,7 +145,7 @@ describe("orgs create integration", () => {
   });
 
   it.effect("treats --output pretty as identical to text mode (preamble + table)", () => {
-    const { layer, out } = setup({ goOutput: "pretty" });
+    const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion");
@@ -155,7 +155,7 @@ describe("orgs create integration", () => {
   });
 
   it.effect("--output flag wins over --output-format", () => {
-    const { layer, out } = setup({ format: "json", goOutput: "yaml" });
+    const { layer, out } = setup({ format: "json", outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("name: Acme");

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { billingUrl, dashboardUrl, poolerHost, projectHost } from "./profile.ts";
 
 describe("projectHost", () => {
-  it("maps built-in profile names to the Go project_host", () => {
+  it("maps built-in profile names to the project_host", () => {
     expect(projectHost("supabase")).toBe("supabase.co");
     expect(projectHost("supabase-staging")).toBe("supabase.red");
     expect(projectHost("supabase-local")).toBe("supabase.red");
@@ -16,7 +16,7 @@ describe("projectHost", () => {
 });
 
 describe("poolerHost", () => {
-  it("maps built-in profile names to the Go pooler_host", () => {
+  it("maps built-in profile names to the pooler_host", () => {
     expect(poolerHost("supabase")).toBe("supabase.com");
     expect(poolerHost("supabase-staging")).toBe("supabase.green");
     expect(poolerHost("snap")).toBe("snapcloud.co");
@@ -32,7 +32,7 @@ describe("poolerHost", () => {
 });
 
 describe("dashboardUrl", () => {
-  it("maps built-in profile names to the Go dashboard_url", () => {
+  it("maps built-in profile names to the dashboard_url", () => {
     expect(dashboardUrl("supabase")).toBe("https://supabase.com/dashboard");
     expect(dashboardUrl("supabase-staging")).toBe("https://supabase.green/dashboard");
     expect(dashboardUrl("supabase-local")).toBe("http://localhost:8082");
