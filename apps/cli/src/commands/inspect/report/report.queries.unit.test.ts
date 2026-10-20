@@ -38,7 +38,7 @@ describe("reportIgnoreSchemas", () => {
 });
 
 describe("REPORT_QUERIES", () => {
-  it("has the 14 underscore CSV basenames Go embeds", () => {
+  it("has the 14 underscore CSV basenames", () => {
     expect(REPORT_QUERIES.map((q) => q.fileName)).toEqual([
       "bloat",
       "blocking",

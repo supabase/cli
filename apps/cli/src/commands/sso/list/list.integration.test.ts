@@ -48,7 +48,7 @@ const tempRoot = useTempWorkdir("supabase-sso-list-int-");
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   status?: number;
   body?: unknown;
   network?: "fail";
@@ -143,7 +143,7 @@ function setup(opts: SetupOpts = {}) {
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
     analytics,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
 
   return { layer, out, api, analytics, telemetry, cache };
@@ -177,7 +177,7 @@ describe("sso list integration", () => {
         },
       ],
     };
-    const { layer, out } = setup({ goOutput: "json", body: { items: [item] } });
+    const { layer, out } = setup({ outputFlag: "json", body: { items: [item] } });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
       const emitted = yield* Schema.decodeEffect(
@@ -226,8 +226,8 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=json wraps response in `{providers: …}`", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("--output=json wraps response in `{providers: …}`", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText.startsWith("{")).toBe(true);
@@ -236,58 +236,53 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=yaml emits providers key", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+  it.effect("--output=yaml emits providers key", () => {
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("providers:");
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=toml emits provider data", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+  it.effect("--output=toml emits provider data", () => {
+    const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText.length).toBeGreaterThan(0);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "Go --output=toml fails like BurntSushi on a nil attribute-mapping array element",
-    () => {
-      const item = {
-        ...PROVIDER_ITEM,
-        saml: {
-          ...PROVIDER_ITEM.saml,
-          attribute_mapping: { keys: { a: { name: "xyz", default: [null, "x"] } } },
-        },
-      };
-      const { layer, out } = setup({ goOutput: "toml", body: { items: [item] } });
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const dump = Cause.pretty(exit.cause);
-          expect(dump).toContain("SsoTomlEncodeError");
-          expect(dump).toContain(
-            "failed to output toml: toml: cannot encode array with nil element",
-          );
-        }
-        expect(out.stdoutText).toBe("");
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("--output=toml fails on a null attribute-mapping array element", () => {
+    const item = {
+      ...PROVIDER_ITEM,
+      saml: {
+        ...PROVIDER_ITEM.saml,
+        attribute_mapping: { keys: { a: { name: "xyz", default: [null, "x"] } } },
+      },
+    };
+    const { layer, out } = setup({ outputFlag: "toml", body: { items: [item] } });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(ssoList({ projectRef: Option.none() }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = Cause.pretty(exit.cause);
+        expect(dump).toContain("SsoTomlEncodeError");
+        expect(dump).toContain("failed to output toml: cannot encode an array with a null element");
+      }
+      expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
 
-  it.effect("Go --output=env emits a flat PROVIDERS= entry", () => {
-    const { layer, out } = setup({ goOutput: "env" });
+  it.effect("--output=env emits a flat PROVIDERS= entry", () => {
+    const { layer, out } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("PROVIDERS=");
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output=pretty falls through to text rendering", () => {
-    const { layer, out } = setup({ goOutput: "pretty" });
+  it.effect("--output=pretty falls through to text rendering", () => {
+    const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("IDENTITY PROVIDER ID");
@@ -311,8 +306,8 @@ describe("sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("Go --output wins over TS --output-format when both set", () => {
-    const { layer, out } = setup({ format: "json", goOutput: "yaml" });
+  it.effect("--output wins over --output-format when both set", () => {
+    const { layer, out } = setup({ format: "json", outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* ssoList({ projectRef: Option.none() });
       expect(out.stdoutText.startsWith("{")).toBe(false);

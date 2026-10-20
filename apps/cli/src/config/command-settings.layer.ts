@@ -1,6 +1,7 @@
+import { findCliProjectRoot } from "@supabase/config/effect";
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
-import { lastExplicitLongFlagValue } from "../shared/cli/cobra-flag-groups.ts";
+import { lastExplicitLongFlagValue } from "../shared/cli/flag-groups.ts";
 import { CLI_VERSION } from "../shared/cli/version.ts";
 import { ProfileFlag, WorkdirFlag } from "../command-internal/global-flags.ts";
 import {
@@ -8,8 +9,9 @@ import {
   type LoadedProfile,
   type ProfileLoadError,
 } from "../command-internal/profile-load.ts";
-import { DebugLogger, type DebugLoggerShape } from "../command-internal/debug-logger.service.ts";
+import { DebugLogger, type DebugLoggerShape } from "../shared/output/debug-logger.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
+import { CliEnvNames } from "./cli-config-keys.ts";
 import { CommandSettings } from "./command-settings.service.ts";
 import { resolveSupabaseHomeValue } from "../shared/config/supabase-home.ts";
 
@@ -68,14 +70,13 @@ function resolveProfile(
  * string (e.g. `.`), but downstream readers such as the project-id cwd-basename fallback need
  * a real directory name, not a relative fragment that would sanitize to an empty project id.
  *
- * `explicit` is true only when the flag/env value was used verbatim, without walking up to find
- * `supabase/config.toml`; some config loads use it to skip a redundant ancestor search.
+ * `explicit` is true only when the flag/env value was used verbatim. Otherwise the nearest
+ * ancestor holding `supabase/config.json` or `supabase/config.toml` wins, falling back to `cwd`.
  */
 export const resolveWorkdir = Effect.fn("CommandSettings.resolveWorkdir")(function* (
   flagValue: Option.Option<string>,
   envValue: Option.Option<string>,
   cwd: string,
-  configTomlExists: (path: string) => Effect.Effect<boolean>,
   path: Path.Path,
 ) {
   if (Option.isSome(flagValue) && flagValue.value.length > 0) {
@@ -84,18 +85,8 @@ export const resolveWorkdir = Effect.fn("CommandSettings.resolveWorkdir")(functi
   if (Option.isSome(envValue) && envValue.value.length > 0) {
     return { workdir: path.resolve(cwd, envValue.value), explicit: true };
   }
-  let current = cwd;
-  while (true) {
-    const candidate = path.join(current, "supabase", "config.toml");
-    if (yield* configTomlExists(candidate)) {
-      return { workdir: current, explicit: false };
-    }
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return { workdir: cwd, explicit: false };
-    }
-    current = parent;
-  }
+  const projectRoot = yield* findCliProjectRoot(cwd);
+  return { workdir: projectRoot ?? cwd, explicit: false };
 });
 
 export const commandSettingsLayer = Layer.unwrap(
@@ -122,7 +113,7 @@ export const commandSettingsLayer = Layer.unwrap(
         );
 
         // Optional service: tests without argv default to "not explicit". An empty command
-        // path scans all of argv up to `--`, matching pflag.
+        // path scans all of argv up to `--`.
         const cliArgs = yield* Effect.serviceOption(CliArgs);
         const explicitProfileFlag = Option.match(cliArgs, {
           onNone: () => undefined,
@@ -144,11 +135,6 @@ export const commandSettingsLayer = Layer.unwrap(
           debugLogger,
         );
 
-        const rawDbPassword = yield* read(Config.option(Config.String("SUPABASE_DB_PASSWORD")));
-        const dbPassword = Option.filter(rawDbPassword, (value) => value.length > 0).pipe(
-          Option.map((value) => Redacted.make(value, { label: "SUPABASE_DB_PASSWORD" })),
-        );
-
         const rawGithubToken = yield* read(Config.option(Config.String("GITHUB_TOKEN")));
         const githubToken = Option.filter(rawGithubToken, (value) => value.length > 0).pipe(
           Option.map((value) => Redacted.make(value, { label: "GITHUB_TOKEN" })),
@@ -159,7 +145,7 @@ export const commandSettingsLayer = Layer.unwrap(
           Option.map((value) => Redacted.make(value, { label: "SUPABASE_ACCESS_TOKEN" })),
         );
 
-        const rawProjectId = yield* read(Config.option(Config.String("SUPABASE_PROJECT_ID")));
+        const rawProjectId = yield* read(Config.option(Config.String(CliEnvNames.projectId.name)));
         const projectId = Option.filter(rawProjectId, (value) => value.length > 0);
 
         const workdirEnvValue = yield* read(Config.option(Config.String("SUPABASE_WORKDIR")));
@@ -167,7 +153,6 @@ export const commandSettingsLayer = Layer.unwrap(
           workdirFlag,
           workdirEnvValue,
           runtimeInfo.cwd,
-          (filePath) => fs.exists(filePath).pipe(Effect.orElseSucceed(() => false)),
           path,
         );
 
@@ -187,7 +172,6 @@ export const commandSettingsLayer = Layer.unwrap(
           poolerHost,
           dashboardUrl,
           accessToken,
-          dbPassword,
           githubToken,
           projectId,
           workdir,

@@ -4,10 +4,15 @@ import { Effect, FileSystem, Path } from "effect";
 import { respondToComplete } from "../../../cli/complete.ts";
 import { rootCommandForFeatures } from "../../../cli/root.ts";
 import { resolveComputeEnabled } from "./compute-backend.ts";
+import { withConfigEnv } from "../../../../tests/helpers/command-mocks.ts";
 import { ExperimentalFeatureFlagError } from "../../../command-internal/experimental-feature.ts";
 
-const resolve = (input: Parameters<typeof resolveComputeEnabled>[0]) =>
-  resolveComputeEnabled(input).pipe(Effect.provide(BunServices.layer));
+const resolve = ({
+  env,
+  ...input
+}: Parameters<typeof resolveComputeEnabled>[0] & {
+  readonly env: Readonly<Record<string, string>>;
+}) => withConfigEnv(env, resolveComputeEnabled(input)).pipe(Effect.provide(BunServices.layer));
 
 const project = Effect.fnUntraced(function* (files: Record<string, string>) {
   const fs = yield* FileSystem.FileSystem;
@@ -109,7 +114,7 @@ describe("resolveComputeEnabled", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
 
-  it.effect("keeps default workdir selection aligned with the TOML command reader", () => {
+  it.effect("prefers a nested project's config.json over an enclosing config.toml project", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
@@ -120,7 +125,7 @@ describe("resolveComputeEnabled", () => {
         path.join(child, "supabase/config.json"),
         '{"experimental":{"compute":true}}',
       );
-      expect(yield* resolve({ args: ["compute"], cwd: child, env: {} })).toBe(false);
+      expect(yield* resolve({ args: ["compute"], cwd: child, env: {} })).toBe(true);
       expect(yield* resolve({ args: ["compute", "--workdir", child], cwd: root, env: {} })).toBe(
         true,
       );

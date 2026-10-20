@@ -41,7 +41,7 @@ const SSL_DESIRED_BUT_NOT_APPLIED: typeof V1GetSslEnforcementConfigOutput.Type =
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
   response?: typeof V1GetSslEnforcementConfigOutput.Type;
   status?: number;
   network?: "fail";
@@ -60,7 +60,7 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliSettings,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api };
 }
@@ -308,8 +308,8 @@ describe("ssl-enforcement update integration", () => {
     },
   );
 
-  it.effect("emits Go-compatible env output for --output env (exact bytes)", () => {
-    const { layer, out } = setup({ goOutput: "env", response: SSL_ENFORCED });
+  it.effect("emits env output for --output env (exact bytes)", () => {
+    const { layer, out } = setup({ outputFlag: "env", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
         projectRef: Option.none(),
@@ -320,8 +320,8 @@ describe("ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("emits Go-compatible indented JSON for --output json (exact bytes)", () => {
-    const { layer, out } = setup({ goOutput: "json", response: SSL_ENFORCED });
+  it.effect("emits indented JSON for --output json (exact bytes)", () => {
+    const { layer, out } = setup({ outputFlag: "json", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
         projectRef: Option.none(),
@@ -341,7 +341,7 @@ describe("ssl-enforcement update integration", () => {
   });
 
   it.effect("emits YAML for --output yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml", response: SSL_ENFORCED });
+    const { layer, out } = setup({ outputFlag: "yaml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
         projectRef: Option.none(),
@@ -354,7 +354,7 @@ describe("ssl-enforcement update integration", () => {
   });
 
   it.effect("emits TOML for --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml", response: SSL_ENFORCED });
+    const { layer, out } = setup({ outputFlag: "toml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
         projectRef: Option.none(),
@@ -367,7 +367,7 @@ describe("ssl-enforcement update integration", () => {
   });
 
   it.effect("treats --output pretty as identical to text mode", () => {
-    const { layer, out } = setup({ goOutput: "pretty", response: SSL_ENFORCED });
+    const { layer, out } = setup({ outputFlag: "pretty", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
         projectRef: Option.none(),
@@ -409,8 +409,8 @@ describe("ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("--output (Go) wins over --output-format (TS) when both provided", () => {
-    const { layer, out } = setup({ format: "json", goOutput: "yaml", response: SSL_ENFORCED });
+  it.effect("--output wins over --output-format when both provided", () => {
+    const { layer, out } = setup({ format: "json", outputFlag: "yaml", response: SSL_ENFORCED });
     return Effect.gen(function* () {
       yield* sslEnforcementUpdate({
         projectRef: Option.none(),
