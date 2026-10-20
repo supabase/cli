@@ -115,7 +115,9 @@ interface DbTargetSelectionScenario<R> {
     readonly workdir: string;
     readonly args: ReadonlyArray<string>;
     readonly target: TargetFlagValuesWithDbUrl;
-  }) => DbTargetAttempt<R>;
+  }) => DbTargetAttempt<R> | Effect.Effect<DbTargetAttempt<R>, unknown, BunServices.BunServices>;
+  /** Wraps each row, for a leaf whose tests pin ambient environment variables around their body. */
+  readonly around?: (row: Effect.Effect<void, unknown>) => Effect.Effect<void, unknown>;
   /** Rows the leaf cannot express, each with why. */
   readonly optOut?: Partial<Record<Row, string>>;
 }
@@ -158,18 +160,25 @@ export function describeDbTargetSelection<R>(
     it.effect(name, () => {
       const workdir = scenario.workdir();
       if (spec.linked === true) linkCheckout(workdir);
-      const ctx = scenario.attempt({
+      const attempted = scenario.attempt({
         workdir,
         args: [...words, ...spec.args],
         target: spec.target,
       });
-      return spec
-        .check(ctx)
-        .pipe(
-          Effect.provide(
-            Layer.mergeAll(ctx.layer, commandTargetLayer.pipe(Layer.provide(ctx.out.layer))),
-          ),
-        );
+      const row = Effect.flatMap(
+        Effect.isEffect(attempted)
+          ? Effect.provide(attempted, BunServices.layer)
+          : Effect.succeed(attempted),
+        (ctx) =>
+          spec
+            .check(ctx)
+            .pipe(
+              Effect.provide(
+                Layer.mergeAll(ctx.layer, commandTargetLayer.pipe(Layer.provide(ctx.out.layer))),
+              ),
+            ),
+      );
+      return scenario.around === undefined ? row : scenario.around(row);
     });
   };
 

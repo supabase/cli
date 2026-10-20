@@ -51,10 +51,14 @@ import {
   StackStorageCapabilityError,
   StackStorageUnavailableError,
 } from "../../../command-internal/stack-storage.ts";
+import {
+  branchLookupsOf,
+  describeDbTargetSelection,
+  storageTargetOf,
+} from "../../../../tests/helpers/db-target-selection.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import {
   buildStorageStackApi,
-  STORAGE_TEST_BRANCH_REF,
   STORAGE_TEST_JWT_SECRET,
   storageConsentApi,
   storageConsentServices,
@@ -68,7 +72,6 @@ import {
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
-import { warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
 interface MockRoute {
   readonly method: string;
@@ -308,8 +311,6 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
     managementCalls: managementApi.requests,
   };
 });
-
-const FLAG_REF = "flagflagflagflagflag";
 
 const VECTOR_LIST = "/storage/v1/vector/ListVectorBuckets";
 const VECTOR_CREATE = "/storage/v1/vector/CreateVectorBucket";
@@ -2267,151 +2268,31 @@ describe("seed buckets", () => {
     }).pipe(seedScenario),
   );
 
-  it.effect("--remote=<ref> seeds the project given by the flag, overriding VALID_REF", () =>
-    Effect.gen(function* () {
-      const { layer, out, requests, linkedCache } = yield* setupSeedBuckets(tmp.current, {
-        toml: "[storage.buckets.test]\npublic = true\n",
-        args: ["seed", "buckets", `--remote=${FLAG_REF}`],
-        routes: [
-          { method: "GET", match: "/storage/v1/bucket", body: [] },
-          { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
-        ],
-      });
-      const exit = yield* seedBuckets({
-        ...DEFAULT_FLAGS,
-        remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const),
-        local: false,
-      }).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(out.stderrText).toContain("Creating Storage bucket: test");
-      expect(requests.some((r) => r.url.startsWith(`https://${FLAG_REF}.supabase.co`))).toBe(true);
-      expect(requests.some((r) => r.url.includes(VALID_REF))).toBe(false);
-      expect(linkedCache.cached).toBe(true);
-      expect(linkedCache.cachedRef).toBe(FLAG_REF);
-    }).pipe(seedScenario),
-  );
-
-  it.effect("--remote=<branch> seeds the project of the branch it names", () =>
-    Effect.gen(function* () {
-      const { layer, requests, linkedCache, managementCalls, out } = yield* setupSeedBuckets(
-        tmp.current,
-        {
+  describeDbTargetSelection("seed buckets", {
+    dbUrl: false,
+    workdir: () => tmp.current,
+    around: seedScenario,
+    attempt: ({ workdir, args, target }) =>
+      Effect.gen(function* () {
+        const ctx = yield* setupSeedBuckets(workdir, {
           toml: "[storage.buckets.test]\npublic = true\n",
-          args: ["seed", "buckets", "--remote=feature-x"],
+          args,
           branches: [storageTestBranch("feature-x")],
           routes: [
             { method: "GET", match: "/storage/v1/bucket", body: [] },
             { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
           ],
-        },
-      );
-      const exit = yield* seedBuckets({
-        ...DEFAULT_FLAGS,
-        remote: Option.some({ _tag: "Branch", name: "feature-x" } as const),
-        local: false,
-      }).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(managementCalls.filter(({ method }) => method === "listAllBranches")).toEqual([
-        { method: "listAllBranches", input: { ref: VALID_REF } },
-      ]);
-      expect(
-        requests.some((r) => r.url.startsWith(`https://${STORAGE_TEST_BRANCH_REF}.supabase.co`)),
-      ).toBe(true);
-      expect(linkedCache.cachedRef).toBe(STORAGE_TEST_BRANCH_REF);
-      expect(warningsOf(out)).toEqual([]);
-    }).pipe(seedScenario),
-  );
-
-  it.effect("fails with the branches that exist when --remote=<branch> matches none", () =>
-    Effect.gen(function* () {
-      const { layer, requests, linkedCache } = yield* setupSeedBuckets(tmp.current, {
-        toml: "[storage.buckets.test]\npublic = true\n",
-        branches: [storageTestBranch("feature-x")],
-      });
-      const error = yield* seedBuckets({
-        ...DEFAULT_FLAGS,
-        remote: Option.some({ _tag: "Branch", name: "feature-y" } as const),
-        local: false,
-      }).pipe(Effect.provide(layer), Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "LinkBranchNotFoundError",
-        message: expect.stringContaining("Available branches: feature-x"),
-      });
-      expect(requests).toEqual([]);
-      expect(linkedCache.cached).toBe(false);
-    }).pipe(seedScenario),
-  );
-
-  describe("deprecated selectors", () => {
-    const cases = [
-      {
-        alias: "--linked",
-        cliArgs: ["seed", "buckets", "--linked"],
-        flags: { linked: true, local: false },
-        host: `https://${VALID_REF}.supabase.co`,
-        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
-      },
-      {
-        alias: "--project-ref",
-        cliArgs: ["seed", "buckets", "--project-ref", FLAG_REF],
-        flags: { projectRef: Option.some(FLAG_REF), local: false },
-        host: `https://${FLAG_REF}.supabase.co`,
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
-      },
-      {
-        alias: "--local",
-        cliArgs: ["seed", "buckets", "--local"],
-        flags: { local: true },
-        host: "http://",
-        warning: "--local isn't needed (local is the default) and will be removed in v4",
-      },
-    ] as const;
-
-    for (const testCase of cases) {
-      it.effect(`${testCase.alias} still selects its target and warns`, () =>
-        Effect.gen(function* () {
-          const { layer, out, requests } = yield* setupSeedBuckets(tmp.current, {
-            toml: "[storage.buckets.test]\npublic = true\n",
-            args: testCase.cliArgs,
-            routes: [
-              { method: "GET", match: "/storage/v1/bucket", body: [] },
-              { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
-            ],
-          });
-          const exit = yield* seedBuckets({ ...DEFAULT_FLAGS, ...testCase.flags }).pipe(
-            Effect.provide(layer),
-            Effect.exit,
-          );
-          expect(Exit.isSuccess(exit)).toBe(true);
-          expect(requests.length).toBeGreaterThan(0);
-          expect(requests.every((r) => r.url.startsWith(testCase.host))).toBe(true);
-          expect(warningsOf(out)).toEqual([testCase.warning]);
-        }).pipe(seedScenario),
-      );
-    }
+        });
+        return {
+          layer: ctx.layer,
+          out: ctx.out,
+          run: seedBuckets({ ...DEFAULT_FLAGS, ...target }),
+          target: () => storageTargetOf(ctx.requests),
+          cachedRef: () => ctx.linkedCache.cachedRef,
+          branchLookups: () => branchLookupsOf(ctx.managementCalls),
+        };
+      }),
   });
-
-  it.effect("rejects --project-ref combined with --local", () =>
-    Effect.gen(function* () {
-      const { layer, requests, linkedCache } = yield* setupSeedBuckets(tmp.current, {
-        toml: "[storage.buckets.test]\npublic = true\n",
-      });
-      const exit = yield* seedBuckets({
-        remote: Option.none(),
-        linked: false,
-        local: true,
-        projectRef: Option.some(FLAG_REF),
-      }).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain(
-          "--project-ref selects a remote project and cannot be combined with --local.",
-        );
-      }
-      expect(requests).toEqual([]);
-      expect(linkedCache.cached).toBe(false);
-    }).pipe(seedScenario),
-  );
 
   it.effect("--local=false stays on the local path", () =>
     Effect.gen(function* () {
