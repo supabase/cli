@@ -43,8 +43,9 @@ export type DataConflict =
 
 /**
  * The conflicts `requested` would meet in a saved stack's data under `dataRoot`, judged by the
- * rules a start applies: initialized data per its runtime, and the schema writers the composition
- * binds to each database.
+ * rules a start applies: initialized data per its runtime, the identity a container runtime
+ * recorded before an interrupted first start, and the schema writers the composition binds to each
+ * database.
  */
 export const collectDataConflicts = Effect.fn("DataConflicts.find")(function* (
   fs: FileSystem.FileSystem,
@@ -64,17 +65,20 @@ export const collectDataConflicts = Effect.fn("DataConflicts.find")(function* (
   )) {
     const instanceRoot = path.join(dataRoot, databaseId);
     const databasePin = requested.database;
-    if (
-      databasePin !== undefined &&
-      DatabaseDataState.$is("Initialized")(
-        yield* readDatabaseDataState(fs, path, instanceRoot, saved.runtime),
-      )
-    ) {
-      const mismatch = databaseIdentityMismatch(
-        saved.id,
-        yield* readDatabaseIdentity(fs, path, instanceRoot),
-        databasePin.upstreamVersion,
-      );
+    if (databasePin !== undefined) {
+      const state = yield* readDatabaseDataState(fs, path, instanceRoot, saved.runtime);
+      const initialized = DatabaseDataState.$is("Initialized")(state);
+      // A container volume is invisible to the host; a start's prepare judges the identity recorded
+      // before initdb whenever the volume holds PG_VERSION.
+      const maybeInVolume = DatabaseDataState.$is("Fresh")(state) && saved.runtime !== "native";
+      const recorded =
+        initialized || maybeInVolume
+          ? yield* readDatabaseIdentity(fs, path, instanceRoot)
+          : undefined;
+      const mismatch =
+        initialized || recorded !== undefined
+          ? databaseIdentityMismatch(saved.id, recorded, databasePin.upstreamVersion)
+          : undefined;
       if (mismatch !== undefined)
         conflicts.push({
           kind: "database-build",

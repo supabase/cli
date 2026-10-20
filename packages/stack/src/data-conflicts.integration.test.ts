@@ -93,23 +93,31 @@ it.effect("accepts any database build while the data was never initialized", () 
   ),
 );
 
-it.effect("counts an interrupted first start's data directory only on the native runtime", () =>
+it.effect("reports the identity a Docker first start recorded before it was interrupted", () =>
   run(
     Effect.gen(function* () {
       const { seed, conflicts } = yield* project;
-      yield* seed({ built, interrupted: true });
-      const requested = { database: pinned(selection.database, newerBuild) };
+      const { stackId, databaseId } = yield* seed({ built, interrupted: true, runtime: "docker" });
 
-      expect(yield* conflicts(requested)).toHaveLength(1);
+      const [conflict] = yield* conflicts({ database: pinned(selection.database, newerBuild) });
+
+      expect(conflict).toMatchObject({
+        kind: "database-build",
+        stackId,
+        instanceId: databaseId,
+        recorded: built,
+        requested: newerBuild,
+      });
+      expect(yield* conflicts({ database: selection.database })).toEqual([]);
     }),
   ),
 );
 
-it.effect("ignores an interrupted first start's data directory under Docker, as a start does", () =>
+it.effect("stays quiet about a Docker data directory that has no recorded identity", () =>
   run(
     Effect.gen(function* () {
       const { seed, conflicts } = yield* project;
-      yield* seed({ built, interrupted: true, runtime: "docker" });
+      yield* seed({ built, interrupted: true, runtime: "docker", withoutIdentity: true });
 
       expect(yield* conflicts({ database: pinned(selection.database, newerBuild) })).toEqual([]);
     }),

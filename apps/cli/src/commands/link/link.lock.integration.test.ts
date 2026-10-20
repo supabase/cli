@@ -591,45 +591,6 @@ describe("link warns when a saved stack would refuse the versions it locks", () 
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("says the data can only be recreated when it has no recorded build", () =>
-    Effect.gen(function* () {
-      const world = yield* startWorld;
-      hostDatabase(world);
-      const stackId = yield* seed(world, { built: BUILT, withoutIdentity: true });
-
-      const out = yield* runLink(world);
-
-      expect(stackWarnings(out)).toEqual([
-        `stack ${stackId}: the next supabase start refuses these pins: PostgreSQL data has no recorded identity, but stock PostgreSQL build ${HOSTED_DATABASE} was requested; ${destroy(stackId)}`,
-      ]);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.live("offers pinning the migrating version when linking moves a schema writer below it", () =>
-    Effect.gen(function* () {
-      const world = yield* startWorld;
-      const stackId = yield* seed(world, { composed: ["auth"], migrated: { auth: "v99.1.0" } });
-
-      const out = yield* runLink(world);
-
-      expect(stackWarnings(out)).toEqual([
-        `stack ${stackId}: the next supabase start refuses these pins: auth ${HOSTED} is older than v99.1.0, which already migrated this database; downgrading does not restore the old schema, so keep this data by pinning \`[local.services.auth] version = "v99.1.0"\` in supabase/config.toml, or ${destroy(stackId)}`,
-      ]);
-      expect((yield* readServices(world.workdir)).auth.resolved.upstreamVersion).toBe(HOSTED);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.live("stays quiet about a schema writer the saved stack does not run", () =>
-    Effect.gen(function* () {
-      const world = yield* startWorld;
-      yield* seed(world, { migrated: { auth: "v99.1.0" } });
-
-      const out = yield* runLink(world);
-
-      expect(stackWarnings(out)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
   it.live("stays quiet when the data was built by the version the link locks", () =>
     Effect.gen(function* () {
       const world = yield* startWorld;
@@ -644,36 +605,6 @@ describe("link warns when a saved stack would refuse the versions it locks", () 
 
       expect(stackWarnings(out)).toEqual([]);
     }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.live("stays quiet when the database was never initialized", () =>
-    Effect.gen(function* () {
-      const world = yield* startWorld;
-      hostDatabase(world);
-      yield* seed(world, {});
-
-      const out = yield* runLink(world);
-
-      expect(stackWarnings(out)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.live("stays quiet about the stack of another project", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const world = yield* startWorld;
-      hostDatabase(world);
-      const other = yield* fs.makeTempDirectoryScoped({ prefix: "link-lock-other-" });
-      yield* seedProjectStack({
-        projectRoot: other,
-        supabaseHome: `${world.workdir}/.supabase`,
-        built: BUILT,
-      });
-
-      const out = yield* runLink(world);
-
-      expect(stackWarnings(out)).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
   it.live("leaves a frozen link silent about saved stacks", () =>

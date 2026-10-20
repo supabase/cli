@@ -347,19 +347,12 @@ describe("experimental stack update and saved stack data", () => {
     `run \`supabase stack destroy --stack-id ${stackId}\` to recreate the stack — this permanently deletes its local database data`;
 
   const lockedAt =
-    (databaseUpstream: string, authUpstream?: string) =>
+    (databaseUpstream: string) =>
     (services: Parameters<NonNullable<Parameters<typeof seedLock>[1]>>[0]) => ({
       ...services,
       database: {
         ...services.database,
         resolved: rebuilt(services.database.resolved, databaseUpstream),
-      },
-      auth: {
-        ...services.auth,
-        resolved:
-          authUpstream === undefined
-            ? services.auth.resolved
-            : rebuilt(services.auth.resolved, authUpstream),
       },
     });
 
@@ -384,45 +377,6 @@ describe("experimental stack update and saved stack data", () => {
         ]);
         expect((yield* readServices(root)).database.resolved.upstreamVersion).toBe(BUILT);
       }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.live("offers pinning the migrating version when a bundled schema writer moves below it", () =>
-    Effect.gen(function* () {
-      const host = yield* startReleaseFixture;
-      const root = yield* project({});
-      yield* seed(root, host, lockedAt(BUILT, "v99.5.0"));
-      const stackId = yield* seedProjectStack({
-        projectRoot: root,
-        supabaseHome: `${root}/.supabase`,
-        composed: ["auth"],
-        migrated: { auth: "v99.5.0" },
-      });
-
-      const { output, run } = update(root, host, ["auth"]);
-      yield* run;
-
-      expect(stackWarnings(output)).toEqual([
-        `stack ${stackId}: the next supabase start refuses these pins: auth ${selection.auth.upstreamVersion} is older than v99.5.0, which already migrated this database; downgrading does not restore the old schema, so keep this data by pinning \`[local.services.auth] version = "v99.5.0"\` in supabase/config.toml, or ${destroy(stackId)}`,
-      ]);
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.live("stays quiet about a schema writer the saved stack does not run", () =>
-    Effect.gen(function* () {
-      const host = yield* startReleaseFixture;
-      const root = yield* project({});
-      yield* seed(root, host, lockedAt(BUILT, "v99.5.0"));
-      yield* seedProjectStack({
-        projectRoot: root,
-        supabaseHome: `${root}/.supabase`,
-        migrated: { auth: "v99.5.0" },
-      });
-
-      const { output, run } = update(root, host, ["auth"]);
-      yield* run;
-
-      expect(stackWarnings(output)).toEqual([]);
-    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live("stays quiet when only a revision of the build that initialized the data moves", () =>

@@ -44,13 +44,14 @@ nothing is resolved or written.
 
 When the command writes the lock and releases the project lease, it checks the new pins against
 the database data of every saved stack of this project, by the rules the next `supabase stack
-start` of that stack applies. The lock is written either way. Each stack whose data would be
-refused gets one warning, `stack <id>: the next supabase start refuses these pins:` followed by the
+start` of that stack applies. The lock is written either way. Each refusal gets one
+warning, `stack <id>: the next supabase start refuses these pins:` followed by the
 failure that start reports: a database build other than a new `-rN` revision of the one that
-initialized the data, or a schema-owning service the stack runs against that database that is
+initialized the data (on Docker and Podman, also the one an interrupted first start recorded), or a schema-owning service the stack runs against that database that is
 older than one that already migrated it. The failure names the recorded and refused versions and
-the remedies: restoring the setting in `supabase/config.toml` that selects the recorded version
-(`[local.services.<service>] version`, `[db] major_version` or `[db] orioledb_version`), or
+the remedies: pinning the recorded version in `supabase/config.toml`
+(`[local.services.<service>] version`, with `[db] major_version` set back when the database major
+differs and any `[db] orioledb_version` removed when an OrioleDB build is requested), or
 `supabase stack destroy --stack-id <id>`, which permanently deletes the stack's local database
 data. Data with no recorded identity offers only the destroy. The check is skipped when nothing was
 written, the span records `lock.data_conflict_count`, and saved state that cannot be read is logged

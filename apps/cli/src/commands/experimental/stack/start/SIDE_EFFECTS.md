@@ -190,8 +190,10 @@ cause is unpublished (`invalid_config`) or transient (`network`) for an explicit
 database whose pin comes from `[local.services]` reports its changes as
 `[local.services.database] version`.
 
-`supabase db reset`, the database shadow of `supabase db diff`, `supabase functions serve` and the
-local services listing read the same lock without the lease or any resolution. When the project has
+`supabase db reset`, the database shadow of `supabase db diff`, the temporary Functions instance
+`supabase functions serve` creates when the stack excludes Functions, and the local services listing
+read the same lock without the lease or any resolution; serving through an existing Functions member
+runs the build its stack already started with. When the project has
 no lock they fall back to the versions bundled with the CLI, honouring `[db] major_version` and
 `orioledb_version` and a `[local.services]` database version the CLI bundles; any other explicit
 upstream-version specifier fails with `supabase/supabase.lock not found; run supabase start to create
@@ -294,9 +296,9 @@ Initialized database data is reused only by a slim-services revision of the buil
 it: the same release line, PostgreSQL major and upstream version, with any `-rN` revision. Every
 start that finds initialized data checks this before preparing or launching the database. A
 different line, major or upstream version fails the start, naming the recorded and requested builds
-and advising to keep the data by restoring the setting in `supabase/config.toml` that selects the
-recorded build (`[local.services.database] version = "<recorded build>"`, `[db] major_version` when
-the major differs, `[db] orioledb_version` when the line differs), or to run `supabase stack destroy`, which permanently deletes the
+and advising to keep the data by pinning `[local.services.database] version = "<recorded build>"` in
+`supabase/config.toml`, with `[db] major_version` set to the recorded major when the major differs and
+any `[db] orioledb_version` removed when an OrioleDB build is requested, or to run `supabase stack destroy`, which permanently deletes the
 stack's local database data; data with no recorded identity offers only the destroy. A
 first start records its identity in `.supabase-database-identity.json` before initializing data, so
 a first start interrupted before readiness resumes only on that build; initialized data with no

@@ -61,7 +61,6 @@ import {
   withoutUnusedCredentials,
 } from "./host/Credentials.ts";
 import {
-  bindsDatabaseUrl,
   makeSupabaseComposition,
   type SupabaseCompositionOptions,
 } from "./composition/Supabase.ts";
@@ -741,7 +740,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       yield* Effect.forEach(
         creations,
         ({ service, pin }) =>
-          isSchemaWriter(service) && bindsDatabaseUrl(service)
+          isSchemaWriter(service)
             ? checkSchemaWriter(
                 fs,
                 path,

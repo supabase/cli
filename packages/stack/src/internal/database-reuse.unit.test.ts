@@ -28,45 +28,36 @@ it("offers to keep data by pinning its build when the major and line are unchang
   );
 });
 
-it("offers to restore the recorded major instead of a pin that cannot validate", () => {
-  const message = messageFor(STOCK_15, STOCK_17);
-
-  expect(message).toBe(
-    `PostgreSQL data was initialized by stock PostgreSQL build ${STOCK_15}, but stock PostgreSQL build ${STOCK_17} was requested; keep this data by setting \`[db] major_version = 15\` in supabase/config.toml, or ${destroy}`,
+it("offers to restore the recorded major beside the pin when the major differs", () => {
+  expect(messageFor(STOCK_15, STOCK_17)).toBe(
+    `PostgreSQL data was initialized by stock PostgreSQL build ${STOCK_15}, but stock PostgreSQL build ${STOCK_17} was requested; keep this data by pinning \`[local.services.database] version = "${STOCK_15}"\` and setting \`[db] major_version = 15\` in supabase/config.toml, or ${destroy}`,
   );
-  expect(message).not.toContain("[local.services.database]");
 });
 
-it("offers to remove orioledb_version when stock data is asked for an OrioleDB build", () => {
-  const message = messageFor(STOCK_17, ORIOLEDB_17);
-
-  expect(message).toBe(
-    `PostgreSQL data was initialized by stock PostgreSQL build ${STOCK_17}, but OrioleDB build ${ORIOLEDB_17} was requested; keep this data by removing \`[db] orioledb_version\` in supabase/config.toml, or ${destroy}`,
+it("offers to remove any orioledb_version when stock data is asked for an OrioleDB build of the same major", () => {
+  expect(messageFor(STOCK_17, ORIOLEDB_17)).toBe(
+    `PostgreSQL data was initialized by stock PostgreSQL build ${STOCK_17}, but OrioleDB build ${ORIOLEDB_17} was requested; keep this data by pinning \`[local.services.database] version = "${STOCK_17}"\` and removing any \`[db] orioledb_version\` in supabase/config.toml, or ${destroy}`,
   );
-  expect(message).not.toContain("[local.services.database]");
 });
 
-it("offers to restore orioledb_version when OrioleDB data is asked for a stock build", () => {
-  const message = messageFor(ORIOLEDB_17, STOCK_17);
-
-  expect(message).toBe(
-    `PostgreSQL data was initialized by OrioleDB build ${ORIOLEDB_17}, but stock PostgreSQL build ${STOCK_17} was requested; keep this data by setting \`[db] orioledb_version = "17.11.0.002"\` in supabase/config.toml, or ${destroy}`,
+it("offers only the pin when OrioleDB data is asked for a stock build of the same major", () => {
+  expect(messageFor(ORIOLEDB_17, STOCK_17)).toBe(
+    `PostgreSQL data was initialized by OrioleDB build ${ORIOLEDB_17}, but stock PostgreSQL build ${STOCK_17} was requested; keep this data by pinning \`[local.services.database] version = "${ORIOLEDB_17}"\` in supabase/config.toml, or ${destroy}`,
   );
-  expect(message).not.toContain("[local.services.database]");
 });
 
-it("offers to restore orioledb_version when OrioleDB data is asked for another OrioleDB build", () => {
+it("offers to remove any orioledb_version when OrioleDB data is asked for another OrioleDB build", () => {
   expect(messageFor(ORIOLEDB_17, ORIOLEDB_17_NEWER)).toBe(
-    `PostgreSQL data was initialized by OrioleDB build ${ORIOLEDB_17}, but OrioleDB build ${ORIOLEDB_17_NEWER} was requested; keep this data by setting \`[db] orioledb_version = "17.11.0.002"\` in supabase/config.toml, or ${destroy}`,
+    `PostgreSQL data was initialized by OrioleDB build ${ORIOLEDB_17}, but OrioleDB build ${ORIOLEDB_17_NEWER} was requested; keep this data by pinning \`[local.services.database] version = "${ORIOLEDB_17}"\` and removing any \`[db] orioledb_version\` in supabase/config.toml, or ${destroy}`,
   );
 });
 
-it("offers every setting to restore when both the major and the line differ", () => {
+it("offers each edit that applies when both the major and the line differ", () => {
   expect(messageFor(STOCK_15, ORIOLEDB_17)).toContain(
-    "keep this data by setting `[db] major_version = 15` and removing `[db] orioledb_version` in supabase/config.toml",
+    `keep this data by pinning \`[local.services.database] version = "${STOCK_15}"\`, setting \`[db] major_version = 15\`, and removing any \`[db] orioledb_version\` in supabase/config.toml`,
   );
   expect(messageFor(ORIOLEDB_17, STOCK_15)).toContain(
-    'keep this data by setting `[db] major_version = 17` and setting `[db] orioledb_version = "17.11.0.002"` in supabase/config.toml',
+    `keep this data by pinning \`[local.services.database] version = "${ORIOLEDB_17}"\` and setting \`[db] major_version = 17\` in supabase/config.toml`,
   );
 });
 

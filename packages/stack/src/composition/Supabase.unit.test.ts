@@ -5,9 +5,7 @@ import * as Orchestrator from "../Orchestrator.ts";
 import { makeService, ServiceError } from "../Service.ts";
 import type { SavedStack } from "../StackNamespace.ts";
 import type { ServiceCreation } from "../services/Catalog.ts";
-import { schemaWriterServices } from "../internal/schema-writers.ts";
 import {
-  bindsDatabaseUrl,
   makeSupabaseComposition,
   planEndpointReplan,
   type SupabaseCompositionOperations,
@@ -281,8 +279,4 @@ it("releases the shared listener's automatic claim when another sharing service 
   ];
   expect(planEndpointReplan(saved, requested)?.releasesSharedApi).toBe(true);
   expect(planEndpointReplan(saved, [])).toBeUndefined();
-});
-
-it("binds the databaseUrl of every schema-owning service to a composed database", () => {
-  expect(schemaWriterServices.filter((service) => !bindsDatabaseUrl(service))).toEqual([]);
 });

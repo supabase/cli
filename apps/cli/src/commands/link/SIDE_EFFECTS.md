@@ -235,13 +235,14 @@ stays busy fails the link with `LockResolutionError` reason `lease-busy` before 
   `service`, `hosted`, `locked`, `resolution`). When the lock was written, the lease is then
   released and the new pins are checked against the database data of every saved stack of this
   project (the `StackLock.dataConflicts` span, which records `lock.data_conflict_count`), by the
-  rules the next `supabase stack start` of that stack applies. Each stack whose data would be
-  refused gets one warning, `stack <id>: the next supabase start refuses these pins:` followed by
+  rules the next `supabase stack start` of that stack applies. Each refusal gets one
+  warning, `stack <id>: the next supabase start refuses these pins:` followed by
   the failure that start reports: a database build other than a new `-rN` revision of the one that
-  initialized the data, or a schema-owning service the stack runs against that database that is
+  initialized the data (on Docker and Podman, also the one an interrupted first start recorded), or a schema-owning service the stack runs against that database that is
   older than one that already migrated it. The failure names the recorded and refused versions and
-  the remedies: restoring the setting in `supabase/config.toml` that selects the recorded version
-  (`[local.services.<service>] version`, `[db] major_version` or `[db] orioledb_version`), or
+  the remedies: pinning the recorded version in `supabase/config.toml`
+  (`[local.services.<service>] version`, with `[db] major_version` set back when the database major
+  differs and any `[db] orioledb_version` removed when an OrioleDB build is requested), or
   `supabase stack destroy --stack-id <id>`, which permanently deletes the stack's local database
   data (data with no recorded identity offers only the destroy). The lock stays written, the link
   never fails on this check, and saved state that cannot be read is logged at debug level and

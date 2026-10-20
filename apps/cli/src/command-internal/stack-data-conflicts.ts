@@ -6,7 +6,7 @@ import { CommandSettings } from "../config/command-settings.service.ts";
 import type { Output } from "../shared/output/output.service.ts";
 
 /**
- * Warns once per saved stack of the project whose data a start at `selection` would refuse, and
+ * Warns once per data conflict a start at `selection` would meet in the project's saved stacks, and
  * returns how many it found; state that cannot be read warns of nothing and is only logged.
  */
 export const warnDataConflicts = Effect.fn("StackLock.dataConflicts")(

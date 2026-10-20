@@ -1,6 +1,6 @@
 import { Data, Effect, Schema } from "effect";
 import type { FileSystem, Path } from "effect";
-import { isOrioledbVersion, orioledbConfigVersion, postgresMajor } from "../Artifacts.ts";
+import { isOrioledbVersion, postgresMajor } from "../Artifacts.ts";
 
 /** Recovery for local database data a stack cannot reuse, worded like the CLI's saved-stack advice. */
 export const recreateStackAdvice = (stackId: string): string =>
@@ -50,8 +50,8 @@ export class DatabaseIdentityMismatch extends Schema.TaggedError<DatabaseIdentit
 ) {}
 
 /**
- * How to keep data `recorded` created. Pinning its build only works within one major and line, so
- * otherwise the `[db]` settings that select them are put back.
+ * How to keep data `recorded` created: pin its build, which selects its line, plus the `[db]` edits
+ * that keep the pin valid whichever setting selected the requested build.
  */
 const keepDatabaseAdvice = (
   stackId: string,
@@ -62,15 +62,14 @@ const keepDatabaseAdvice = (
     ...(recorded.major === requested.major
       ? []
       : [`setting \`[db] major_version = ${recorded.major}\``]),
-    ...(recorded.line === "orioledb"
-      ? [`setting \`[db] orioledb_version = "${orioledbConfigVersion(recorded.build)}"\``]
-      : requested.line === "orioledb"
-        ? ["removing `[db] orioledb_version`"]
-        : []),
+    ...(requested.line === "orioledb" ? ["removing any `[db] orioledb_version`"] : []),
   ];
-  return edits.length === 0
-    ? keepOrRecreateAdvice(stackId, "database", recorded.build)
-    : `keep this data by ${edits.join(" and ")} in supabase/config.toml, or ${recreateStackAdvice(stackId)}`;
+  if (edits.length === 0) return keepOrRecreateAdvice(stackId, "database", recorded.build);
+  const clauses = new Intl.ListFormat("en", { type: "conjunction" }).format([
+    `pinning \`[local.services.database] version = "${recorded.build}"\``,
+    ...edits,
+  ]);
+  return `keep this data by ${clauses} in supabase/config.toml, or ${recreateStackAdvice(stackId)}`;
 };
 
 /**
