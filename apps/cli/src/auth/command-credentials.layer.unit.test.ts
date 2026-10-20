@@ -1,27 +1,29 @@
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit, FileSystem, Layer, Option, PlatformError, Redacted } from "effect";
-import { afterEach, beforeEach, vi } from "vitest";
+import { BunPath, BunServices } from "@effect/platform-bun";
+import {
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Redacted,
+  Schema,
+} from "effect";
+import { beforeEach, vi } from "vitest";
 
 import { DebugFlag, ProfileFlag, WorkdirFlag } from "../command-internal/global-flags.ts";
+import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { mockRuntimeInfo, processEnvLayer } from "../../tests/helpers/mocks.ts";
 import { commandSettingsLayer } from "../config/command-settings.layer.ts";
 import { debugLoggerLayer } from "../command-internal/debug-logger.layer.ts";
 import { commandCredentialsLayer } from "./command-credentials.layer.ts";
 import { CommandCredentials } from "./command-credentials.service.ts";
 import { DeleteTokenError, InvalidAccessTokenError, NotLoggedInError } from "./errors.ts";
+
+const path = Effect.runSync(Effect.provide(Path.Path, BunPath.layer));
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const passwords = new Map<string, string>();
 let throwOnSetPassword = false;
@@ -97,7 +99,7 @@ vi.mock("@napi-rs/keyring", () => ({
   },
 }));
 
-let tempHome: string;
+const tempHome = useTempWorkdir("supabase-creds-");
 
 function makeLayer(
   opts: {
@@ -108,7 +110,7 @@ function makeLayer(
     fs?: Layer.Layer<FileSystem.FileSystem>;
   } = {},
 ) {
-  const home = opts.home ?? tempHome;
+  const home = opts.home ?? tempHome.current;
   const env = { HOME: home, ...opts.env };
   const envLayer = processEnvLayer(env);
   const runtimeInfoLayer = mockRuntimeInfo({
@@ -131,7 +133,7 @@ function makeLayer(
     Layer.provide(Layer.succeed(DebugFlag, opts.debug ?? false)),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(opts.fs ?? BunServices.layer),
-    Layer.provide(BunServices.layer),
+    Layer.provideMerge(BunServices.layer),
     Layer.provide(envLayer),
   );
 }
@@ -146,11 +148,6 @@ beforeEach(() => {
   opaqueAccounts.clear();
   failDeleteAccounts.clear();
   throwOnFindCredentials = false;
-  tempHome = mkdtempSync(join(tmpdir(), "supabase-creds-"));
-});
-
-afterEach(() => {
-  rmSync(tempHome, { recursive: true, force: true });
 });
 
 const VALID_TOKEN = "sbp_" + "a".repeat(40);
@@ -181,7 +178,7 @@ function captureStderr() {
 
 describe("commandCredentialsLayer.getAccessToken", () => {
   it.effect("surfaces a filesystem read failure instead of treating it as no token", () => {
-    const fallbackPath = join(tempHome, ".supabase", "access-token");
+    const fallbackPath = path.join(tempHome.current, ".supabase", "access-token");
     const fsLayer = Layer.succeed(
       FileSystem.FileSystem,
       FileSystem.makeNoop({
@@ -291,10 +288,13 @@ describe("commandCredentialsLayer.getAccessToken", () => {
   });
 
   it.effect("falls back to ~/.supabase/access-token when keyring entries miss", () => {
-    const supaDir = join(tempHome, ".supabase");
-    mkdirSync(supaDir, { recursive: true });
-    writeFileSync(join(supaDir, "access-token"), `${VALID_TOKEN}\n`, { mode: 0o600 });
+    const supaDir = path.join(tempHome.current, ".supabase");
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(supaDir, { recursive: true });
+      yield* fs.writeFileString(path.join(supaDir, "access-token"), `${VALID_TOKEN}\n`, {
+        mode: 0o600,
+      });
       const { getAccessToken } = yield* CommandCredentials;
       const token = yield* getAccessToken;
       expectSomeToken(token, VALID_TOKEN);
@@ -302,10 +302,13 @@ describe("commandCredentialsLayer.getAccessToken", () => {
   });
 
   it.effect("falls back to SUPABASE_HOME/access-token when configured", () => {
-    const supabaseHome = join(tempHome, "custom-supabase-home");
-    mkdirSync(supabaseHome, { recursive: true });
-    writeFileSync(join(supabaseHome, "access-token"), `${VALID_TOKEN}\n`, { mode: 0o600 });
+    const supabaseHome = path.join(tempHome.current, "custom-supabase-home");
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(supabaseHome, { recursive: true });
+      yield* fs.writeFileString(path.join(supabaseHome, "access-token"), `${VALID_TOKEN}\n`, {
+        mode: 0o600,
+      });
       const { getAccessToken } = yield* CommandCredentials;
       const token = yield* getAccessToken;
       expectSomeToken(token, VALID_TOKEN);
@@ -327,7 +330,7 @@ describe("commandCredentialsLayer.getAccessToken", () => {
       const exit = yield* Effect.exit(getAccessToken);
       expect(exit._tag).toBe("Failure");
       if (exit._tag === "Failure") {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = yield* encodeJson(exit.cause);
         expect(errorJson).toContain("InvalidAccessTokenError");
         expect(errorJson).toContain("Invalid access token format");
       }
@@ -367,10 +370,11 @@ describe("commandCredentialsLayer.getAccessToken", () => {
   it.effect("falls back to the filesystem when keyring throws", () => {
     throwOnGetPasswordAccounts.add("Supabase CLI/supabase");
     throwOnGetPasswordAccounts.add("Supabase CLI/access-token");
-    const supaDir = join(tempHome, ".supabase");
-    mkdirSync(supaDir, { recursive: true });
-    writeFileSync(join(supaDir, "access-token"), VALID_TOKEN, { mode: 0o600 });
+    const supaDir = path.join(tempHome.current, ".supabase");
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(supaDir, { recursive: true });
+      yield* fs.writeFileString(path.join(supaDir, "access-token"), VALID_TOKEN, { mode: 0o600 });
       const { getAccessToken } = yield* CommandCredentials;
       const token = yield* getAccessToken;
       expectSomeToken(token, VALID_TOKEN);
@@ -381,7 +385,7 @@ describe("commandCredentialsLayer.getAccessToken", () => {
 describe("commandCredentialsLayer.saveAccessToken", () => {
   it.effect("surfaces a fallback directory write failure as PlatformError", () => {
     throwOnSetPassword = true;
-    const fallbackDir = join(tempHome, ".supabase");
+    const fallbackDir = path.join(tempHome.current, ".supabase");
     const fsLayer = Layer.succeed(
       FileSystem.FileSystem,
       FileSystem.makeNoop({
@@ -415,7 +419,7 @@ describe("commandCredentialsLayer.saveAccessToken", () => {
       const exit = yield* Effect.exit(saveAccessToken("nope"));
       expect(exit._tag).toBe("Failure");
       if (exit._tag === "Failure") {
-        expect(JSON.stringify(exit.cause)).toContain("InvalidAccessTokenError");
+        expect(yield* encodeJson(exit.cause)).toContain("InvalidAccessTokenError");
       }
     }).pipe(Effect.provide(makeLayer())),
   );
@@ -452,7 +456,10 @@ describe("commandCredentialsLayer.saveAccessToken", () => {
       yield* saveAccessToken(VALID_TOKEN);
       expect(passwords.get(goWindowsKey("supabase")) ?? "").toBe("");
       expect(passwords.has("Supabase CLI/supabase")).toBe(false);
-      const content = readFileSync(join(tempHome, ".supabase", "access-token"), "utf-8");
+      const fs = yield* FileSystem.FileSystem;
+      const content = yield* fs.readFileString(
+        path.join(tempHome.current, ".supabase", "access-token"),
+      );
       expect(content).toBe(VALID_TOKEN);
     }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
   });
@@ -464,12 +471,13 @@ describe("commandCredentialsLayer.saveAccessToken", () => {
     return Effect.gen(function* () {
       const { saveAccessToken } = yield* CommandCredentials;
       yield* saveAccessToken(VALID_TOKEN);
-      const fallbackDir = join(tempHome, ".supabase");
-      const fallbackPath = join(fallbackDir, "access-token");
-      const content = readFileSync(fallbackPath, "utf-8");
+      const fs = yield* FileSystem.FileSystem;
+      const fallbackDir = path.join(tempHome.current, ".supabase");
+      const fallbackPath = path.join(fallbackDir, "access-token");
+      const content = yield* fs.readFileString(fallbackPath);
       expect(content).toBe(VALID_TOKEN);
-      expect(statSync(fallbackDir).mode & 0o777).toBe(0o755);
-      expect(statSync(fallbackPath).mode & 0o777).toBe(0o600);
+      expect((yield* fs.stat(fallbackDir)).mode & 0o777).toBe(0o755);
+      expect((yield* fs.stat(fallbackPath)).mode & 0o777).toBe(0o600);
     }).pipe(
       Effect.provide(makeLayer()),
       Effect.ensuring(Effect.sync(() => process.umask(prevUmask))),
@@ -478,64 +486,74 @@ describe("commandCredentialsLayer.saveAccessToken", () => {
 
   it.effect("filesystem fallback honors SUPABASE_HOME when configured", () => {
     throwOnSetPassword = true;
-    const supabaseHome = join(tempHome, "custom-supabase-home");
+    const supabaseHome = path.join(tempHome.current, "custom-supabase-home");
     return Effect.gen(function* () {
       const { saveAccessToken } = yield* CommandCredentials;
       yield* saveAccessToken(VALID_TOKEN);
-      const content = readFileSync(join(supabaseHome, "access-token"), "utf-8");
+      const fs = yield* FileSystem.FileSystem;
+      const content = yield* fs.readFileString(path.join(supabaseHome, "access-token"));
       expect(content).toBe(VALID_TOKEN);
-      expect(existsSync(join(tempHome, ".supabase", "access-token"))).toBe(false);
+      expect(yield* fs.exists(path.join(tempHome.current, ".supabase", "access-token"))).toBe(
+        false,
+      );
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_HOME: supabaseHome } })));
   });
 });
 
 describe("commandCredentialsLayer.deleteAccessToken", () => {
-  const seedTokenFile = (home: string, token = VALID_TOKEN) => {
-    const supaDir = join(home, ".supabase");
-    mkdirSync(supaDir, { recursive: true });
-    writeFileSync(join(supaDir, "access-token"), token, { mode: 0o600 });
-  };
-  const tokenFileExists = (home: string) => existsSync(join(home, ".supabase", "access-token"));
+  const seedTokenFile = Effect.fnUntraced(function* (home: string, token = VALID_TOKEN) {
+    const fs = yield* FileSystem.FileSystem;
+    const supaDir = path.join(home, ".supabase");
+    yield* fs.makeDirectory(supaDir, { recursive: true });
+    yield* fs.writeFileString(path.join(supaDir, "access-token"), token, { mode: 0o600 });
+  });
+  const tokenFileExists = Effect.fnUntraced(function* (home: string) {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.exists(path.join(home, ".supabase", "access-token"));
+  });
 
   it.effect("logged in via keyring profile entry → deletes file + entry, succeeds", () => {
     passwords.set("Supabase CLI/supabase", VALID_TOKEN);
     passwords.set("Supabase CLI/access-token", VALID_OAUTH_TOKEN);
-    seedTokenFile(tempHome);
     return Effect.gen(function* () {
+      yield* seedTokenFile(tempHome.current);
       const { deleteAccessToken } = yield* CommandCredentials;
       yield* deleteAccessToken;
       expect(passwords.has("Supabase CLI/supabase")).toBe(false);
       expect(passwords.has("Supabase CLI/access-token")).toBe(false);
-      expect(tokenFileExists(tempHome)).toBe(false);
+      expect(yield* tokenFileExists(tempHome.current)).toBe(false);
     }).pipe(Effect.provide(makeLayer()));
   });
 
   it.effect("logged in via keyring profile entry → deletes the SUPABASE_HOME file", () => {
-    const supabaseHome = join(tempHome, "custom-supabase-home");
-    mkdirSync(supabaseHome, { recursive: true });
-    writeFileSync(join(supabaseHome, "access-token"), VALID_TOKEN, { mode: 0o600 });
+    const supabaseHome = path.join(tempHome.current, "custom-supabase-home");
     passwords.set("Supabase CLI/supabase", VALID_TOKEN);
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(supabaseHome, { recursive: true });
+      yield* fs.writeFileString(path.join(supabaseHome, "access-token"), VALID_TOKEN, {
+        mode: 0o600,
+      });
       const { deleteAccessToken } = yield* CommandCredentials;
       yield* deleteAccessToken;
       expect(passwords.has("Supabase CLI/supabase")).toBe(false);
-      expect(existsSync(join(supabaseHome, "access-token"))).toBe(false);
+      expect(yield* fs.exists(path.join(supabaseHome, "access-token"))).toBe(false);
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_HOME: supabaseHome } })));
   });
 
   it.effect(
     "keyring profile entry absent → NotLoggedInError even though the file was removed",
     () => {
-      seedTokenFile(tempHome);
       return Effect.gen(function* () {
+        yield* seedTokenFile(tempHome.current);
         const { deleteAccessToken } = yield* CommandCredentials;
         const exit = yield* Effect.exit(deleteAccessToken);
         expect(exit._tag).toBe("Failure");
         if (exit._tag === "Failure") {
-          expect(JSON.stringify(exit.cause)).toContain("NotLoggedInError");
-          expect(JSON.stringify(exit.cause)).toContain("You were not logged in, nothing to do.");
+          expect(yield* encodeJson(exit.cause)).toContain("NotLoggedInError");
+          expect(yield* encodeJson(exit.cause)).toContain("You were not logged in, nothing to do.");
         }
-        expect(tokenFileExists(tempHome)).toBe(false);
+        expect(yield* tokenFileExists(tempHome.current)).toBe(false);
       }).pipe(Effect.provide(makeLayer()));
     },
   );
@@ -546,7 +564,7 @@ describe("commandCredentialsLayer.deleteAccessToken", () => {
       const exit = yield* Effect.exit(deleteAccessToken);
       expect(exit._tag).toBe("Failure");
       if (exit._tag === "Failure") {
-        expect(JSON.stringify(exit.cause)).toContain("NotLoggedInError");
+        expect(yield* encodeJson(exit.cause)).toContain("NotLoggedInError");
       }
       expect(passwords.has(goWindowsKey("supabase"))).toBe(false);
       expect(withTargetCalls).toEqual([]);
@@ -560,7 +578,7 @@ describe("commandCredentialsLayer.deleteAccessToken", () => {
       const exit = yield* Effect.exit(deleteAccessToken);
       expect(exit._tag).toBe("Failure");
       if (exit._tag === "Failure") {
-        expect(JSON.stringify(exit.cause)).toContain("NotLoggedInError");
+        expect(yield* encodeJson(exit.cause)).toContain("NotLoggedInError");
       }
     }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
   });
@@ -568,23 +586,23 @@ describe("commandCredentialsLayer.deleteAccessToken", () => {
   it.effect(
     "keyring unavailable (SUPABASE_NO_KEYRING) with token in file → removes file, still NotLoggedIn",
     () => {
-      seedTokenFile(tempHome);
       return Effect.gen(function* () {
+        yield* seedTokenFile(tempHome.current);
         const { deleteAccessToken } = yield* CommandCredentials;
         const exit = yield* Effect.exit(deleteAccessToken);
         expect(exit._tag).toBe("Failure");
         if (exit._tag === "Failure") {
-          expect(JSON.stringify(exit.cause)).toContain("NotLoggedInError");
+          expect(yield* encodeJson(exit.cause)).toContain("NotLoggedInError");
         }
-        expect(tokenFileExists(tempHome)).toBe(false);
+        expect(yield* tokenFileExists(tempHome.current)).toBe(false);
       }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_NO_KEYRING: "1" } })));
     },
   );
 
   it.effect("file remove error (non-ENOENT) → DeleteTokenError before touching keyring", () => {
-    const home = tempHome;
+    const home = tempHome.current;
     const env = { HOME: home };
-    const tokenPath = join(home, ".supabase", "access-token");
+    const tokenPath = path.join(home, ".supabase", "access-token");
     // Seeds a profile keyring entry to prove the keyring is never touched once the file removal fails.
     passwords.set("Supabase CLI/supabase", VALID_TOKEN);
     const runtimeInfoLayer = mockRuntimeInfo({ homeDir: home, cwd: home });
@@ -627,8 +645,8 @@ describe("commandCredentialsLayer.deleteAccessToken", () => {
       const exit = yield* Effect.exit(deleteAccessToken);
       expect(exit._tag).toBe("Failure");
       if (exit._tag === "Failure") {
-        expect(JSON.stringify(exit.cause)).toContain("DeleteTokenError");
-        expect(JSON.stringify(exit.cause)).toContain("failed to remove access token file");
+        expect(yield* encodeJson(exit.cause)).toContain("DeleteTokenError");
+        expect(yield* encodeJson(exit.cause)).toContain("failed to remove access token file");
       }
       expect(passwords.has("Supabase CLI/supabase")).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -642,8 +660,10 @@ describe("commandCredentialsLayer.deleteAccessToken", () => {
       const exit = yield* Effect.exit(deleteAccessToken);
       expect(exit._tag).toBe("Failure");
       if (exit._tag === "Failure") {
-        expect(JSON.stringify(exit.cause)).toContain("DeleteTokenError");
-        expect(JSON.stringify(exit.cause)).toContain("failed to delete access token from keyring");
+        expect(yield* encodeJson(exit.cause)).toContain("DeleteTokenError");
+        expect(yield* encodeJson(exit.cause)).toContain(
+          "failed to delete access token from keyring",
+        );
       }
     }).pipe(Effect.provide(makeLayer()));
   });
@@ -680,7 +700,7 @@ describe("commandCredentialsLayer.deleteAccessToken", () => {
       const exit = yield* Effect.exit(deleteAccessToken);
       expect(exit._tag).toBe("Failure");
       if (exit._tag === "Failure") {
-        expect(JSON.stringify(exit.cause)).toContain("DeleteTokenError");
+        expect(yield* encodeJson(exit.cause)).toContain("DeleteTokenError");
       }
       expect(passwords.has(goWindowsKey("supabase"))).toBe(true);
     }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
@@ -705,7 +725,7 @@ describe("commandCredentialsLayer.deleteAccessToken", () => {
         const exit = yield* Effect.exit(deleteAccessToken);
         expect(exit._tag).toBe("Failure");
         if (exit._tag === "Failure") {
-          expect(JSON.stringify(exit.cause)).toContain("DeleteTokenError");
+          expect(yield* encodeJson(exit.cause)).toContain("DeleteTokenError");
         }
       }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
     },
@@ -803,7 +823,7 @@ describe("commandCredentialsLayer.deleteProjectCredential", () => {
         const exit = yield* Effect.exit(deleteProjectCredential("abcdefghijklmnopqrs1"));
         expect(exit._tag).toBe("Failure");
         if (exit._tag === "Failure") {
-          expect(JSON.stringify(exit.cause)).toContain("CredentialDeleteError");
+          expect(yield* encodeJson(exit.cause)).toContain("CredentialDeleteError");
         }
       }).pipe(Effect.provide(makeLayer({ platform: "win32" })));
     },

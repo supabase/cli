@@ -1,16 +1,22 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { ExperimentalFeatureFlagError } from "../../../command-internal/experimental-feature.ts";
+import { readLinkSnapshot } from "../../../command-internal/link-snapshot.ts";
+import { projectStateModeLayer } from "../../../command-internal/project-state-mode.ts";
 import { respondToComplete } from "../../../cli/complete.ts";
 import { rootCommandForFeatures } from "../../../cli/root.ts";
 import {
   type StackBackend,
   StackRoutingError,
-  resolveStackBackend,
+  resolveProjectStateSelection,
 } from "../../../command-internal/stack-backend.ts";
 
-const resolve = (input: Parameters<typeof resolveStackBackend>[0]) =>
-  resolveStackBackend(input).pipe(Effect.provide(BunServices.layer));
+const select = (input: Parameters<typeof resolveProjectStateSelection>[0]) =>
+  resolveProjectStateSelection(input).pipe(Effect.provide(BunServices.layer));
+
+const resolve = (input: Parameters<typeof resolveProjectStateSelection>[0]) =>
+  select(input).pipe(Effect.map(({ stackBackend }) => stackBackend));
 
 const project = (config: string, format: "toml" | "json" = "toml") =>
   Effect.gen(function* () {
@@ -32,7 +38,7 @@ const completionFlags = (backend: StackBackend | undefined, command: string) =>
     "--",
   ])?.candidates.map(({ name }) => name);
 
-describe("resolveStackBackend", () => {
+describe("resolveProjectStateSelection", () => {
   it.effect("keeps the explicit stack namespace disabled without the feature flag", () =>
     Effect.gen(function* () {
       expect(yield* resolve({ args: ["stack", "start"], cwd: "/missing", env: {} })).toBe("legacy");
@@ -216,6 +222,44 @@ stack = true
     );
   });
 
+  it.effect("keeps an invalid environment value from failing an unrouted command", () =>
+    withServices(
+      Effect.gen(function* () {
+        const root = yield* project("[experimental]\nstack = true\n");
+        const selection = yield* select({
+          args: ["login"],
+          cwd: root,
+          env: { SUPABASE_EXPERIMENTAL_STACK: "garbage" },
+        });
+        expect(selection.stackBackend).toBeUndefined();
+        expect(selection.projectState).toBeDefined();
+      }),
+    ),
+  );
+
+  it.effect("fails a link-state read with the typed error once the mode is invalid", () =>
+    withServices(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* project("[experimental]\nstack = true\n");
+        const selection = yield* select({
+          args: ["link"],
+          cwd: root,
+          env: { SUPABASE_EXPERIMENTAL_STACK: "garbage" },
+        });
+        if (selection.projectState === undefined) return yield* Effect.die("no selection");
+
+        const read = yield* readLinkSnapshot(fs, path, root).pipe(
+          Effect.map((snapshot) => snapshot.ref),
+          Effect.provide(projectStateModeLayer(selection.projectState)),
+          Effect.flip,
+        );
+        expect(read).toBeInstanceOf(ExperimentalFeatureFlagError);
+      }),
+    ),
+  );
+
   it.effect("honors explicit workdir and separated global boolean values", () => {
     return withServices(
       Effect.gen(function* () {
@@ -360,7 +404,18 @@ stack = true
       ])?.candidates.map(({ name }) => name);
       expect(stackCommands).toEqual(
         backend === "stack"
-          ? ["destroy", "list", "logs", "prepare", "restart", "start", "status", "stop"]
+          ? [
+              "destroy",
+              "install",
+              "list",
+              "logs",
+              "outdated",
+              "restart",
+              "start",
+              "status",
+              "stop",
+              "update",
+            ]
           : [],
       );
     }

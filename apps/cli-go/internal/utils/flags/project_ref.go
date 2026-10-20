@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/config"
 	"golang.org/x/term"
 )
 
@@ -62,6 +63,9 @@ func LoadProjectRef(fsys afero.Fs) error {
 	if ProjectRef = viper.GetString("PROJECT_ID"); len(ProjectRef) > 0 {
 		fmt.Fprintf(debuglogger, "Loading project ref from env var: %s\n", ProjectRef)
 		return utils.AssertProjectRefIsValid(ProjectRef)
+	}
+	if config.UsesStackState() {
+		return errors.New(utils.ErrNotLinked)
 	}
 	// Load from local file last
 	projectRefBytes, err := afero.ReadFile(fsys, utils.ProjectRefPath)

@@ -19,10 +19,10 @@ import {
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { functionsList } from "./list.handler.ts";
+import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 type Functions = typeof V1ListAllFunctionsOutput.Type;
 
@@ -489,7 +489,7 @@ describe("functions list integration", () => {
         telemetry: telemetry.layer,
         linkedProjectCache: cache.layer,
       }),
-      Layer.succeed(ProjectRefResolver, {
+      stubRemoteTarget({
         resolve: () =>
           Effect.fail(
             new ProjectRefNotLinkedError({
@@ -498,8 +498,8 @@ describe("functions list integration", () => {
           ),
         resolveForLink: () => Effect.die("not used in functions list test"),
         resolveOptional: () => Effect.die("not used in functions list test"),
-        loadProjectRef: () => Effect.die("not used in functions list test"),
-        promptProjectRef: () => Effect.die("not used in functions list test"),
+        load: () => Effect.die("not used in functions list test"),
+        prompt: () => Effect.die("not used in functions list test"),
       }),
     );
     return Effect.gen(function* () {

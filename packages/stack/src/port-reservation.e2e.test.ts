@@ -9,6 +9,7 @@ import { captureOwnerPid } from "../tests/owner.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
 import { testEngine } from "../tests/test-engine.ts";
 import type { ContainerEngine } from "./runtime/Container.ts";
+import { selection } from "../tests/pins.ts";
 
 /**
  * The per-user port reservation registry: a stopped stack keeps its automatic ports across state
@@ -21,7 +22,12 @@ const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(servicesLayer));
 
 const mailOn = (port: number | "auto") =>
-  ({ service: "mail" as const, config: {}, endpoints: { http: { port } } }) as const;
+  ({
+    service: "mail" as const,
+    pin: selection.mail,
+    config: {},
+    endpoints: { http: { port } },
+  }) as const;
 
 const portOf = (observation: Observation): number => {
   const endpoint = observation.endpoints.find((candidate) => candidate.name === "http");

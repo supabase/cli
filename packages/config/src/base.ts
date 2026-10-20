@@ -7,6 +7,7 @@ import { edge_runtime } from "./edge_runtime.ts";
 import { experimental } from "./experimental.ts";
 import { functions } from "./functions.ts";
 import { inbucket } from "./inbucket.ts";
+import { local } from "./local.ts";
 import { toPublishedJsonSchemaDocument } from "./json-schema-document.ts";
 import { realtime } from "./realtime.ts";
 import { storage } from "./storage.ts";
@@ -41,6 +42,7 @@ const baseCliConfigFields = {
   studio,
   compute,
   experimental,
+  local: Schema.optionalKey(local),
 };
 
 const remoteCliConfigBlock = Schema.Struct({

@@ -4,7 +4,7 @@ import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { bold } from "../../../command-internal/colors.ts";
 import {
   readDbToml,
@@ -64,12 +64,19 @@ const runUp = Effect.fnUntraced(function* (
 
   const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
 
+  const remoteTarget = yield* RemoteTarget;
+  const linkedTarget =
+    (target.connType ?? "local") === "linked"
+      ? yield* remoteTarget.load(flags.projectRef)
+      : undefined;
+
   const upBody = Effect.gen(function* () {
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
       connType: target.connType ?? "local",
       dnsResolver,
       linkedProjectRef: flags.projectRef,
+      target: linkedTarget,
     });
     const ref = Option.getOrUndefined(cfg.ref ?? Option.none());
     const toml = yield* readDbToml(fs, path, cliSettings.workdir, ref);
@@ -149,11 +156,9 @@ const runUp = Effect.fnUntraced(function* (
     );
   });
 
-  if ((target.connType ?? "local") === "linked") {
-    const projectRef = yield* ProjectRefResolver;
+  if (linkedTarget !== undefined) {
     const linkedProjectCache = yield* LinkedProjectCache;
-    const linkedRef = yield* projectRef.loadProjectRef(flags.projectRef);
-    return yield* upBody.pipe(Effect.ensuring(linkedProjectCache.cache(linkedRef)));
+    return yield* upBody.pipe(Effect.ensuring(linkedProjectCache.cache(linkedTarget.ref)));
   }
   return yield* upBody;
 });

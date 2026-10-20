@@ -13,6 +13,7 @@ import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { ownerFor } from "../../tests/owner-rpc.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
+import { selection } from "../../tests/pins.ts";
 
 const cacheRoot = testArtifactCacheRoot;
 const jwtSecret = "storage-gateway-secret-with-at-least-32-chars";
@@ -76,8 +77,8 @@ const serveStorage = Effect.fnUntraced(function* (runtime: SavedStack["runtime"]
     services: [
       {
         service: "database",
+        pin: selection.database,
         config: {
-          version: "17",
           databasePassword: Redacted.make("postgres"),
           jwtSecret: Redacted.make(jwtSecret),
           jwtExpiry: 3600,
@@ -86,6 +87,7 @@ const serveStorage = Effect.fnUntraced(function* (runtime: SavedStack["runtime"]
       },
       {
         service: "storage",
+        pin: selection.storage,
         config: { filePath: storageRoot, jwtSecret, s3ProtocolEnabled: true },
         endpoints: { http: { port: "auto" } },
       },

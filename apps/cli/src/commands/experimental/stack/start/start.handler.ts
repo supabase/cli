@@ -3,7 +3,6 @@ import {
   isOrioledbVersion,
   orioledbConfigVersion,
   orioledbVersions,
-  postgresVersion,
 } from "@supabase/stack/internal/artifacts";
 import {
   connectionEnv,
@@ -24,7 +23,7 @@ import {
   type StackRuntime,
 } from "../../../../command-internal/stack-runtime.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import { Effect, FileSystem, Fiber, Match, Option, Path, Redacted, Ref } from "effect";
+import { Effect, FileSystem, Fiber, Match, Option, Path, Redacted, Ref, Schema } from "effect";
 import {
   apiRoute,
   resolveNativePostgresUser,
@@ -56,6 +55,7 @@ import { hasConfiguredBuckets, seedBucketsRun } from "../../../../command-intern
 import { loadLocalProjectContext } from "../../../../command-internal/local-project-context.ts";
 import {
   loadStackConfig,
+  stackUploadsDir,
   StackConfigError,
   stackEndpointSetting,
   stackMajorVersionSetting,
@@ -63,6 +63,12 @@ import {
   type StackEndpointSetting,
 } from "../../../../command-internal/stack-config.ts";
 import { envOverride } from "../../../../command-internal/local-config-values.ts";
+import type { CliConfig } from "@supabase/config/effect";
+import {
+  LockResolutionError,
+  lockedSelection,
+  parseSpecifier,
+} from "../../../../command-internal/stack-lock.ts";
 import {
   StackApi,
   stackCapabilityForService,
@@ -196,12 +202,23 @@ const stackAcquireError = (
 };
 
 const loadStartConfig = Effect.fn("experimental.stack.start.loadConfig")(
-  function* (projectRoot: string, fs: FileSystem.FileSystem, path: Path.Path) {
+  function* (
+    projectRoot: string,
+    fs: FileSystem.FileSystem,
+    path: Path.Path,
+    selection: ReturnType<typeof lockedSelection>,
+    frozen: boolean,
+  ) {
     const context = yield* loadLocalProjectContext(
       projectRoot,
       (message) => new StackConfigError({ message }),
     );
-    const config = yield* loadStackConfig(projectRoot, { context });
+    const config = yield* loadStackConfig(projectRoot, {
+      context,
+      selection,
+      frozen,
+      publishesLock: true,
+    });
     const keys = yield* config.keys;
     const toml = yield* readDbToml(fs, path, projectRoot);
     return { context, config, keys, toml };
@@ -209,7 +226,7 @@ const loadStartConfig = Effect.fn("experimental.stack.start.loadConfig")(
   Effect.mapError(
     (error) =>
       new StackCommandStartError({
-        reason: "invalid-config",
+        reason: Schema.is(LockResolutionError)(error) ? "lock" : "invalid-config",
         message: error.message,
         cause: error,
       }),
@@ -240,9 +257,13 @@ const endpointPortLabel = (endpoints: unknown, name: string): string => {
   return port === "auto" ? "automatic" : typeof port === "number" ? String(port) : "unset";
 };
 
-const databaseVersionOf = (
-  creation: ServiceCreation | ServiceCreationInput | undefined,
-): string | undefined => (creation?.service === "database" ? creation.config.version : undefined);
+const databaseVersionOf = (creation: ServiceCreation | ServiceCreationInput | undefined): string =>
+  creation?.service === "database" ? creation.pin.upstreamVersion : "unknown";
+
+const databaseReleaseOf = (creation: ServiceCreation | ServiceCreationInput | undefined): string =>
+  creation?.service === "database"
+    ? `${creation.pin.upstreamVersion}-r${creation.pin.revision}`
+    : "unknown";
 
 const majorVersionOf = (version: string): string => version.split(".")[0] ?? version;
 
@@ -269,8 +290,7 @@ const settingKeyLabel = (
 /**
  * One setting behind an incompatible path, reported as the JSON/stream-json error envelope's
  * `stack_changes` entries (contract documented in `SIDE_EFFECTS.md`). `editable` marks whether `key` is a
- * `config.toml` key or env var the user can revert, or plain wording for a catalog-pinned
- * artifact or Postgres build.
+ * `config.toml` key or env var the user can revert, or plain wording otherwise.
  */
 interface StructuredSettingChange {
   readonly service: string;
@@ -287,27 +307,26 @@ const describeSettingChange = (
   savedCreation: ServiceCreation | undefined,
   requestedCreation: ServiceCreationInput | undefined,
   projectEnvValues: Readonly<Record<string, string>>,
+  databaseFromServices: boolean,
 ): StructuredSettingChange | ReadonlyArray<StructuredSettingChange> => {
-  if (service === "database" && path === "config.version") {
-    // `postgresVersion` resolves a bare major alias (e.g. "17") to the pinned build the
-    // composition plan actually compared, so the saved/requested pair reflects what changed.
-    const savedVersion = postgresVersion(databaseVersionOf(savedCreation) ?? "unknown");
-    const requestedVersion = postgresVersion(databaseVersionOf(requestedCreation) ?? "unknown");
+  if (service === "database" && path === "pin") {
+    const savedVersion = databaseVersionOf(savedCreation);
+    const requestedVersion = databaseVersionOf(requestedCreation);
     const savedMajor = majorVersionOf(savedVersion);
     const requestedMajor = majorVersionOf(requestedVersion);
     const savedOrioledb = orioledbVersionOf(savedVersion);
     const requestedOrioledb = orioledbVersionOf(requestedVersion);
-    // Same major and engine but different pinned build: no setting controls this, so name the
-    // actual (unpinnable) versions instead.
-    if (savedMajor === requestedMajor && savedOrioledb === requestedOrioledb)
-      return {
-        service,
-        path,
-        key: "Postgres build",
-        saved: savedVersion,
-        requested: requestedVersion,
-        editable: false,
-      };
+    if (databaseFromServices)
+      return [
+        {
+          service,
+          path,
+          key: "[local.services.database] version",
+          saved: databaseReleaseOf(savedCreation),
+          requested: databaseReleaseOf(requestedCreation),
+          editable: true,
+        },
+      ];
     const changes: Array<StructuredSettingChange> = [];
     if (savedMajor !== requestedMajor)
       changes.push({
@@ -342,16 +361,23 @@ const describeSettingChange = (
       requested: endpointPortLabel(requestedCreation?.endpoints, endpointName),
       editable: true,
     };
-  // No config.toml key or env var covers this path (e.g. the catalog-pinned artifact `version`):
-  // name it plainly instead of implying a setting the user could edit.
+  // No config.toml key or env var covers this path: name it plainly instead of implying a
+  // setting the user could edit.
   return {
     service,
     path,
-    key: path === "version" ? `${service} artifact version` : `${service} ${path}`,
-    saved: path === "version" ? (savedCreation?.version ?? "unknown") : "changed",
-    requested: path === "version" ? (requestedCreation?.version ?? "unknown") : "changed",
+    key: `${service} ${path}`,
+    saved: "changed",
+    requested: "changed",
     editable: false,
   };
+};
+
+/** Whether `[local.services]` names a published database release, which `[db]` settings no longer select. */
+const databasePublishedBy = (source: CliConfig): boolean => {
+  const services = source.local?.services;
+  const version = services?.database?.version ?? services?.default?.version;
+  return version !== undefined && parseSpecifier(version).kind === "release";
 };
 
 /** Every incompatible path across every rejected saved member, as one structured list. */
@@ -360,6 +386,7 @@ const incompatibleSettingChanges = (
   savedConfigById: ReadonlyMap<string, ServiceCreation>,
   requested: ReadonlyArray<ServiceCreationInput>,
   projectEnvValues: Readonly<Record<string, string>>,
+  databaseFromServices: boolean,
 ): ReadonlyArray<StructuredSettingChange> =>
   planned
     .filter((entry) => entry.member && entry.change === "incompatible")
@@ -373,6 +400,7 @@ const incompatibleSettingChanges = (
               savedConfigById.get(entry.id),
               requested.find((creation) => creation.service === entry.service),
               projectEnvValues,
+              databaseFromServices,
             ),
           )
         : [],
@@ -411,12 +439,13 @@ const revertAdvice = (editableKeys: ReadonlyArray<string>): string | undefined =
       ? `Revert ${editableKeys[0]} to its saved value`
       : "Revert the settings listed to their saved values";
 
-/** Rejects every saved member whose endpoints or artifact versions the request would change. */
+/** Rejects every saved member whose endpoints or database line or major the request would change. */
 const incompatibleChange = (
   planned: ReadonlyArray<PlannedInstance>,
   savedConfigById: ReadonlyMap<string, ServiceCreation>,
   requested: ReadonlyArray<ServiceCreationInput>,
   projectEnvValues: Readonly<Record<string, string>>,
+  databaseFromServices: boolean,
   stackIdentity: { readonly id: string; readonly name?: string },
   ownerLive: boolean,
 ):
@@ -427,7 +456,13 @@ const incompatibleChange = (
       readonly command: string | undefined;
     }
   | undefined => {
-  const changes = incompatibleSettingChanges(planned, savedConfigById, requested, projectEnvValues);
+  const changes = incompatibleSettingChanges(
+    planned,
+    savedConfigById,
+    requested,
+    projectEnvValues,
+    databaseFromServices,
+  );
   if (changes.length === 0) return undefined;
   const lines = settingChangeLines(changes);
   const command = destroyCommandFor(stackIdentity.id);
@@ -561,7 +596,15 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       NotNeeded: () => Effect.void,
     });
     // Every project-context load prints the config deprecation WARNs, so it happens at most once.
-    const startConfig = yield* Effect.cached(loadStartConfig(target.projectRoot, fs, path));
+    const startConfig = yield* Effect.cached(
+      loadStartConfig(
+        target.projectRoot,
+        fs,
+        path,
+        lockedSelection({ frozen: flags.frozen, output }),
+        flags.frozen,
+      ),
+    );
     if (target.id === undefined || !target.hostRunning) yield* startConfig;
     if (target.id === undefined) yield* ensurePostgresUser;
     const stateRoot = path.join(settings.supabaseHome, "stacks");
@@ -600,7 +643,8 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     // before it registers endpoint namespaces from the saved state. An owner that is already live
     // ignores them and keeps applying endpoint changes only after stop and start, so the liveness
     // observed above never decides whether a replacement owner that wins a stop race re-plans. A
-    // configuration that cannot resolve only fails a start whose owner was not running.
+    // configuration that cannot resolve only fails a start whose owner was not running; a lock
+    // failure fails either way.
     const resolveForReplan = (stackId: string) =>
       Effect.gen(function* () {
         const loaded = yield* startConfig;
@@ -611,8 +655,10 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         ? undefined
         : target.hostRunning
           ? yield* resolveForReplan(target.id).pipe(
-              Effect.option,
-              Effect.map(Option.getOrUndefined),
+              Effect.catchIf(
+                (error) => error.reason !== "lock",
+                () => Effect.void,
+              ),
             )
           : yield* resolveForReplan(target.id);
     const startupComplete = yield* Ref.make(false);
@@ -823,12 +869,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     }
     if (requested.some(({ service }) => service === "storage"))
       yield* fs
-        .makeDirectory(
-          path.join(target.projectRoot, "supabase", ".temp", "stack-uploads", stack.id),
-          {
-            recursive: true,
-          },
-        )
+        .makeDirectory(stackUploadsDir(path, settings.supabaseHome, stack.id), {
+          recursive: true,
+        })
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -882,6 +925,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       savedConfigById,
       requested,
       config.projectEnvValues,
+      databasePublishedBy(config.source),
       stackIdentity,
       target.hostRunning,
     );
@@ -1014,7 +1058,12 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           }
         : undefined;
       yield* initializeStackDatabase({
-        target: { stack, database, databaseServices: catalogDatabaseServices(requested) },
+        target: {
+          stack,
+          database,
+          databaseServices: catalogDatabaseServices(requested),
+          selection: config.selection,
+        },
         overlay: projectCatalogOverlay(toml, target.projectRoot),
         ...(migrations === undefined ? {} : { migrations }),
       }).pipe(

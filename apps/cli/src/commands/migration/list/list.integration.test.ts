@@ -19,7 +19,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   assertTargetDefaultWarning,
@@ -38,7 +38,6 @@ import {
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { MigrationsReadError } from "../../../command-internal/migration.errors.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
@@ -47,6 +46,9 @@ import { DbConnection } from "../../../command-internal/db-connection.service.ts
 import { MigrationPasswordFlagsError, MigrationTargetFlagsError } from "../migration.errors.ts";
 import { migrationList } from "./list.handler.ts";
 import type { MigrationListFlags } from "./list.command.ts";
+import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
+import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
+import { remoteTargetLayer as realRemoteTargetLayer } from "../../../config/remote-target.layer.ts";
 
 const LIST_SQL = "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
 
@@ -106,15 +108,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   // Gives an explicit --project-ref flag precedence over the VALID_REF fallback, so a
   // test can prove the flag drives the linked ref.
-  const projectRef = Layer.succeed(ProjectRefResolver, {
+  const projectRef = stubRemoteTarget({
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
-    loadProjectRef: (flagValue: Option.Option<string>) =>
+    load: (flagValue: Option.Option<string>) =>
       Effect.succeed(
         Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : VALID_REF,
       ),
-    promptProjectRef: () => Effect.succeed(VALID_REF),
+    prompt: () => Effect.succeed(VALID_REF),
   });
 
   const http = recordingProjectHttpClient(VALID_REF);
@@ -403,6 +405,34 @@ describe("migration list", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(ctx.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
+
+  it.effect("reports an unlinked project before it reads an invalid config.toml", () => {
+    const ctx = setup(tmp.current, { realLayers: true });
+    const unlinkedTarget = realRemoteTargetLayer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          mockCommandSettings({ workdir: tmp.current, projectId: Option.none() }),
+          mockTty({ stdinIsTty: false }),
+          mockOutput().layer,
+          Layer.succeed(CommandPlatformApiFactory, {
+            make: Effect.die("the platform API is not used without a link"),
+          }),
+          BunServices.layer,
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path.join(tmp.current, "supabase", "config.toml"), "= not toml\n");
+      const error = yield* Effect.flip(migrationList(flags()));
+      expect(error._tag).toBe("ProjectRefNotLinkedError");
+    }).pipe(
+      Effect.provide(Layer.mergeAll(ctx.layer, unlinkedTarget)),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });

@@ -104,7 +104,7 @@ Warning: supabase db push will target the local database by default in the next 
 - **Targets**: `--db-url`, `--linked` (default), and `--local` are mutually
   exclusive; with no flag the target defaults to linked.
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution `ProjectRefResolver`
+  command) overrides ONLY the linked-ref resolution `RemoteTarget`
   performs (flag > `SUPABASE_PROJECT_ID` > `~/.supabase/<hash>/project-ref`).
   It never implies `--linked`: passing it with a resolved `--local`/`--db-url`
   target is a hard error rather than a silently discarded flag (deliberately

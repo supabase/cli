@@ -20,7 +20,7 @@ and uses an automatically assigned port; `db.shadow_port` applies only to the le
 
 Pg-delta runs in-process. Coverage gaps warn, while `--strict-coverage` makes
 them fatal, and `PGDELTA_DEBUG` writes diagnostic JSON under
-`supabase/.temp/pgdelta/v2/debug/<id>/`. The engine may emit transaction-aware
+`supabase/.temp/pgdelta/v2/debug/<id>/` (`<SUPABASE_HOME>/tmp/pgdelta/v2/debug/<id>/` in stack mode). The engine may emit transaction-aware
 file splits; applicable, convergent SQL is the contract.
 The bundled formatter defaults to lowercase SQL at width 180; config overrides
 it, and JSON `null` disables formatting without disabling safe compaction.
@@ -48,7 +48,7 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 | --------------------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql`                 | SQL     | non-empty `--file` diff; bundled pg-delta may emit ordered transaction-aware files, while pgAdmin always emits one                                                                                                                                                                                                                                             |
 | `<path>` (from `--output` / `-o`)                                           | SQL     | explicit `--from/--to` mode with `--output`; flattened review representation, not a portable apply script                                                                                                                                                                                                                                                      |
-| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                     | JSON    | bundled engine with `PGDELTA_DEBUG`                                                                                                                                                                                                                                                                                                                            |
+| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                     | JSON    | bundled engine with `PGDELTA_DEBUG`; `<SUPABASE_HOME>/tmp/pgdelta/v2/debug/<id>/` in stack mode                                                                                                                                                                                                                                                                |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar     | cache-enabled COLD shadow provision creates the current key's snapshot (native diff targets + the explicit `--from/--to migrations` shadow; never `--use-pgadmin`/`--use-pg-schema`); a warm hit `touch`es its mtime (LRU); every cache-eligible acquire may delete other keys under LRU keep-3 + 2-day mtime TTL — ~90MB (`SUPABASE_HOME` overrides the root) |
 | managed snapshot key `<key>`                                                | backend | stack-mode cache-enabled cold shadow provision saves the database baseline; the last completed save replaces the key                                                                                                                                                                                                                                           |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial` | tar     | during a cold export — the in-flight temp file, `rename`d into the tar above on success and removed on failure; only a crash/SIGKILL leaves it behind, and later cold exports / warm hits sweep leftovers older than 5 minutes                                                                                                                                 |
@@ -208,7 +208,7 @@ transaction metadata.
   mutually-exclusive engine group; `--db-url` / `--linked` / `--local` are a
   mutually-exclusive target group (default `--local`).
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution `ProjectRefResolver`
+  command) overrides ONLY the linked-ref resolution `RemoteTarget`
   performs (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`) — unlike
   `SUPABASE_PROJECT_ID`, it does not affect the shadow container's project
   id/labels. It never implies `--linked`: passing it with a resolved

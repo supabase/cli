@@ -4,7 +4,7 @@ import { DnsResolverFlag, resolveYesWithProjectEnv } from "./global-flags.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../shared/output/errors.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../config/project-ref.service.ts";
+import { RemoteTarget } from "../config/remote-target.service.ts";
 import { bold } from "./colors.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import { DbConnection } from "./db-connection.service.ts";
@@ -72,11 +72,15 @@ export const runMigrationFetch = Effect.fn("MigrationFetch.run")(function* (
   // `--db-url`/`config.toml` then fails immediately, instead of first creating
   // `supabase/migrations` or letting a declined overwrite prompt mask the real error
   // with `context canceled`. Same fix as `migration repair`.
+  const remoteTarget = yield* RemoteTarget;
+  const linkedTarget =
+    connType === "linked" ? yield* remoteTarget.load(flags.projectRef) : undefined;
   const cfg = yield* resolver.resolve({
     dbUrl: flags.dbUrl,
     connType,
     dnsResolver,
     linkedProjectRef: flags.projectRef,
+    target: linkedTarget,
   });
 
   // The project .env loads after the parse-time flag-group validation above — so a
@@ -86,15 +90,12 @@ export const runMigrationFetch = Effect.fn("MigrationFetch.run")(function* (
   const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
 
-  // Linked fetch caches the project ref on success. The ref is
-  // loaded now (pre-run), but the cache write is attached to the body via `Effect.ensuring`,
-  // so a declined prompt returns before it runs.
+  // Linked fetch caches the project ref on success. The cache write is attached to the body
+  // via `Effect.ensuring`, so a declined prompt returns before it runs.
   let cacheLinkedRef: Effect.Effect<void> | undefined;
-  if (connType === "linked") {
-    const projectRef = yield* ProjectRefResolver;
+  if (linkedTarget !== undefined) {
     const linkedProjectCache = yield* LinkedProjectCache;
-    const ref = yield* projectRef.loadProjectRef(flags.projectRef);
-    cacheLinkedRef = linkedProjectCache.cache(ref);
+    cacheLinkedRef = linkedProjectCache.cache(linkedTarget.ref);
   }
 
   const fetchBody = Effect.gen(function* () {

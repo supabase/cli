@@ -2,7 +2,7 @@ import { Effect, FileSystem, Option, Ref } from "effect";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { changedLinkedLocalFlags } from "../../../command-internal/db-target-flags.ts";
 import { seedBucketsRun } from "../../../command-internal/seed-buckets.ts";
 import { requireExplicitWorkdirProject } from "../../../command-internal/workdir-project.ts";
@@ -68,8 +68,8 @@ export const seedBuckets = Effect.fn("seed.buckets")(function* (
       Effect.mapError((error) => new SeedMissingProjectConfigError({ message: error.message })),
     );
 
-    const projectRefResolver = yield* ProjectRefResolver;
-    const projectRef = isLinked ? yield* projectRefResolver.loadProjectRef(flags.projectRef) : "";
+    const projectRefResolver = yield* RemoteTarget;
+    const projectRef = isLinked ? (yield* projectRefResolver.load(flags.projectRef)).ref : "";
     yield* Ref.set(linkedRef, projectRef);
 
     yield* Effect.annotateCurrentSpan({ "db.conn_type": isLinked ? "linked" : "local" });

@@ -39,7 +39,6 @@ import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
 import { InvalidAccessTokenError } from "../../../auth/errors.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { DbConfigIpv6Error } from "../../../command-internal/db-config.errors.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
@@ -58,6 +57,7 @@ import { encodeAdvisorLints, scanAdvisorLintRow } from "./advisors.format.ts";
 import { dbAdvisors } from "./advisors.handler.ts";
 import { splitLintsSql } from "./advisors.lints-sql.ts";
 import type { DbAdvisorsFlags } from "./advisors.command.ts";
+import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -157,7 +157,7 @@ function mockConnection(opts: {
 
 function mockProjectRef() {
   const calls: Array<string> = [];
-  const layer = Layer.succeed(ProjectRefResolver, {
+  const layer = stubRemoteTarget({
     resolve: () =>
       Effect.sync(() => {
         calls.push("resolve");
@@ -167,12 +167,12 @@ function mockProjectRef() {
     resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
     // Gives an explicit `--project-ref` flag top precedence, mirroring the real resolver so a
     // test can prove the flag (not just the hardcoded fallback) drives the linked ref.
-    loadProjectRef: (flagValue: Option.Option<string>) =>
+    load: (flagValue: Option.Option<string>) =>
       Effect.sync(() => {
-        calls.push("loadProjectRef");
+        calls.push("load");
         return Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : VALID_REF;
       }),
-    promptProjectRef: () => Effect.succeed(VALID_REF),
+    prompt: () => Effect.succeed(VALID_REF),
   });
   return {
     layer,
@@ -466,7 +466,7 @@ describe("db advisors — local", () => {
     });
     return Effect.gen(function* () {
       yield* dbAdvisors(flags());
-      expect(projectRef.calls).toContain("loadProjectRef");
+      expect(projectRef.calls).toContain("load");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -479,7 +479,7 @@ describe("db advisors — local", () => {
     });
     return Effect.gen(function* () {
       yield* dbAdvisors(flags());
-      expect(projectRef.calls).toContain("loadProjectRef");
+      expect(projectRef.calls).toContain("load");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -737,7 +737,7 @@ describe("db advisors — linked", () => {
     });
     return Effect.gen(function* () {
       yield* dbAdvisors(flags({ type: Option.some("security") }));
-      expect(projectRef.calls).toContain("loadProjectRef");
+      expect(projectRef.calls).toContain("load");
       expect(projectRef.calls).not.toContain("resolve");
     }).pipe(Effect.provide(layer));
   });

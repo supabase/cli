@@ -25,18 +25,21 @@ export interface Creation extends Schema.Schema.Type<typeof Creation> {}
 export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   service: "rest",
   executable: "bin/postgrest",
-  ports: { http: 3000 },
-  healthPath: "/",
+  ports: { http: 3000, admin: 3001 },
+  healthPort: "admin",
+  healthPath: "/ready",
   env: (creation, endpoints, container) =>
     Effect.gen(function* () {
       const databaseUrl = yield* requiredInput("rest", "databaseUrl", creation.config.databaseUrl);
       const http = endpoints.get("http");
+      const admin = endpoints.get("admin");
       const jwtSecret = creation.config.jwks ?? creation.config.jwtSecret;
       return {
         DATABASE_URL: databaseUrl,
         PGRST_DB_URI: databaseUrl,
         PGRST_SERVER_HOST: container ? "0.0.0.0" : "127.0.0.1",
         ...(http === undefined ? {} : { PGRST_SERVER_PORT: String(http.port) }),
+        ...(admin === undefined ? {} : { PGRST_ADMIN_SERVER_PORT: String(admin.port) }),
         PGRST_DB_SCHEMAS: creation.config.schemas ?? "public,graphql_public",
         ...(creation.config.extraSearchPath === undefined
           ? {}

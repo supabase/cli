@@ -5,8 +5,8 @@ import { commandPlatformApiFactoryLayer } from "../../../auth/command-platform-a
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { projectRefLayer } from "../../../config/project-ref.layer.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { remoteTargetLayer } from "../../../config/remote-target.layer.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
@@ -57,7 +57,7 @@ export const genTypesRuntimeLayer = (() => {
     generator,
     cliSettings,
     platformApiFactory,
-    projectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
+    remoteTargetLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
     linkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
       Layer.provide(cliSettings),
@@ -84,7 +84,7 @@ export const genTypesRuntimeLayer = (() => {
 type GenTypesServices =
   | CommandPlatformApiFactory
   | CommandSettings
-  | ProjectRefResolver
+  | RemoteTarget
   | DbConfigResolver
   | DbConnection
   | GenTypesGenerator

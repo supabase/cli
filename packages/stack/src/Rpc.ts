@@ -1,6 +1,6 @@
 import { Cause, Exit, Option, Predicate, Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
-import { ServiceCreation, ServiceCreationInput } from "./services/Catalog.ts";
+import { ServiceCreation, ServiceCreationInput, ServiceRestartInput } from "./services/Catalog.ts";
 import { snapshotScopes } from "./services/DatabaseSnapshot.ts";
 import { causeMessage, CompositionConfig, OrchestratorError } from "./Orchestrator.ts";
 import { CommandInvocation } from "./Commands.ts";
@@ -180,7 +180,7 @@ export const OwnerRpc = RpcGroup.make(
   Rpc.make("readyService", { payload: Instance, error: StackError }),
   Rpc.make("stopService", { payload: Instance, error: StackError }),
   Rpc.make("restartService", {
-    payload: { ...Instance, config: Schema.optionalKey(ServiceCreationInput) },
+    payload: { ...Instance, config: Schema.optionalKey(ServiceRestartInput) },
     error: StackError,
   }),
   Rpc.make("destroyService", { payload: Instance, error: StackError }),
@@ -225,6 +225,7 @@ export const OwnerRpc = RpcGroup.make(
       reuseIds: Schema.optionalKey(Schema.Array(Schema.String)),
       keys: Schema.optionalKey(StackKeysInput),
       eager: Schema.optionalKey(Schema.Boolean),
+      retainMembers: Schema.optionalKey(Schema.Boolean),
     },
     success: Schema.Array(Definition),
     error: StackError,

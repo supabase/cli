@@ -33,10 +33,10 @@ import {
 } from "../../../command-internal/global-flags.ts";
 
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { IdentityStitch } from "../../../command-internal/identity-stitch.ts";
 
 import { genTypesRuntimeLayer } from "./types.layers.ts";
+import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 const tempRoot = useTempWorkdir("supabase-gen-types-layers-");
 
@@ -59,12 +59,12 @@ function ambientStubs() {
   );
 
   const heavyServiceStubs = Layer.mergeAll(
-    Layer.succeed(ProjectRefResolver, {
+    stubRemoteTarget({
       resolve: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveForLink: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveOptional: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
-      loadProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
-      promptProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
+      load: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
+      prompt: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
     }),
     Layer.succeed(CommandPlatformApiFactory, {
       make: Effect.die("platform-api-factory not needed for layer-exposure test"),

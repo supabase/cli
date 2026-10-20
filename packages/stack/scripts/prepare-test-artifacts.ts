@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeRuntime, NodeServices } from "@effect/platform-node";
 import { Console, Effect, Layer } from "effect";
-import { artifactServiceKinds, catalogPins, prepareNativeArtifact } from "../src/Artifacts.ts";
+import { catalogPins, prepareNativeArtifact } from "../src/Artifacts.ts";
 import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 
 /**
@@ -8,9 +8,9 @@ import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
  * With `--images`, prints every catalog container image instead so CI can pull them.
  */
 const prepareNative = Effect.forEach(
-  [...artifactServiceKinds(), "vector" as const],
-  (service) =>
-    prepareNativeArtifact({ service }, testArtifactCacheRoot).pipe(
+  catalogPins().filter(({ isDefault }) => isDefault),
+  ({ service, pin }) =>
+    prepareNativeArtifact({ service, pin }, testArtifactCacheRoot).pipe(
       Effect.tap((artifact) => Console.log(`${service} ${artifact.version}`)),
     ),
   { concurrency: "unbounded", discard: true },

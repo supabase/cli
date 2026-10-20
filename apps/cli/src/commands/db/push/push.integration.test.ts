@@ -44,7 +44,6 @@ import {
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
@@ -57,6 +56,10 @@ import {
 import { dbPush } from "./push.handler.ts";
 import type { DbPushFlags } from "./push.command.ts";
 import { DbPushApplyError } from "./push.errors.ts";
+import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
+import { remoteTargetLayer as realRemoteTargetLayer } from "../../../config/remote-target.layer.ts";
+import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
+import { projectStateModeLayer } from "../../../command-internal/project-state-mode.ts";
 
 const LIST_MIGRATIONS =
   "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
@@ -202,8 +205,30 @@ function setup(
     simulateInitialisingLoginRole?: boolean;
     /** Runs the real `DbConfigResolver` and linked-project cache against `workdir`. */
     realLayers?: boolean;
+    /** Resolves the hosted target through the real `RemoteTarget` against `workdir`. */
+    realRemoteTarget?: boolean;
+    /** Collects the path of every `.link.json` read made through the layer's file system. */
+    linkReads?: Array<string>;
   },
 ) {
+  const services =
+    opts.linkReads === undefined
+      ? BunServices.layer
+      : Layer.mergeAll(
+          BunServices.layer,
+          Layer.effect(
+            FileSystem.FileSystem,
+            Effect.map(FileSystem.FileSystem, (real) =>
+              FileSystem.FileSystem.of({
+                ...real,
+                readFileString: (file, encoding) => {
+                  if (file.endsWith(".link.json")) opts.linkReads?.push(file);
+                  return real.readFileString(file, encoding);
+                },
+              }),
+            ),
+          ).pipe(Layer.provide(BunServices.layer)),
+        );
   const workdirLayer = Layer.effectDiscard(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -225,13 +250,13 @@ function setup(
   const telemetry = mockTelemetryStateTracked();
   const linkedCache = mockLinkedProjectCacheTracked();
 
-  const projectRefLayer = Layer.succeed(ProjectRefResolver, {
+  const stubbedRemoteTarget = stubRemoteTarget({
     resolve: () => Effect.succeed(opts.projectRef ?? VALID_REF),
     resolveForLink: () => Effect.succeed(opts.projectRef ?? VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(opts.projectRef ?? VALID_REF)),
     // An explicit `--project-ref` flag takes top precedence, short-circuiting before
     // the "not linked" failure.
-    loadProjectRef: (flagValue: Option.Option<string>) =>
+    load: (flagValue: Option.Option<string>) =>
       Option.isSome(flagValue) && flagValue.value.length > 0
         ? Effect.succeed(flagValue.value)
         : opts.linkedFails === true
@@ -241,8 +266,25 @@ function setup(
               }),
             )
           : Effect.succeed(opts.projectRef ?? VALID_REF),
-    promptProjectRef: () => Effect.succeed(opts.projectRef ?? VALID_REF),
+    prompt: () => Effect.succeed(opts.projectRef ?? VALID_REF),
   });
+
+  const remoteTargetLayer =
+    opts.realRemoteTarget === true
+      ? realRemoteTargetLayer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              mockCommandSettings({ workdir, projectId: Option.none() }),
+              mockTty({ stdinIsTty: false }),
+              out.layer,
+              Layer.succeed(CommandPlatformApiFactory, {
+                make: Effect.die("the platform API is not used when a link names the target"),
+              }),
+              services,
+            ),
+          ),
+        )
+      : stubbedRemoteTarget;
 
   const resolver = mockResolver({
     isLocal: opts.isLocal ?? true,
@@ -263,13 +305,14 @@ function setup(
           workdir,
           dbConnection: conn.layer,
           env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
+          services,
         })
       : resolver.layer,
     mockCommandSettings({
       workdir,
       ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
     }),
-    BunServices.layer,
+    services,
     // Prompts are answered through mockOutput's `promptConfirmResponses` (the
     // TTY/clack path) unless `piped` feeds promptYesNo's non-TTY branch.
     mockTty({ stdinIsTty: opts.piped === undefined }),
@@ -277,7 +320,7 @@ function setup(
     Layer.succeed(CliArgs, { args: opts.args ?? ["db", "push", "--local"] }),
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(DnsResolverFlag, "native"),
-    projectRefLayer,
+    remoteTargetLayer,
     telemetry.layer,
     opts.realLayers === true
       ? realLinkedProjectCache({
@@ -920,6 +963,39 @@ describe("db push", () => {
       expect(out.stderrText).toContain("Connecting to remote database...");
       expect(out.stdoutText).toBe("Remote database is up to date.\n");
     });
+  });
+
+  it.effect("resolves the linked target once across the whole push", () => {
+    const link = {
+      project: { ref: VALID_REF },
+      active_branch: {
+        ref: VALID_REF,
+        pooler_url: `postgres://postgres.${VALID_REF}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+      },
+      fetchedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const linkReads: Array<string> = [];
+    const { layer } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: { "supabase/.link.json": JSON.stringify(link) },
+      args: ["db", "push", "--linked"],
+      isLocal: false,
+      realLayers: true,
+      realRemoteTarget: true,
+      linkReads,
+    });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(
+        Effect.provide(Layer.mergeAll(layer, projectStateModeLayer("stack"))),
+      );
+      expect(linkReads).toHaveLength(1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
   });
 
   it.effect("mints a login role and fills the cache through the real resolver and cache", () => {

@@ -11,7 +11,7 @@ image), to stdout or `--file`.
 | --------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `supabase/config.toml`            | TOML       | always (db port/password/major_version, project_id)                                                                                          |
 | `supabase/.temp/postgres-version` | plain text | always (best-effort) — pins the pg image tag when present                                                                                    |
-| `supabase/.temp/pooler-url`       | plain text | `--linked` when the direct host is unreachable (pooler URL)                                                                                  |
+| `supabase/.temp/pooler-url`       | plain text | `--linked` when the direct host is unreachable and the target ref is the linked ref (pooler URL)                                             |
 | `~/.supabase/access-token`        | plain text | `--linked` when `SUPABASE_ACCESS_TOKEN` unset                                                                                                |
 | `supabase/.temp/project-ref`      | plain text | `--linked` (and the default target) ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`/config.toml `project_id`) is set |
 | `supabase/.env*`                  | dotenv     | always (project env, feeds `SUPABASE_DB_PASSWORD` / `PG*`)                                                                                   |
@@ -102,7 +102,10 @@ Warning: supabase db dump will target the local database by default in the next 
   id. It never implies `--linked`: passing it with a resolved
   `--local`/`--db-url` target is a hard error rather than a silently discarded
   flag (deliberately stricter than `SUPABASE_PROJECT_ID`, which Go's equivalent
-  env var simply leaves unused on a non-linked target).
+  env var simply leaves unused on a non-linked target). The saved `.temp/pooler-url`
+  applies only when the target ref is the linked ref; a `--project-ref` or
+  `SUPABASE_PROJECT_ID` naming another project fetches that project's pooler config from the
+  Management API.
 - **Container-level pooler fallback.** When a linked dump reaches the direct host
   from the host process but the `pg_dump` container fails over IPv6, the captured
   container stderr is classified (`isIPv6ConnectivityError`) and the dump is

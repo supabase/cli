@@ -13,7 +13,7 @@ import {
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget, type ResolvedRemoteTarget } from "../../../config/remote-target.service.ts";
 import { aqua, bold } from "../../../command-internal/colors.ts";
 import {
   buildLocalDbContainerInputs,
@@ -137,7 +137,7 @@ const squashMigrations = Effect.fn("MigrationSquash.squashMigrations")(function*
             kind: "stack" as const,
             stack: handle.stack,
             command: "pg_dump" as const,
-            major: toml.majorVersion === 15 ? (15 as const) : (17 as const),
+            pin: handle.databasePin,
           };
           const session = yield* connectShadowDatabase(stackConn);
           const before = yield* squashDumpSchemaToString({
@@ -499,9 +499,11 @@ const runSquash = Effect.fnUntraced(function* (
     // resolver.resolve() below (like db diff --linked); read unconditionally since the
     // shadow is provisioned locally either way.
     let linkedRef: string | undefined;
+    let linkedTarget: ResolvedRemoteTarget | undefined;
     if (connType === "linked") {
-      const projectRefResolver = yield* ProjectRefResolver;
-      linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
+      const remoteTarget = yield* RemoteTarget;
+      linkedTarget = yield* remoteTarget.load(flags.projectRef);
+      linkedRef = linkedTarget.ref;
       yield* Ref.set(linkedRefForCache, linkedRef);
     }
     const toml = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
@@ -529,6 +531,7 @@ const runSquash = Effect.fnUntraced(function* (
       dnsResolver,
       password: flags.password,
       linkedProjectRef: flags.projectRef,
+      target: linkedTarget,
     });
     if (linkedRef === undefined) {
       linkedRef = Option.getOrUndefined(cfg.ref ?? Option.none());

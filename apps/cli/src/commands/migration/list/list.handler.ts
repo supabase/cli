@@ -4,7 +4,7 @@ import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
@@ -57,6 +57,12 @@ const runList = Effect.fnUntraced(function* (
     });
   }
 
+  const remoteTarget = yield* RemoteTarget;
+  const linkedTarget =
+    (target.connType ?? "linked") === "linked"
+      ? yield* remoteTarget.load(flags.projectRef)
+      : undefined;
+
   const listBody = Effect.gen(function* () {
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
@@ -64,6 +70,7 @@ const runList = Effect.fnUntraced(function* (
       dnsResolver,
       password: flags.password,
       linkedProjectRef: flags.projectRef,
+      target: linkedTarget,
     });
 
     const remote = yield* Effect.scoped(
@@ -100,11 +107,9 @@ const runList = Effect.fnUntraced(function* (
 
   // `--linked` resolves the project ref and writes the linked-project cache; `--local`
   // / `--db-url` leave the ref empty.
-  if ((target.connType ?? "linked") === "linked") {
-    const projectRef = yield* ProjectRefResolver;
+  if (linkedTarget !== undefined) {
     const linkedProjectCache = yield* LinkedProjectCache;
-    const ref = yield* projectRef.loadProjectRef(flags.projectRef);
-    return yield* listBody.pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
+    return yield* listBody.pipe(Effect.ensuring(linkedProjectCache.cache(linkedTarget.ref)));
   }
   return yield* listBody;
 });

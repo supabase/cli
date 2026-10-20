@@ -17,6 +17,7 @@ import (
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/config"
 )
 
 func TestProjectRef(t *testing.T) {
@@ -42,6 +43,19 @@ func TestProjectRef(t *testing.T) {
 		err = ParseProjectRef(context.Background(), fsys)
 		// Check error
 		assert.NoError(t, err)
+	})
+
+	t.Run("ignores the linked file in stack mode", func(t *testing.T) {
+		t.Setenv(config.StackStateEnv, "1")
+		ProjectRef = ""
+		fsys := afero.NewMemMapFs()
+		decoy := apitest.RandomProjectRef()
+		require.NoError(t, afero.WriteFile(fsys, utils.ProjectRefPath, []byte(decoy), 0644))
+		// Run test
+		err := LoadProjectRef(fsys)
+		// Check error
+		assert.ErrorIs(t, err, utils.ErrNotLinked)
+		assert.Empty(t, ProjectRef)
 	})
 
 	t.Run("throws error on read failure", func(t *testing.T) {

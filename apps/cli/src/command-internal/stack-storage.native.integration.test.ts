@@ -66,6 +66,7 @@ const startFlags = () => ({
   stackId: Option.none<string>(),
   runtime: "native" as const,
   preparation: "on-demand" as const,
+  frozen: false,
   eager: false,
 });
 

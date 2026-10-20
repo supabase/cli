@@ -1,18 +1,40 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Crypto, Data, Effect, Exit, FileSystem, Path, Ref, Schema, Scope, Stream } from "effect";
+import {
+  Clock,
+  Crypto,
+  Data,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Path,
+  Ref,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
+import { resolveArtifact } from "../Artifacts.ts";
+import { selection } from "../../tests/pins.ts";
+import { makeManualClock } from "../../tests/manual-clock.ts";
 import { makeContainerRuntime, resolveEngineTarget } from "../runtime/Container.ts";
 import { makeDockerDatabaseStorage } from "../storage/DockerDatabaseStorage.ts";
 import { makeDockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
 import { shellQuote } from "../storage/DockerSnapshotBackend.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { testEngine } from "../../tests/test-engine.ts";
+import {
+  databaseIdentity,
+  readDatabaseIdentity,
+  recordDatabaseIdentity,
+} from "../internal/database-reuse.ts";
+import { holdSchemaWriter, readSchemaWriters } from "../internal/schema-writers.ts";
 import { makeDatabaseSnapshots, type SnapshotScope } from "./DatabaseSnapshot.ts";
 
 // Derived from the real catalog (not hardcoded), so a Postgres pin bump never makes this go stale.
-const version = postgresVersion("17");
+const pin = selection.database;
+const version = pin.upstreamVersion;
 
 class ShellError extends Data.TaggedError("ShellError")<{ readonly message: string }> {}
 
@@ -68,6 +90,7 @@ interface Overrides {
 
 interface SnapshotError {
   readonly operation: string;
+  readonly message: string;
 }
 
 interface Instance {
@@ -96,11 +119,11 @@ interface Engine {
   readonly instance: (name: string, overrides?: Overrides) => Effect.Effect<Instance>;
 }
 
-const readyMarker = (runtime: string) =>
-  `{"version":"${version}","runtime":"${runtime}","profile":"supabase"}`;
+const readyMarker = (runtime: string) => `{"runtime":"${runtime}","profile":"supabase"}`;
 
 const native = Effect.fnUntraced(function* () {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const services = yield* Effect.context<Services>();
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "database-snapshot-contract-" });
@@ -126,7 +149,7 @@ const native = Effect.fnUntraced(function* () {
         instanceRoot,
         cacheRoot,
         runtime: "native",
-        version,
+        pin,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, overrides.fs ?? fs),
         Effect.provideService(
@@ -148,6 +171,7 @@ const native = Effect.fnUntraced(function* () {
             yield* fs.writeFileString(`${data}/PG_VERSION`, "17\n");
             yield* fs.writeFileString(`${data}/fixture`, value);
             yield* fs.writeFileString(`${data}/nested/fixture`, value);
+            yield* recordDatabaseIdentity(fs, path, instanceRoot, databaseIdentity(version));
             yield* fs.writeFileString(
               `${instanceRoot}/.supabase-database-ready.json`,
               readyMarker("native"),
@@ -183,7 +207,7 @@ const docker = Effect.fnUntraced(function* () {
   const stackId = "snapshot-contract";
   const root = yield* makeDockerDatabaseRoot("database-snapshot-contract-", stackId);
   const cacheRoot = path.resolve(root, "../../../cache");
-  const image = (yield* resolveArtifact({ service: "database", version }).pipe(Effect.orDie)).image;
+  const image = (yield* resolveArtifact({ service: "database", pin }).pipe(Effect.orDie)).image;
   const target = yield* resolveEngineTarget(spawner, "docker");
   const container = yield* makeContainerRuntime({
     target,
@@ -261,8 +285,8 @@ const docker = Effect.fnUntraced(function* () {
         spawner: overrides.partialCopy === true ? partialCopy : spawner,
         helpers,
       }).pipe(Scope.provide(scope));
-      yield* storage.mount(version);
-      if (overrides.fresh !== true) yield* storage.prepare(version);
+      yield* storage.mount(pin);
+      if (overrides.fresh !== true) yield* storage.prepare(pin);
       const marker = yield* fs
         .readFileString(`${instanceRoot}/.supabase-database-storage.json`)
         .pipe(Effect.flatMap(Schema.decodeEffect(StorageMarker)));
@@ -275,23 +299,23 @@ const docker = Effect.fnUntraced(function* () {
         entries: `${cache}/entries`,
         stages: `${cache}/stages`,
         restoreStages: `${cache}/stages`,
-        saveSnapshot: (key, scope) => storage.saveSnapshot(version, key, scope),
-        restoreSnapshot: (key, scope) => storage.restoreSnapshot(version, key, scope),
+        saveSnapshot: (key, scope) => storage.saveSnapshot(pin, key, scope),
+        restoreSnapshot: (key, scope) => storage.restoreSnapshot(pin, key, scope),
         seed: (value) =>
           Effect.gen(function* () {
-            yield* storage.prepare(version);
+            yield* storage.prepare(pin);
             yield* shell(
               `set -eu; /usr/bin/busybox mkdir -p ${shellQuote(`${data}/nested`)}; printf 17 > ${shellQuote(`${data}/PG_VERSION`)}; printf '%s' ${shellQuote(value)} > ${shellQuote(`${data}/fixture`)}; printf '%s' ${shellQuote(value)} > ${shellQuote(`${data}/nested/fixture`)}`,
             );
-            yield* storage.markInitialized(version);
+            yield* storage.markInitialized(pin);
             yield* fs.writeFileString(
               `${instanceRoot}/.supabase-database-ready.json`,
               readyMarker("docker"),
             );
           }).pipe(Effect.orDie),
-        clear: storage.removeData(version).pipe(Effect.orDie),
+        clear: storage.removeData(pin).pipe(Effect.orDie),
         destroy: storage
-          .destroyData(version)
+          .destroyData(pin)
           .pipe(Effect.andThen(fs.remove(instanceRoot, { recursive: true })), Effect.orDie),
       };
       return instance;
@@ -307,7 +331,6 @@ const engines = [
 ];
 
 const Descriptor = Schema.fromJsonString(Schema.Struct({ logicalKey: Schema.String }));
-const ReadyVersion = Schema.fromJsonString(Schema.Struct({ version: Schema.String }));
 
 const setup = <E>(make: () => Effect.Effect<Engine, E, Services>) =>
   Effect.gen(function* () {
@@ -363,11 +386,9 @@ for (const { name, make } of engines)
           expect(yield* target.restoreSnapshot("key")).toBe(true);
 
           expect(yield* fixture(target)).toBe("saved\nsaved");
-          expect(
-            yield* Schema.decodeEffect(ReadyVersion)(
-              yield* fs.readFileString(`${target.root}/.supabase-database-ready.json`),
-            ),
-          ).toEqual({ version });
+          expect(yield* readDatabaseIdentity(fs, yield* Path.Path, target.root)).toEqual(
+            databaseIdentity(version),
+          );
         }),
       ),
     );
@@ -383,6 +404,76 @@ for (const { name, make } of engines)
           const target = yield* engine.instance("target", { fresh: true });
           expect(yield* target.restoreSnapshot("key")).toBe(true);
           expect(yield* fixture(target)).toBe("saved\nsaved");
+        }),
+      ),
+    );
+
+    it.live("restores the schema-writers record that was saved with the snapshot", () =>
+      live(
+        Effect.gen(function* () {
+          const { fs, engine } = yield* setup(make);
+          const path = yield* Path.Path;
+          const source = yield* engine.instance("source");
+          yield* source.seed("saved");
+          yield* fs.writeFileString(
+            `${source.root}/schema-writers.json`,
+            '{"auth":"v2.197.0","storage":"v1.30.0"}',
+          );
+          yield* source.saveSnapshot("key");
+          yield* fs.writeFileString(
+            `${source.root}/schema-writers.json`,
+            '{"auth":"v2.400.0","storage":"v1.99.0"}',
+          );
+
+          const target = yield* engine.instance("target");
+          yield* fs.writeFileString(
+            `${target.root}/schema-writers.json`,
+            '{"auth":"v2.300.0","realtime":"v2.9.0"}',
+          );
+          expect(yield* target.restoreSnapshot("key")).toBe(true);
+
+          expect(yield* readSchemaWriters(fs, path, target.root)).toEqual({
+            auth: "v2.197.0",
+            storage: "v1.30.0",
+          });
+        }),
+      ),
+    );
+
+    it.live("waits for an admitted schema writer before replacing the record", () =>
+      live(
+        Effect.gen(function* () {
+          const { fs, engine, contents } = yield* setup(make);
+          const path = yield* Path.Path;
+          const source = yield* engine.instance("source");
+          yield* source.seed("saved");
+          yield* fs.writeFileString(`${source.root}/schema-writers.json`, '{"auth":"v2.197.0"}');
+          yield* source.saveSnapshot("key");
+          const target = yield* engine.instance("target");
+          yield* fs.writeFileString(`${target.root}/schema-writers.json`, '{"auth":"v2.200.0"}');
+
+          const migrating = yield* Scope.make();
+          yield* holdSchemaWriter(fs, path, {
+            stackId: "snapshot-contract",
+            instanceRoot: target.root,
+            service: "storage",
+            version: "v1.31.0",
+          }).pipe(Scope.provide(migrating));
+          const admitted = { auth: "v2.200.0", storage: "v1.31.0" };
+
+          const manual = yield* makeManualClock;
+          const blocked = yield* target
+            .restoreSnapshot("key")
+            .pipe(Effect.provideService(Clock.Clock, manual.clock), Effect.flip, Effect.forkChild);
+          yield* manual.sleeping(50);
+          yield* manual.advance(61_000);
+          expect((yield* Fiber.join(blocked)).message).toContain("locked by another operation");
+          expect(yield* readSchemaWriters(fs, path, target.root)).toEqual(admitted);
+          expect(yield* contents(target.data)).toBe("");
+
+          yield* Scope.close(migrating, Exit.void);
+          expect(yield* target.restoreSnapshot("key")).toBe(true);
+          expect(yield* readSchemaWriters(fs, path, target.root)).toEqual({ auth: "v2.197.0" });
         }),
       ),
     );

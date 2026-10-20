@@ -8,7 +8,8 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
-import { tempPaths } from "./temp-paths.ts";
+import { legacyProjectStatePaths, type LegacyStateFile } from "./legacy-project-state.paths.ts";
+import { usesStackState } from "./stack-backend.ts";
 
 /** A saved `.temp` pin is not a usable image tag. The file is left unchanged. */
 export class InvalidServiceVersionTagError extends Data.TaggedError(
@@ -28,18 +29,18 @@ export class InvalidServiceVersionTagError extends Data.TaggedError(
  * `postgrest` are additionally gated on `majorVersion > 14`.
  */
 const VERSION_FILES = [
-  ["auth", "gotrue-version", (majorVersion: number | undefined) => (majorVersion ?? 17) > 14],
-  ["postgrest", "rest-version", (majorVersion: number | undefined) => (majorVersion ?? 17) > 14],
-  ["storage", "storage-version"],
-  ["realtime", "realtime-version"],
-  ["studio", "studio-version"],
-  ["pgmeta", "pgmeta-version"],
-  ["analytics", "logflare-version"],
-  ["pooler", "pooler-version"],
+  ["auth", "gotrueVersion", (majorVersion: number | undefined) => (majorVersion ?? 17) > 14],
+  ["postgrest", "restVersion", (majorVersion: number | undefined) => (majorVersion ?? 17) > 14],
+  ["storage", "storageVersion"],
+  ["realtime", "realtimeVersion"],
+  ["studio", "studioVersion"],
+  ["pgmeta", "pgmetaVersion"],
+  ["analytics", "logflareVersion"],
+  ["pooler", "poolerVersion"],
 ] as const satisfies ReadonlyArray<
   readonly [
     "auth" | "postgrest" | "storage" | "realtime" | "studio" | "pgmeta" | "analytics" | "pooler",
-    string,
+    LegacyStateFile,
     ((majorVersion: number | undefined) => boolean)?,
   ]
 >;
@@ -50,28 +51,29 @@ const VERSION_FILES = [
  * (including not-exist) resolves to "" for that file. A pin that is not a usable
  * image tag fails; the file is not rewritten.
  */
-export const readServiceVersionOverrides = Effect.fnUntraced(function* (
+export const readServiceVersionOverrides = Effect.fn("ServiceVersionOverrides.read")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
   majorVersion: number | undefined,
 ) {
-  const paths = tempPaths(path, workdir);
   const versions: LocalServiceVersionOverrides = {};
+  if (yield* usesStackState) return versions;
+  const paths = legacyProjectStatePaths(path, workdir);
 
-  for (const [service, fileName, shouldRead] of VERSION_FILES) {
+  for (const [service, file, shouldRead] of VERSION_FILES) {
     if (shouldRead !== undefined && !shouldRead(majorVersion)) {
       continue;
     }
 
-    const version = yield* fs.readFileString(path.join(paths.tempDir, fileName)).pipe(
+    const version = yield* fs.readFileString(paths[file]).pipe(
       Effect.map((content) => content.trim()),
       Effect.orElseSucceed(() => ""),
     );
     if (version.length === 0) continue;
     if (!isUsableServiceVersionTag(service, version)) {
       return yield* new InvalidServiceVersionTagError({
-        message: `invalid ${service} image tag "${version}" in supabase/.temp/${fileName}; run supabase link again`,
+        message: `invalid ${service} image tag "${version}" in ${path.relative(workdir, paths[file])}; run supabase link again`,
       });
     }
     versions[service] = version;

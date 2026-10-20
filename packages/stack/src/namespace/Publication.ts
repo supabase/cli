@@ -6,6 +6,8 @@ import * as Drivers from "./drivers/FileSystem.ts";
 export interface PublishOptions {
   readonly target: string;
   readonly content: string;
+  /** File mode of the published document; private (`0o600`) unless set. */
+  readonly mode?: number;
   readonly platform?: NodeJS.Platform;
 }
 
@@ -34,7 +36,7 @@ export const publish = Effect.fn("Namespace.publish")(function* (
     Effect.succeed(staging),
     () =>
       Effect.gen(function* () {
-        yield* fs.writeFileString(staging, options.content, { mode: 0o600 });
+        yield* fs.writeFileString(staging, options.content, { mode: options.mode ?? 0o600 });
         yield* Drivers.fsyncFile(fs, staging);
         yield* retry(fs.rename(staging, options.target));
         yield* Drivers.fsyncDirectory(fs, directory);

@@ -162,6 +162,12 @@ environment values take precedence. Smoke-only environment files are excluded
 from packaged profiles. The artifact release is the boundary for service
 startup defaults; the stack package owns runtime selection and lifecycle around
 the selected artifact.
+Every service creation carries an exact artifact pin (upstream version and
+revision) taken from the selection the CLI builds from the project lock file or
+the bundled defaults, instead of following the compiled default at launch. The
+detached owner never resolves versions itself. One-shot jobs (initialization,
+command runner jobs, and the Postgres client tools) use the same selection. See
+[ADR-0026](0026-slim-artifact-mirrors.md) for how the lock is resolved.
 
 Read-only discovery never acquires ownership. Owner metadata points to a Unix
 domain socket on POSIX or a named pipe on Windows, and the ownership lock is the

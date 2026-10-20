@@ -6,12 +6,15 @@ import { stripAnsi } from "../../tests/helpers/ansi.ts";
 import { VALID_REF, mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { targetDefaultWarning } from "../../tests/helpers/target-default-warning.ts";
+import { writeProjectLink } from "./project-link.ts";
+import { projectStateModeLayer } from "./project-state-mode.ts";
 import { warnLinkedTargetDefault } from "./target-default-warning.ts";
 
 interface Scenario {
   readonly projectId?: Option.Option<string>;
   readonly refFile?: string;
   readonly refPathIsDirectory?: boolean;
+  readonly stackLinkRef?: string;
 }
 
 const run = (input: Parameters<typeof warnLinkedTargetDefault>[0], scenario: Scenario = {}) =>
@@ -27,6 +30,13 @@ const run = (input: Parameters<typeof warnLinkedTargetDefault>[0], scenario: Sce
     if (scenario.refPathIsDirectory === true) {
       yield* fs.makeDirectory(refPath, { recursive: true });
     }
+    if (scenario.stackLinkRef !== undefined) {
+      yield* writeProjectLink(workdir, {
+        project: { ref: scenario.stackLinkRef },
+        active_branch: { ref: scenario.stackLinkRef },
+        fetchedAt: "2026-01-01T00:00:00.000Z",
+      });
+    }
     const out = mockOutput();
     yield* warnLinkedTargetDefault(input).pipe(
       Effect.provide(
@@ -34,6 +44,7 @@ const run = (input: Parameters<typeof warnLinkedTargetDefault>[0], scenario: Sce
           out.layer,
           mockCommandSettings({ workdir, projectId: scenario.projectId ?? Option.none() }),
           BunServices.layer,
+          projectStateModeLayer(scenario.stackLinkRef === undefined ? "legacy" : "stack"),
         ),
       ),
     );
@@ -54,6 +65,13 @@ describe("warnLinkedTargetDefault", () => {
   it.effect("warns when only the link file configures the linked project", () =>
     Effect.gen(function* () {
       const result = yield* run(BARE, { refFile: `${VALID_REF}\n` });
+      expect(result).toEqual({ stdout: "", stderr: WARNING });
+    }),
+  );
+
+  it.effect("warns when a stack-mode link record configures the linked project", () =>
+    Effect.gen(function* () {
+      const result = yield* run(BARE, { stackLinkRef: VALID_REF });
       expect(result).toEqual({ stdout: "", stderr: WARNING });
     }),
   );

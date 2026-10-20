@@ -5,7 +5,7 @@ import { Config, Crypto, Duration, Effect, FileSystem, Layer, Option, Path } fro
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { ProjectRefResolver, PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
+import { RemoteTarget, PROJECT_REF_PATTERN } from "../config/remote-target.service.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
@@ -56,14 +56,14 @@ const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
     kind: "required",
     when: [{ flag: "project-ref" }],
     context:
-      "the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
+      "the direct database host is unreachable (IPv4-only network) and there is no usable saved pooler URL (supabase/.temp/pooler-url, or supabase/.link.json in stack mode), or a SUPABASE_PROJECT_ID ref differs from the link",
   },
   {
     operationId: "v1-get-pooler-config",
     kind: "required",
     when: [{ flag: "project-ref", oneOf: [""] }],
     context:
-      "an empty --project-ref falls back to the linked project but still allows the pooler fetch, when the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
+      "an empty --project-ref falls back to the linked project but still allows the pooler fetch, when the direct database host is unreachable (IPv4-only network) and there is no usable saved pooler URL (supabase/.temp/pooler-url, or supabase/.link.json in stack mode), or a SUPABASE_PROJECT_ID ref differs from the link",
   },
   {
     operationId: "v1-list-all-network-bans",
@@ -107,7 +107,7 @@ const poolerFallbackEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
     operationId: "v1-get-pooler-config",
     kind: "required",
     context:
-      "the command's database work fails with an IPv6 connectivity error against the direct database host, and there is no usable saved supabase/.temp/pooler-url",
+      "the command's database work fails with an IPv6 connectivity error against the direct database host, and there is no usable saved pooler URL (supabase/.temp/pooler-url, or supabase/.link.json in stack mode), or a SUPABASE_PROJECT_ID ref differs from the link",
   },
   {
     operationId: "v1-create-login-role",
@@ -345,11 +345,13 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   poolerHost: string,
   dnsResolver: "native" | "https",
   password: string,
+  // The pooler URL the link recorded for `ref`.
+  savedPoolerUrl: Option.Option<string>,
   // The container-fallback path falls back to the Management API's primary pooler config when
-  // no `.temp/pooler-url` is saved; the resolve-time IPv6 path uses the saved URL only and
+  // no pooler URL is saved; the resolve-time IPv6 path uses the saved URL only and
   // errors otherwise, so this defaults off.
   fetchFromApi = false,
-  // For an ad-hoc `--project-id` ref the saved `.temp/pooler-url` belongs to the
+  // For an ad-hoc `--project-id` ref the saved pooler URL belongs to the
   // (possibly different) linked workdir, so ignore it and resolve the pooler for
   // `ref` from the Management API instead.
   ignoreSavedUrl = false,
@@ -362,12 +364,10 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   // on the main linked branch rather than validating base config. For an ad-hoc `--project-id`
   // ref, skip the saved workdir pooler URL because it belongs to the linked project, not
   // necessarily the explicit ref.
-  const tomlValues = yield* readDbToml(fs, path, workdir, ref, {
+  yield* readDbToml(fs, path, workdir, ref, {
     resolveVaultSecrets,
   });
-  let connectionString = ignoreSavedUrl
-    ? undefined
-    : Option.getOrUndefined(tomlValues.poolerConnectionString);
+  let connectionString = ignoreSavedUrl ? undefined : Option.getOrUndefined(savedPoolerUrl);
   if (connectionString === undefined) {
     if (!fetchFromApi) return Option.none<PgConnInput>();
     // No saved pooler URL → fetch the primary pooler config from the Management API. Any API
@@ -418,7 +418,7 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
  * from `CommandSettings.workdir`'s cwd-walked value — e.g. `bootstrap`, whose own
  * `process.chdir` happens after that layer is built. `bootstrap` calls this directly with its
  * own local `workdir`/`projectRef`/`created.dbPassword`, without going through
- * `DbConfigResolver`/`ProjectRefResolver` (both keyed off the ambient, potentially-stale
+ * `DbConfigResolver`/`RemoteTarget` (both keyed off the ambient, potentially-stale
  * `CommandSettings.workdir`).
  */
 export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(function* (
@@ -431,12 +431,14 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
   options: {
     readonly adHocProjectRef?: boolean;
     readonly resolveVaultSecrets?: boolean;
+    /** The pooler URL the link recorded for `ref`, used when the direct host is unreachable. */
+    readonly poolerUrl?: Option.Option<string>;
     /**
      * Requests the Management API pooler-config fetch on an IPv4-only network
      * independent of `adHocProjectRef`'s credential/saved-URL semantics — see
      * `DbConfigFlags.linkedProjectRef`'s doc comment. Set when the caller
-     * supplied an explicit ref (`--project-ref`/`--project-id`) rather than
-     * falling back to `.temp/project-ref`, so an unlinked or mismatched-tenant
+     * supplied an explicit ref (`--project-ref`/`--project-id` or
+     * `SUPABASE_PROJECT_ID`) rather than falling back to the link, so an unlinked or mismatched-tenant
      * workdir still reaches the primary pooler config instead of dead-ending in
      * the "run supabase link" IPv6 error.
      */
@@ -447,6 +449,7 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     adHocProjectRef = false,
     resolveVaultSecrets = true,
     fetchPoolerFromApi = false,
+    poolerUrl = Option.none<string>(),
   } = options;
   const debug = yield* DebugLogger;
   // Read lazily (per invocation) rather than at layer build, so tests and
@@ -490,6 +493,7 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     poolerHost,
     dnsResolver,
     base.password,
+    poolerUrl,
     adHocProjectRef || fetchPoolerFromApi,
     adHocProjectRef,
     resolveVaultSecrets,
@@ -661,20 +665,22 @@ export const dbConfigResolverLayer = Layer.effect(
           };
         }
 
-        // --linked. The lazy Management API runtime (project-ref resolver + lazy platform API
+        // --linked. The lazy Management API runtime (remote target + lazy platform API
         // factory) is provided here at runtime so it is only built on this branch —
         // `--local`/`--db-url` never touch it. The factory resolves the access token only on
         // first use (minting a temp role), so a `--linked --password` invocation stays
         // auth-free.
         if (flags.connType === "linked") {
           const linked = yield* Effect.gen(function* () {
-            const projectRef = yield* ProjectRefResolver;
-            // Load-or-fail with no prompt: use `loadProjectRef` (not the soft
-            // `resolveOptional`, which swallows a read error to `None`) — an unlinked workdir
-            // fails with a not-linked error, a bad ref with the invalid-ref error, and an
-            // unreadable ref file surfaces the filesystem problem, for every caller of this
-            // resolver (`test db --linked`, dump, declarative).
-            const ref = yield* projectRef.loadProjectRef(flags.linkedProjectRef ?? Option.none());
+            const remoteTarget = yield* RemoteTarget;
+            // Load-or-fail with no prompt: use `load` (not the soft `resolveOptional`, which
+            // swallows a read error to `None`) — an unlinked workdir fails with a not-linked
+            // error, a bad ref with the invalid-ref error, and an unreadable link surfaces the
+            // filesystem problem, for every caller of this resolver (`test db --linked`, dump,
+            // declarative). A caller that already resolved passes `flags.target`.
+            const target =
+              flags.target ?? (yield* remoteTarget.load(flags.linkedProjectRef ?? Option.none()));
+            const { ref } = target;
             // The `[remotes.<ref>]`-merged config (e.g. an unsupported remote
             // `db.major_version`/`edge_runtime.deno_version`) is validated as a pure config
             // error before any network work. The base read in `resolve` above only validates
@@ -694,11 +700,15 @@ export const dbConfigResolverLayer = Layer.effect(
               {
                 adHocProjectRef: flags.adHocProjectRef ?? false,
                 resolveVaultSecrets,
-                // An explicit ref (the eight `db` commands' `--project-ref`, or
-                // `gen types --project-id`) independently unlocks the Management API
-                // pooler fetch, regardless of `adHocProjectRef`'s credential semantics
-                // — see `DbConfigFlags.linkedProjectRef`'s doc comment.
-                fetchPoolerFromApi: Option.isSome(flags.linkedProjectRef ?? Option.none()),
+                poolerUrl: Option.fromNullishOr(target.poolerUrl),
+                // A ref from a flag or `SUPABASE_PROJECT_ID` independently unlocks the
+                // Management API pooler fetch, regardless of `adHocProjectRef`'s credential
+                // semantics. The target carries the saved pooler URL only when its ref is the
+                // linked one.
+                fetchPoolerFromApi:
+                  target.source !== "link" ||
+                  // Covers an empty `--project-ref` value and `gen types`, which always passes the resolved ref.
+                  Option.isSome(flags.linkedProjectRef ?? Option.none()),
               },
             );
             // The linked-project telemetry cache (GET /v1/projects/{ref}) is not issued here:
@@ -749,23 +759,27 @@ export const dbConfigResolverLayer = Layer.effect(
       Effect.gen(function* () {
         if (flags.connType !== "linked") return Option.none<PgConnInput>();
         return yield* Effect.gen(function* () {
-          const projectRef = yield* ProjectRefResolver;
-          const refOpt = yield* projectRef.resolveOptional(flags.linkedProjectRef ?? Option.none());
-          if (Option.isNone(refOpt)) return Option.none<PgConnInput>();
-          const ref = refOpt.value;
+          const remoteTarget = yield* RemoteTarget;
+          const targetOpt =
+            flags.target === undefined
+              ? yield* remoteTarget.resolveOptional(flags.linkedProjectRef ?? Option.none())
+              : Option.some(flags.target);
+          if (Option.isNone(targetOpt)) return Option.none<PgConnInput>();
+          const { ref } = targetOpt.value;
           if (!PROJECT_REF_PATTERN.test(ref)) return Option.none<PgConnInput>();
           const adHocProjectRef = flags.adHocProjectRef ?? false;
           const password = adHocProjectRef
             ? (Option.getOrUndefined(flags.password ?? Option.none()) ?? "")
             : yield* resolveDbPassword(flags.password ?? Option.none(), cliSettings.workdir);
           // Container-fallback: fetch the primary pooler config from the Management API when
-          // no `.temp/pooler-url` is saved.
+          // the link recorded no pooler URL.
           return yield* resolvePoolerConn(
             ref,
             cliSettings.workdir,
             cliSettings.poolerHost,
             flags.dnsResolver,
             password,
+            Option.fromNullishOr(targetOpt.value.poolerUrl),
             true,
             adHocProjectRef,
             flags.resolveVaultSecrets ?? true,

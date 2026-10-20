@@ -1,3 +1,4 @@
+import { legacyProjectStateLayer } from "../../src/command-internal/legacy-project-state.layer.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,7 +56,7 @@ import {
   PGDATA_BASELINE_MARKER_NAME,
   PGDATA_PATH,
 } from "../../src/command-internal/db-bootstrap/pgdata-snapshot.ts";
-import { projectRefLayer } from "../../src/config/project-ref.layer.ts";
+import { remoteTargetLayer } from "../../src/config/remote-target.layer.ts";
 import { LocalDockerEngine } from "../../src/command-internal/db-bootstrap/local-db-running.ts";
 import { LinkedProjectCache } from "../../src/telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../src/telemetry/telemetry-state.service.ts";
@@ -1395,7 +1396,7 @@ export function mockDockerDaemonCliSpawner(
 }
 
 // Bundles the entire Layer.mergeAll(...) graph that every native-port integration test
-// re-builds, including the easy-to-mis-wire `projectRefLayer.pipe(Layer.provide(...))` subgraph —
+// re-builds, including the easy-to-mis-wire `remoteTargetLayer.pipe(Layer.provide(...))` subgraph —
 // `Layer.provide` does not share to siblings inside `Layer.mergeAll`, so centralizing the
 // subgraph here removes a recurring footgun.
 type GoOutputValue = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
@@ -1425,6 +1426,8 @@ export interface BuildTestRuntimeOpts {
   readonly goOutput?: Option.Option<GoOutputValue>;
   /** Raw argv seen by the handler (e.g. to exercise an explicit `--yes=false`). */
   readonly cliArgs?: ReadonlyArray<string>;
+  /** Replaces the Bun `FileSystem` every service in the runtime reads and writes through. */
+  readonly fileSystem?: Layer.Layer<FileSystem.FileSystem>;
 }
 
 export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
@@ -1437,6 +1440,10 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
   const analytics = (opts.analytics ?? mockAnalytics()).layer;
   const goOutput = opts.goOutput ?? Option.none<GoOutputValue>();
   const httpClient = opts.api.httpClientLayer;
+  const platform =
+    opts.fileSystem === undefined
+      ? BunServices.layer
+      : Layer.merge(BunServices.layer, opts.fileSystem);
 
   // When the caller doesn't expose an HttpClient layer, use a stub that fails
   // loudly if any code path tries to consume it. Always wiring HttpClient at
@@ -1462,7 +1469,7 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
     stdin,
     processControl,
     runtimeInfo,
-    projectRefLayer.pipe(
+    remoteTargetLayer.pipe(
       Layer.provide(
         Layer.succeed(CommandPlatformApiFactory, {
           make: CommandPlatformApi.pipe(Effect.provide(opts.api.layer)),
@@ -1471,9 +1478,10 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
       Layer.provide(opts.cliSettings),
       Layer.provide(tty),
       Layer.provide(opts.out.layer),
-      Layer.provide(BunServices.layer),
+      Layer.provide(platform),
     ),
-    BunServices.layer,
+    platform,
+    legacyProjectStateLayer.pipe(Layer.provide(platform)),
     Layer.succeed(OutputFlag, goOutput),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
     linkedProjectCache,

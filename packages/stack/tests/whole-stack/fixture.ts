@@ -23,6 +23,7 @@ import { cleanupDockerRoot } from "../docker-cleanup.ts";
 import { destroyTestStack } from "../stack-cleanup.ts";
 import { testEngine } from "../test-engine.ts";
 import { testArtifactCacheRoot } from "../artifact-cache.ts";
+import { selection } from "../pins.ts";
 
 type AnyService = Effect.Success<Stack["services"]["list"]>[number];
 
@@ -159,8 +160,8 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
       [
         {
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("postgres"),
             jwtSecret: Redacted.make(secret),
             jwtExpiry: 3600,
@@ -169,21 +170,25 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
         },
         {
           service: "rest",
+          pin: selection.rest,
           config: { jwtSecret: secret },
           endpoints: { http: endpoint("auto") },
         },
         {
           service: "auth",
+          pin: selection.auth,
           config: { jwtSecret: secret },
           endpoints: { http: endpoint("auto") },
         },
         {
           service: "realtime",
+          pin: selection.realtime,
           config: { jwtSecret: secret },
           endpoints: { http: endpoint("auto"), rpc: endpoint("auto") },
         },
         {
           service: "storage",
+          pin: selection.storage,
           config: {
             filePath: storageRoot,
             jwtSecret: secret,
@@ -192,32 +197,43 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
         },
         {
           service: "imgproxy",
+          pin: selection.imgproxy,
           config: { filePath: storageRoot },
           endpoints: { http: endpoint("auto") },
         },
         {
           service: "functions",
+          pin: selection.functions,
           config: { functionsRoot, verifyJwt: true, jwtSecret: secret },
           endpoints: { http: endpoint("auto") },
         },
-        { service: "studio", config: { jwtSecret: secret }, endpoints: { http: endpoint("auto") } },
+        {
+          service: "studio",
+          pin: selection.studio,
+          config: { jwtSecret: secret },
+          endpoints: { http: endpoint("auto") },
+        },
         {
           service: "pgmeta",
+          pin: selection.pgmeta,
           config: {},
           endpoints: { http: endpoint("auto") },
         },
         {
           service: "mail",
+          pin: selection.mail,
           config: {},
           endpoints: { http: endpoint("auto"), smtp: endpoint("auto"), pop3: endpoint("auto") },
         },
         {
           service: "analytics",
+          pin: selection.analytics,
           config: { backend: "postgres", apiKey: secret },
           endpoints: { http: endpoint("auto") },
         },
         {
           service: "pooler",
+          pin: selection.pooler,
           config: {
             jwtSecret: secret,
             tenant: "whole",
@@ -357,7 +373,7 @@ export const sql = Effect.fn("WholeStack.sql")((fixture: WholeStack, statement: 
     if (databaseUrl === undefined) return yield* Effect.die("Database URL missing");
     const output: Array<Uint8Array> = [];
     const errors: Array<Uint8Array> = [];
-    const result = yield* fixture.stack.commands.run(postgres.psql({ major: 17 }), {
+    const result = yield* fixture.stack.commands.run(postgres.psql({ pin: selection.database }), {
       args: ["--set", "ON_ERROR_STOP=1", "--dbname", databaseUrl, "-At"],
       stdin: Stream.make(new TextEncoder().encode(`${statement}\n`)),
       stdout: (bytes) => Effect.sync(() => output.push(bytes)),

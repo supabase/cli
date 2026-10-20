@@ -1,6 +1,11 @@
-import { readdirSync, readFileSync } from "node:fs";
-import path from "node:path";
+import { Effect, FileSystem, Path, Schema } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 import { parse } from "yaml";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../shared/telemetry/error-actionability.ts";
 import type { DocsExample } from "./docs-spec.ts";
 
 /**
@@ -14,23 +19,69 @@ export interface DocsContent {
   readonly examples: Readonly<Record<string, ReadonlyArray<DocsExample>>>;
 }
 
-export function readDocsContent(docsDir: string): DocsContent {
+/** Fails `readDocsContent` when `templates/examples.yaml` is not valid YAML or not the expected shape. */
+export class DocsExamplesError extends Schema.TaggedError<DocsExamplesError>()(
+  "DocsExamplesError",
+  { message: Schema.String, cause: Schema.Defect() },
+) {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
+
+export const readDocsContent = Effect.fn("docs.readDocsContent")(function* (
+  docsDir: string,
+): Effect.fn.Return<
+  DocsContent,
+  PlatformError | DocsExamplesError,
+  FileSystem.FileSystem | Path.Path
+> {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  /* Keeps a leading BOM, which `readFileString` strips. */
+  const readUtf8 = (file: string) =>
+    Effect.map(fs.readFile(file), (bytes) =>
+      new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes),
+    );
+  /* Never walks a symlink, even one `readLink` is denied on (a mode-000 link on macOS); an entry
+     `readLink` or `stat` cannot reach counts as a file, so a `.md` one still fails on its read. */
+  const isWalkableDirectory = Effect.fnUntraced(function* (entryPath: string) {
+    const isSymlinkOrDenied = yield* fs.readLink(entryPath).pipe(
+      Effect.catchReason("PlatformError", "PermissionDenied", () => Effect.void),
+      Effect.isSuccess,
+    );
+    if (isSymlinkOrDenied) return false;
+    return yield* Effect.match(fs.stat(entryPath), {
+      onFailure: () => false,
+      onSuccess: (info) => info.type === "Directory",
+    });
+  });
   const overlays = new Map<string, string>();
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const entryPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) walk(entryPath);
-      else if (entry.name.endsWith(".md")) {
-        const key = path.relative(docsDir, entryPath).split(path.sep).join("/");
-        overlays.set(key, readFileSync(entryPath, "utf8"));
+  const walk = (dir: string): Effect.Effect<void, PlatformError> =>
+    Effect.gen(function* () {
+      for (const name of yield* fs.readDirectory(dir)) {
+        const entryPath = path.join(dir, name);
+        if (yield* isWalkableDirectory(entryPath)) yield* walk(entryPath);
+        else if (name.endsWith(".md")) {
+          const key = path.relative(docsDir, entryPath).split(path.sep).join("/");
+          overlays.set(key, yield* readUtf8(entryPath));
+        }
       }
-    }
-  };
-  walk(path.join(docsDir, "supabase"));
+    });
+  yield* walk(path.join(docsDir, "supabase"));
 
   const examplesPath = path.join(docsDir, "templates/examples.yaml");
-  return { overlays, examples: parseExamples(parse(readFileSync(examplesPath, "utf8"))) };
-}
+  const text = yield* readUtf8(examplesPath);
+  const examples = yield* Effect.try({
+    try: () => parseExamples(parse(text)),
+    catch: (cause) =>
+      new DocsExamplesError({
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+  });
+  return { overlays, examples };
+});
 
 /**
  * Narrows the parsed `examples.yaml` document to its expected shape — a mapping of doc id to

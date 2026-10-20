@@ -1,6 +1,7 @@
-import { Data, Effect, Path, Record } from "effect";
+import { Data, Effect, Path, Record, Schema } from "effect";
 import type { StackFailureKind } from "./FailureKind.ts";
 import { makeArtifactStore } from "./preparation/ArtifactStore.ts";
+import { SLIM_IMAGE_GHCR_REGISTRY, slimReleasesUrl } from "./preparation/SlimEndpoints.ts";
 import {
   makeSlimServicesSource,
   type SlimServicesArtifact,
@@ -37,20 +38,24 @@ export class ArtifactError extends Data.TaggedError("ArtifactError")<{
 }> {}
 
 /** Lowercase hexadecimal SHA-256 digest. */
-type Sha256 = string;
+const Sha256 = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
 
 /** Content digests of one native target's published archive and manifest. */
-export interface NativePin {
-  readonly archive: Sha256;
-  readonly manifest: Sha256;
-}
+export const NativePin = Schema.Struct({ archive: Sha256, manifest: Sha256 }).annotate({
+  identifier: "NativePin",
+});
+export interface NativePin extends Schema.Schema.Type<typeof NativePin> {}
 
-/** One published slim-services revision of an upstream version, pinned by content. */
-export interface ArtifactPin {
-  readonly upstreamVersion: string;
-  readonly revision: number;
+/**
+ * One published slim-services revision of an upstream version, pinned by content. A pin stands
+ * alone and need not be in the compiled catalog; a service kind's executable and runtime paths
+ * come from its artifact definition.
+ */
+export const ArtifactPin = Schema.Struct({
+  upstreamVersion: Schema.String,
+  revision: Schema.Int,
   /** `ghcr.io/supabase/cli/<service>:<release version>@sha256:<digest>`. */
-  readonly image: string;
+  image: Schema.String,
   /**
    * The exact upstream image this release was built or mirrored from, as slim-services recorded
    * it: the release manifest's `upstream_image` for a derived service, or the release's
@@ -58,9 +63,17 @@ export interface ArtifactPin {
    * the Dockerfile's `FROM` form — no leading `docker.io/`, no digest — so legacy non-slim mode
    * can use it as the upstream tag directly.
    */
-  readonly upstreamImage: string;
-  readonly natives: Readonly<Record<NativeTarget, NativePin>>;
-}
+  upstreamImage: Schema.String,
+  natives: Schema.Struct({
+    "darwin-arm64": NativePin,
+    "linux-amd64": NativePin,
+    "linux-arm64": NativePin,
+  }),
+}).annotate({ identifier: "ArtifactPin" });
+export interface ArtifactPin extends Schema.Schema.Type<typeof ArtifactPin> {}
+
+/** The pin each stack service runs, chosen once per command and written into every creation. */
+export type ArtifactSelection = Readonly<Record<ServiceKind, ArtifactPin>>;
 
 /** The published release version, `<upstream>-r<revision>`. */
 const releaseVersion = (pin: ArtifactPin): string => `${pin.upstreamVersion}-r${pin.revision}`;
@@ -83,12 +96,14 @@ export interface PreparedNativeArtifact {
   readonly executable: string;
   /** The generation's digest lock file; a native workload spawned from `root` pins this too. */
   readonly lockPath: string;
+  /** Whether this call downloaded the generation or found it already installed. */
+  readonly outcome: "cached" | "downloaded";
 }
 
 interface ArtifactDefinition {
   readonly sourceService: string;
-  readonly defaultVersion: string;
-  /** Pins keyed by upstream version. */
+  readonly defaultPin: ArtifactPin;
+  /** Compiled pins keyed by upstream version. */
   readonly pins: Readonly<Record<string, ArtifactPin>>;
   readonly requiredRuntimePaths: ReadonlyArray<string>;
   readonly executablePath: string;
@@ -102,35 +117,33 @@ const definition = (
   additionalPins: Readonly<Record<string, ArtifactPin>> = {},
 ): ArtifactDefinition => ({
   sourceService,
-  defaultVersion: pin.upstreamVersion,
+  defaultPin: pin,
   pins: { [pin.upstreamVersion]: pin, ...additionalPins },
   requiredRuntimePaths,
   executablePath,
 });
 
-const SLIM_IMAGE_GHCR_REGISTRY = "ghcr.io/supabase/cli/";
-
 const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   database: definition(
     "postgres",
     {
-      upstreamVersion: "17.11.0.004",
-      revision: 1,
+      upstreamVersion: "17.11.0.006",
+      revision: 0,
       image:
-        "ghcr.io/supabase/cli/postgres:17.11.0.004-r1@sha256:8fb7ae7cd0d8121c460c8756d7f2791ce9a19c3331b46987456dfa4f8b45d701",
-      upstreamImage: "supabase/postgres:17.11.0.004",
+        "ghcr.io/supabase/cli/postgres:17.11.0.006-r0@sha256:ee0f2d9747fb9d3c0a29703684ec718f070384ad05bf0d92823ed02cabde8e5a",
+      upstreamImage: "supabase/postgres:17.11.0.006",
       natives: {
         "darwin-arm64": {
-          archive: "4c5b550683b8835a1a5ca0bf8ba73b6c1fe0cb8b2484dbfa15f32f76eade7efb",
-          manifest: "0f53b023b5afb14b759705661e88af450f634df4584eb5ffd3de0ede32119b44",
+          archive: "fb7594525d712ab85b6da00d4d4854f8d0c9ba26b49b781a5fede0119362e917",
+          manifest: "b499127a253b15f362fa217301d490f5d61f4b201d1b6501de06a11c6347e192",
         },
         "linux-amd64": {
-          archive: "a9d374c950ec50cb59ead868662f0dd44d358b3917a10346b4bf131f567207f7",
-          manifest: "368ab96c35d21b3505966b4d892ebe3fe8247335ea75873bc0bbd1881e968459",
+          archive: "f3a4389c92c550597cacf8c71c74af025b8e75259753c4e78bb5014e6f29e6f2",
+          manifest: "457949debc6c8b1d17dfaedcdef4883af3ff1ef7a15998f74d9511294be9a2fa",
         },
         "linux-arm64": {
-          archive: "6c7dfb5adf4b443a6af472bad8906ac9677dfe8310b0d598bfb101844095bcf5",
-          manifest: "f0e5cbf7aee20f175a845251652b2c4f761d914941914df483ee2c20d104eb0e",
+          archive: "443bb6be464b78fcc9a1e07d94cc4e8a5f0f9cba3d4ca3d5d8a8563fa962fddb",
+          manifest: "fd0f71d0f42898657a69962475164f4446f8f732edfac248708593b36eec4fcf",
         },
       },
     },
@@ -144,24 +157,24 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
       "bin/psql",
     ],
     {
-      "15.19.0.004": {
-        upstreamVersion: "15.19.0.004",
-        revision: 1,
+      "15.19.0.006": {
+        upstreamVersion: "15.19.0.006",
+        revision: 0,
         image:
-          "ghcr.io/supabase/cli/postgres:15.19.0.004-r1@sha256:df77a34bf5839149c74b24a12228ad58e492c2a9d76d3887ef4f279d06173e09",
-        upstreamImage: "supabase/postgres:15.19.0.004",
+          "ghcr.io/supabase/cli/postgres:15.19.0.006-r0@sha256:dd5d757785930d2daf216ccc2ea871e2337657d11c42f7cc709309774fa663f1",
+        upstreamImage: "supabase/postgres:15.19.0.006",
         natives: {
           "darwin-arm64": {
-            archive: "57463faeb424d11296a833ea271881ba4ab31434ec90b860b104e2e814de25fd",
-            manifest: "7a0dab606017ccfea22f1e32f69b78792f3ff5eca13e3880a3de8884e9c03832",
+            archive: "0350c9ff12f84061f1a35de8218400fb8e6059dedd36d037bd01e9b7adde3e4b",
+            manifest: "a2d941b715b0fa09918353164f13fac47751973ab5ae4ceca978bb8263c41f62",
           },
           "linux-amd64": {
-            archive: "867fba08024fb813dcbd8d0cfcc87f02dfb49d6093e18a9459a6f4c1b44236c2",
-            manifest: "eab1b6d62684aef3f7d3aa9e55b9e8dbf99f732e4ac23f704e75474321bdfa30",
+            archive: "3e0126f154c174a88c45a9fa496441e1a15e2f328e4ad3b61fcc02c9caead69c",
+            manifest: "af86fad4f63a9bafbc853e8291275d95762da609e9775129f7debbdcdd35c1bb",
           },
           "linux-arm64": {
-            archive: "73502a47bb7419f70668feeb857fe2da039fdaade60a7baba41b1edb954b2796",
-            manifest: "3b957388f0bf05c230b1d65691412150239aa39847e0d782a1448d56258f9ef8",
+            archive: "ec1f08c01a110aa267c646a7ab69dc63e2e544c5d9d0c0536cfb974423280b3a",
+            manifest: "7527e460894f9ef76c57ec03359db5e8cc4d8fdb7043f727f4213344d9f3e76c",
           },
         },
       },
@@ -186,28 +199,70 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
           },
         },
       },
+      "17.11.0.005-orioledb": {
+        upstreamVersion: "17.11.0.005-orioledb",
+        revision: 0,
+        image:
+          "ghcr.io/supabase/cli/postgres:17.11.0.005-orioledb-r0@sha256:aa141c2d1f9b0eb2e96681781f6ff2226f6f29466308e660be565b7eb781462f",
+        upstreamImage: "supabase/postgres:17.11.0.005-orioledb",
+        natives: {
+          "darwin-arm64": {
+            archive: "5526b890ac015f4714f6dee460acc9aa0687e35f156cf437544f16fdfe812ba7",
+            manifest: "dde250a7063b05ea39329b00911397976357a037c3446fa1f6b6a66e5a49cb65",
+          },
+          "linux-amd64": {
+            archive: "a5ebf59e43cd247819f2ce6a43cd3481baf2caf2492d39f04f1484c1bc71f499",
+            manifest: "6611a0d4e0e78faa477e00b43f48737be126ed8f2484f2ebf95658b8b2bdaefa",
+          },
+          "linux-arm64": {
+            archive: "772b2324480bff79fdc4fd0c018b7c23295b63566997db3e65cafc51178a9f08",
+            manifest: "1d1ad6a4c30b8417880ba818cdd4dc29e69acd87a5c874e1e766be025636b954",
+          },
+        },
+      },
+      "17.11.0.006-orioledb": {
+        upstreamVersion: "17.11.0.006-orioledb",
+        revision: 0,
+        image:
+          "ghcr.io/supabase/cli/postgres:17.11.0.006-orioledb-r0@sha256:d1b3cb9421c5448dd1d226856344ef7abdd828a6d27722a1de11b3c0f5c46fc7",
+        upstreamImage: "supabase/postgres:17.11.0.006-orioledb",
+        natives: {
+          "darwin-arm64": {
+            archive: "6e6a90857cf3f6637b22e182856b18425fe6c12af80ef065b6dce736ce5a914c",
+            manifest: "5433b222cc40036069ab60fdfdf1e468c2ca1268a01f505b6a835c62f770abb8",
+          },
+          "linux-amd64": {
+            archive: "b7ea7bcd9953e4dec1af75d26e2a96cd753d8ebafb12f01c91d0baf0d2fbe6e2",
+            manifest: "280b0d449ae5ca09631cf362bd8c228abff638bafc832f39849a13828e66fc88",
+          },
+          "linux-arm64": {
+            archive: "b5bd6e730b89c3c150107740e1489b0bc1ce2ea3e8f802470e4c2bd7f88570e2",
+            manifest: "0cde8aff915fb425db9dadffbd3c0307b420f4e1c2b1b3a1c0dc1849ef296c47",
+          },
+        },
+      },
     },
   ),
   rest: definition(
     "postgrest",
     {
-      upstreamVersion: "v16.4",
+      upstreamVersion: "v16.5",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/postgrest:v16.4-r0@sha256:63a8d4acfdeb107b6568f4582759c78072100ef07951a7fbe58c9a51241138a7",
-      upstreamImage: "postgrest/postgrest:v16.4",
+        "ghcr.io/supabase/cli/postgrest:v16.5-r0@sha256:11421115f972012e05e515bbb28df07f38cb7a966b8da251d2d1d3e5b34527cd",
+      upstreamImage: "postgrest/postgrest:v16.5",
       natives: {
         "darwin-arm64": {
-          archive: "a1f5449d739404cbd042ec9dbabadea6dcf810db636e44c7176b859d5e78ab07",
-          manifest: "943cbeb7a3cf2f9dd0406152a178d814e81221d0061626b04ab2b042209d5e03",
+          archive: "554fd826083c9d1e384aa39dc3bc5d56f17c4a90e1088b6e821a9c7b9f15567b",
+          manifest: "20469b7dd05d6edb1abe2e8074531e3558604bca335056e2946c0ee7d2ec69c9",
         },
         "linux-amd64": {
-          archive: "d9170378062dba1188c25fb05cd08a3397bb62afd63151812f831eed4fab1051",
-          manifest: "a3f3f29c4c4c5f7b004b507152f29316bc79df052652fb00ad5ad9bdd6f7be29",
+          archive: "e224ec6209a4ff800524c54e3b11715ede07aa3923154e44e97a67bb786b6417",
+          manifest: "644809d3e7912ef4c1273e848e0a0b52b8c353b909c1b63e95eb7c3d6413f12b",
         },
         "linux-arm64": {
-          archive: "c1a99eddaac0c005b2520960d258c7fc79945ba0703eff3a2515aa119fac4477",
-          manifest: "7ced80e3f814d9748763983de74706c6e04a897f8c024366af156c8093cf150f",
+          archive: "89cddaa3a08cd252ea24a28ae3acf13d74e572cb57b721cfe70743de266e9028",
+          manifest: "8097ef1fa2036d6dd735488a4aac82b0f128483171672d0a4662c48a045149a8",
         },
       },
     },
@@ -241,23 +296,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   realtime: definition(
     "realtime",
     {
-      upstreamVersion: "v2.145.3",
+      upstreamVersion: "v2.145.5",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/realtime:v2.145.3-r0@sha256:12ffe6497de93b0f3a15c713cc1c2647af3d418874afdb6fef489a83deccc8b4",
-      upstreamImage: "supabase/realtime:v2.145.3",
+        "ghcr.io/supabase/cli/realtime:v2.145.5-r0@sha256:d1b3dda7f8a9a4045b830d083ec8ac8242569a43c78577af9da36bffa5e65968",
+      upstreamImage: "supabase/realtime:v2.145.5",
       natives: {
         "darwin-arm64": {
-          archive: "938520c2a38a3f89efdef67599feb34acfe3eeb707c0220305e96719de070506",
-          manifest: "7933f0fc48da98c244f2c9b0be2cf2013b5186db9e9ed48c7f9c09061deec727",
+          archive: "c6fd679b107bb436a0f2794ddfe94ea46aaa52de0bd5523d7f4c553e688aca48",
+          manifest: "36f6727174ec8e522508d6b011b265c9fbbfb710fa6e48270bf221adc34561cd",
         },
         "linux-amd64": {
-          archive: "1a480a7c73a10c66c63d397af193b2cdc20a47451929844a65436d3d35cc558e",
-          manifest: "1acf2d3195dd834b1f7c84467f3ddcec11b21ec8ca5c320f0ca6f7078caa42fb",
+          archive: "c5dcbd8837daa539838bab8adcf4a8e3b08ad60b6d2a677ac2020de7de81d710",
+          manifest: "899a989b00499186527994e468511d359230ce8860635f7fe055294e78503883",
         },
         "linux-arm64": {
-          archive: "93b4df6eec9cd076f82fc02a27d1b8d9843eecc5f5cc040dfcca6703ec76c86f",
-          manifest: "9a874e660dcf71a20807166f7221090da656b73a15d6ef126d383b8afa18da9d",
+          archive: "35be9b17d46bbfe50502f41ba1f68d561d073f634912347ff7e3b5f2f6d73a70",
+          manifest: "7b18c917fa46fbdb93468078040ca173b7a66420b86121a0f7f20cd278a3394b",
         },
       },
     },
@@ -267,23 +322,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   storage: definition(
     "storage",
     {
-      upstreamVersion: "v1.83.5",
+      upstreamVersion: "v1.84.0",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/storage:v1.83.5-r0@sha256:f3f8d44d485db98f70ad6cc111d24f76340f1809e80484ebe7ffb5b18154b987",
-      upstreamImage: "supabase/storage-api:v1.83.5",
+        "ghcr.io/supabase/cli/storage:v1.84.0-r0@sha256:837c299c73d5fa0ada05cb4d9648186e1bb1d500d5892db7d12601bde5674f7b",
+      upstreamImage: "supabase/storage-api:v1.84.0",
       natives: {
         "darwin-arm64": {
-          archive: "a65552e3422b4d6d9ce0dbdf134491bc4f1bb86fba3d4f8d896c90b9cbbd79fd",
-          manifest: "7d996c9f5ea530d9868d859cc3b63a81521abb95850850e2c59ef113d3207988",
+          archive: "f3024fa9b6fc34407acbad41b3b99be5e527869a29e575870bc0a3e92a2bc49f",
+          manifest: "e088b3add2c659771ceeb73288720e632adbd34571b0424e93f217ed4a70f4ab",
         },
         "linux-amd64": {
-          archive: "3ca93a63704236ba4690e32d65d15b7d541554662896957bc4c79954515c2be1",
-          manifest: "cb684420dd7a7622cc558bb32163ad348cc87de808030f1a6e29616e9ab6d48b",
+          archive: "685dcdb7ada3c4551de9c517844b51ae6c94dbc6112b14d9cb1ca57c0f110327",
+          manifest: "5db6aa659348a72757ba808c3f0829f7c3b0aa31405c327f2bfb45e7bd5dd1a4",
         },
         "linux-arm64": {
-          archive: "98cb93dd48ed42a365d3ec132cabaceb53c9cbced5125ef53e65846c282328ce",
-          manifest: "89583266e67be95b64f47d9b2b8c333d939636ca6b6fc8619dc3db10f0def20b",
+          archive: "82e8c364480c28310990a3573ea8b487e46282d7895decbf6a4ef6ef345aecda",
+          manifest: "a1ae9e8846df92c49c7cb4570c9d0b0e1641c685fcfeffbac77c185de982d7fb",
         },
       },
     },
@@ -318,23 +373,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   functions: definition(
     "edge-runtime",
     {
-      upstreamVersion: "v1.77.4",
+      upstreamVersion: "v1.77.6",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/edge-runtime:v1.77.4-r0@sha256:33ca85830d726be1864e8ab929bf9e2230b0a750d59634fef871e736c9a40c34",
-      upstreamImage: "supabase/edge-runtime:v1.77.4",
+        "ghcr.io/supabase/cli/edge-runtime:v1.77.6-r0@sha256:6d1a5a63eb817e92bbe9b5083375ac4f702e1fd1120eff717ef56aca79a2ed2c",
+      upstreamImage: "supabase/edge-runtime:v1.77.6",
       natives: {
         "darwin-arm64": {
-          archive: "c0a16266b5208caec6669a982076575492c46f4d999748cdb7f3eb1dccbd6e39",
-          manifest: "ffa7bc574ead39237657cbc96308b750e8ddce778bf8072b6db8bf7a9f25e91a",
+          archive: "47c58394d4cde1eda132c18f081dcbbc08863e568f72bf24de1339a9e78a3cbf",
+          manifest: "f277afe91115a7fcb6a7f2306ba1f52f75f76dc2584df4eb361b3928a825985a",
         },
         "linux-amd64": {
-          archive: "29447f4e0ff992bce358fa3e08c4535e99c185d245a3e4c76efc4685aadadd18",
-          manifest: "eead320333d0bb58c10a491c53e00c5076e983b2f5044a41036a54ee5d092188",
+          archive: "2d6d32a063e287bd00fb311ff6d492876621ea00166aa1fe3d695d3eb9443a5c",
+          manifest: "3a7fa428f7adc563f6f792ca99aefe98a4e3a69ad580963fed3c291eb97950e3",
         },
         "linux-arm64": {
-          archive: "f8b2b43ca5320729e25d8b455c8aaeef43c08ccddc764557c970c4e30a4d9fe4",
-          manifest: "6b7257fca1bacecb4ca7c8f7512073109c8557672d8f9386533c483aa27320c4",
+          archive: "e1b9ca5238cb1244e995a116bb344ab94cc151f4b6394a27cbedecb0d8fa601c",
+          manifest: "e000ae8a38fa3063842cf0e96caed40f50fdfa47cd3114b7b2816111bb7c1056",
         },
       },
     },
@@ -519,8 +574,6 @@ const platformText = (platform: { readonly os: string; readonly arch: string }):
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : typeof cause === "string" ? cause : String(cause);
 
-const SLIM_NATIVE_GITHUB_RELEASES = "https://github.com/supabase/slim-services/releases/download";
-
 /**
  * Public S3 copy of the release assets for hosts that block GitHub release downloads, such as
  * agent sandboxes that allow `*.amazonaws.com`.
@@ -540,11 +593,12 @@ const artifactFor = (
   service: ArtifactKind,
   resolved: ArtifactResolution,
   target: NativeTarget,
+  releasesUrl: string,
 ): SlimServicesArtifact => {
   const sourceService = definitions[service].sourceService;
   const releaseTag = `${sourceService}-${resolved.releaseVersion}`;
   const assetName = `${releaseTag}-${target}`;
-  const githubRelease = `${SLIM_NATIVE_GITHUB_RELEASES}/${releaseTag}`;
+  const githubRelease = `${releasesUrl}/${releaseTag}`;
   const supabaseS3 = `${SLIM_NATIVE_SUPABASE_S3_MIRROR}/${sourceService}/${resolved.releaseVersion}`;
   const pin = resolved.natives[target];
   return {
@@ -572,9 +626,10 @@ const artifactFor = (
   };
 };
 
+/** Binds an explicit pin to its service kind's executable and runtime paths. */
 export const resolveArtifact = Effect.fn("Artifacts.resolveArtifact")(function* (request: {
   readonly service: ArtifactKind;
-  readonly version?: string;
+  readonly pin: ArtifactPin;
 }) {
   if (!Object.hasOwn(definitions, request.service))
     return yield* new ArtifactError({
@@ -582,24 +637,32 @@ export const resolveArtifact = Effect.fn("Artifacts.resolveArtifact")(function* 
       kind: "configuration",
     });
   const selected = definitions[request.service];
-  const version = request.version ?? selected.defaultVersion;
-  const pin = Object.entries(selected.pins).find(([candidate]) => candidate === version)?.[1];
-  if (pin === undefined)
-    return yield* new ArtifactError({
-      message: `Unsupported ${request.service} artifact version: ${version}`,
-      service: request.service,
-      version,
-      kind: "configuration",
-    });
+  const { pin } = request;
   return {
     service: request.service,
-    version,
+    version: pin.upstreamVersion,
     releaseVersion: releaseVersion(pin),
     image: pin.image,
     natives: pin.natives,
     executablePath: selected.executablePath,
     requiredRuntimePaths: selected.requiredRuntimePaths,
   };
+});
+
+/** The compiled default pin of every stack service; the database runs the stock default line. */
+export const defaultArtifactSelection = (): ArtifactSelection => ({
+  database: definitions.database.defaultPin,
+  rest: definitions.rest.defaultPin,
+  auth: definitions.auth.defaultPin,
+  realtime: definitions.realtime.defaultPin,
+  storage: definitions.storage.defaultPin,
+  imgproxy: definitions.imgproxy.defaultPin,
+  functions: definitions.functions.defaultPin,
+  studio: definitions.studio.defaultPin,
+  pgmeta: definitions.pgmeta.defaultPin,
+  mail: definitions.mail.defaultPin,
+  analytics: definitions.analytics.defaultPin,
+  pooler: definitions.pooler.defaultPin,
 });
 
 const ORIOLEDB_SUFFIX = "-orioledb";
@@ -630,11 +693,34 @@ export const orioledbConfigVersion = (version: string): string =>
 export const orioledbVersions = (): ReadonlyArray<string> =>
   Object.keys(definitions.database.pins).filter(isOrioledbVersion).map(orioledbConfigVersion);
 
-/** Resolves a PostgreSQL major alias against the pinned stock database artifacts. */
-export const postgresVersion = (version: string): string =>
-  Object.keys(definitions.database.pins).find(
-    (candidate) => !isOrioledbVersion(candidate) && postgresMajor(candidate) === version,
-  ) ?? version;
+/**
+ * The compiled database pin for a PostgreSQL major alias (the pinned stock build of that major) or
+ * an exact pinned upstream version such as an OrioleDB build.
+ */
+export const databaseArtifactPin = (version: string): Effect.Effect<ArtifactPin, ArtifactError> => {
+  const pins = Object.values(definitions.database.pins);
+  const pin =
+    pins.find((candidate) => candidate.upstreamVersion === version) ??
+    pins.find(
+      (candidate) =>
+        !isOrioledbVersion(candidate.upstreamVersion) &&
+        postgresMajor(candidate.upstreamVersion) === version,
+    );
+  return pin === undefined
+    ? Effect.fail(
+        new ArtifactError({
+          message: `Unsupported database artifact version: ${version}`,
+          service: "database",
+          version,
+          kind: "configuration",
+        }),
+      )
+    : Effect.succeed(pin);
+};
+
+/** The slim-services producer that publishes releases of an artifact. */
+export const artifactSourceService = (service: ArtifactKind): string =>
+  definitions[service].sourceService;
 
 /** Service kinds the stack runs, in artifact catalog order; legacy-only artifacts are omitted. */
 export const artifactServiceKinds = (): ReadonlyArray<ServiceKind> =>
@@ -642,7 +728,7 @@ export const artifactServiceKinds = (): ReadonlyArray<ServiceKind> =>
 
 /**
  * Every catalog pin in catalog order, including additional upstream lines. `isDefault` marks the
- * pin `resolveArtifact` picks when no version is requested (postgres's 17.x line today); every
+ * pin the default selection runs (postgres's 17.x line today); every
  * other pin (postgres's 15.x and OrioleDB lines) carries `isDefault: false`.
  */
 export const catalogPins = (): ReadonlyArray<{
@@ -652,12 +738,12 @@ export const catalogPins = (): ReadonlyArray<{
   readonly isDefault: boolean;
 }> =>
   Record.keys(definitions).flatMap((service) => {
-    const { sourceService, defaultVersion, pins } = definitions[service];
+    const { sourceService, defaultPin, pins } = definitions[service];
     return Object.values(pins).map((pin) => ({
       service,
       sourceService,
       pin,
-      isDefault: pin.upstreamVersion === defaultVersion,
+      isDefault: pin.upstreamVersion === defaultPin.upstreamVersion,
     }));
   });
 
@@ -666,7 +752,7 @@ const artifactKey = (artifact: SlimServicesArtifact): string =>
 
 /** Builds the native store request shared by ahead-of-time preparation and launch-time use. */
 const nativeStoreRequest = Effect.fn("Artifacts.nativeStoreRequest")(function* (
-  request: { readonly service: ArtifactKind; readonly version?: string },
+  request: { readonly service: ArtifactKind; readonly pin: ArtifactPin },
   platform: { readonly os: string; readonly arch: string },
 ) {
   const resolved = yield* resolveArtifact(request);
@@ -679,7 +765,8 @@ const nativeStoreRequest = Effect.fn("Artifacts.nativeStoreRequest")(function* (
       platform: platformText(platform),
       kind: "platform-unsupported",
     });
-  const sourceArtifact = artifactFor(request.service, resolved, target);
+  const releasesUrl = yield* slimReleasesUrl;
+  const sourceArtifact = artifactFor(request.service, resolved, target, releasesUrl);
   const key = artifactKey(sourceArtifact);
   const source = makeSlimServicesSource((candidate) =>
     candidate.key === key ? sourceArtifact : undefined,
@@ -697,7 +784,11 @@ const nativeStoreRequest = Effect.fn("Artifacts.nativeStoreRequest")(function* (
 
 const toNativeArtifact = (
   resolved: ArtifactResolution,
-  prepared: { readonly path: string; readonly lockPath: string },
+  prepared: {
+    readonly path: string;
+    readonly lockPath: string;
+    readonly outcome: "cached" | "downloaded";
+  },
   path: Path.Path,
 ): PreparedNativeArtifact => ({
   service: resolved.service,
@@ -705,11 +796,12 @@ const toNativeArtifact = (
   root: prepared.path,
   executable: path.join(prepared.path, resolved.executablePath),
   lockPath: prepared.lockPath,
+  outcome: prepared.outcome,
 });
 
 /** Ahead-of-time: downloads and publishes the generation, but pins nothing. */
 export const prepareNativeArtifact = Effect.fn("Artifacts.prepareNativeArtifact")(function* (
-  request: { readonly service: ArtifactKind; readonly version?: string },
+  request: { readonly service: ArtifactKind; readonly pin: ArtifactPin },
   cacheRoot: string,
   platform: { readonly os: string; readonly arch: string } = {
     os: process.platform,
@@ -742,7 +834,7 @@ export const prepareNativeArtifact = Effect.fn("Artifacts.prepareNativeArtifact"
  * its paths. Every consumer must use the returned paths only inside this scope.
  */
 export const useNativeArtifact = Effect.fn("Artifacts.useNativeArtifact")(function* (
-  request: { readonly service: ServiceKind; readonly version?: string },
+  request: { readonly service: ServiceKind; readonly pin: ArtifactPin },
   cacheRoot: string,
   platform: { readonly os: string; readonly arch: string } = {
     os: process.platform,

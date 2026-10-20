@@ -5,7 +5,7 @@ import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget, type ResolvedRemoteTarget } from "../../../config/remote-target.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import {
   checkDbToml,
@@ -77,9 +77,11 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
     // matching `[remotes.<ref>]` block merges. For `--local` / `--db-url`,
     // the ref stays empty.
     let projectRef = "";
+    let linkedTarget: ResolvedRemoteTarget | undefined;
     if (connType === "linked") {
-      const refResolver = yield* ProjectRefResolver;
-      projectRef = yield* refResolver.loadProjectRef(flags.projectRef);
+      const remoteTarget = yield* RemoteTarget;
+      linkedTarget = yield* remoteTarget.load(flags.projectRef);
+      projectRef = linkedTarget.ref;
       yield* Ref.set(linkedRefForCache, projectRef);
     }
 
@@ -103,6 +105,7 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
       password: flags.password,
       resolveVaultSecrets: !flags.skipVault,
       linkedProjectRef: flags.projectRef,
+      target: linkedTarget,
     });
 
     yield* Effect.annotateCurrentSpan({

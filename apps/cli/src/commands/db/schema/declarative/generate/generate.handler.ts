@@ -9,8 +9,11 @@ import { promptYesNo } from "../../../../../command-internal/prompt-yes-no.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
+import {
+  RemoteTarget,
+  type ResolvedRemoteTarget,
+} from "../../../../../config/remote-target.service.ts";
 import { bold } from "../../../../../command-internal/colors.ts";
-import { readProjectRefFile } from "../../../../../command-internal/temp-paths.ts";
 import {
   loadProjectEnv,
   readDbToml,
@@ -61,6 +64,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
   const cliSettings = yield* CommandSettings;
   const telemetryState = yield* TelemetryState;
   const linkedProjectCache = yield* LinkedProjectCache;
+  const remoteTarget = yield* RemoteTarget;
   const dnsResolver = yield* DnsResolverFlag;
   // The project env is loaded and resolved before the gate below, so a `SUPABASE_EXPERIMENTAL`
   // set only in `supabase/.env` opens the gate too.
@@ -102,17 +106,14 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     // block overrides `experimental.pgdelta.*` downstream only, not the gate above. Smart-mode's
     // "Linked project" choice does not re-load, so only `flags.linked` triggers this.
     let toml = baseToml;
+    let explicitLinkedTarget: ResolvedRemoteTarget | undefined;
     // The resolved linked ref (explicit `--linked` only) is threaded into the raw-shadow export
     // source, so its platform setup uses the remote-merged config, and into the post-run
     // linked-project cache finalizer below.
     if (Option.isSome(flags.linked)) {
-      const linkedRef = Option.isSome(cliSettings.projectId)
-        ? cliSettings.projectId
-        : yield* readProjectRefFile(fs, path, cliSettings.workdir);
-      if (Option.isSome(linkedRef)) {
-        yield* Ref.set(linkedProjectRef, linkedRef.value);
-        toml = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef.value);
-      }
+      explicitLinkedTarget = yield* remoteTarget.load(Option.none());
+      yield* Ref.set(linkedProjectRef, explicitLinkedTarget.ref);
+      toml = yield* readDbToml(fs, path, cliSettings.workdir, explicitLinkedTarget.ref);
     }
 
     // Preserve the selected value for user-facing output: invocation-local `--output` wins,
@@ -186,7 +187,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
         }
         target = yield* resolveLocalTargetEndpoint(local, dnsResolver);
       } else {
-        target = yield* resolveRemoteEndpoint(flags);
+        target = yield* resolveRemoteEndpoint(flags, explicitLinkedTarget);
       }
       overwrite = flags.overwrite;
     } else {
@@ -212,21 +213,17 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
         }
       }
       const hasMigrations = yield* hasMigrationFiles(fs, path, migrationsDir);
-      // Only when migrations exist, resolve the ref (config `project_id` → `.temp/project-ref`)
-      // and record it for the post-run cache finalizer, so smart generate in a linked workdir
-      // caches the project regardless of which target the user picks.
-      let linkedRef = Option.none<string>();
+      // Only when migrations exist, resolve the target (env, then link) and record its ref for
+      // the post-run cache finalizer, so smart generate in a linked workdir caches the project
+      // regardless of which target the user picks.
+      let linkedTarget = Option.none<ResolvedRemoteTarget>();
       if (hasMigrations) {
-        // Only decides whether to offer the linked choice, so swallow a broken
-        // `.temp/project-ref` here (omit the choice) rather than aborting; the explicit
-        // `--linked` branch above still propagates a real failure.
-        linkedRef = Option.isSome(cliSettings.projectId)
-          ? cliSettings.projectId
-          : yield* readProjectRefFile(fs, path, cliSettings.workdir).pipe(
-              Effect.orElseSucceed(() => Option.none<string>()),
-            );
-        if (Option.isSome(linkedRef)) {
-          yield* Ref.set(linkedProjectRef, linkedRef.value);
+        // Only decides whether to offer the linked choice, so a broken link omits the choice
+        // rather than aborting; the explicit `--linked` branch above still propagates a real
+        // failure.
+        linkedTarget = yield* remoteTarget.resolveOptional(Option.none());
+        if (Option.isSome(linkedTarget)) {
+          yield* Ref.set(linkedProjectRef, linkedTarget.value.ref);
         }
       }
       target = yield* resolveSmartTargetEndpoint(
@@ -236,7 +233,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
         fs,
         path,
         cliSettings.workdir,
-        linkedRef,
+        linkedTarget,
         (yield* DeclarativeSeam).ensureLocalPostgresImageCurrent,
       );
       overwrite = true;

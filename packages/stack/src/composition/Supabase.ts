@@ -1,5 +1,5 @@
 import { Data, Effect, Exit, Redacted, Schema } from "effect";
-import { postgresVersion } from "../Artifacts.ts";
+import { postgresLine } from "../Artifacts.ts";
 import { causeMessage, type CompositionConfig, isStoppedAndWakeDisabled } from "../Orchestrator.ts";
 import type { Observation } from "../Rpc.ts";
 import { ServiceCreation, type ServiceCreationInput } from "../services/Catalog.ts";
@@ -204,6 +204,8 @@ export interface SupabaseCompositionOptions {
   /** Reuses stopped instances; inputs declare desired bindings, not previous resolved creations. */
   readonly reuseIds?: ReadonlyArray<string>;
   readonly keys?: StackKeysInput;
+  /** Keeps unnamed saved members and dependencies; supports rebinding services without an API endpoint. */
+  readonly retainMembers?: boolean;
   /**
    * Starts every member with the composition. By default the database and members without an
    * endpoint start eagerly, and other members start on their first connection.
@@ -216,7 +218,7 @@ export type CreationChange =
   | { readonly change: "unchanged" }
   | { readonly change: "changed"; readonly paths: ReadonlyArray<string> }
   | {
-      /** The instance cannot adopt the request: its endpoints, artifact or data version differ. */
+      /** The instance cannot adopt the request: its endpoints or database line differ. */
       readonly change: "incompatible";
       readonly paths: ReadonlyArray<string>;
       /**
@@ -281,8 +283,11 @@ const comparable = (
   const config: Record<string, unknown> = Object.fromEntries(
     Object.entries(creation.config).filter(([key]) => compared.has(key) || !managed.has(key)),
   );
-  if (creation.service === "database") config.version = postgresVersion(creation.config.version);
-  return { version: creation.version, endpoints: withSharedApiPort(creation, sharedPort), config };
+  return {
+    pin: creation.pin,
+    endpoints: withSharedApiPort(creation, sharedPort),
+    config,
+  };
 };
 
 /** Compares a requested creation with a saved one, ignoring inputs the package supplies. */
@@ -291,6 +296,7 @@ const compareCreation = (
   requested: ServiceCreationInput,
   sharedPort: number | undefined,
   memberKinds: ReadonlySet<ServiceCreation["service"]>,
+  initializedData: boolean,
 ): CreationChange => {
   const overridable = overridableInputs[requested.service] ?? [];
   // Without its supplying member, the composition keeps the project's own value of an input.
@@ -303,13 +309,22 @@ const compareCreation = (
       .map(([input]) => input),
   ]);
   const requestedComparable = comparable(requested, sharedPort, compared);
-  const paths = differences(comparable(saved, undefined, compared), requestedComparable, "");
+  const paths = [
+    ...new Set(
+      differences(comparable(saved, undefined, compared), requestedComparable, "").map((path) =>
+        path.startsWith("pin.") ? "pin" : path,
+      ),
+    ),
+  ];
   const isEndpointPath = (path: string) => path === "endpoints" || path.startsWith("endpoints.");
+  // The planner flags a line or major change on initialized data; Database.prepare enforces the
+  // exact build there, so any other pin change is planned as a restart.
+  const databaseLineChanged =
+    initializedData &&
+    saved.service === "database" &&
+    postgresLine(saved.pin.upstreamVersion) !== postgresLine(requested.pin.upstreamVersion);
   const incompatible = paths.filter(
-    (path) =>
-      path === "version" ||
-      isEndpointPath(path) ||
-      (saved.service === "database" && path === "config.version"),
+    (path) => isEndpointPath(path) || (path === "pin" && databaseLineChanged),
   );
   const savedNames = endpointNames(saved);
   const requestedNames = endpointNames({
@@ -335,6 +350,16 @@ const compareCreation = (
  */
 export interface PlanOptions {
   readonly requestKind?: "partial" | "complete";
+}
+
+/** Planning options plus what the caller read from the instances' data. */
+export interface PlanInputs extends PlanOptions {
+  /**
+   * The database instances whose data is initialized. A database line or major change is
+   * incompatible only for these, since uninitialized data adopts any build. Omitted, every
+   * database counts as initialized.
+   */
+  readonly initializedDatabases?: ReadonlySet<string>;
 }
 
 /**
@@ -365,7 +390,7 @@ const sharedApiPortFor = (
 export const planSupabaseComposition = (
   saved: Pick<SavedStack, "instances" | "composition">,
   requested: ReadonlyArray<ServiceCreationInput>,
-  options: PlanOptions = {},
+  options: PlanInputs = {},
 ): ReadonlyArray<PlannedInstance> => {
   const members = new Set(saved.composition.members.map(({ id }) => id));
   const memberKinds = new Set(
@@ -381,7 +406,13 @@ export const planSupabaseComposition = (
             id,
             service: creation.service,
             member: members.has(id),
-            ...compareCreation(creation, request, sharedPort, memberKinds),
+            ...compareCreation(
+              creation,
+              request,
+              sharedPort,
+              memberKinds,
+              options.initializedDatabases?.has(id) ?? true,
+            ),
           },
         ];
   });
@@ -452,8 +483,8 @@ const endpointRewrite = (
 /**
  * Plans the endpoint port changes a stopped stack's start can apply instead of failing.
  * Returns `undefined` when a member is incompatible for a reason besides a pure endpoint port
- * reassignment (an artifact or database version change, or an added or removed endpoint), so the
- * caller leaves that case to the existing incompatible-change rejection.
+ * reassignment (an added or removed endpoint), so the caller leaves that case to the existing
+ * incompatible-change rejection.
  *
  * A requested kind with no saved member and no compatible stopped instance also has its sole
  * endpoint-only incompatible instance rewritten, so the start reuses it instead of creating a
@@ -462,10 +493,11 @@ const endpointRewrite = (
 export const planEndpointReplan = (
   saved: Pick<SavedStack, "instances" | "composition">,
   requested: ReadonlyArray<ServiceCreationInput>,
+  initializedDatabases?: ReadonlySet<string>,
 ): EndpointReplan | undefined => {
   // The start re-plan always replaces the whole composition, so an excluded sibling's stale
   // saved port must not anchor the shared port this request would otherwise move to automatic.
-  const planOptions: PlanOptions = { requestKind: "complete" };
+  const planOptions: PlanInputs = { requestKind: "complete", initializedDatabases };
   const planned = planSupabaseComposition(saved, requested, planOptions);
   const sharedPort = sharedApiPortFor(saved, requested, planOptions);
   const savedMemberIds = new Set(saved.composition.members.map(({ id }) => id));
@@ -780,6 +812,14 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
             return entry;
           }),
         );
+        const requestedIds = new Set(configured.map(({ id }) => id));
+        const retained = options.retainMembers === true;
+        const retainedMembers = retained
+          ? current.members.filter(({ id }) => !requestedIds.has(id))
+          : [];
+        const retainedDependencies = retained
+          ? current.dependencies.filter(({ from, to }) => !dependencyMap.has(`${from}->${to}`))
+          : [];
         const members = configured.map(({ id, creation }) => {
           const lazy =
             options.eager !== true &&
@@ -790,8 +830,8 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
             : { id, activation: "eager" as const };
         });
         yield* operations.configure({
-          members,
-          dependencies: [...dependencyMap.values()],
+          members: [...members, ...retainedMembers],
+          dependencies: [...dependencyMap.values(), ...retainedDependencies],
         });
         return configured;
       });

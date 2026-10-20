@@ -140,26 +140,6 @@ describe("stack command telemetry", () => {
     );
   });
 
-  it.effect("records the prepare command identity on invalid target input", () => {
-    return setup().pipe(
-      Effect.flatMap((fixture) => {
-        const command = stackCommand.pipe(Command.provide(fixture.layer));
-        return Effect.gen(function* () {
-          yield* Command.runWith(command, { version: "0.0.0-test" })([
-            "prepare",
-            "--stack-id",
-            "invalid",
-          ]).pipe(Effect.flip);
-          const event = fixture.analytics.captured.find(
-            (candidate) => candidate.event === EventCommandExecuted,
-          );
-          expect(event?.properties[PropCommand]).toBe("stack prepare");
-        }).pipe(Effect.provide(fixture.layer));
-      }),
-      Effect.provide(BunServices.layer),
-    );
-  });
-
   it.effect("records the logs command identity when no stack exists", () => {
     return setup().pipe(
       Effect.flatMap((fixture) => {

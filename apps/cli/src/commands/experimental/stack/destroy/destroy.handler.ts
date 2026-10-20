@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Option, Path, Result } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path, Result } from "effect";
 import type { StackError } from "@supabase/stack/effect";
 import { MachineErrorContext } from "../../../../shared/output/machine-error-context.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
@@ -6,6 +6,7 @@ import { OutputFlag, resolveYes } from "../../../../command-internal/global-flag
 import { promptYesNo } from "../../../../command-internal/prompt-yes-no.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
+import { stackUploadsDir } from "../../../../command-internal/stack-config.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
   isStackId,
@@ -51,6 +52,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
 
     const resolver = yield* StackTargetResolver;
     const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
     const locations = {
       stateRoot: path.join(settings.supabaseHome, "stacks"),
       cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),
@@ -131,15 +133,9 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
         suggestion: "Pass --yes when running non-interactively or in a machine-readable format.",
       });
     const scope = selected.map((entry) => entry.scope).join("; ");
-    const preserved = "Storage upload files will be preserved.";
-    if (yes) yield* output.raw(`Permanently destroying ${scope}. ${preserved}\n`, "stderr");
+    if (yes) yield* output.raw(`Permanently destroying ${scope}.\n`, "stderr");
     else {
-      const confirmed = yield* promptYesNo(
-        output,
-        false,
-        `Permanently destroy ${scope}? ${preserved}`,
-        false,
-      );
+      const confirmed = yield* promptYesNo(output, false, `Permanently destroy ${scope}?`, false);
       if (!confirmed)
         return yield* new StackCommandDestroyError({
           reason: "cancelled",
@@ -162,6 +158,18 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
                 : destroying.fail(Option.getOrUndefined(Exit.findErrorOption(exit))?.message),
           ),
           Effect.mapError(destroyError(id)),
+        );
+        const uploads = stackUploadsDir(path, settings.supabaseHome, id);
+        yield* fs.remove(uploads, { recursive: true, force: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new StackCommandDestroyError({
+                reason: "uploads",
+                message: `Stack ${id} was destroyed, but its Storage uploads could not be removed: ${cause.message}`,
+                suggestion: `Remove ${uploads} manually.`,
+                cause,
+              }),
+          ),
         );
         if (!batch) yield* Effect.annotateCurrentSpan({ "stack.prompted": !yes });
         if (output.format === "text")
@@ -186,18 +194,32 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
     const [failure] = failed;
     if (failure !== undefined) {
       if (!batch) return yield* failure.error;
+      /* A stack whose registration is gone counts as destroyed and cannot be retried. */
+      const leftover = failed.filter(({ error }) => error.reason === "uploads");
+      const retryable = failed.filter(({ error }) => error.reason !== "uploads");
       const machineErrorContext = yield* Effect.serviceOption(MachineErrorContext);
       if (Option.isSome(machineErrorContext))
-        yield* machineErrorContext.value.set({ destroyed_stacks: destroyed });
-      const retry = `"supabase stack destroy ${failed.map(({ id }) => `--stack-id ${id}`).join(" ")} --yes"`;
-      const runtime = failed.every(({ error }) => error.reason === "runtime");
+        yield* machineErrorContext.value.set({
+          destroyed_stacks: [...destroyed, ...leftover.map(({ id }) => ({ id }))],
+        });
+      const manual =
+        leftover.length === 0 ? undefined : leftover.map(({ error }) => error.suggestion).join(" ");
+      const retry = `"supabase stack destroy ${retryable.map(({ id }) => `--stack-id ${id}`).join(" ")} --yes"`;
+      const runtime =
+        retryable.length > 0 && retryable.every(({ error }) => error.reason === "runtime");
+      const retrySuggestion = runtime
+        ? `Start the container engine, then run ${retry} again; nothing was removed for those stacks.`
+        : `Resolve each error, then run ${retry} to retry the stacks that failed.`;
       return yield* new StackCommandDestroyError({
-        reason: runtime ? "runtime" : "stack",
+        reason: retryable.length === 0 ? "uploads" : runtime ? "runtime" : "stack",
         message: `Failed to destroy ${failed.length} managed stack(s).`,
         detail: failed.map(({ id, error }) => `${id}: ${error.message}`).join("\n"),
-        suggestion: runtime
-          ? `Start the container engine, then run ${retry} again; nothing was removed for those stacks.`
-          : `Resolve each error, then run ${retry} to retry the stacks that failed.`,
+        suggestion:
+          retryable.length === 0
+            ? manual
+            : manual === undefined
+              ? retrySuggestion
+              : `${retrySuggestion} ${manual}`,
         // Telemetry classifies a batch by its first failure; `detail` lists every stack.
         cause: failure.error,
       });

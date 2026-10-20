@@ -7,7 +7,10 @@ import {
 import { promptYesNo } from "../../../../command-internal/prompt-yes-no.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { resetLocalDatabase } from "../../../../command-internal/db-bootstrap/reset-local-database.ts";
-import { PROJECT_REF_PATTERN } from "../../../../config/project-ref.service.ts";
+import {
+  PROJECT_REF_PATTERN,
+  type ResolvedRemoteTarget,
+} from "../../../../config/remote-target.service.ts";
 import { currentStackBackend } from "../../../../command-internal/stack-backend.ts";
 import { DbConfigResolver } from "../../../../command-internal/db-config.service.ts";
 import { loadProjectEnv } from "../../../../command-internal/db-config.toml-read.ts";
@@ -91,8 +94,14 @@ export const resolveLocalTargetEndpoint = Effect.fnUntraced(function* (
   } satisfies PgDeltaDatabaseEndpoint;
 });
 
-/** Resolves a remote target without discarding TLS and connection options. */
-export const resolveRemoteEndpoint = Effect.fnUntraced(function* (flags: SmartTargetFlags) {
+/**
+ * Resolves a remote target without discarding TLS and connection options. A caller that already
+ * resolved the linked target passes it, so the connection does not resolve it again.
+ */
+export const resolveRemoteEndpoint = Effect.fnUntraced(function* (
+  flags: SmartTargetFlags,
+  target?: ResolvedRemoteTarget,
+) {
   const resolver = yield* DbConfigResolver;
   const dnsResolver = yield* DnsResolverFlag;
   const resolved = yield* resolver.resolve({
@@ -100,6 +109,7 @@ export const resolveRemoteEndpoint = Effect.fnUntraced(function* (flags: SmartTa
     connType: Option.isSome(flags.dbUrl) ? "db-url" : "linked",
     dnsResolver,
     password: flags.password,
+    ...(target === undefined ? {} : { target }),
   });
   return {
     kind: "database",
@@ -121,7 +131,7 @@ export const resolveSmartTargetEndpoint = Effect.fn("DeclarativeSchema.smartTarg
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
-  linkedRef: Option.Option<string>,
+  linkedTarget: Option.Option<ResolvedRemoteTarget>,
   beforeLocalTarget: Effect.Effect<void, DeclarativeShadowDbError> = Effect.void,
 ) {
   if (!hasMigrations) {
@@ -139,15 +149,16 @@ export const resolveSmartTargetEndpoint = Effect.fn("DeclarativeSchema.smartTarg
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
   // Inserts "Linked project" between local and custom when the workdir is linked with a valid
   // ref; an invalid on-disk ref hides the choice rather than showing it and failing later.
-  const showLinked = Option.isSome(linkedRef) && PROJECT_REF_PATTERN.test(linkedRef.value);
+  const showLinked =
+    Option.isSome(linkedTarget) && PROJECT_REF_PATTERN.test(linkedTarget.value.ref);
   const choice = yield* output.promptSelect("Generate declarative schema from:", [
     { value: "local", label: "Local database", hint: "generate from local Postgres" },
-    ...(showLinked && Option.isSome(linkedRef)
+    ...(showLinked && Option.isSome(linkedTarget)
       ? [
           {
             value: "linked",
             label: "Linked project",
-            hint: `generate from remote linked project (${linkedRef.value})`,
+            hint: `generate from remote linked project (${linkedTarget.value.ref})`,
           },
         ]
       : []),
@@ -157,7 +168,10 @@ export const resolveSmartTargetEndpoint = Effect.fn("DeclarativeSchema.smartTarg
 
   if (choice === "linked") {
     // Same path as an explicit `--linked`: login-role mint + pooler fallback, then the resolved URL.
-    return yield* resolveRemoteEndpoint({ ...flags, linked: Option.some(true) });
+    return yield* resolveRemoteEndpoint(
+      { ...flags, linked: Option.some(true) },
+      Option.getOrUndefined(linkedTarget),
+    );
   }
 
   if (choice === "custom") {

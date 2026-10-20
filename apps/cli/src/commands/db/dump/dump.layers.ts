@@ -4,7 +4,7 @@ import { commandCredentialsLayer } from "../../../auth/command-credentials.layer
 import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
 import { commandPlatformApiFactoryLayer } from "../../../auth/command-platform-api-factory.layer.ts";
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
-import { projectRefLayer } from "../../../config/project-ref.layer.ts";
+import { remoteTargetLayer } from "../../../config/remote-target.layer.ts";
 import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
 import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
@@ -20,7 +20,7 @@ import { bundledPostgresClientLayer } from "../../../command-internal/bundled-po
  * Runtime layer for `supabase db dump`.
  *
  * Mirrors `test db`'s composition: most of the Management API stack builds lazily
- * inside the resolver's `--linked` branch. `ProjectRefResolver` is exposed here (like
+ * inside the resolver's `--linked` branch. `RemoteTarget` is exposed here (like
  * `db push`) so the handler can validate `--project-ref` before the linked-project-cache
  * finalizer sees it.
  */
@@ -41,9 +41,9 @@ const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
   Layer.provide(identityStitchLayer),
 );
 
-// Exposed so the handler can pre-validate `--project-ref` via `loadProjectRef`
+// Exposed so the handler can pre-validate `--project-ref` via `RemoteTarget.load`
 // before the linked-project-cache finalizer ever sees it.
-const projectRef = projectRefLayer.pipe(
+const projectRef = remoteTargetLayer.pipe(
   Layer.provide(platformApiFactory),
   Layer.provide(cliSettings),
 );

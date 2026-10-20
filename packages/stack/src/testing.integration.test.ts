@@ -14,16 +14,20 @@ import {
   Stream,
 } from "effect";
 import * as NetAddress from "effect/net/NetAddress";
-import { discover, type Stack } from "./effect.ts";
+import { discover, type DatabaseInstance, type Stack } from "./effect.ts";
 import { makeTestStack } from "./testing.ts";
 import { postgres } from "./Commands.ts";
+import { StackError } from "./Rpc.ts";
+import { LockInvalidError, writeLock } from "./Lock.ts";
+import { lockWithDatabase } from "../tests/locks.ts";
+import { database15, selection } from "../tests/pins.ts";
 
 const sql = (stack: Stack, databaseUrl: string, command: string) =>
   Effect.gen(function* () {
     const decoder = new TextDecoder();
     let stdout = "";
     let stderr = "";
-    const result = yield* stack.commands.run(postgres.psql({ major: 17 }), {
+    const result = yield* stack.commands.run(postgres.psql({ pin: selection.database }), {
       args: ["--dbname", databaseUrl, "--set", "ON_ERROR_STOP=1", "-tA", "--command", command],
       stdout: (bytes) => Effect.sync(() => (stdout += decoder.decode(bytes))),
       stderr: (bytes) => Effect.sync(() => (stderr += decoder.decode(bytes))),
@@ -233,7 +237,7 @@ it.live(
       const port = occupied.address.port;
 
       const startup = yield* makeTestStack({
-        services: [{ service: "mail", endpoints: { http: { port } } }],
+        services: [{ service: "mail", pin: selection.mail, endpoints: { http: { port } } }],
         runtime: "native",
         stateRoot,
       }).pipe(Effect.scoped, Effect.exit);
@@ -243,7 +247,8 @@ it.live(
         ? Cause.findErrorOption(startup.cause)
         : Option.none();
       if (Option.isNone(failure)) return yield* Effect.die("Expected a typed startup failure");
-      expect(failure.value.operation).toBe("test-startup");
+      expect(failure.value).toBeInstanceOf(StackError);
+      expect(failure.value).toMatchObject({ operation: "test-startup" });
       // macOS and Windows refuse the port while claiming it; Linux reports the failed bind.
       expect(failure.value.message).toMatch(new RegExp(`\\b${port}\\b.*\\bin use\\b`));
       expect(failure.value.message).toContain("Services: none");
@@ -291,11 +296,67 @@ it.live("rejects an unknown SUPABASE_STACK_TEST_RUNTIME before creating a stack"
       Effect.flip,
     );
 
-    expect(failure.operation).toBe("test-stack");
+    expect(failure).toBeInstanceOf(StackError);
+    expect(failure).toMatchObject({ operation: "test-stack" });
     expect(failure.message).toContain("SUPABASE_STACK_TEST_RUNTIME");
     expect(yield* discover({ stateRoot })).toEqual([]);
   }).pipe(
     Effect.scoped,
     Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
   ),
+);
+
+const databaseVersion = (test: {
+  readonly stack: Stack;
+  readonly services: { readonly database: DatabaseInstance };
+}) =>
+  Effect.gen(function* () {
+    const { databaseUrl } = yield* test.services.database.credentials();
+    if (databaseUrl === undefined) return yield* Effect.die("Database URL missing");
+    return yield* sql(test.stack, databaseUrl, "SHOW server_version");
+  });
+
+it.live(
+  "runs the versions locked in a caller-owned project root and the bundled ones without a lock",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-testing-lock-" });
+      const unlocked = yield* fs.makeTempDirectoryScoped({ prefix: "stack-testing-unlocked-" });
+      const locked = yield* fs.makeTempDirectoryScoped({ prefix: "stack-testing-locked-" });
+      yield* writeLock(locked, lockWithDatabase(database15, 15));
+
+      const bundled = yield* makeTestStack({ runtime: "native", stateRoot, projectRoot: unlocked });
+      expect(yield* databaseVersion(bundled)).toMatch(/^17\./);
+      const pinned = yield* makeTestStack({ runtime: "native", stateRoot, projectRoot: locked });
+      expect(yield* databaseVersion(pinned)).toMatch(/^15\./);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+    ),
+  { timeout: 240_000 },
+);
+
+it.live(
+  "fails with the invalid-lock error instead of running bundled when the lock is malformed",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-testing-bad-lock-" });
+      const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-testing-bad-root-" });
+      yield* fs.makeDirectory(path.join(projectRoot, "supabase"));
+      yield* fs.writeFileString(path.join(projectRoot, "supabase", "supabase.lock"), "{");
+
+      const failure = yield* makeTestStack({ runtime: "native", stateRoot, projectRoot }).pipe(
+        Effect.scoped,
+        Effect.flip,
+      );
+
+      expect(failure).toBeInstanceOf(LockInvalidError);
+      expect(yield* discover({ stateRoot })).toEqual([]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+    ),
 );

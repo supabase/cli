@@ -37,7 +37,7 @@ import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
-import { PROJECT_NOT_LINKED_MESSAGE } from "../../../config/project-ref.service.ts";
+import { PROJECT_NOT_LINKED_MESSAGE } from "../../../config/remote-target.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConnectError, DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";

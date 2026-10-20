@@ -6,6 +6,10 @@ import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
 import { loadStackConfig, StackConfigError } from "../../../command-internal/stack-config.ts";
 import {
+  LockResolutionError,
+  readSelectionOrBundled,
+} from "../../../command-internal/stack-lock.ts";
+import {
   readStackFunctionsEnv,
   StackFunctionsEnvError,
 } from "../../../command-internal/stack-functions-env.ts";
@@ -24,28 +28,21 @@ type FunctionsCreation = Extract<ServiceCreation, { readonly service: "functions
 const JwkArray = Schema.fromJsonString(Schema.Array(Schema.Unknown));
 const JwksDocument = Schema.fromJsonString(Schema.Struct({ keys: Schema.Array(Schema.Unknown) }));
 
+const serveReason = (cause: { readonly message: string }): FunctionsServeStackError["reason"] => {
+  if (Schema.is(StackError)(cause)) return "stack";
+  if (Schema.is(LockResolutionError)(cause))
+    return cause.reason === "io" ? "runtime" : "invalid-config";
+  if (cause instanceof StackFunctionsEnvError || cause instanceof StackConfigError)
+    return "invalid-config";
+  // The session only decodes the stack's saved credentials.
+  if (cause instanceof Schema.SchemaError) return "state";
+  return cause instanceof LocalDbRunningError ? "lifecycle" : "runtime";
+};
+
 const runtimeError = (cause: { readonly message: string }) =>
   cause instanceof FunctionsServeStackError
     ? cause
-    : Schema.is(StackError)(cause)
-      ? new FunctionsServeStackError({
-          reason: "stack",
-          message: cause.message,
-          cause,
-        })
-      : new FunctionsServeStackError({
-          reason:
-            cause instanceof StackFunctionsEnvError || cause instanceof StackConfigError
-              ? "invalid-config"
-              : // The session only decodes the stack's saved credentials.
-                Schema.isSchemaError(cause)
-                ? "state"
-                : cause instanceof LocalDbRunningError
-                  ? "lifecycle"
-                  : "runtime",
-          message: cause.message,
-          cause,
-        });
+    : new FunctionsServeStackError({ reason: serveReason(cause), message: cause.message, cause });
 const invalidConfig = (message: string) =>
   new FunctionsServeStackError({ reason: "invalid-config", message });
 
@@ -213,7 +210,7 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
     return yield* invalidConfig("Invalid saved database configuration.");
   const identity = yield* stack.credentials.get;
   if (identity === undefined) return yield* invalidConfig("The stack has no saved credentials.");
-  const config = yield* loadStackConfig(settings.workdir);
+  const config = yield* loadStackConfig(settings.workdir, { selection: readSelectionOrBundled });
   yield* Effect.annotateCurrentSpan("functions.instance", "temporary");
   const refreshedJwks = yield* config.remoteJwks.pipe(
     Effect.catch((cause) =>

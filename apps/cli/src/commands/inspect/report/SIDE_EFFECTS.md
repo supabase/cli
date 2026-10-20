@@ -10,7 +10,7 @@ validating those CSVs.
 | ------------------------------------------ | ---------- | -------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.toml`           | TOML       | always — `[experimental.inspect.rules]` (custom rules) + `[db]` subtree                |
 | `<workdir>/supabase/.env*` (nested)        | dotenv     | always — `env(VAR)` expansion for `[db]` and rule string fields                        |
-| `<workdir>/supabase/.temp/pooler-url`      | plain text | `--linked` path (pooler connection string)                                             |
+| `<workdir>/supabase/.temp/pooler-url`      | plain text | `--linked` path, only when the target ref is the linked ref (pooler connection string) |
 | `<workdir>/supabase/.temp/project-ref`     | plain text | `--linked` path, without `--project-ref` or `SUPABASE_PROJECT_ID` (linked project ref) |
 | `~/.supabase/access-token`                 | plain text | `--linked` path, when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable            |
 | `<output-dir>/<YYYY-MM-DD>/<name>.csv` ×14 | CSV        | read back in-memory for rule evaluation                                                |

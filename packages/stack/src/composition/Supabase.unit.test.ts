@@ -10,6 +10,7 @@ import {
   planEndpointReplan,
   type SupabaseCompositionOperations,
 } from "./Supabase.ts";
+import { selection } from "../../tests/pins.ts";
 
 /** A registered instance with no runtime behavior beyond an immediate healthy start and stop. */
 const makeInstance = (
@@ -78,8 +79,8 @@ it.live(
         const inputs: ReadonlyArray<ServiceCreation> = [
           {
             service: "database",
+            pin: selection.database,
             config: {
-              version: "17",
               databasePassword: Redacted.make("studio-idle-password"),
               jwtSecret: Redacted.make("studio-idle-jwt-secret-with-32-chars"),
               jwtExpiry: 3600,
@@ -88,16 +89,28 @@ it.live(
           },
           {
             service: "auth",
+            pin: selection.auth,
             config: { jwtSecret: "studio-idle-jwt-secret-with-32-chars", jwtExpiry: 3600 },
             endpoints: { http: { port: "auto" } },
           },
           {
             service: "functions",
+            pin: selection.functions,
             config: { functionsRoot: "/project/supabase/functions" },
             endpoints: { http: { port: "auto" } },
           },
-          { service: "studio", config: {}, endpoints: { http: { port: "auto" } } },
-          { service: "pgmeta", config: {}, endpoints: { http: { port: "auto" } } },
+          {
+            service: "studio",
+            pin: selection.studio,
+            config: {},
+            endpoints: { http: { port: "auto" } },
+          },
+          {
+            service: "pgmeta",
+            pin: selection.pgmeta,
+            config: {},
+            endpoints: { http: { port: "auto" } },
+          },
         ];
         const baseById = new Map(inputs.map((creation) => [idFor(creation.service), creation]));
         const captured = yield* Ref.make<Orchestrator.CompositionConfig | undefined>(undefined);
@@ -204,11 +217,21 @@ it("does not let an excluded sibling's stale fixed port mask a shared endpoint's
     instances: [
       {
         id: "rest-1",
-        creation: { service: "rest", config: {}, endpoints: { http: { port: fixedPort } } },
+        creation: {
+          service: "rest",
+          pin: selection.rest,
+          config: {},
+          endpoints: { http: { port: fixedPort } },
+        },
       },
       {
         id: "auth-1",
-        creation: { service: "auth", config: {}, endpoints: { http: { port: fixedPort } } },
+        creation: {
+          service: "auth",
+          pin: selection.auth,
+          config: {},
+          endpoints: { http: { port: fixedPort } },
+        },
       },
     ],
     composition: {
@@ -221,7 +244,7 @@ it("does not let an excluded sibling's stale fixed port mask a shared endpoint's
   };
   // The config dropped [api] port and the start excludes auth, so only REST is requested.
   const requested: ReadonlyArray<ServiceCreation> = [
-    { service: "rest", config: {}, endpoints: { http: { port: "auto" } } },
+    { service: "rest", pin: selection.rest, config: {}, endpoints: { http: { port: "auto" } } },
   ];
   const plan = planEndpointReplan(saved, requested);
   expect(plan?.changes).toEqual([
@@ -240,14 +263,19 @@ it("releases the shared listener's automatic claim when another sharing service 
     instances: [
       {
         id: "auth-1",
-        creation: { service: "auth", config: {}, endpoints: { http: { port: "auto" } } },
+        creation: {
+          service: "auth",
+          pin: selection.auth,
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        },
       },
     ],
     composition: { members: [{ id: "auth-1", activation: "eager" }], dependencies: [] },
   };
   // Auth is excluded from this start and REST takes the config's fixed [api] port.
   const requested: ReadonlyArray<ServiceCreation> = [
-    { service: "rest", config: {}, endpoints: { http: { port: 8_911 } } },
+    { service: "rest", pin: selection.rest, config: {}, endpoints: { http: { port: 8_911 } } },
   ];
   expect(planEndpointReplan(saved, requested)?.releasesSharedApi).toBe(true);
   expect(planEndpointReplan(saved, [])).toBeUndefined();

@@ -10,7 +10,7 @@ import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget, type ResolvedRemoteTarget } from "../../../config/remote-target.service.ts";
 import { aqua, yellow } from "../../../command-internal/colors.ts";
 import { resolveResetSeedConfig } from "../../../command-internal/db-bootstrap/db-setup.ts";
 import { resetLocalDatabase } from "../../../command-internal/db-bootstrap/reset-local-database.ts";
@@ -179,10 +179,11 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
 
     // Loaded before the fallible linked resolution, so the post-run cache finalizer still fires
     // even when `resolver.resolve` fails mid-way (merged config, temp-role mint, connection).
+    let linkedTarget: ResolvedRemoteTarget | undefined;
     if (connType === "linked") {
-      const refResolver = yield* ProjectRefResolver;
-      const ref = yield* refResolver.loadProjectRef(flags.projectRef);
-      yield* Ref.set(linkedRefForCache, Option.some(ref));
+      const remoteTarget = yield* RemoteTarget;
+      linkedTarget = yield* remoteTarget.load(flags.projectRef);
+      yield* Ref.set(linkedRefForCache, Option.some(linkedTarget.ref));
     }
 
     const cfg = yield* resolver.resolve({
@@ -190,6 +191,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       connType,
       dnsResolver,
       linkedProjectRef: flags.projectRef,
+      target: linkedTarget,
     });
 
     yield* Effect.annotateCurrentSpan({

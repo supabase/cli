@@ -2,7 +2,7 @@ import { Effect, Option } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
@@ -46,7 +46,7 @@ export const notebooksPull = Effect.fn("notebooks.pull")(function* (flags: Noteb
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* ProjectRefResolver;
+  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
@@ -61,7 +61,7 @@ export const notebooksPull = Effect.fn("notebooks.pull")(function* (flags: Noteb
     yield* rejectNotebooksEnvOutput();
     const machineOutput = yield* notebooksMachineOutputRequested();
 
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const { ref } = yield* resolver.resolve(flags.projectRef);
 
     yield* Effect.gen(function* () {
       const pulled: Array<string> = [];
