@@ -14,7 +14,10 @@ import {
   parseStorageUrl,
 } from "../../command-internal/storage-url.ts";
 import { StorageConfigError } from "../../command-internal/storage-credentials.errors.ts";
-import { missingProjectConfigMessageEffect } from "../../command-internal/workdir-project.ts";
+import {
+  missingProjectConfigMessageEffect,
+  relativeConfigPath,
+} from "../../command-internal/workdir-project.ts";
 import { shouldSearchAncestors } from "../../command-internal/workdir-search.ts";
 import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
 import {
@@ -23,6 +26,7 @@ import {
   StorageUrlParseError,
   StorageWorkdirError,
 } from "./storage.errors.ts";
+import { configParseCauseMessage } from "../../shared/output/normalize-error.ts";
 
 /**
  * Shared plumbing for the four `storage` subcommands: resolving the project ref
@@ -58,7 +62,7 @@ export const loadStorageConfig = Effect.fn("Storage.loadConfig")(function* (
       "CliConfigParseError",
       (cause) =>
         new StorageConfigError({
-          message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
+          message: `failed to parse ${relativeConfigPath(cliSettings.workdir, cause.path)}: ${configParseCauseMessage(cause.cause)}`,
         }),
     ),
   );

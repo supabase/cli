@@ -926,8 +926,8 @@ project_id = "not-a-valid-ref"
   it.effect(
     "does not echo a literal secret value from config.toml into the debug log on a schema-decode error",
     () => {
-      // Unlike the syntax-error case above, a schema-decode failure has no separator to
-      // truncate: the rejected value appears inline on one line. The bad entry sits inside
+      // Unlike the syntax-error case above, a schema-decode issue path names the failing entry,
+      // which here is the secret's name. The bad entry sits inside
       // `[edge_runtime.secrets]` itself, so this also exercises the per-entry recovery path —
       // `PLANTED_SECRET` is dropped, but the CLI-arg secret still goes through.
       const { layer, api, debugLogger } = setup();

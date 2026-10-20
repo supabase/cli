@@ -1,12 +1,9 @@
 import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { Console, Data, Effect, FileSystem, Layer, Path, type PlatformError, Schema } from "effect";
-import { CliConfigSchema, toCliConfigJsonSchema } from "../src/base.ts";
-import {
-  ProjectConfigSchema,
-  toProjectConfigJsonSchema,
-} from "../src/project-config/project-schema.ts";
+import { toCliConfigJsonSchema } from "../src/base.ts";
+import { toProjectConfigJsonSchema } from "../src/project-config/project-schema.ts";
 import { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "../src/schema-metadata.ts";
-import { collapseNonFiniteNumberUnions, withSchemaMetadata } from "./json-schema-postprocess.ts";
+import { withSchemaMetadata } from "./json-schema-postprocess.ts";
 
 const packageRoot = Effect.gen(function* () {
   const path = yield* Path.Path;
@@ -84,28 +81,6 @@ function readStringAt(root: unknown, path: ReadonlyArray<string>): string {
   }
   return current;
 }
-
-/**
- * Runs a schema document through {@link collapseNonFiniteNumberUnions} and
- * {@link withSchemaMetadata}, then writes it via {@link renderJsonSchema}.
- * Narrows the collapse step's `unknown` result with `isRecord` instead of an
- * `as` cast, since a non-object result here would mean the collapse walk
- * itself is broken.
- */
-const renderCollapsedJsonSchema = Effect.fnUntraced(function* (
-  outputPath: string,
-  document: unknown,
-  rootAst: Parameters<typeof collapseNonFiniteNumberUnions>[1],
-  metadata: Parameters<typeof withSchemaMetadata>[1],
-) {
-  const collapsed = collapseNonFiniteNumberUnions(document, rootAst);
-  if (!isRecord(collapsed)) {
-    return yield* Effect.die(
-      new Error(`collapseNonFiniteNumberUnions did not return an object for ${outputPath}`),
-    );
-  }
-  yield* renderJsonSchema(outputPath, withSchemaMetadata(collapsed, metadata));
-});
 
 const renderJsonSchema = Effect.fnUntraced(function* (
   outputPath: string,
@@ -486,27 +461,23 @@ const build = Effect.gen(function* () {
   yield* runCommand(["pnpm", "exec", "tsc", "-p", "tsconfig.build.json"]);
 
   yield* Console.log("[build] rendering JSON Schema artifacts...");
-  yield* renderCollapsedJsonSchema(
+  yield* renderJsonSchema(
     path.join(root, "dist", "schema.json"),
-    toCliConfigJsonSchema(),
-    CliConfigSchema.ast,
-    {
+    withSchemaMetadata(toCliConfigJsonSchema(), {
       id: CLI_CONFIG_SCHEMA_URL,
       title: "Supabase CLI config (CliConfig)",
       description:
         "The Supabase CLI's local project config document (supabase/config.toml or supabase/config.json).",
-    },
+    }),
   );
-  yield* renderCollapsedJsonSchema(
+  yield* renderJsonSchema(
     path.join(root, "dist", "project-schema.json"),
-    toProjectConfigJsonSchema(),
-    ProjectConfigSchema.ast,
-    {
+    withSchemaMetadata(toProjectConfigJsonSchema(), {
       id: PROJECT_CONFIG_SCHEMA_URL,
       title: "Supabase hosted project config (ProjectConfig)",
       description:
         "The sparse, hosted-project subset of CliConfig that a Supabase project manages.",
-    },
+    }),
   );
 
   yield* Console.log("[build] verifying every exports-map dist target exists...");

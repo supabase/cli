@@ -594,6 +594,9 @@ project_id = "previewrefaaaaaaaaaa"
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("StatusConfigLoadError");
+        expect(Cause.pretty(exit.cause)).toContain(
+          "duplicate project_id for [remotes.b] and [remotes.a]",
+        );
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));

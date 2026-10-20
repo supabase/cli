@@ -271,6 +271,11 @@ describe("config io", () => {
     ).toThrow();
   });
 
+  test("rejects a non-finite number during decode", () => {
+    expect(() => decodeCliConfig({ db: { port: Infinity } })).toThrow("Expected a finite number");
+    expect(() => decodeCliConfig({ api: { max_rows: NaN } })).toThrow("Expected a finite number");
+  });
+
   test("only validates the highest-priority enabled sms provider during decode (Go switch parity)", () => {
     // Providers are validated in a fixed priority order (twilio, twilio_verify, messagebird,
     // textlocal, vonage); only the first enabled one is checked, so a complete, higher-priority

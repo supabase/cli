@@ -6,6 +6,7 @@ import {
   relativeConfigPath,
 } from "../../command-internal/workdir-project.ts";
 import { shouldSearchAncestors } from "../../command-internal/workdir-search.ts";
+import { configParseCauseMessage } from "../../shared/output/normalize-error.ts";
 
 export { relativeConfigPath };
 
@@ -31,7 +32,7 @@ export function loadLocalConfig<E>(
         CliConfigParseError: (cause) =>
           Effect.fail(
             makeError(
-              `failed to parse ${relativeConfigPath(cliSettings.workdir, cause.path)}: ${String(cause.cause)}`,
+              `failed to parse ${relativeConfigPath(cliSettings.workdir, cause.path)}: ${configParseCauseMessage(cause.cause)}`,
             ),
           ),
         DuplicateRemoteProjectIdError: (cause) => Effect.fail(makeError(cause.message)),

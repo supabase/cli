@@ -136,22 +136,6 @@
     "apps/cli/src/command-internal/config-validate.ts",
     "apps/cli/src/command-internal/config-validate.unit.test.ts",
     "apps/cli/src/command-internal/db-bootstrap/local-db-running.integration.test.ts",
-    "apps/cli/src/command-internal/db-bootstrap/local-db-running.ts",
-    "packages/config/scripts/json-schema-postprocess.unit.test.ts",
-    "packages/config/src/analytics.ts",
-    "packages/config/src/api.ts",
-    "packages/config/src/auth/email.ts",
-    "packages/config/src/auth/index.ts",
-    "packages/config/src/auth/mfa.ts",
-    "packages/config/src/auth/rate_limit.ts",
-    "packages/config/src/auth/sms.ts",
-    "packages/config/src/compute.ts",
-    "packages/config/src/db.ts",
-    "packages/config/src/edge_runtime.ts",
-    "packages/config/src/inbucket.ts",
-    "packages/config/src/project-config/api-attributes.ts",
-    "packages/config/src/realtime.ts",
-    "packages/config/src/storage.ts",
-    "packages/config/src/studio.ts"
+    "apps/cli/src/command-internal/db-bootstrap/local-db-running.ts"
   ]
 }
