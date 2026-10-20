@@ -69,10 +69,7 @@ import {
 import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
-import {
-  ProjectRefResolver,
-  PROJECT_NOT_LINKED_MESSAGE,
-} from "../../../config/project-ref.service.ts";
+import { PROJECT_NOT_LINKED_MESSAGE } from "../../../config/remote-target.service.ts";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import {
@@ -100,6 +97,7 @@ import { dbDiff } from "./diff.handler.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackNativeEngineError } from "../../../command-internal/stack-local-database.ts";
 import { PGADMIN_DESKTOP_NOTE_PREFIX, PGADMIN_DIFF_HEADER } from "./pgadmin-diff.ts";
+import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 interface SetupOpts {
   readonly format?: OutputFormat;
@@ -134,7 +132,7 @@ interface SetupOpts {
   // `Option.none()` to exercise the config.toml/workdir-basename fallback
   // (`resolveLocalProjectId`).
   readonly projectId?: Option.Option<string>;
-  // Simulates an unlinked workdir: `loadProjectRef` fails with
+  // Simulates an unlinked workdir: `RemoteTarget.load` fails with
   // `ProjectRefNotLinkedError` absent an explicit `--project-ref` flag.
   readonly linkedFails?: boolean;
   // Per-differ-run `--json-diff` stdout, indexed by run order; falls back to `""`
@@ -423,17 +421,17 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // Mirrors the same ref `resolver`'s own mock embeds above, and gives an explicit
   // `--project-ref` flag top precedence over `opts.linkedRef` (mirrors
   // `reset.integration.test.ts`'s identical mock).
-  const projectRefResolver = Layer.succeed(ProjectRefResolver, {
+  const projectRefResolver = stubRemoteTarget({
     resolve: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
     resolveForLink: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(opts.linkedRef ?? VALID_REF)),
-    loadProjectRef: (flagValue: Option.Option<string>) =>
+    load: (flagValue: Option.Option<string>) =>
       Option.isSome(flagValue) && flagValue.value.length > 0
         ? Effect.succeed(flagValue.value)
         : opts.linkedFails === true
           ? Effect.fail(new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
           : Effect.succeed(opts.linkedRef ?? VALID_REF),
-    promptProjectRef: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
+    prompt: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
   });
 
   const proxyCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> = [];

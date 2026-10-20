@@ -9,7 +9,14 @@ import {
 import { type StackTargetIssue, stackTargetInvalidConfigActionability } from "../stack.shared.ts";
 
 export class StackCommandDestroyError extends Data.TaggedError("ExperimentalStackDestroyError")<{
-  readonly reason: "flags" | "confirmation" | "cancelled" | "invalid-config" | "runtime" | "stack";
+  readonly reason:
+    | "flags"
+    | "confirmation"
+    | "cancelled"
+    | "invalid-config"
+    | "runtime"
+    | "stack"
+    | "uploads";
   readonly targetIssue?: StackTargetIssue;
   readonly message: string;
   readonly detail?: string;
@@ -28,6 +35,8 @@ export class StackCommandDestroyError extends Data.TaggedError("ExperimentalStac
         return stackTargetInvalidConfigActionability(this.targetIssue);
       case "runtime":
         return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+      case "uploads":
+        return { ...actionability.runtimeCrash, fingerprint_suffix: "filesystem_io" };
       case "stack":
         return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability(this.cause);
     }

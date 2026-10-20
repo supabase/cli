@@ -3,8 +3,9 @@ import { Context } from "effect";
 
 interface LinkedProjectCacheShape {
   /**
-   * Fire-and-forget: fetches the project metadata from the Management API and writes
-   * `<workdir>/supabase/.temp/linked-project.json` if no cache exists yet.
+   * Fire-and-forget: fetches the project metadata from the Management API and writes it if no
+   * cache exists yet: `<workdir>/supabase/.temp/linked-project.json` in legacy mode,
+   * `$SUPABASE_HOME/project-cache/<ref>.json` in stack mode.
    *
    * `workdir` overrides the directory the cache resolves against. Callers that have already
    * changed the working directory (e.g. `bootstrap`, whose target workdir can come from an

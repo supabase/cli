@@ -24,10 +24,9 @@ import { HttpClient } from "effect/http";
 import {
   slimImageMirrors,
   prepareNativeArtifact,
-  postgresLine,
-  postgresVersion,
   resolveArtifact,
   useNativeArtifact,
+  type ArtifactPin,
   type PreparedNativeArtifact,
 } from "../Artifacts.ts";
 import {
@@ -90,10 +89,25 @@ import {
   type DockerDatabaseStorage,
   type DockerDatabaseStorageError,
 } from "../storage/DockerDatabaseStorage.ts";
-import { recreateStackAdvice, unusableDatabaseData } from "../internal/database-reuse.ts";
+import {
+  DatabaseDataState,
+  DatabaseReadyMarker,
+  databaseIdentity,
+  databaseIdentityMismatch,
+  databaseReadyMarkerFile,
+  readDatabaseDataState,
+  readDatabaseIdentity,
+  recordDatabaseIdentity,
+  recreateStackAdvice,
+} from "../internal/database-reuse.ts";
+import {
+  removeSchemaWriters,
+  schemaWriterLockFiles,
+  schemaWritersFile,
+  withSchemaWriterLeases,
+} from "../internal/schema-writers.ts";
 
 export const DatabaseConfig = Schema.Struct({
-  version: Schema.String,
   databasePassword: Schema.Redacted(Schema.String),
   jwtSecret: Schema.Redacted(Schema.String),
   jwtExpiry: Schema.Finite,
@@ -106,20 +120,21 @@ export const DatabaseConfig = Schema.Struct({
   ),
 });
 
-const DatabaseReadyMarker = Schema.Struct({
-  version: Schema.String,
-  runtime: Schema.Literals(["native", "docker", "podman"]),
-  profile: Schema.Literal("supabase"),
-});
-
-/** Release line a native first start initializes, written before initdb so an interrupted start can resume. */
-const DatabaseLineMarker = Schema.Struct({ line: Schema.String });
-const lineMarkerFile = ".supabase-database-line.json";
-
 // Health reconciles role passwords as supabase_admin, including after a configured password change.
 const NATIVE_HBA_RULES = "local all supabase_admin trust\nlocal all all scram-sha-256\n";
 
 export interface DatabaseConfig extends Schema.Schema.Type<typeof DatabaseConfig> {}
+
+/** A database's configuration with the artifact pin its creation selected. */
+export interface PinnedDatabaseConfig extends DatabaseConfig {
+  readonly pin: ArtifactPin;
+}
+
+/** Joins a database creation's pin and configuration into what the component runs. */
+export const pinnedDatabaseConfig = (creation: {
+  readonly pin: ArtifactPin;
+  readonly config: DatabaseConfig;
+}): PinnedDatabaseConfig => ({ ...creation.config, pin: creation.pin });
 
 export const DatabaseEndpoints = Schema.Struct({ sql: Schema.optionalKey(EndpointIntent) });
 export interface DatabaseEndpoints extends Schema.Schema.Type<typeof DatabaseEndpoints> {}
@@ -155,17 +170,17 @@ export interface DatabaseOptions {
 }
 
 export interface DatabaseComponent {
-  readonly definition: ServiceDefinition<DatabaseConfig>;
+  readonly definition: ServiceDefinition<PinnedDatabaseConfig>;
   readonly resetData: (
-    context: ServiceInstanceContext<DatabaseConfig>,
+    context: ServiceInstanceContext<PinnedDatabaseConfig>,
   ) => Effect.Effect<void, ServiceError>;
   readonly saveSnapshot: (
-    context: ServiceInstanceContext<DatabaseConfig>,
+    context: ServiceInstanceContext<PinnedDatabaseConfig>,
     key: string,
     scope: SnapshotScope,
   ) => Effect.Effect<void, ServiceError>;
   readonly restoreSnapshot: (
-    context: ServiceInstanceContext<DatabaseConfig>,
+    context: ServiceInstanceContext<PinnedDatabaseConfig>,
     key: string,
     scope: SnapshotScope,
   ) => Effect.Effect<boolean, ServiceError>;
@@ -343,7 +358,6 @@ const health = Effect.fn("Database.health")(function* (
           const readyMarker = yield* Schema.encodeEffect(
             Schema.fromJsonString(DatabaseReadyMarker),
           )({
-            version: context.version,
             runtime: context.runtime,
             profile: "supabase",
           }).pipe(Effect.mapError((cause) => errorFor("bootstrap", cause)));
@@ -355,7 +369,7 @@ const health = Effect.fn("Database.health")(function* (
           if (context.markInitialized !== undefined) yield* context.markInitialized;
           yield* context.fs.rename(
             `${stage}/marker`,
-            `${context.instanceRoot}/.supabase-database-ready.json`,
+            `${context.instanceRoot}/${databaseReadyMarkerFile}`,
           );
         }),
       ),
@@ -605,12 +619,12 @@ export const makeDatabase = (
             ...(options.helpers === undefined ? {} : { helpers: options.helpers }),
           }).pipe(Effect.mapError((cause) => databaseError("storage", cause)));
 
-    const snapshots = (version: string) =>
+    const snapshots = (pin: ArtifactPin) =>
       makeDatabaseSnapshots({
         instanceRoot,
         cacheRoot: options.cacheRoot,
         runtime: options.runtime,
-        version,
+        pin,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
@@ -620,12 +634,9 @@ export const makeDatabase = (
       );
 
     const dataCommand = Effect.fn("Database.containerFiles")(
-      function* (version: string, args: ReadonlyArray<string>) {
+      function* (pin: ArtifactPin, args: ReadonlyArray<string>) {
         if (container === undefined) return "";
-        const artifact = yield* resolveArtifact({
-          service: "database",
-          version: postgresVersion(version),
-        });
+        const artifact = yield* resolveArtifact({ service: "database", pin });
         return yield* Effect.scoped(
           Effect.gen(function* () {
             const child = yield* container.launchCommand({
@@ -640,7 +651,7 @@ export const makeDatabase = (
               mounts: [
                 storage === undefined
                   ? { source: instanceRoot, target: containerInstancePath, readOnly: false }
-                  : yield* storage.mount(version).pipe(
+                  : yield* storage.mount(pin).pipe(
                       Effect.map((mount) => ({ ...mount, target: "/var/lib/postgresql/data" })),
                       Effect.mapError((cause) => errorFor("data", cause)),
                     ),
@@ -687,9 +698,9 @@ export const makeDatabase = (
     );
 
     const prepareArtifact = Effect.fn("Database.prepareArtifact")((
-      input: DatabaseConfig,
+      input: PinnedDatabaseConfig,
     ): Effect.Effect<void, ServiceError> => {
-      const version = postgresVersion(input.version);
+      const { pin } = input;
       if (!Number.isInteger(input.jwtExpiry) || input.jwtExpiry <= 0)
         return Effect.fail(
           new ServiceError({
@@ -716,7 +727,7 @@ export const makeDatabase = (
       if (options.runtime === "native")
         // Ahead-of-time warm-up only: downloads and publishes the generation but pins nothing.
         // `launch` resolves (or prepares) and pins its own copy right before it spawns.
-        return prepareNativeArtifact({ service: "database", version }, options.cacheRoot).pipe(
+        return prepareNativeArtifact({ service: "database", pin }, options.cacheRoot).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
           Effect.provideService(Crypto.Crypto, crypto),
@@ -730,81 +741,53 @@ export const makeDatabase = (
         return Effect.fail(
           new ServiceError({ operation: "prepare", message: "Container runtime is unavailable" }),
         );
-      return resolveArtifact({ service: "database", version }).pipe(
+      return resolveArtifact({ service: "database", pin }).pipe(
         Effect.flatMap((artifact) => selectedContainer.prepare(artifact.image)),
         Effect.mapError((cause) => errorFor("prepare", cause)),
       );
     });
 
-    /** Records the release line before initdb runs; initialized data keeps the line it has. */
-    const recordLine = Effect.fn("Database.recordLine")(
-      function* (dataPath: string, version: string) {
-        if (yield* fs.exists(path.join(dataPath, "PG_VERSION"))) return;
-        const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(DatabaseLineMarker))({
-          line: postgresLine(version),
-        });
-        const stage = yield* fs.makeTempDirectoryScoped({
-          directory: instanceRoot,
-          prefix: ".line-",
-        });
-        yield* fs.writeFileString(path.join(stage, "marker"), encoded, { mode: 0o600 });
-        yield* fs.rename(path.join(stage, "marker"), path.join(instanceRoot, lineMarkerFile));
-      },
-      Effect.scoped,
-      Effect.mapError((cause) => errorFor("launch", cause)),
-    );
-
     /**
-     * Why the instance's data cannot serve `requested`, or `undefined` when it can. Prepare runs
-     * outside the lifecycle gate, so the gated launch checks again before touching the data.
+     * Fails when the instance's initialized data cannot serve `requested`. Prepare runs outside the
+     * lifecycle gate, so the gated launch checks again before touching the data. A Docker volume is
+     * invisible to the host, so Docker data without a readiness marker is checked by its storage.
      */
-    const reuseFailure = Effect.fn("Database.reuseFailure")(function* (requested: string) {
-      const recreate = recreateStackAdvice(String(options.stackId));
-      const markerPath = path.join(instanceRoot, ".supabase-database-ready.json");
-      if (yield* fs.exists(markerPath)) {
-        const marker = yield* fs
-          .readFileString(markerPath)
-          .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DatabaseReadyMarker))));
-        return postgresLine(marker.version) === postgresLine(requested) &&
-          marker.runtime === options.runtime
-          ? undefined
-          : `Initialized database data is ${marker.version} on the ${marker.runtime} runtime, but ${requested} on the ${options.runtime} runtime was requested; ${recreate}`;
+    const checkReuse = Effect.fn("Database.checkReuse")(function* (requested: string) {
+      const state = yield* readDatabaseDataState(fs, path, instanceRoot, options.runtime);
+      if (DatabaseDataState.$is("RuntimeMismatch")(state)) {
+        yield* Effect.annotateCurrentSpan({ "database.reuse.outcome": "runtime_mismatch" });
+        return yield* errorFor(
+          "prepare",
+          `Initialized database data is for the ${state.recorded} runtime, but the ${options.runtime} runtime was requested; ${recreateStackAdvice(String(options.stackId))}`,
+        );
       }
-      const versionPath = path.join(instanceRoot, "data", "PG_VERSION");
-      if (options.runtime !== "native" || !(yield* fs.exists(versionPath))) return undefined;
-      const linePath = path.join(instanceRoot, lineMarkerFile);
-      const recorded = (yield* fs.exists(linePath))
-        ? (yield* fs
-            .readFileString(linePath)
-            .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DatabaseLineMarker)))))
-            .line
-        : undefined;
-      const reason = unusableDatabaseData(
-        {
-          major: (yield* fs.readFileString(versionPath)).trim(),
-          line: recorded,
-          initialized: false,
-        },
-        requested,
-      );
-      return reason === undefined ? undefined : `${reason}; ${recreate}`;
+      if (DatabaseDataState.$is("Fresh")(state)) {
+        yield* Effect.annotateCurrentSpan({ "database.reuse.outcome": "fresh" });
+        return;
+      }
+      const recorded = yield* readDatabaseIdentity(fs, path, instanceRoot);
+      const mismatch = databaseIdentityMismatch(String(options.stackId), recorded, requested);
+      yield* Effect.annotateCurrentSpan({
+        "database.reuse.outcome": mismatch === undefined ? "reusable" : "mismatch",
+        "database.reuse.recorded_build": recorded?.build ?? "none",
+        "database.reuse.requested_build": requested,
+      });
+      if (mismatch !== undefined) return yield* errorFor("prepare", mismatch);
     });
 
     const prepare = Effect.fn("Database.prepare")(
-      function* (input: DatabaseConfig) {
-        const reason = yield* reuseFailure(postgresVersion(input.version));
-        if (reason !== undefined) return yield* errorFor("prepare", reason);
+      function* (input: PinnedDatabaseConfig) {
+        yield* checkReuse(input.pin.upstreamVersion);
         yield* prepareArtifact(input);
       },
       Effect.mapError((cause) => errorFor("prepare", cause)),
     );
 
     const openDatabaseContainer = Effect.fn("Database.openContainer")(function* (
-      context: ServiceInstanceContext<DatabaseConfig>,
+      context: ServiceInstanceContext<PinnedDatabaseConfig>,
     ) {
       const config = {
         ...context.config,
-        version: postgresVersion(context.config.version),
         rootKey: context.config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
       };
       const dataPath = path.join(instanceRoot, "data");
@@ -819,7 +802,7 @@ export const makeDatabase = (
               }),
             )
           : yield* storage
-              .mount(config.version)
+              .mount(config.pin)
               .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
       const rootKeyPath = path.join(instanceRoot, "pgsodium_root.key");
       yield* fs
@@ -833,13 +816,13 @@ export const makeDatabase = (
         return yield* errorFor("launch", "Container runtime is unavailable");
       const image = yield* resolveArtifact({
         service: "database",
-        version: config.version,
+        pin: config.pin,
       }).pipe(Effect.mapError((cause) => errorFor("launch", cause)));
       if (
         storage === undefined ||
         (yield* storage.needsDataChown.pipe(Effect.mapError((cause) => errorFor("launch", cause))))
       ) {
-        yield* dataCommand(config.version, ["chown", "100:101", "/var/lib/postgresql/data"]);
+        yield* dataCommand(config.pin, ["chown", "100:101", "/var/lib/postgresql/data"]);
       }
       const launched = selectedContainer
         .launch({
@@ -889,7 +872,7 @@ export const makeDatabase = (
 
     const launch = Effect.fn("Database.launch")(
       (
-        context: ServiceLaunchContext<DatabaseConfig>,
+        context: ServiceLaunchContext<PinnedDatabaseConfig>,
       ): Effect.Effect<RuntimeSession, ServiceError | ServiceLaunchError> =>
         Effect.gen(function* () {
           const publish = yield* (yield* launchOutputPublisher(logs, context.launchId)).part;
@@ -914,16 +897,14 @@ export const makeDatabase = (
             );
           const config = {
             ...context.config,
-            version: postgresVersion(context.config.version),
             rootKey: context.config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
           };
-          const reuse = yield* reuseFailure(config.version).pipe(
+          yield* checkReuse(config.pin.upstreamVersion).pipe(
             Effect.mapError((cause) => errorFor("launch", cause)),
           );
-          if (reuse !== undefined) return yield* errorFor("launch", reuse);
           if (storage !== undefined)
             yield* storage
-              .prepare(config.version)
+              .prepare(config.pin)
               .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
           const settings = postgresArguments(config);
           if (options.runtime === "native") {
@@ -943,7 +924,16 @@ export const makeDatabase = (
             yield* fs
               .makeDirectory(dataPath, { recursive: true, mode: 0o700 })
               .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
-            yield* recordLine(dataPath, config.version);
+            const initializing = !(yield* fs
+              .exists(path.join(dataPath, "PG_VERSION"))
+              .pipe(Effect.mapError((cause) => errorFor("launch", cause))));
+            if (initializing)
+              yield* recordDatabaseIdentity(
+                fs,
+                path,
+                instanceRoot,
+                databaseIdentity(config.pin.upstreamVersion),
+              ).pipe(Effect.mapError((cause) => errorFor("launch", cause)));
             const rootKeyPath = path.join(nativeRoot, "pgsodium_root.key");
             yield* fs
               .writeFileString(rootKeyPath, Redacted.value(config.rootKey), { mode: 0o600 })
@@ -1002,7 +992,7 @@ export const makeDatabase = (
             // process's cleanup before releasing the pin.
             const launchScope = yield* Scope.fork(context.scope, "sequential");
             const artifact = yield* useNativeArtifact(
-              { service: "database", version: config.version },
+              { service: "database", pin: config.pin },
               options.cacheRoot,
             ).pipe(
               Scope.provide(launchScope),
@@ -1054,13 +1044,13 @@ export const makeDatabase = (
             const setup = health(selectedEndpoint, config, Effect.void, {
               fs,
               instanceRoot,
-              version: config.version,
+              version: config.pin.upstreamVersion,
               runtime: options.runtime,
               markInitialized:
                 storage === undefined
                   ? undefined
                   : storage
-                      .markInitialized(config.version)
+                      .markInitialized(config.pin)
                       .pipe(Effect.mapError((cause) => errorFor("health", cause))),
             });
             return {
@@ -1095,13 +1085,13 @@ export const makeDatabase = (
             {
               fs,
               instanceRoot,
-              version: config.version,
+              version: config.pin.upstreamVersion,
               runtime: options.runtime,
               markInitialized:
                 storage === undefined
                   ? undefined
                   : storage
-                      .markInitialized(config.version)
+                      .markInitialized(config.pin)
                       .pipe(Effect.mapError((cause) => errorFor("health", cause))),
             },
           );
@@ -1126,7 +1116,7 @@ export const makeDatabase = (
           )
         : Effect.void;
 
-    const definition: ServiceDefinition<DatabaseConfig> = {
+    const definition: ServiceDefinition<PinnedDatabaseConfig> = {
       prepare,
       launch,
       removeData: (context) =>
@@ -1140,7 +1130,7 @@ export const makeDatabase = (
               storage === undefined
                 ? Effect.void
                 : storage
-                    .destroyData(postgresVersion(context.config.version))
+                    .destroyData(context.config.pin)
                     .pipe(Effect.mapError((cause) => errorFor("destroy", cause))),
             ),
           ),
@@ -1148,34 +1138,46 @@ export const makeDatabase = (
         ),
     };
     const resetData = Effect.fn("Database.resetData")((
-      context: ServiceInstanceContext<DatabaseConfig>,
+      context: ServiceInstanceContext<PinnedDatabaseConfig>,
     ) => {
       const clear: Effect.Effect<void, ServiceError | DockerDatabaseStorageError> =
         storage === undefined
           ? destroyOwnedRoot(fs, path, instanceRoot, options.root, Effect.void, errorFor, [
               instanceSnapshotsDirectory,
-            ])
-          : storage.removeData(postgresVersion(context.config.version));
-      return clear.pipe(Effect.mapError((cause) => errorFor("reset", cause)));
+              schemaWritersFile,
+              ...schemaWriterLockFiles,
+            ]).pipe(
+              // Forgotten last, so a crash leaves the record at least as new as the data.
+              Effect.andThen(
+                removeSchemaWriters(fs, path, instanceRoot).pipe(
+                  Effect.mapError((cause) => errorFor("reset", cause)),
+                ),
+              ),
+            )
+          : storage.removeData(context.config.pin);
+      // An admitted writer's raised record must not be forgotten while it still migrates.
+      return withSchemaWriterLeases(path, instanceRoot, clear).pipe(
+        Effect.mapError((cause) => errorFor("reset", cause)),
+      );
     });
     return {
       definition,
       resetData,
       saveSnapshot: (context, key, scope) =>
         storage === undefined
-          ? Effect.flatMap(snapshots(context.config.version), (store) =>
+          ? Effect.flatMap(snapshots(context.config.pin), (store) =>
               store.saveSnapshot(key, scope),
             ).pipe(Effect.mapError((cause) => errorFor("snapshot", cause)))
           : storage
-              .saveSnapshot(postgresVersion(context.config.version), key, scope)
+              .saveSnapshot(context.config.pin, key, scope)
               .pipe(Effect.mapError((cause) => errorFor("snapshot", cause))),
       restoreSnapshot: (context, key, scope) =>
         storage === undefined
-          ? Effect.flatMap(snapshots(context.config.version), (store) =>
+          ? Effect.flatMap(snapshots(context.config.pin), (store) =>
               store.restoreSnapshot(key, scope),
             ).pipe(Effect.mapError((cause) => errorFor("snapshot", cause)))
           : storage
-              .restoreSnapshot(postgresVersion(context.config.version), key, scope)
+              .restoreSnapshot(context.config.pin, key, scope)
               .pipe(Effect.mapError((cause) => errorFor("snapshot", cause))),
       endpoint: Ref.get(endpoint).pipe(
         Effect.flatMap((value) =>

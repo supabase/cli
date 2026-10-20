@@ -3379,7 +3379,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
   it.effect(
     "a broken .temp/project-ref (a directory, not a file) degrades gracefully instead of failing",
     () => {
-      // Mirrors the established `readProjectRefFile` EISDIR regression
+      // Mirrors the established `readLegacyProjectRef` EISDIR regression
       // technique — the target-detection recovery's own best-effort read
       // must swallow a real read failure (not just a missing file), not
       // propagate it. A cache candidate (with a branch-list response that

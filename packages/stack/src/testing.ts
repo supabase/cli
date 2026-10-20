@@ -1,9 +1,29 @@
-import { Config, Crypto, Effect, FileSystem, Option, Path, Ref, Schema, Scope } from "effect";
+import {
+  Config,
+  Context,
+  Crypto,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Ref,
+  Schema,
+  Scope,
+} from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem exposes no OS temp or home directory path for the shared roots.
 import { homedir, tmpdir, userInfo } from "node:os";
 import type { PlatformError } from "effect/PlatformError";
-import { defaultRuntime } from "./Artifacts.ts";
+import { defaultArtifactSelection, defaultRuntime, type ArtifactPin } from "./Artifacts.ts";
 import * as StackEffect from "./effect.ts";
+import {
+  LockInvalidError,
+  LockIoError,
+  LockUnsupportedVersionError,
+  lockSelection,
+  readLock,
+} from "./Lock.ts";
 import {
   acquire,
   stackAdapter,
@@ -15,10 +35,24 @@ import {
   type Stack,
 } from "./PromiseClient.ts";
 import { StackError, stackError } from "./Rpc.ts";
+import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
+import {
+  DatabaseReadyMarker,
+  databaseIdentity,
+  databaseReadyMarkerFile,
+  recordDatabaseIdentity,
+} from "./internal/database-reuse.ts";
+import {
+  setSchemaWriters,
+  type SchemaWriters,
+  type SchemaWriterService,
+} from "./internal/schema-writers.ts";
 import {
   allowedEndpointNames,
+  ServiceCreation,
   ServiceCreationInput as CreationSchema,
 } from "./services/Catalog.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 
 /** Exposed for test fakes that need to reproduce the package's own saved-stack comparison. */
 export { planSupabaseComposition } from "./composition/Supabase.ts";
@@ -26,12 +60,14 @@ export { planSupabaseComposition } from "./composition/Supabase.ts";
 type Kind = StackEffect.ServiceCreationInput["service"];
 type Creation<K extends Kind> = Extract<StackEffect.ServiceCreationInput, { readonly service: K }>;
 
-/** A service kind to compose, optionally with config and endpoint overrides. */
+/** A service kind to compose, optionally with a pin, config and endpoint overrides. */
 export type TestService<K extends Kind = Kind> = K extends Kind
   ?
       | K
       | {
           readonly service: K;
+          /** Defaults to the project lock's pin of the kind, then the compiled default. */
+          readonly pin?: ArtifactPin;
           readonly config?: Partial<Creation<K>["config"]>;
           readonly endpoints?: Creation<K>["endpoints"];
         }
@@ -77,7 +113,9 @@ export interface TestStackOptions<S> {
   readonly cacheRoot?: string;
   /**
    * A caller-owned project root; by default a temporary one is removed on disposal. Default
-   * Storage and Functions directories live in the temporary root, never in a caller's root.
+   * Storage and Functions directories live in the temporary root, never in a caller's root. Its
+   * `supabase/supabase.lock` pins the versions the stack runs; without one the bundled versions
+   * run, and an unreadable lock fails the stack.
    */
   readonly projectRoot?: string;
 }
@@ -124,6 +162,14 @@ const cacheHome = Config.option(Config.NonEmptyString("XDG_CACHE_HOME"));
 
 const testFailure = (operation: string) => (cause: unknown) => stackError(operation, cause);
 
+const isLockError = Schema.is(
+  Schema.Union([LockInvalidError, LockUnsupportedVersionError, LockIoError]),
+);
+
+/** Lock failures stay typed so callers can tell a bad lock from a startup failure. */
+const creationFailure = (cause: unknown) =>
+  isLockError(cause) ? cause : testFailure("test-stack")(cause);
+
 /** Local-development configuration for each kind, with every endpoint on an automatic port. */
 const localCreation = Effect.fnUntraced(function* (
   kind: Kind,
@@ -138,7 +184,7 @@ const localCreation = Effect.fnUntraced(function* (
   });
   const config =
     kind === "database"
-      ? { version: "17", jwtExpiry: 3600 }
+      ? { jwtExpiry: 3600 }
       : kind === "storage" || kind === "imgproxy"
         ? { filePath: yield* directory("storage") }
         : kind === "functions"
@@ -159,189 +205,195 @@ function byKind(
   return Object.fromEntries(members.map((member) => [member.service, member]));
 }
 
-const make = Effect.fn("TestStack.make")(
-  function* <Required extends Kind, Optional extends Kind = never>(
-    options: TestStackOptions<ReadonlyArray<TestService | PlainTestService>>,
-    decode: (creation: unknown) => Effect.Effect<StackEffect.ServiceCreationInput, StackError>,
-  ) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
-    const runtime =
-      options.runtime ?? Option.getOrUndefined(yield* runtimeOverride) ?? defaultRuntime();
-    // Shared roots are created owner-only, so each OS user needs its own.
-    const user = process.getuid?.() ?? userInfo().username;
-    const stateRoot = options.stateRoot ?? path.join(tmpdir(), `supabase-stack-tests-${user}`);
-    const cacheRoot =
-      options.cacheRoot ??
-      path.join(
-        Option.getOrElse(yield* cacheHome, () => path.join(homedir(), ".cache")),
-        "supabase-stack-artifacts",
-      );
-    // Native Edge Runtime on Linux cannot read project files below /tmp.
-    const temporaryRoot = fs.makeTempDirectoryScoped({
-      prefix: "supabase-test-stack-",
-      ...(runtime === "native" && process.platform === "linux" ? { directory: homedir() } : {}),
-    });
-    const projectRoot = options.projectRoot ?? (yield* temporaryRoot);
-    const dataRoot =
-      options.projectRoot === undefined
-        ? Effect.succeed(projectRoot)
-        : yield* Effect.cached(temporaryRoot);
-    const services: ReadonlyArray<TestService | PlainTestService> = options.services ?? [
-      "database",
-    ];
-    const creations = yield* Effect.forEach(services, (service) =>
-      Effect.gen(function* () {
-        const kind = typeof service === "string" ? service : service.service;
-        const local = yield* localCreation(kind, dataRoot);
-        return yield* decode({
-          service: kind,
-          config: { ...local.config, ...(typeof service === "string" ? {} : service.config) },
-          endpoints: {
-            ...local.endpoints,
-            ...(typeof service === "string" ? {} : service.endpoints),
-          },
+const make = Effect.fn("TestStack.make")(function* <
+  Required extends Kind,
+  Optional extends Kind = never,
+>(
+  options: TestStackOptions<ReadonlyArray<TestService | PlainTestService>>,
+  decode: (creation: unknown) => Effect.Effect<StackEffect.ServiceCreationInput, StackError>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
+  const runtime =
+    options.runtime ?? Option.getOrUndefined(yield* runtimeOverride) ?? defaultRuntime();
+  // Shared roots are created owner-only, so each OS user needs its own.
+  const user = process.getuid?.() ?? userInfo().username;
+  const stateRoot = options.stateRoot ?? path.join(tmpdir(), `supabase-stack-tests-${user}`);
+  const cacheRoot =
+    options.cacheRoot ??
+    path.join(
+      Option.getOrElse(yield* cacheHome, () => path.join(homedir(), ".cache")),
+      "supabase-stack-artifacts",
+    );
+  // Native Edge Runtime on Linux cannot read project files below /tmp.
+  const temporaryRoot = fs.makeTempDirectoryScoped({
+    prefix: "supabase-test-stack-",
+    ...(runtime === "native" && process.platform === "linux" ? { directory: homedir() } : {}),
+  });
+  const projectRoot = options.projectRoot ?? (yield* temporaryRoot);
+  const dataRoot =
+    options.projectRoot === undefined
+      ? Effect.succeed(projectRoot)
+      : yield* Effect.cached(temporaryRoot);
+  const services: ReadonlyArray<TestService | PlainTestService> = options.services ?? ["database"];
+  const selection =
+    options.projectRoot === undefined
+      ? defaultArtifactSelection()
+      : Option.match(yield* readLock(options.projectRoot), {
+          onNone: defaultArtifactSelection,
+          onSome: lockSelection,
         });
-      }),
-    );
-    const stack = yield* Effect.acquireRelease(
-      StackEffect.create({
-        projectRoot,
-        stateRoot,
-        cacheRoot,
-        runtime,
-        name: `test-${yield* crypto.randomUUIDv4}`,
-        lifetime: "session",
-      }),
-      (created) => created.destroy.pipe(Effect.orDie),
-    );
-    const diagnose = (operation: string) => (cause: StackError) =>
-      stack.services.list.pipe(
-        Effect.flatMap((registered) =>
-          Effect.forEach(registered, (member) =>
-            member.status.pipe(
-              Effect.map(
-                (status) =>
-                  `${member.service}=${status.lifecycle}` +
-                  `${status.health === undefined ? "" : `/${status.health}`}` +
-                  `${status.error === undefined ? "" : ` (${status.error.message})`}`,
-              ),
-              Effect.orElseSucceed(() => `${member.service}=unobservable`),
+  const creations = yield* Effect.forEach(services, (service) =>
+    Effect.gen(function* () {
+      const kind = typeof service === "string" ? service : service.service;
+      const local = yield* localCreation(kind, dataRoot);
+      return yield* decode({
+        service: kind,
+        pin: (typeof service === "string" ? undefined : service.pin) ?? selection[kind],
+        config: { ...local.config, ...(typeof service === "string" ? {} : service.config) },
+        endpoints: {
+          ...local.endpoints,
+          ...(typeof service === "string" ? {} : service.endpoints),
+        },
+      });
+    }),
+  );
+  const stack = yield* Effect.acquireRelease(
+    StackEffect.create({
+      projectRoot,
+      stateRoot,
+      cacheRoot,
+      runtime,
+      name: `test-${yield* crypto.randomUUIDv4}`,
+      lifetime: "session",
+    }),
+    (created) => created.destroy.pipe(Effect.orDie),
+  );
+  const diagnose = (operation: string) => (cause: StackError) =>
+    stack.services.list.pipe(
+      Effect.flatMap((registered) =>
+        Effect.forEach(registered, (member) =>
+          member.status.pipe(
+            Effect.map(
+              (status) =>
+                `${member.service}=${status.lifecycle}` +
+                `${status.health === undefined ? "" : `/${status.health}`}` +
+                `${status.error === undefined ? "" : ` (${status.error.message})`}`,
             ),
+            Effect.orElseSucceed(() => `${member.service}=unobservable`),
           ),
         ),
-        Effect.orElseSucceed((): ReadonlyArray<string> => []),
-        Effect.flatMap((statuses) =>
-          Effect.fail(
-            new StackError({
-              ...cause,
-              operation,
-              message: `${cause.message}\nServices: ${statuses.length === 0 ? "none" : statuses.join(", ")}\nOwner log: ${path.join(stateRoot, stack.id, "owner.log")}`,
-            }),
-          ),
-        ),
-      );
-    const members = yield* stack.composition
-      .supabase(creations, { eager: true })
-      .pipe(Effect.catch(diagnose("test-startup")));
-    const start = (operation: string) =>
-      stack.composition.start.pipe(
-        Effect.andThen(
-          Effect.forEach(members, (member) => member.ready, {
-            concurrency: "unbounded",
-            discard: true,
+      ),
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+      Effect.flatMap((statuses) =>
+        Effect.fail(
+          new StackError({
+            ...cause,
+            operation,
+            message: `${cause.message}\nServices: ${statuses.length === 0 ? "none" : statuses.join(", ")}\nOwner log: ${path.join(stateRoot, stack.id, "owner.log")}`,
           }),
         ),
-        Effect.catch(diagnose(operation)),
-      );
-    yield* start("test-startup");
-    const database = members.find(
-      (member): member is StackEffect.DatabaseInstance => member.service === "database",
+      ),
     );
-    const checkpoints = yield* Ref.make<ReadonlySet<string>>(new Set());
-    const withContext = (suffix: string) =>
-      Effect.mapError(
-        (failure: StackError) =>
-          new StackError({ ...failure, message: `${failure.message}; ${suffix}` }),
-      );
-    /** Stops the composition around `work` and brings it back whether or not `work` succeeds. */
-    const whileStopped = (
-      operation: string,
-      work: (database: StackEffect.DatabaseInstance) => Effect.Effect<void, StackError>,
-    ) =>
-      database === undefined
-        ? Effect.fail(
-            new StackError({ operation, message: "Test stack checkpoints require a database" }),
-          )
-        : // The owner completes a stop its caller abandons, so the restart must follow its reply.
-          Effect.uninterruptible(stack.composition.stop).pipe(
-            Effect.andThen(work(database)),
-            Effect.matchEffect({
-              onSuccess: () => start(operation),
-              onFailure: (failure) =>
-                start(operation).pipe(
-                  Effect.matchEffect({
-                    onSuccess: () => Effect.fail(failure),
-                    onFailure: (restart) =>
-                      Effect.fail(failure).pipe(
-                        withContext(`restarting the composition also failed: ${restart.message}`),
+  const members = yield* stack.composition
+    .supabase(creations, { eager: true })
+    .pipe(Effect.catch(diagnose("test-startup")));
+  const start = (operation: string) =>
+    stack.composition.start.pipe(
+      Effect.andThen(
+        Effect.forEach(members, (member) => member.ready, {
+          concurrency: "unbounded",
+          discard: true,
+        }),
+      ),
+      Effect.catch(diagnose(operation)),
+    );
+  yield* start("test-startup");
+  const database = members.find(
+    (member): member is StackEffect.DatabaseInstance => member.service === "database",
+  );
+  const checkpoints = yield* Ref.make<ReadonlySet<string>>(new Set());
+  const withContext = (suffix: string) =>
+    Effect.mapError(
+      (failure: StackError) =>
+        new StackError({ ...failure, message: `${failure.message}; ${suffix}` }),
+    );
+  /** Stops the composition around `work` and brings it back whether or not `work` succeeds. */
+  const whileStopped = (
+    operation: string,
+    work: (database: StackEffect.DatabaseInstance) => Effect.Effect<void, StackError>,
+  ) =>
+    database === undefined
+      ? Effect.fail(
+          new StackError({ operation, message: "Test stack checkpoints require a database" }),
+        )
+      : // The owner completes a stop its caller abandons, so the restart must follow its reply.
+        Effect.uninterruptible(stack.composition.stop).pipe(
+          Effect.andThen(work(database)),
+          Effect.matchEffect({
+            onSuccess: () => start(operation),
+            onFailure: (failure) =>
+              start(operation).pipe(
+                Effect.matchEffect({
+                  onSuccess: () => Effect.fail(failure),
+                  onFailure: (restart) =>
+                    Effect.fail(failure).pipe(
+                      withContext(`restarting the composition also failed: ${restart.message}`),
+                    ),
+                }),
+              ),
+          }),
+          // Signal aborts and test timeouts interrupt; the shared stack must not stay stopped.
+          Effect.onInterrupt(() => start(operation)),
+        );
+  const testStack: EffectTestStack<Required, Optional> = {
+    stack,
+    services: byKind<Required, Optional>(members),
+    projectRoot,
+    checkpoint: (name) =>
+      whileStopped("checkpoint", (current) =>
+        current
+          .saveSnapshot(name, { scope: "instance" })
+          .pipe(Effect.andThen(Ref.update(checkpoints, (names) => new Set([...names, name])))),
+      ),
+    reset: (name) =>
+      Ref.get(checkpoints).pipe(
+        Effect.flatMap((names) =>
+          names.has(name)
+            ? whileStopped("reset", (current) =>
+                current.resetData.pipe(
+                  withContext("the database data may have been partially reset"),
+                  Effect.andThen(
+                    current.restoreSnapshot(name, { scope: "instance" }).pipe(
+                      Effect.flatMap((restored) =>
+                        restored
+                          ? Effect.void
+                          : Effect.fail(
+                              new StackError({
+                                operation: "reset",
+                                message: `Checkpoint ${name} is missing`,
+                              }),
+                            ),
                       ),
-                  }),
-                ),
-            }),
-            // Signal aborts and test timeouts interrupt; the shared stack must not stay stopped.
-            Effect.onInterrupt(() => start(operation)),
-          );
-    const testStack: EffectTestStack<Required, Optional> = {
-      stack,
-      services: byKind<Required, Optional>(members),
-      projectRoot,
-      checkpoint: (name) =>
-        whileStopped("checkpoint", (current) =>
-          current
-            .saveSnapshot(name, { scope: "instance" })
-            .pipe(Effect.andThen(Ref.update(checkpoints, (names) => new Set([...names, name])))),
-        ),
-      reset: (name) =>
-        Ref.get(checkpoints).pipe(
-          Effect.flatMap((names) =>
-            names.has(name)
-              ? whileStopped("reset", (current) =>
-                  current.resetData.pipe(
-                    withContext("the database data may have been partially reset"),
-                    Effect.andThen(
-                      current.restoreSnapshot(name, { scope: "instance" }).pipe(
-                        Effect.flatMap((restored) =>
-                          restored
-                            ? Effect.void
-                            : Effect.fail(
-                                new StackError({
-                                  operation: "reset",
-                                  message: `Checkpoint ${name} is missing`,
-                                }),
-                              ),
-                        ),
-                        withContext(
-                          `the database data was reset without restoring checkpoint ${name}`,
-                        ),
+                      withContext(
+                        `the database data was reset without restoring checkpoint ${name}`,
                       ),
                     ),
                   ),
-                )
-              : Effect.fail(
-                  new StackError({
-                    operation: "reset",
-                    message: `No checkpoint named ${name}; the database data was not reset`,
-                  }),
                 ),
-          ),
+              )
+            : Effect.fail(
+                new StackError({
+                  operation: "reset",
+                  message: `No checkpoint named ${name}; the database data was not reset`,
+                }),
+              ),
         ),
-    };
-    return testStack;
-  },
-  Effect.mapError(testFailure("test-stack")),
-);
+      ),
+  };
+  return testStack;
+}, Effect.mapError(creationFailure));
 
 const decodeCreation = (creation: unknown) =>
   Schema.decodeUnknownEffect(CreationSchema)(creation).pipe(Effect.mapError(testFailure("config")));
@@ -375,3 +427,103 @@ export const createTestStack = <
       [Symbol.asyncDispose]: client.close,
     };
   });
+
+/** What {@link seedSavedStack} saves for a project. */
+export interface SeedSavedStackOptions {
+  readonly projectRoot: string;
+  readonly stateRoot: string;
+  /** Defaults to the native runtime. */
+  readonly runtime?: StackEffect.CreateOptions["runtime"];
+  /** Marks the database initialized by this upstream build; without it the data was never initialized. */
+  readonly built?: string;
+  /** Leaves `built` as an interrupted first start does: a data directory, but no readiness marker. */
+  readonly interrupted?: boolean;
+  /** Leaves `built`'s data without its recorded build identity. */
+  readonly withoutIdentity?: boolean;
+  /** Schema-owning services the saved composition binds to the database. */
+  readonly composed?: ReadonlyArray<SchemaWriterService>;
+  /** The newest upstream version each service migrated the database with. */
+  readonly migrated?: SchemaWriters;
+}
+
+/**
+ * Saves a stack of `projectRoot` without starting anything and writes the database data a start
+ * left behind, with the package's own record writers.
+ */
+export const seedSavedStack = Effect.fn("TestStack.seedSavedStack")(
+  function* (options: SeedSavedStackOptions) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
+    const runtime = options.runtime ?? "native";
+    const pins = defaultArtifactSelection();
+    const identity = yield* resolveStackIdentity({ projectRoot: options.projectRoot });
+    const stackId = yield* deriveStackId(identity);
+    const databaseId = yield* crypto.randomUUIDv4;
+    const database: ServiceCreation = {
+      service: "database",
+      pin: pins.database,
+      config: {
+        databasePassword: Redacted.make("seeded-stack-password"),
+        jwtSecret: Redacted.make("seeded-stack-jwt-secret-with-at-least-32-chars"),
+        jwtExpiry: 3600,
+      },
+      endpoints: { sql: { port: "auto" } },
+    };
+    const writers = yield* Effect.forEach(options.composed ?? [], (service) =>
+      Effect.all({
+        id: crypto.randomUUIDv4,
+        creation: Schema.decodeUnknownEffect(ServiceCreation)({
+          service,
+          pin: pins[service],
+          config: service === "storage" ? { filePath: "storage" } : {},
+          endpoints: {},
+        }),
+      }),
+    );
+    const state = Context.get(
+      yield* Layer.build(StackNamespace.layer({ root: options.stateRoot })),
+      StackNamespace.Service,
+    );
+    yield* state.save({
+      id: stackId,
+      identity,
+      runtime,
+      lifetime: "detached",
+      instances: [{ id: databaseId, creation: database }, ...writers],
+      composition: {
+        members: [databaseId, ...writers.map(({ id }) => id)].map((id) => ({
+          id,
+          activation: "eager",
+        })),
+        dependencies: writers.map(({ id }) => ({
+          from: databaseId,
+          to: id,
+          bindings: [{ output: "databaseUrl", input: "databaseUrl" }],
+        })),
+      },
+    });
+    const instanceRoot = path.join(options.stateRoot, stackId, "data", databaseId);
+    yield* fs.makeDirectory(instanceRoot, { recursive: true });
+    if (options.built !== undefined) {
+      if (options.interrupted === true) {
+        yield* fs.makeDirectory(path.join(instanceRoot, "data"));
+        yield* fs.writeFileString(path.join(instanceRoot, "data", "PG_VERSION"), "17\n");
+      } else
+        yield* fs.writeFileString(
+          path.join(instanceRoot, databaseReadyMarkerFile),
+          yield* Schema.encodeEffect(Schema.fromJsonString(DatabaseReadyMarker))({
+            runtime,
+            profile: "supabase",
+          }),
+        );
+      if (options.withoutIdentity !== true)
+        yield* recordDatabaseIdentity(fs, path, instanceRoot, databaseIdentity(options.built));
+    }
+    if (options.migrated !== undefined)
+      yield* setSchemaWriters(fs, path, instanceRoot, options.migrated);
+    return { stackId, databaseId };
+  },
+  Effect.scoped,
+  Effect.mapError(testFailure("seed-saved-stack")),
+);

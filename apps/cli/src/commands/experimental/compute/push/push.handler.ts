@@ -50,7 +50,7 @@ import {
   ComputeSourceMissingError,
   MissingComputeExposureError,
 } from "../../../../shared/compute/compute.errors.ts";
-import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
@@ -544,14 +544,14 @@ export const computePush = Effect.fn("compute.push")(function* (
 ) {
   const output = yield* Output;
   const path = yield* Path.Path;
-  const resolver = yield* ProjectRefResolver;
+  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   // Resolved here, outside the block below, since caching it is one of that
   // block's own finalizers — everything else that can fail belongs inside so
   // those failures still flush telemetry.
-  const projectRef = yield* resolver.resolve(flags.projectRef);
+  const { ref: projectRef } = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
     const project = yield* loadComputeProject;

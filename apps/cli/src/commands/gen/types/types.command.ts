@@ -11,7 +11,7 @@ import {
   dbConfigLinked,
   dbConfigPoolerFallbackLinked,
 } from "../../../command-internal/db-config.layer.ts";
-import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { projectRefPicker } from "../../../config/remote-target.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";

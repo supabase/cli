@@ -1,16 +1,14 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
 import { Data, Effect, Option } from "effect";
 
-import { ProjectRefResolver } from "../config/project-ref.service.ts";
+import { RemoteTarget, type RemoteTargetError } from "../config/remote-target.service.ts";
 import {
   parentNotLinkedMessage,
   parentRefInvalidMessage,
   parentRefTypoHint,
-  resolveLinkedParentRef,
-  resolveParentScopedProjectRef,
 } from "./parent-project-ref.ts";
 import { Output } from "../shared/output/output.service.ts";
-import { projectRefPicker } from "../config/project-ref.layer.ts";
+import { projectRefPicker } from "../config/remote-target.layer.ts";
 import { branchRef, resolveBranchProjectRef } from "./branch-ref.resolver.ts";
 import { compose, withCondition } from "./command-permissions/model.ts";
 import { sanitizeInlineName } from "./http-errors.ts";
@@ -173,7 +171,7 @@ export const resolveConfigTarget = Effect.fn("ProjectTarget.resolve")(function* 
   mapResolveError: (cause: SupabaseApiError) => Effect.Effect<never, EResolve>,
 ) {
   const output = yield* Output;
-  const resolver = yield* ProjectRefResolver;
+  const remoteTarget = yield* RemoteTarget;
 
   let ref: string;
   let branch: string | undefined;
@@ -183,11 +181,13 @@ export const resolveConfigTarget = Effect.fn("ProjectTarget.resolve")(function* 
     const byId = BRANCH_UUID_PATTERN.test(target);
     yield* Effect.annotateCurrentSpan("project_target.kind", byId ? "branch_id" : "branch_name");
 
-    let parentRef: ReturnType<typeof resolveParentScopedProjectRef>;
+    let parentRef: Effect.Effect<string, RemoteTargetError>;
     if (byId) {
-      parentRef = resolveParentScopedProjectRef(Option.none());
+      parentRef = remoteTarget
+        .resolveParentScoped(Option.none())
+        .pipe(Effect.map((resolved) => resolved.ref));
     } else {
-      const parent = yield* resolveLinkedParentRef();
+      const parent = yield* remoteTarget.parent;
       if (parent.kind === "absent") {
         return yield* Effect.fail(errors.notLinked(target));
       }
@@ -215,7 +215,7 @@ export const resolveConfigTarget = Effect.fn("ProjectTarget.resolve")(function* 
     }
   } else {
     yield* Effect.annotateCurrentSpan("project_target.kind", "project");
-    ref = yield* resolver.resolve(requested);
+    ({ ref } = yield* remoteTarget.resolve(requested));
   }
 
   yield* Effect.annotateCurrentSpan("project.ref", ref);

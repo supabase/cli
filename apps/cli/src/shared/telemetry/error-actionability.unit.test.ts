@@ -40,6 +40,12 @@ class PlainDeclaredError extends Data.Error<{ readonly message: string }> {
   }
 }
 
+class CancelledDefect extends Data.TaggedError("CancelledDefect") {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.cancelled;
+  }
+}
+
 class UndeclaredError extends Data.TaggedError("UndeclaredError")<{ readonly message: string }> {}
 
 class RuntimeCrashError extends Data.TaggedError("RuntimeCrashError")<{
@@ -295,6 +301,17 @@ describe("classifyCliCauseActionability", () => {
       error_category: "panic",
       error_fingerprint: "error:TypeError",
     });
+  });
+
+  it("classifies the typed failure when a cancellation defect accompanies it", () => {
+    const cause = Cause.combine(
+      Cause.fail(new DeclaredError({ message: "recoverable" })),
+      Cause.die(new CancelledDefect()),
+    );
+    expect(classifyCliCauseActionability(cause).error_category).toBe("auth");
+    expect(classifyCliCauseActionability(Cause.die(new CancelledDefect())).error_category).toBe(
+      "cancelled",
+    );
   });
 
   const platformDefectWith = (field: "_tag" | "module" | "method", value: string) => {

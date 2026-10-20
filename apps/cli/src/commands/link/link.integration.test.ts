@@ -269,6 +269,7 @@ const flags = (overrides: Partial<LinkFlags> = {}): LinkFlags => ({
   projectRef: Option.some(VALID_REF),
   password: Option.none(),
   skipPooler: false,
+  frozen: false,
   ...overrides,
 });
 

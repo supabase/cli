@@ -8,6 +8,7 @@ import { CommandSettings } from "../../../../config/command-settings.service.ts"
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import type { StackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
+import { readLockedSelection } from "../../../../command-internal/stack-lock.ts";
 import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import { bold, gray, green, red, yellow } from "../../../../command-internal/colors.ts";
 import {
@@ -313,9 +314,12 @@ const unavailableDrift = (message: string): StackReport["config_drift"] => ({
   message,
 });
 
+const projectConfigUnavailable = (error: { readonly message: string }) =>
+  Effect.succeed(unavailableDrift(`Project configuration could not be compared: ${error.message}`));
+
 const configDrift = Effect.fn("experimental.stack.status.configDrift")(
   function* (stack: Stack, projectRoot: string, functionsIsMember: boolean) {
-    const loaded = yield* loadStackConfig(projectRoot);
+    const loaded = yield* loadStackConfig(projectRoot, { selection: readLockedSelection });
     const creations = yield* loaded.creations(stack.id);
     // Drift ignores non-members, so a Functions dotenv only matters when Functions is a member.
     const requested = functionsIsMember
@@ -326,14 +330,9 @@ const configDrift = Effect.fn("experimental.stack.status.configDrift")(
   (effect) =>
     effect.pipe(
       Effect.catchTags({
-        StackConfigError: (error) =>
-          Effect.succeed(
-            unavailableDrift(`Project configuration could not be compared: ${error.message}`),
-          ),
-        StackFunctionsEnvError: (error) =>
-          Effect.succeed(
-            unavailableDrift(`Project configuration could not be compared: ${error.message}`),
-          ),
+        StackConfigError: projectConfigUnavailable,
+        LockResolutionError: projectConfigUnavailable,
+        StackFunctionsEnvError: projectConfigUnavailable,
         StackError: (error) =>
           Effect.succeed(
             unavailableDrift(`Saved configuration could not be compared: ${error.message}`),

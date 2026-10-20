@@ -2,8 +2,8 @@
  * On-disk locations for pg-delta-adjacent cache/snapshot artefacts.
  *
  * Two roots:
- * - {@link pgDeltaTempPath}: project-local (`supabase/.temp/pgdelta`) — catalog
- *   snapshots and debug bundles (Go-shared, workspace-mounted).
+ * - `pgdeltaScratchDir`: `supabase/.temp/pgdelta` in legacy state (Go-shared, workspace-mounted),
+ *   `$SUPABASE_HOME/tmp/pgdelta/<project hash>` in stack state — catalog snapshots and debug bundles.
  * - {@link shadowBaselineCacheDir}: global under `SUPABASE_HOME` — the shadow
  *   baseline PGDATA tars, shared across worktrees with the same settings.
  */
@@ -13,11 +13,6 @@ import { homedir } from "node:os";
 import type { Path } from "effect";
 
 import { resolveSupabaseHome } from "../shared/config/supabase-home.ts";
-
-/** `supabase/.temp/pgdelta` — catalog snapshots and debug bundles. */
-export function pgDeltaTempPath(path: Path.Path, workdir: string): string {
-  return path.join(workdir, "supabase", ".temp", "pgdelta");
-}
 
 /**
  * Global shadow-baseline cache directory:

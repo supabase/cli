@@ -4,7 +4,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
@@ -210,7 +210,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
   const goOutputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* ProjectRefResolver;
+  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const stdio = yield* Stdio.Stdio;
@@ -301,7 +301,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
 
     const providerId = yield* Effect.fromResult(validateUuid(flags.providerId));
 
-    const ref = yield* resolver.resolve(projectRefFlag);
+    const { ref } = yield* resolver.resolve(projectRefFlag);
 
     // Use the pflag-reconciled profile's host when it disagreed with
     // `--profile`, otherwise the config layer's.

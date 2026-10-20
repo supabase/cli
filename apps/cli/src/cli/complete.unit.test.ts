@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { Cause } from "effect";
+import { describe, expect, it, vi } from "@effect/vitest";
+import { Cause, Effect } from "effect";
 
 import { rootCommand } from "./root.ts";
 import { StackRoutingError } from "../command-internal/stack-backend.ts";
@@ -813,6 +813,26 @@ describe("respondToComplete", () => {
       });
     });
 
+    it("checks the calendar date for gen bearer-jwt --exp, years below 100 included", () => {
+      const complete = (exp: string) =>
+        respondToComplete(rootCommand, [
+          "__complete",
+          "gen",
+          "bearer-jwt",
+          "--role",
+          "anon",
+          "--exp",
+          exp,
+          "--p",
+        ]);
+      for (const exp of ["2024-02-30T00:00:00Z", "2023-02-29T00:00:00Z"]) {
+        expect(complete(exp)).toEqual({ candidates: [], directive: CompletionDirective.Default });
+      }
+      for (const exp of ["2024-02-29T00:00:00Z", "0099-01-01T00:00:00Z"]) {
+        expect(complete(exp)?.candidates.map((c) => c.name)).toContain("--profile");
+      }
+    });
+
     it("rejects a negative value for storage cp --jobs even though it's a string-typed flag in TS", () => {
       const result = respondToComplete(rootCommand, [
         "__complete",
@@ -1217,71 +1237,87 @@ describe("tryComplete", () => {
         exits.push(code);
       },
       // No-op: telemetry capture is covered separately in complete.integration.test.ts.
-      captureTelemetry: async () => {},
+      captureTelemetry: () => Effect.void,
       ...overrides,
     };
     return { deps, stdoutWrites, stderrWrites, exits };
   }
 
-  // `tryComplete` awaits `deps.captureTelemetry` before calling `deps.exit`.
-  it("returns false and does nothing for non-__complete argv", async () => {
-    const { deps, stdoutWrites, exits } = makeDeps({ argv: ["migration", "list"] });
-    expect(await tryComplete(deps)).toBe(false);
-    expect(stdoutWrites).toEqual([]);
-    expect(exits).toEqual([]);
-  });
+  /* `tryComplete` runs `deps.captureTelemetry` before calling `deps.exit`. */
+  it.effect("returns false and does nothing for non-__complete argv", () =>
+    Effect.gen(function* () {
+      const { deps, stdoutWrites, exits } = makeDeps({ argv: ["migration", "list"] });
+      expect(yield* tryComplete(deps)).toBe(false);
+      expect(stdoutWrites).toEqual([]);
+      expect(exits).toEqual([]);
+    }),
+  );
 
-  it("writes the formatted response to stdout and exits 0 for a real completion request", async () => {
-    const { deps, stdoutWrites, exits } = makeDeps();
-    expect(await tryComplete(deps)).toBe(true);
-    expect(stdoutWrites).toHaveLength(1);
-    expect(stdoutWrites[0]).toContain("list\t");
-    expect(stdoutWrites[0]).toMatch(/:4\n$/);
-    expect(exits).toEqual([0]);
-  });
+  it.effect(
+    "writes the formatted response to stdout and exits 0 for a real completion request",
+    () =>
+      Effect.gen(function* () {
+        const { deps, stdoutWrites, exits } = makeDeps();
+        expect(yield* tryComplete(deps)).toBe(true);
+        expect(stdoutWrites).toHaveLength(1);
+        expect(stdoutWrites[0]).toContain("list\t");
+        expect(stdoutWrites[0]).toMatch(/:4\n$/);
+        expect(exits).toEqual([0]);
+      }),
+  );
 
-  it("respects __completeNoDesc by stripping descriptions from the written response", async () => {
-    const { deps, stdoutWrites } = makeDeps({ argv: ["__completeNoDesc", "migration", "li"] });
-    await tryComplete(deps);
-    expect(stdoutWrites[0]).toBe("list\n:4\n");
-  });
+  it.effect("respects __completeNoDesc by stripping descriptions from the written response", () =>
+    Effect.gen(function* () {
+      const { deps, stdoutWrites } = makeDeps({ argv: ["__completeNoDesc", "migration", "li"] });
+      yield* tryComplete(deps);
+      expect(stdoutWrites[0]).toBe("list\n:4\n");
+    }),
+  );
 
-  it("exits 1 and does not write anything to stdout for zero completion args", async () => {
-    const { deps, stdoutWrites, exits } = makeDeps({ argv: ["__complete"] });
-    expect(await tryComplete(deps)).toBe(true);
-    expect(stdoutWrites).toEqual([]);
-    expect(exits).toEqual([1]);
-  });
+  it.effect("exits 1 and does not write anything to stdout for zero completion args", () =>
+    Effect.gen(function* () {
+      const { deps, stdoutWrites, exits } = makeDeps({ argv: ["__complete"] });
+      expect(yield* tryComplete(deps)).toBe(true);
+      expect(stdoutWrites).toEqual([]);
+      expect(exits).toEqual([1]);
+    }),
+  );
 
-  it("writes invalid environment routing failures to stderr without emitting completion stdout", async () => {
-    const { deps, stdoutWrites, stderrWrites, exits } = makeDeps({
-      root: undefined,
-      routingFailure: Cause.fail(
-        new StackRoutingError({
-          message: "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set",
-        }),
-      ),
-    });
-    expect(await tryComplete(deps)).toBe(true);
-    expect(stdoutWrites).toEqual([]);
-    expect(stderrWrites).toHaveLength(1);
-    expect(stderrWrites[0]).toContain("SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set");
-    expect(stderrWrites[0]).toContain(
-      "Suggestion: Set SUPABASE_EXPERIMENTAL_STACK=1 to enable stack commands, or 0 to use legacy start/stop/status.",
-    );
-    expect(exits).toEqual([1]);
-  });
+  it.effect(
+    "writes invalid environment routing failures to stderr without emitting completion stdout",
+    () =>
+      Effect.gen(function* () {
+        const { deps, stdoutWrites, stderrWrites, exits } = makeDeps({
+          root: undefined,
+          routingFailure: Cause.fail(
+            new StackRoutingError({
+              message: "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set",
+            }),
+          ),
+        });
+        expect(yield* tryComplete(deps)).toBe(true);
+        expect(stdoutWrites).toEqual([]);
+        expect(stderrWrites).toHaveLength(1);
+        expect(stderrWrites[0]).toContain("SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set");
+        expect(stderrWrites[0]).toContain(
+          "Suggestion: Set SUPABASE_EXPERIMENTAL_STACK=1 to enable stack commands, or 0 to use legacy start/stop/status.",
+        );
+        expect(exits).toEqual([1]);
+      }),
+  );
 
-  it("preserves a defect diagnostic when routing fails with a defect cause", async () => {
-    const { deps, stdoutWrites, stderrWrites, exits } = makeDeps({
-      root: undefined,
-      routingFailure: Cause.die(new Error("completion routing defect")),
-    });
-    expect(await tryComplete(deps)).toBe(true);
-    expect(stdoutWrites).toEqual([]);
-    expect(stderrWrites[0]).toContain("completion routing defect");
-    expect(exits).toEqual([1]);
-  });
+  it.effect("preserves a defect diagnostic when routing fails with a defect cause", () =>
+    Effect.gen(function* () {
+      const { deps, stdoutWrites, stderrWrites, exits } = makeDeps({
+        root: undefined,
+        routingFailure: Cause.die(new Error("completion routing defect")),
+      });
+      expect(yield* tryComplete(deps)).toBe(true);
+      expect(stdoutWrites).toEqual([]);
+      expect(stderrWrites[0]).toContain("completion routing defect");
+      expect(exits).toEqual([1]);
+    }),
+  );
 });
 
 describe("defaultCompleteDeps", () => {

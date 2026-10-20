@@ -173,6 +173,35 @@ export const withTempHome = <A, E, R>(
       }),
   );
 
+/** The run's owned temp CLI project could not be created or removed. */
+export class TempCliProjectError extends Data.TaggedError("TempCliProjectError")<{
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
+
+/**
+ * Runs `use` with an owned temp CLI project from `makeTempCliProject`, which keeps its stack
+ * cleanup registration. Setup and removal failures both stay in the typed channel.
+ */
+export const withTempCliProject = <A, E, R>(
+  prefix: string,
+  use: (project: Awaited<ReturnType<typeof makeTempCliProject>>) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, TempCliProjectError | E, R> =>
+  Effect.acquireUseRelease(
+    Effect.tryPromise({
+      try: () => makeTempCliProject(prefix),
+      catch: (cause) =>
+        new TempCliProjectError({ message: "temp CLI project setup failed", cause }),
+    }),
+    use,
+    (project) =>
+      Effect.tryPromise({
+        try: () => project.cleanup(),
+        catch: (cause) =>
+          new TempCliProjectError({ message: "temp CLI project cleanup failed", cause }),
+      }),
+  );
+
 /**
  * Concurrent e2e workers each keep only ports in their own slot, so a port one worker picked and
  * released before Docker binds it is never handed to another worker. Slots skip the low bit
@@ -395,6 +424,8 @@ export function spawnSupabase(
     cleanupProcessGroupOnClose?: boolean;
     /** Maximum time to wait for the process to exit before force-killing it. */
     exitTimeoutMs?: number;
+    /** Close the read end of stdout at spawn, like a `| head` reader that has already exited. */
+    closeStdout?: boolean;
   },
 ): SpawnedSupabase {
   const ownHome = options?.home ? null : makeTempHome();
@@ -443,6 +474,7 @@ export function spawnSupabase(
   if (stdoutStream == null || stderrStream == null) {
     throw new Error("Expected spawned Supabase process to expose stdout/stderr pipes");
   }
+  if (options?.closeStdout) stdoutStream.destroy();
 
   let stdout = "";
   let stderr = "";

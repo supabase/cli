@@ -263,7 +263,7 @@ to those defaults (the usual outcome for an interactive terminal).
   stack, not the flag name: a `--db-url` pointing at the local stack is treated
   as a local reset.
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution `ProjectRefResolver`
+  command) overrides ONLY the linked-ref resolution `RemoteTarget`
   performs (flag > `SUPABASE_PROJECT_ID` > `~/.supabase/<hash>/project-ref`) —
   unlike `SUPABASE_PROJECT_ID`, it does not affect the local container id. It
   never implies `--linked`: passing it with a resolved `--local`/`--db-url`

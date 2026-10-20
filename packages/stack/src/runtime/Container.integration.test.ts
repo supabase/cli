@@ -40,6 +40,7 @@ import * as Owner from "../Owner.ts";
 import * as StackNamespace from "../StackNamespace.ts";
 import { makeDockerDatabaseStorage } from "../storage/DockerDatabaseStorage.ts";
 import { reconcileContainerPassword } from "../services/Database.ts";
+import { selection } from "../../tests/pins.ts";
 
 const image = await Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -80,13 +81,14 @@ describe("container process adapter", { timeout: 120_000 }, () => {
       const pinnedImage = `${image}@${digest}`;
       const pullAttempted = yield* Ref.make(false);
       const spawner = makePullFailureSpawner(delegate, pullAttempted);
-      yield* makeContainerRuntime({
+      const ensured = yield* makeContainerRuntime({
         target: containerTarget,
         root: ".",
       }).pipe(
-        Effect.flatMap((runtime) => runtime.prepare(pinnedImage)),
+        Effect.flatMap((runtime) => runtime.ensureImage(pinnedImage)),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
+      expect(ensured).toEqual({ image: pinnedImage, pulled: false });
       expect(yield* Ref.get(pullAttempted)).toBe(false);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -1710,7 +1712,7 @@ describe("container process adapter", { timeout: 120_000 }, () => {
           container,
           spawner,
         });
-        yield* storage.prepare("17");
+        yield* storage.prepare(selection.database);
 
         // Password reconcile: the consumer F2 found spawning the engine unpinned.
         yield* reconcileContainerPassword(

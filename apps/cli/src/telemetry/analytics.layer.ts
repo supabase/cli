@@ -1,4 +1,7 @@
+import { legacyProjectStatePaths } from "../command-internal/legacy-project-state.paths.ts";
 import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
+import type { ProjectStateMode } from "../command-internal/project-state-mode.ts";
+import { readProjectLink } from "../command-internal/project-link.ts";
 import { aiToolLayer } from "../shared/telemetry/ai-tool.layer.ts";
 import { AiTool } from "../shared/telemetry/ai-tool.service.ts";
 import {
@@ -113,11 +116,30 @@ function makeLoadLinkedProject(
   fs: FileSystem.FileSystem,
   path: Path.Path,
   runtimeInfo: { readonly cwd: string },
+  mode: ProjectStateMode,
 ): Effect.Effect<Option.Option<LinkedProjectCacheValue>> {
   return Effect.gen(function* () {
     const configuredWorkdir = yield* Config.option(Config.String("SUPABASE_WORKDIR"));
     const workdir = Option.getOrElse(configuredWorkdir, () => runtimeInfo.cwd);
-    const cachePath = path.join(workdir, "supabase", ".temp", "linked-project.json");
+    if (mode === "stack") {
+      const link = yield* readProjectLink(workdir).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.option,
+        Effect.map(Option.flatten),
+      );
+      return Option.flatMap(link, ({ project }) =>
+        project.organization_slug === undefined
+          ? Option.none<LinkedProjectCacheValue>()
+          : Option.some({
+              ref: project.ref,
+              name: project.name ?? "",
+              organization_id: project.organization_id ?? "",
+              organization_slug: project.organization_slug,
+            }),
+      );
+    }
+    const cachePath = legacyProjectStatePaths(path, workdir).linkedProjectCache;
     const exists = yield* fs.exists(cachePath).pipe(Effect.orElseSucceed(() => false));
     if (!exists) return Option.none<LinkedProjectCacheValue>();
 
@@ -136,104 +158,108 @@ function makeLoadLinkedProject(
   }).pipe(Effect.orElseSucceed(() => Option.none<LinkedProjectCacheValue>()));
 }
 
-export const analyticsLayer = Layer.effect(
-  Analytics,
-  Effect.gen(function* () {
-    const runtime = yield* TelemetryRuntime;
-    const configProvider = yield* ConfigProvider.ConfigProvider;
-    const aiTool = yield* AiTool;
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const runtimeInfo = yield* RuntimeInfo;
-    const posthogConfig = yield* resolvePosthogConfig(configProvider);
+/** `mode` picks where the linked project's group identity is read from. */
+export const analyticsLayerFor = (mode: ProjectStateMode) =>
+  Layer.effect(
+    Analytics,
+    Effect.gen(function* () {
+      const runtime = yield* TelemetryRuntime;
+      const configProvider = yield* ConfigProvider.ConfigProvider;
+      const aiTool = yield* AiTool;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const runtimeInfo = yield* RuntimeInfo;
+      const posthogConfig = yield* resolvePosthogConfig(configProvider);
 
-    if (runtime.consent !== "granted" || Option.isNone(posthogConfig.key)) {
+      if (runtime.consent !== "granted" || Option.isNone(posthogConfig.key)) {
+        return Analytics.of({
+          capture: () => Effect.void,
+          identify: () => Effect.void,
+          alias: () => Effect.void,
+          groupIdentify: () => Effect.void,
+        });
+      }
+
+      const client = yield* scopedPosthogClient(posthogConfig.key.value, posthogConfig.host);
+
+      const loadLinkedProject = makeLoadLinkedProject(fs, path, runtimeInfo, mode);
+
+      const isAgent = Option.isSome(aiTool.name);
+      const envSignals = yield* collectEnvSignals;
+
+      const baseProperties = stripUndefined({
+        [PropPlatform]: "cli",
+        [PropSchemaVersion]: 1,
+        [PropDeviceId]: runtime.deviceId,
+        [PropSessionId]: runtime.sessionId,
+        [PropIsFirstRun]: runtime.isFirstRun,
+        [PropIsTty]: runtime.isTty,
+        [PropIsCi]: runtime.isCi,
+        [PropIsAgent]: isAgent,
+        [PropOs]: runtime.os,
+        [PropArch]: runtime.arch,
+        [PropCliVersion]: runtime.cliVersion,
+        [PropEnvSignals]: Option.isSome(envSignals) ? envSignals.value : undefined,
+      });
+
+      const capture = (event: string, properties: Record<string, unknown> = {}) =>
+        Effect.gen(function* () {
+          const context = yield* CurrentAnalyticsContext;
+          const linkedProject = yield* loadLinkedProject;
+          const groups = resolveGroups(context, linkedProject);
+
+          client.capture({
+            event,
+            distinctId: context.distinct_id ?? runtime.identity.current() ?? runtime.deviceId,
+            ...(groups === undefined ? {} : { groups }),
+            properties: {
+              ...baseProperties,
+              ...contextProperties(context),
+              ...stripUndefined(properties),
+            },
+          });
+        });
+
+      const identify = (distinctId: string, properties: Record<string, unknown> = {}) =>
+        Effect.sync(() => {
+          client.identify({
+            distinctId,
+            properties: stripUndefined({
+              cli_version: runtime.cliVersion,
+              os: runtime.os,
+              arch: runtime.arch,
+              ...properties,
+            }),
+          });
+        });
+
+      const alias = (distinctId: string, aliasValue: string) =>
+        Effect.sync(() => {
+          client.alias({ distinctId, alias: aliasValue });
+        });
+
+      const groupIdentify = (
+        groupType: string,
+        groupKey: string,
+        properties: Record<string, unknown> = {},
+      ) =>
+        Effect.gen(function* () {
+          const context = yield* CurrentAnalyticsContext;
+          client.groupIdentify({
+            groupType,
+            groupKey,
+            distinctId: context.distinct_id ?? runtime.identity.current() ?? runtime.deviceId,
+            properties: stripUndefined(properties),
+          });
+        });
+
       return Analytics.of({
-        capture: () => Effect.void,
-        identify: () => Effect.void,
-        alias: () => Effect.void,
-        groupIdentify: () => Effect.void,
+        capture,
+        identify,
+        alias,
+        groupIdentify,
       });
-    }
+    }),
+  ).pipe(Layer.provide(telemetryRuntimeLayer), Layer.provide(aiToolLayer));
 
-    const client = yield* scopedPosthogClient(posthogConfig.key.value, posthogConfig.host);
-
-    const loadLinkedProject = makeLoadLinkedProject(fs, path, runtimeInfo);
-
-    const isAgent = Option.isSome(aiTool.name);
-    const envSignals = yield* collectEnvSignals;
-
-    const baseProperties = stripUndefined({
-      [PropPlatform]: "cli",
-      [PropSchemaVersion]: 1,
-      [PropDeviceId]: runtime.deviceId,
-      [PropSessionId]: runtime.sessionId,
-      [PropIsFirstRun]: runtime.isFirstRun,
-      [PropIsTty]: runtime.isTty,
-      [PropIsCi]: runtime.isCi,
-      [PropIsAgent]: isAgent,
-      [PropOs]: runtime.os,
-      [PropArch]: runtime.arch,
-      [PropCliVersion]: runtime.cliVersion,
-      [PropEnvSignals]: Option.isSome(envSignals) ? envSignals.value : undefined,
-    });
-
-    const capture = (event: string, properties: Record<string, unknown> = {}) =>
-      Effect.gen(function* () {
-        const context = yield* CurrentAnalyticsContext;
-        const linkedProject = yield* loadLinkedProject;
-        const groups = resolveGroups(context, linkedProject);
-
-        client.capture({
-          event,
-          distinctId: context.distinct_id ?? runtime.identity.current() ?? runtime.deviceId,
-          ...(groups === undefined ? {} : { groups }),
-          properties: {
-            ...baseProperties,
-            ...contextProperties(context),
-            ...stripUndefined(properties),
-          },
-        });
-      });
-
-    const identify = (distinctId: string, properties: Record<string, unknown> = {}) =>
-      Effect.sync(() => {
-        client.identify({
-          distinctId,
-          properties: stripUndefined({
-            cli_version: runtime.cliVersion,
-            os: runtime.os,
-            arch: runtime.arch,
-            ...properties,
-          }),
-        });
-      });
-
-    const alias = (distinctId: string, aliasValue: string) =>
-      Effect.sync(() => {
-        client.alias({ distinctId, alias: aliasValue });
-      });
-
-    const groupIdentify = (
-      groupType: string,
-      groupKey: string,
-      properties: Record<string, unknown> = {},
-    ) =>
-      Effect.gen(function* () {
-        const context = yield* CurrentAnalyticsContext;
-        client.groupIdentify({
-          groupType,
-          groupKey,
-          distinctId: context.distinct_id ?? runtime.identity.current() ?? runtime.deviceId,
-          properties: stripUndefined(properties),
-        });
-      });
-
-    return Analytics.of({
-      capture,
-      identify,
-      alias,
-      groupIdentify,
-    });
-  }),
-).pipe(Layer.provide(telemetryRuntimeLayer), Layer.provide(aiToolLayer));
+export const analyticsLayer = analyticsLayerFor("legacy");

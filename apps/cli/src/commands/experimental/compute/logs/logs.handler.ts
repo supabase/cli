@@ -30,7 +30,7 @@ import {
   ComputeApiNetworkError,
   ComputeApiUnexpectedStatusError,
 } from "../../../../shared/compute/compute.errors.ts";
-import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import { validateComputeName } from "../compute.shared.ts";
@@ -142,7 +142,7 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
 ) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
+  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const processControl = yield* ProcessControl;
@@ -151,7 +151,7 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
   // checkout fails inside `resolve` after the command has already run. Only the
   // linked-project cache stays under the ref, since it has nothing to write without one.
   yield* Effect.gen(function* () {
-    const projectRef = yield* resolver.resolve(flags.projectRef);
+    const { ref: projectRef } = yield* resolver.resolve(flags.projectRef);
     const refSuffix = computeProjectRefSuffix(flags.projectRef);
 
     yield* Effect.gen(function* () {

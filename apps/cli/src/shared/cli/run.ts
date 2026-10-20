@@ -24,9 +24,12 @@ import { CLI_VERSION } from "./version.ts";
 import type { CliProjectHome } from "../config/cli-project-home.service.ts";
 import type { CliSettings } from "../config/cli-settings.service.ts";
 import type { ProjectLinkState } from "../config/project-link-state.service.ts";
+import { legacyProjectStateLayer } from "../../command-internal/legacy-project-state.layer.ts";
+import type { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { outputLayerFor } from "../output/output.layer.ts";
+import { failureBesideClosedStdout, ignoreStdoutClosed } from "../output/errors.ts";
 import { normalizeCause } from "../output/normalize-error.ts";
 import type { OutputFormat } from "../output/types.ts";
 import { Output } from "../output/output.service.ts";
@@ -89,6 +92,7 @@ export type AllowedRunCliServices =
   | CommandRuntime
   | FileSystem.FileSystem
   | Crypto.Crypto
+  | LegacyProjectState
   | Path.Path
   | ProcessControl
   | ProjectLinkState
@@ -609,6 +613,7 @@ function cliProgramFor<
     Layer.provideMerge(cliProjectHomeLayerFor(runtimeLayer)),
     Layer.provideMerge(cliProjectContextLayerFor(runtimeLayer)),
     Layer.provideMerge(projectLinkStateLayer),
+    Layer.provideMerge(legacyProjectStateLayer),
     Layer.provideMerge(runtimeLayer),
     Layer.provideMerge(fallbackCommandLayer),
     Layer.provideMerge(Layer.succeed(CliArgs, { args })),
@@ -757,11 +762,16 @@ export const runCli = Effect.fnUntraced(function* <
             })
           : Effect.void;
       if (Exit.isFailure(exit)) {
-        const exitCode = exitCodeForFailure(exit.cause);
+        const cause = failureBesideClosedStdout(exit.cause);
+        if (cause === undefined) {
+          // The reader is gone, so there is nobody left for a report, a notice, or a trailer.
+          return (yield* processControl.getExitCode) ?? 0;
+        }
+        const exitCode = exitCodeForFailure(cause);
         // See `shouldReportFailure` and `exitCodeForFailure` for the exit-code/reporting rules; a
         // literal `--help` never reaches this branch — it exits 0 via the success path below.
-        if (shouldReportFailure(exit.cause, exitCode)) {
-          yield* output.fail(normalizeCause(exit.cause, suggestionContext));
+        if (shouldReportFailure(cause, exitCode)) {
+          yield* ignoreStdoutClosed(output.fail(normalizeCause(cause, suggestionContext)));
         }
         yield* afterSuccess(exitCode, true);
         return exitCode;

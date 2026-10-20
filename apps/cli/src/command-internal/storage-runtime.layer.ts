@@ -6,8 +6,8 @@ import { commandPlatformApiFactoryLayer } from "../auth/command-platform-api-fac
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { commandSettingsLayer } from "../config/command-settings.layer.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { projectRefLayer } from "../config/project-ref.layer.ts";
-import { ProjectRefResolver } from "../config/project-ref.service.ts";
+import { remoteTargetLayer } from "../config/remote-target.layer.ts";
+import { RemoteTarget } from "../config/remote-target.service.ts";
 import { debugLoggerLayer } from "./debug-logger.layer.ts";
 import { IdentityStitch, identityStitchLayer } from "./identity-stitch.ts";
 import { httpClientLayer } from "../auth/http-debug.layer.ts";
@@ -47,7 +47,7 @@ export function storageGatewayRuntimeLayer(subcommand: ReadonlyArray<string>) {
     cliSettings,
     platformApiFactory,
     httpClient,
-    projectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
+    remoteTargetLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
     linkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
       Layer.provide(cliSettings),
@@ -74,7 +74,7 @@ export function storageGatewayRuntimeLayer(subcommand: ReadonlyArray<string>) {
 type StorageGatewayServices =
   | CommandPlatformApiFactory
   | CommandSettings
-  | ProjectRefResolver
+  | RemoteTarget
   | LinkedProjectCache
   | TelemetryState
   | IdentityStitch

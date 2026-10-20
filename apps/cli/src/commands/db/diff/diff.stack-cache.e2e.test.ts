@@ -6,6 +6,7 @@ import { create as createStack, discover as discoverStacks } from "@supabase/sta
 import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
 import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
 import { stackArtifactCacheRoot } from "../../../../tests/helpers/stack-artifacts.ts";
+import { selection } from "../../../../tests/helpers/pins.ts";
 
 const COMMAND_TIMEOUT_MS = 8 * 60_000;
 const TEST_TIMEOUT_MS = COMMAND_TIMEOUT_MS * 4 + 2 * 60_000;
@@ -46,8 +47,8 @@ const composeStack = Effect.fn("DbDiffStackCacheE2e.composeStack")(function* (
   const [database] = yield* stack.composition.supabase([
     {
       service: "database",
+      pin: selection.database,
       config: {
-        version: "17",
         databasePassword: Redacted.make("postgres"),
         jwtSecret: Redacted.make("db-diff-stack-cache-e2e-jwt-secret-with-32-chars"),
         jwtExpiry: 3600,

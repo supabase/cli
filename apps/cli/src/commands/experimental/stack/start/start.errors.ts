@@ -32,6 +32,7 @@ export class StackCommandStartError extends Data.TaggedError("ExperimentalStackS
   readonly reason:
     | "invalid-config"
     | "filesystem"
+    | "lock"
     | "flags"
     | "runtime"
     | "lifecycle"
@@ -59,6 +60,13 @@ export class StackCommandStartError extends Data.TaggedError("ExperimentalStackS
           ? declared
           : { ...actionability.runtimeCrash, fingerprint_suffix: "filesystem_io" };
       }
+      case "lock":
+        return (
+          causeDeclaration(this.cause) ?? {
+            ...actionability.invalidConfig,
+            fingerprint_suffix: "invalid_config",
+          }
+        );
       case "flags":
         return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
       case "runtime":

@@ -33,7 +33,6 @@ import {
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
@@ -47,6 +46,7 @@ import { encodeLintResults, parseLintResult } from "./lint.format.ts";
 import { dbLint } from "./lint.handler.ts";
 import { CHECK_SCHEMA_SCRIPT, ENABLE_PGSQL_CHECK, LIST_SCHEMAS_SQL } from "./lint.lint-sql.ts";
 import type { DbLintFlags } from "./lint.command.ts";
+import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -161,22 +161,22 @@ function mockConnection(opts: {
 }
 
 /** Project-ref resolver mock. `db lint --linked` resolves the ref via the
- *  non-prompting `loadProjectRef` to write the linked-project cache; the
+ *  non-prompting `RemoteTarget.load` to write the linked-project cache; the
  *  other methods are unused by lint. */
 function mockProjectRef() {
   const calls: Array<string> = [];
-  const layer = Layer.succeed(ProjectRefResolver, {
+  const layer = stubRemoteTarget({
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
     // An explicit `--project-ref` flag takes top precedence, mirroring the real
     // resolver.
-    loadProjectRef: (flagValue: Option.Option<string>) =>
+    load: (flagValue: Option.Option<string>) =>
       Effect.sync(() => {
-        calls.push("loadProjectRef");
+        calls.push("load");
         return Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : VALID_REF;
       }),
-    promptProjectRef: () => Effect.succeed(VALID_REF),
+    prompt: () => Effect.succeed(VALID_REF),
   });
   return {
     layer,
@@ -515,7 +515,7 @@ describe("db lint", () => {
     });
     return Effect.gen(function* () {
       yield* dbLint(flags({ schema: ["public"] }));
-      expect(projectRef.calls).toContain("loadProjectRef");
+      expect(projectRef.calls).toContain("load");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -705,7 +705,7 @@ describe("db lint", () => {
     });
     return Effect.gen(function* () {
       yield* dbLint(flags({ schema: ["public"] }));
-      expect(projectRef.calls).toContain("loadProjectRef");
+      expect(projectRef.calls).toContain("load");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -718,7 +718,7 @@ describe("db lint", () => {
     });
     return Effect.gen(function* () {
       yield* dbLint(flags({ schema: ["public"] }));
-      expect(projectRef.calls).toContain("loadProjectRef");
+      expect(projectRef.calls).toContain("load");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });

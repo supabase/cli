@@ -9,7 +9,7 @@ import { emitSuccessTrailer } from "../../../shared/cli/success-trailer.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { aqua } from "../../../command-internal/colors.ts";
 import { loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
@@ -146,12 +146,16 @@ const runRepair = Effect.fnUntraced(function* (
 
   // Resolves the DB config (and, for the linked default, the project ref) before the
   // version parse and any prompt, so an invalid target surfaces first.
+  const remoteTarget = yield* RemoteTarget;
+  const linkedTarget =
+    connType === "linked" ? yield* remoteTarget.load(input.projectRef) : undefined;
   const cfg = yield* resolver.resolve({
     dbUrl: input.dbUrl,
     connType,
     dnsResolver,
     password: input.password,
     linkedProjectRef: input.projectRef,
+    target: linkedTarget,
   });
   yield* Effect.annotateCurrentSpan({
     "db.conn_type": connType,
@@ -228,11 +232,9 @@ const runRepair = Effect.fnUntraced(function* (
 
   // Attached to the whole flow via `Effect.ensuring` below so the cache write still
   // runs even when the version parse fails or the repair-all prompt is declined.
-  if (connType === "linked") {
-    const projectRef = yield* ProjectRefResolver;
+  if (linkedTarget !== undefined) {
     const linkedProjectCache = yield* LinkedProjectCache;
-    const ref = yield* projectRef.loadProjectRef(input.projectRef);
-    return yield* repairFlow.pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
+    return yield* repairFlow.pipe(Effect.ensuring(linkedProjectCache.cache(linkedTarget.ref)));
   }
   return yield* repairFlow;
 });

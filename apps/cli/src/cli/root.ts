@@ -1,4 +1,4 @@
-import { Effect, Layer, Option } from "effect";
+import { Effect, type Exit, Layer, Option } from "effect";
 import { Command } from "effect/cli";
 import { backupsCommand } from "../commands/backups/backups.command.ts";
 import { bootstrapCommand } from "../commands/bootstrap/bootstrap.command.ts";
@@ -18,6 +18,11 @@ import { stackStopCommand } from "../commands/experimental/stack/stop/stop.comma
 import { stackStatusCommand } from "../commands/experimental/stack/status/status.command.ts";
 import type { StackBackend } from "../command-internal/stack-backend.ts";
 import { isFunctionsServePath, stackBackendLayer } from "../command-internal/stack-backend.ts";
+import type { ExperimentalFeatureFlagError } from "../command-internal/experimental-feature.ts";
+import {
+  type ProjectStateMode,
+  projectStateModeLayer,
+} from "../command-internal/project-state-mode.ts";
 import { computeCommand } from "../commands/experimental/compute/compute.command.ts";
 import { feedbackCommand } from "../commands/feedback/feedback.command.ts";
 import { functionsCommand } from "../commands/functions/functions.command.ts";
@@ -144,6 +149,7 @@ export function rootDescription(version: string): string {
 }
 
 interface RootCommandFeatures {
+  readonly projectState?: Exit.Exit<ProjectStateMode, ExperimentalFeatureFlagError>;
   readonly stackBackend?: StackBackend;
   readonly computeEnabled?: boolean;
 }
@@ -258,11 +264,14 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
             : outputLayerFor(outputFormat);
 
           return Layer.mergeAll(
+            options.projectState === undefined
+              ? Layer.empty
+              : projectStateModeLayer(options.projectState),
             options.stackBackend === undefined
               ? Layer.empty
               : stackBackendLayer(options.stackBackend),
             outputLayer,
-            makeGoProxyLayer({ globalArgs, parentOwnsCapturedSuccessTail: true }),
+            makeGoProxyLayer({ globalArgs, workdir, parentOwnsCapturedSuccessTail: true }),
           );
         }),
       ),

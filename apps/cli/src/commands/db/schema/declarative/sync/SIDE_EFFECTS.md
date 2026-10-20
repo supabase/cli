@@ -15,7 +15,7 @@ cache described below; `--no-cache` bypasses it as well as the legacy backend ca
 Pg-delta runs in-process and uses two scoped shadow databases. Coverage gaps
 warn; `--strict-coverage` makes
 them fatal, while `PGDELTA_DEBUG` writes diagnostic JSON under
-`supabase/.temp/pgdelta/v2/debug/<id>/`. The engine may emit ordered
+`supabase/.temp/pgdelta/v2/debug/<id>/` (`<SUPABASE_HOME>/tmp/pgdelta/v2/debug/<id>/` in stack mode). The engine may emit ordered
 transaction-aware files; applicable, convergent SQL is the contract. `--no-cache`
 bypasses the engine's shadow baseline cache. The bundled formatter defaults to
 lowercase SQL
@@ -129,7 +129,7 @@ existing SQL or creates an export manifest.
   codes (a non-interactive run still fails with "no declarative schema found").
 - The migration apply is native (connects to the local DB and records migration
   history). On apply failure a debug bundle is written under
-  `supabase/.temp/pgdelta/debug/` and, in a TTY, a reset-and-reapply is offered
+  `supabase/.temp/pgdelta/debug/` (`<SUPABASE_HOME>/tmp/pgdelta/debug/` in stack mode) and, in a TTY, a reset-and-reapply is offered
   (the reset itself is native too — `resetLocalDatabase` — run in-process,
   sharing this command's own telemetry/linked-project-cache finalizer cycle
   rather than firing a second one from a child process).

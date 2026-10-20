@@ -1,7 +1,7 @@
 import { Effect, Option, Ref } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -27,7 +27,7 @@ export const storageLs = Effect.fn("storage.ls")(function* (flags: StorageLsFlag
   const cliSettings = yield* CommandSettings;
   const telemetryState = yield* TelemetryState;
   const linkedProjectCache = yield* LinkedProjectCache;
-  const resolver = yield* ProjectRefResolver;
+  const resolver = yield* RemoteTarget;
 
   const linkedRef = yield* Ref.make(Option.none<string>());
 
@@ -44,7 +44,7 @@ export const storageLs = Effect.fn("storage.ls")(function* (flags: StorageLsFlag
 
     // `--local` clears the ref; otherwise the linked path resolves it. No network access yet,
     // safe before the URL parse below.
-    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
+    const projectRef = flags.local ? "" : (yield* resolver.load(flags.projectRef)).ref;
     if (projectRef !== "") {
       yield* Ref.set(linkedRef, Option.some(projectRef));
     }

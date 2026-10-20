@@ -1293,12 +1293,14 @@ function defectIdentity(defect: unknown): string {
 
 export function classifyCliCauseActionability(cause: Cause.Cause<unknown>): CliErrorActionability {
   let firstKnownDefect: CliErrorActionability | undefined;
+  let cancelledDefect: CliErrorActionability | undefined;
   let unknownDefect: { readonly defect: unknown } | undefined;
   for (const reason of cause.reasons) {
     if (!Cause.isDieReason(reason)) continue;
     const classified = classifyCliErrorActionability(reason.defect);
     if (classified.error_kind === CliErrorKind.InternalBug) return classified;
     if (classified.error_kind === CliErrorKind.Unknown) unknownDefect ??= { defect: reason.defect };
+    else if (classified.error_kind === CliErrorKind.UserCancelled) cancelledDefect ??= classified;
     else firstKnownDefect ??= classified;
   }
   if (unknownDefect !== undefined) {
@@ -1308,10 +1310,13 @@ export function classifyCliCauseActionability(cause: Cause.Cause<unknown>): CliE
     };
   }
   if (firstKnownDefect !== undefined) return firstKnownDefect;
+  const typedError = Cause.findErrorOption(cause);
+  // A cancellation defect, such as a closed stdout, is often a side effect of the real failure.
+  if (cancelledDefect !== undefined && Option.isNone(typedError)) return cancelledDefect;
   if (Cause.hasInterruptsOnly(cause)) {
     return toActionability(actionability.cancelled, "error", "Interrupt");
   }
-  const error = Option.getOrElse(Cause.findErrorOption(cause), () => Cause.squash(cause));
+  const error = Option.getOrElse(typedError, () => Cause.squash(cause));
   return classifyCliErrorActionability(error);
 }
 

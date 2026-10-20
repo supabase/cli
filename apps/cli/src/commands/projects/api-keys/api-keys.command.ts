@@ -3,7 +3,7 @@ import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
 import { projectApiKeys } from "../../../command-internal/get-api-keys.ts";
-import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { projectRefPicker } from "../../../config/remote-target.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";

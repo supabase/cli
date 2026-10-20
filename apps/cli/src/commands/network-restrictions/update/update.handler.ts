@@ -5,7 +5,7 @@ import type {
 import { Effect, Option, Result } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
@@ -43,7 +43,7 @@ export const networkRestrictionsUpdate = Effect.fn("network-restrictions.update"
   const output = yield* Output;
   const goOutputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
+  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
@@ -60,7 +60,7 @@ export const networkRestrictionsUpdate = Effect.fn("network-restrictions.update"
     }
     const { v4, v6 } = validation.success;
 
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const { ref } = yield* resolver.resolve(flags.projectRef);
 
     yield* Effect.gen(function* () {
       const updating =

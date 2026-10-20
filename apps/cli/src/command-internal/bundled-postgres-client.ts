@@ -14,7 +14,7 @@ import { FetchHttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
   ArtifactError,
-  postgresVersion,
+  type ArtifactPin,
   resolveArtifact,
   useNativeArtifact,
 } from "@supabase/stack/internal/artifacts";
@@ -48,7 +48,7 @@ interface PostgresClientResult {
 }
 
 export interface RunPostgresClientOptions<E> {
-  readonly version?: string;
+  readonly pin: ArtifactPin;
   readonly runtime?: StackRuntimePreference;
   readonly argv: ReadonlyArray<string>;
   readonly env: Readonly<Record<string, string>>;
@@ -242,9 +242,8 @@ export const bundledPostgresClientLayer: Layer.Layer<
         Effect.gen(function* () {
           yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
           const runtime = options.runtime ?? { kind: "native" };
-          const version = postgresVersion(options.version ?? "17");
           if (runtime.kind === "container") {
-            const resolved = yield* resolveArtifact({ service: "database", version }).pipe(
+            const resolved = yield* resolveArtifact({ service: "database", pin: options.pin }).pipe(
               Effect.mapError(mapArtifactError),
             );
             return yield* dockerRun(options, resolved.image, docker);
@@ -252,7 +251,7 @@ export const bundledPostgresClientLayer: Layer.Layer<
           // Pins the generation for the life of this scope, before the spawn inside `nativeRun`:
           // the client child always exits before this scope closes, so the pin covers it fully.
           const prepared = yield* useNativeArtifact(
-            { service: "database", version },
+            { service: "database", pin: options.pin },
             path.join(settings.supabaseHome, "cache", "stack"),
             { os: runtimeInfo.platform, arch: runtimeInfo.arch },
           ).pipe(

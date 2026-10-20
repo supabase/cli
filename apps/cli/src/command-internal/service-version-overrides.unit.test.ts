@@ -42,14 +42,12 @@ describe("readServiceVersionOverrides", () => {
       const workdir = yield* makeWorkdir;
       const pinPath = path.join(workdir, "supabase", ".temp", "storage-version");
       yield* writePin(workdir, "storage-version", "vv1.77.1-versions\n");
-      const exit = yield* readPins(workdir).pipe(Effect.exit);
-      expect(exit).toEqual(
-        Exit.fail(
-          new InvalidServiceVersionTagError({
-            message:
-              'invalid storage image tag "vv1.77.1-versions" in supabase/.temp/storage-version; run supabase link again',
-          }),
-        ),
+      const error = yield* readPins(workdir).pipe(Effect.flip);
+      expect(error).toEqual(
+        new InvalidServiceVersionTagError({
+          message:
+            'invalid storage image tag "vv1.77.1-versions" in supabase/.temp/storage-version; run supabase link again',
+        }),
       );
       expect(yield* fs.readFileString(pinPath)).toBe("vv1.77.1-versions\n");
     }).pipe(Effect.provide(BunServices.layer)),
@@ -59,14 +57,12 @@ describe("readServiceVersionOverrides", () => {
     Effect.gen(function* () {
       const workdir = yield* makeWorkdir;
       yield* writePin(workdir, "rest-version", "vv12.2.0");
-      const exit = yield* readPins(workdir).pipe(Effect.exit);
-      expect(exit).toEqual(
-        Exit.fail(
-          new InvalidServiceVersionTagError({
-            message:
-              'invalid postgrest image tag "vv12.2.0" in supabase/.temp/rest-version; run supabase link again',
-          }),
-        ),
+      const error = yield* readPins(workdir).pipe(Effect.flip);
+      expect(error).toEqual(
+        new InvalidServiceVersionTagError({
+          message:
+            'invalid postgrest image tag "vv12.2.0" in supabase/.temp/rest-version; run supabase link again',
+        }),
       );
     }).pipe(Effect.provide(BunServices.layer)),
   );

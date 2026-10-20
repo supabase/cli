@@ -97,6 +97,8 @@ export interface ProcessRecipeSpec<C extends RecipeCreation<ServiceKind, unknown
   readonly executable: string;
   readonly ports: Readonly<Record<string, number>>;
   readonly healthPath: string;
+  /** The `ports` entry `healthPath` is probed on; defaults to `http`. */
+  readonly healthPort?: string;
   readonly args: (
     creation: C,
     endpoints: ReadonlyMap<string, ServiceEndpoint>,
@@ -432,13 +434,13 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
       if (spec.prepare !== undefined) yield* spec.prepare(candidate);
       const resolved = yield* resolveArtifact({
         service: candidate.service,
-        version: candidate.version,
+        pin: candidate.pin,
       }).pipe(Effect.mapError((cause) => serviceError("prepare", cause)));
       if (options.runtime === "native") {
         // Ahead-of-time warm-up only: downloads and publishes the generation but pins nothing.
         // `launch` resolves (or prepares) and pins its own copy right before it spawns.
         yield* prepareNativeArtifact(
-          { service: candidate.service, version: candidate.version },
+          { service: candidate.service, pin: candidate.pin },
           options.cacheRoot,
           options.platform,
         ).pipe(
@@ -471,7 +473,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         // `context.scope`), so closing it always runs their cleanup before releasing the pin.
         const launchScope = yield* Scope.fork(context.scope, "sequential");
         const artifact = yield* useNativeArtifact(
-          { service: context.config.service, version: context.config.version },
+          { service: context.config.service, pin: context.config.pin },
           options.cacheRoot,
           options.platform,
         ).pipe(
@@ -626,12 +628,12 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         type NativeAttempt = Effect.Success<ReturnType<typeof spawnAttempt>>;
 
         const readyCondition = (attempt: NativeAttempt, timeout: Duration.Input) => {
-          const http = attempt.selected.get("http");
-          if (http === undefined)
+          const ready = attempt.selected.get(spec.healthPort ?? "http");
+          if (ready === undefined)
             return Effect.fail(serviceError("health", "Recipe has no HTTP readiness endpoint"));
           return Effect.all(
             [
-              readiness(deps.client, http, spec.healthPath, timeout),
+              readiness(deps.client, ready, spec.healthPath, timeout),
               spec.nativeReadinessOutput === undefined
                 ? Effect.void
                 : Deferred.await(attempt.output.bindReady),
@@ -776,7 +778,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         return yield* serviceError("launch", "Container runtime unavailable");
       const resolved = yield* resolveArtifact({
         service: context.config.service,
-        version: context.config.version,
+        pin: context.config.pin,
       }).pipe(Effect.mapError((cause) => serviceError("launch", cause)));
       const containerDesired = startupEndpointsFor(context.config, spec, { container: true });
       for (const process of spec.startupCommands) {
@@ -890,7 +892,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
       yield* Ref.set(endpoints, selected);
       yield* publishProcessLogs(launched, yield* output.part, context.scope);
       const runtime = runtimeFromContainer(launched);
-      const ready = selected.get("http");
+      const ready = selected.get(spec.healthPort ?? "http");
       const noReadinessEndpoint = Effect.fail(
         serviceError("health", "Recipe has no HTTP readiness endpoint"),
       );

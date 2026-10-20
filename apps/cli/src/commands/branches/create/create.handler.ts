@@ -13,7 +13,7 @@ import { aqua } from "../../../command-internal/colors.ts";
 import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
 import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
 import { GO_BRANCH_RESPONSE } from "../branches.go-payload.ts";
 import {
@@ -80,7 +80,8 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, and the platform 403s on that ref for every branches-management
   // endpoint.
-  const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  const remoteTarget = yield* RemoteTarget;
+  const { ref } = yield* remoteTarget.resolveParentScoped(flags.projectRef);
   yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {

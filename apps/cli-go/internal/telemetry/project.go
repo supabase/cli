@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/config"
 )
 
 type LinkedProject struct {
@@ -18,6 +19,10 @@ type LinkedProject struct {
 	OrganizationID   string `json:"organization_id"`
 	OrganizationSlug string `json:"organization_slug"`
 }
+
+// linkedProjectEnv carries the linked project as the JSON of LinkedProject when the TypeScript
+// CLI keeps the link outside supabase/.temp.
+const linkedProjectEnv = "SUPABASE_INTERNAL_LINKED_PROJECT"
 
 func linkedProjectPath() string {
 	return filepath.Join(utils.TempDir, "linked-project.json")
@@ -38,10 +43,21 @@ func SaveLinkedProject(project api.V1ProjectWithDatabaseResponseOutput, fsys afe
 }
 
 func LoadLinkedProject(fsys afero.Fs) (LinkedProject, error) {
+	if config.UsesStackState() {
+		contents := os.Getenv(linkedProjectEnv)
+		if contents == "" {
+			return LinkedProject{}, os.ErrNotExist
+		}
+		return parseLinkedProject([]byte(contents))
+	}
 	contents, err := afero.ReadFile(fsys, linkedProjectPath())
 	if err != nil {
 		return LinkedProject{}, err
 	}
+	return parseLinkedProject(contents)
+}
+
+func parseLinkedProject(contents []byte) (LinkedProject, error) {
 	var linked LinkedProject
 	if err := json.Unmarshal(contents, &linked); err != nil {
 		return LinkedProject{}, errors.Errorf("failed to parse linked project: %w", err)

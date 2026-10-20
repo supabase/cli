@@ -1,7 +1,7 @@
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -18,13 +18,13 @@ export const domainsActivate = Effect.fn("domains.activate")(function* (
 ) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
+  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   yield* warnIncludeRawOutputDeprecated(flags.includeRawOutput);
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  const { ref } = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
     const activating =

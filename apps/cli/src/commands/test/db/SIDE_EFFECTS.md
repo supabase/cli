@@ -7,7 +7,7 @@
 | `<cwd>/supabase/tests/**/*.{sql,pg}`   | SQL    | default test discovery when no `[path]` given                                                                                             |
 | `<path...>`                            | SQL    | when explicit test files/dirs are passed                                                                                                  |
 | `<workdir>/supabase/config.toml`       | TOML   | always: `db.port`, `db.shadow_port`, `db.password`, `project_id`. Absent → defaults; **present but malformed → command fails**            |
-| `<workdir>/supabase/.temp/pooler-url`  | text   | `--linked` pooler fallback only — the connection-pooler URL written by `supabase link` (read from this file rather than from config.toml) |
+| `<workdir>/supabase/.temp/pooler-url`  | text   | `--linked` pooler fallback, linked ref only — the connection-pooler URL written by `supabase link` (read from this file, not config.toml) |
 | `~/.supabase/access-token`             | text   | `--linked` only, when `SUPABASE_ACCESS_TOKEN` unset                                                                                       |
 | `<workdir>/supabase/.temp/project-ref` | text   | `--linked` only, to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                      |
 | `<supabaseHome>/stacks/*/state.json`   | JSON   | managed `--local`: discover the project stack and open its saved definition                                                               |
@@ -149,7 +149,10 @@ command (exit 1).
 - The linked connection pooler URL is read from `supabase/.temp/pooler-url` (written by
   `supabase link`) rather than from config.toml — the `[db.pooler]` config.toml field
   is intentionally ignored. The pooler's `?options=reference=<ref>` startup param is
-  carried through to the connection for the legacy pooler-URL format.
+  carried through to the connection for the legacy pooler-URL format. The saved URL is used
+  only when the target ref is the linked project's ref (`.temp/project-ref`); a `--project-ref`
+  or `SUPABASE_PROJECT_ID` naming another project fetches that project's pooler config from the
+  Management API instead.
 - Compose pg_prove image is fixed at `supabase/pg_prove:3.36`; the old Go CLI's `[images] pgprove`
   config override is not modeled by the TS config schema (documented divergence).
 - The old Go CLI's hidden `--network-id` override is not declared on the TS command (documented divergence).

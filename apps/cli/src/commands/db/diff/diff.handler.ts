@@ -11,7 +11,7 @@ import { branchClause, detectGitBranch } from "../../../shared/git/git-branch.ts
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget, type ResolvedRemoteTarget } from "../../../config/remote-target.service.ts";
 import { aqua, yellow } from "../../../command-internal/colors.ts";
 import {
   envOverrideLookup,
@@ -250,12 +250,17 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           : Option.isSome(flags.linked)
             ? "linked"
             : "local";
+        const preflightTarget =
+          preflightConnType === "linked"
+            ? yield* (yield* RemoteTarget).load(flags.projectRef)
+            : undefined;
         const preflight = yield* resolver.resolve({
           dbUrl: flags.dbUrl,
           connType: preflightConnType,
           dnsResolver,
           password: Option.none(),
           linkedProjectRef: flags.projectRef,
+          target: preflightTarget,
         });
         if (preflightConnType === "linked") {
           const preflightRef = Option.getOrUndefined(preflight.ref ?? Option.none());
@@ -334,6 +339,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                 dnsResolver,
                 password: Option.none(),
                 linkedProjectRef: flags.projectRef,
+                target: yield* (yield* RemoteTarget).load(flags.projectRef),
               });
               const ref2 = Option.getOrUndefined(resolved.ref ?? Option.none());
               if (ref2 !== undefined) {
@@ -502,9 +508,11 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     // connection work (TCP probe / temp-role mint). Only the linked path pre-resolves a ref; the
     // default local/db-url target never merges a remote block.
     let linkedRef: string | undefined;
+    let linkedTarget: ResolvedRemoteTarget | undefined;
     if (connType === "linked") {
-      const projectRefResolver = yield* ProjectRefResolver;
-      linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
+      const remoteTarget = yield* RemoteTarget;
+      linkedTarget = yield* remoteTarget.load(flags.projectRef);
+      linkedRef = linkedTarget.ref;
       // Cached the moment the ref is known, not after `cfg`/`localInputs` below (both
       // fallible) resolve, so the project cache is still written even if a later step fails.
       yield* Ref.set(linkedRefForCache, Option.some(linkedRef));
@@ -542,6 +550,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       dnsResolver,
       password: Option.none(),
       linkedProjectRef: flags.projectRef,
+      target: linkedTarget,
     });
     if (linkedRef === undefined) {
       linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
