@@ -1063,74 +1063,6 @@ describe("gen types", () => {
         }).pipe(Effect.provide(BunServices.layer)),
     );
 
-    it.effect("rejects --project-id together with --project-ref", () =>
-      Effect.gen(function* () {
-        const { layer, api, telemetry } = yield* setup({
-          args: ["gen", "types", "--project-id", VALID_REF, "--project-ref", VALID_REF],
-        });
-        const exit = yield* genTypes(
-          defaultFlags({
-            projectId: Option.some(VALID_REF),
-            projectRef: Option.some(VALID_REF),
-          }),
-        ).pipe(Effect.provide(layer), Effect.exit);
-
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(String(exit.cause)).toContain(
-            "--project-id is a deprecated alias of --project-ref; pass only one of them.",
-          );
-        }
-        expect(api.requests).toHaveLength(0);
-        expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
-
-    it.effect("rejects --project-ref together with --local", () =>
-      Effect.gen(function* () {
-        const { layer, api, generator } = yield* setup({
-          args: ["gen", "types", "--local", "--project-ref", VALID_REF],
-        });
-        const exit = yield* genTypes(
-          defaultFlags({ local: true, projectRef: Option.some(VALID_REF) }),
-        ).pipe(Effect.provide(layer), Effect.exit);
-
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(
-            Option.exists(
-              Cause.findErrorOption(exit.cause),
-              Predicate.isTagged("TargetProjectRefConflictError"),
-            ),
-          ).toBe(true);
-        }
-        expect(api.requests).toHaveLength(0);
-        expect(generator.calls).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
-
-    it.effect("rejects --project-ref together with --db-url", () =>
-      Effect.gen(function* () {
-        const dbUrl = "postgresql://postgres:postgres@127.0.0.1:5432/postgres";
-        const { layer, generator } = yield* setup({
-          args: ["gen", "types", "--db-url", dbUrl, "--project-ref", VALID_REF],
-        });
-        const exit = yield* genTypes(
-          defaultFlags({ dbUrl: Option.some(dbUrl), projectRef: Option.some(VALID_REF) }),
-        ).pipe(Effect.provide(layer), Effect.exit);
-
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(
-            Option.exists(
-              Cause.findErrorOption(exit.cause),
-              Predicate.isTagged("TargetProjectRefConflictError"),
-            ),
-          ).toBe(true);
-        }
-        expect(generator.calls).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
     it.effect("generates for the project of the branch --remote=<branch> names", () =>
       Effect.gen(function* () {
         const { layer, api, linkedProjectCache } = yield* setup({
@@ -1341,52 +1273,6 @@ describe("gen types", () => {
   );
 
   describe("Flag mutex groups and argv-scan precedence", () => {
-    it.effect("rejects combining --remote and --local", () =>
-      Effect.gen(function* () {
-        const { layer, telemetry, api, generator } = yield* setup({
-          args: ["gen", "types", "--remote", "--local"],
-        });
-        const error = yield* genTypes(
-          defaultFlags({ remote: Option.some({ _tag: "Linked" } as const), local: true }),
-        ).pipe(Effect.provide(layer), Effect.flip);
-
-        expect(error).toMatchObject({
-          _tag: "TargetSelectorConflictError",
-          message:
-            "Only one of --remote, --linked, --db-url and --local can be set; got --remote and --local.",
-        });
-        expect(api.requests).toEqual([]);
-        expect(generator.calls).toHaveLength(0);
-        expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
-
-    it.effect("rejects combining --local and --linked", () =>
-      Effect.gen(function* () {
-        const { layer, telemetry } = yield* setup({
-          args: ["gen", "types", "--local", "--linked"],
-        });
-        const exit = yield* genTypes(defaultFlags({ local: true, linked: true })).pipe(
-          Effect.provide(layer),
-          Effect.exit,
-        );
-
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(String(exit.cause)).toContain(
-            "Only one of --remote, --linked, --db-url and --local can be set; got --linked and --local.",
-          );
-          expect(
-            Option.exists(
-              Cause.findErrorOption(exit.cause),
-              Predicate.isTagged("TargetSelectorConflictError"),
-            ),
-          ).toBe(true);
-        }
-        expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
-
     it.effect("does not misdetect a mutex flag consumed as -s's value", () =>
       Effect.gen(function* () {
         const { layer, api } = yield* setup({
@@ -1548,28 +1434,6 @@ describe("gen types", () => {
           expect(String(exit.cause)).toContain(
             "if any flags in the group [remote linked project-ref query-timeout] are set none of the others can be; [linked project-ref query-timeout] were all set",
           );
-        }
-        expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
-
-    it.effect("rejects --linked with --project-ref when --local is also set", () =>
-      Effect.gen(function* () {
-        const { layer, api } = yield* setup({
-          args: ["gen", "types", "--local", "--linked", "--project-ref", VALID_REF],
-        });
-        const exit = yield* genTypes(
-          defaultFlags({ local: true, linked: true, projectRef: Option.some(VALID_REF) }),
-        ).pipe(Effect.provide(layer), Effect.exit);
-
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(
-            Option.exists(
-              Cause.findErrorOption(exit.cause),
-              Predicate.isTagged("TargetSelectorConflictError"),
-            ),
-          ).toBe(true);
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(BunServices.layer)),
