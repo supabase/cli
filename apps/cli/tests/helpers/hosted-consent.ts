@@ -152,7 +152,10 @@ export function describeHostedConsent(path: string, scenario: HostedConsentScena
         const { exit, out, mutations } = yield* runCase({ json: true });
         expect(failureOf(exit)).toBeInstanceOf(HostedMutationConsentRequiredError);
         expect(mutations).toBe(0);
-        expect(out.messages.filter((message) => message.type === "success")).toEqual([]);
+        // Only Output.success reaches stdout and records a data key; task.succeed goes to stderr.
+        expect(
+          out.messages.filter((message) => message.type === "success" && "data" in message),
+        ).toEqual([]);
         expect(out.stdoutText).toBe("");
       }),
     );

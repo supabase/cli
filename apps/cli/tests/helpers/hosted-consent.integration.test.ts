@@ -5,11 +5,19 @@ import { CommandPlatformApi } from "../../src/auth/command-platform-api.service.
 import { requireHostedMutationConsent } from "../../src/command-internal/hosted-consent/hosted-consent.ts";
 import { withTargetPolicy } from "../../src/command-internal/target/target-policy.ts";
 import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
+import { Output } from "../../src/shared/output/output.service.ts";
 import { describeHostedConsent } from "./hosted-consent.ts";
 
-const syntheticWrite = (options: { typed?: boolean; onWrite?: () => void } = {}) =>
+const syntheticWrite = (
+  options: { typed?: boolean; onWrite?: () => void; readOnlyTask?: boolean } = {},
+) =>
   Effect.gen(function* () {
     const ref = yield* ProjectRefResolver.use((resolver) => resolver.resolve(Option.none()));
+    if (options.readOnlyTask === true) {
+      const output = yield* Output;
+      const task = yield* output.task("Reading secrets");
+      yield* task.succeed("Read secrets");
+    }
     yield* requireHostedMutationConsent({
       action: `create a secret on ${ref}`,
       ...(options.typed === true ? { confirm: { kind: "typed" as const, expected: ref } } : {}),
@@ -33,6 +41,11 @@ describeHostedConsent("synthetic-write with a typed confirmation", {
   command: syntheticLeaf,
   typed: true,
   invoke: () => ({ run: syntheticWrite({ typed: true }) }),
+});
+
+describeHostedConsent("synthetic-write after a read-only task step", {
+  command: syntheticLeaf,
+  invoke: () => ({ run: syntheticWrite({ readOnlyTask: true }) }),
 });
 
 describeHostedConsent("synthetic-write with a custom mutation probe", {
