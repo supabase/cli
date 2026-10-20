@@ -1,6 +1,6 @@
 import { Effect, Option } from "effect";
 
-import { resolveParentScopedProjectRef } from "../parent-project-ref.ts";
+import { resolveParentScopedProjectRef } from "./parent-scoped-project-ref.ts";
 import { resolveHostedRemote, selectTarget } from "./remote-resolution.ts";
 import type { ProjectTargetFlagValues } from "./target-flags.ts";
 import { TargetNeedsProjectError } from "./target.errors.ts";

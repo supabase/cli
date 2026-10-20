@@ -15,12 +15,15 @@ Target: hosted, no consent — see [Command target](../../../../docs/command-tar
 > `branches` is PARENT-scoped: after `supabase link <branch>`, the on-disk `project-ref` file
 > holds the BRANCH's own ref, and the Management API returns 403 for a branch ref on every
 > branches-management endpoint. Every `branches` subcommand therefore resolves the project ref
-> via `resolveParentScopedProjectRef` (`command-internal/parent-project-ref.ts`) instead
+> via `resolveParentScopedProjectRef` (`command-internal/target/parent-scoped-project-ref.ts`) instead
 > of calling `ProjectRefResolver.resolve` directly: an explicit `--remote=<ref>` still wins
 > outright; otherwise the PARENT is resolved as env `SUPABASE_PROJECT_ID` → `linked-project.json`'s
 > `ref` → the `project-ref` file, first ref-shaped candidate wins, falling through to
 > `resolver.resolve(None)`'s ordinary env/prompt/not-linked behavior when no candidate is
-> ref-shaped. No-op when linked to a real (non-branch) project, since the cache and the
+> ref-shaped. A cached parent that differs from the `project-ref` file stands only while its
+> branch list contains the file's ref (one extra `GET /v1/projects/{ref}/branches`); otherwise
+> the file's project is used when its own branches can be listed, and a failed check keeps the
+> cached parent. No-op when linked to a real (non-branch) project, since the cache and the
 > `project-ref` file then hold the same ref (CLI-2167).
 
 > Pretty-table rendering ALSO makes its own independent, soft read of `<workdir>/supabase/.temp/project-ref`

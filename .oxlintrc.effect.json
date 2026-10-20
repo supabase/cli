@@ -120,6 +120,7 @@
     "!apps/cli/src/command-internal/string-slice-flag.*",
     "!apps/cli/src/command-internal/struct-output.*",
     "!apps/cli/src/command-internal/supabase-env.*",
+    "!apps/cli/src/command-internal/target/parent-scoped-project-ref.*",
     "!apps/cli/src/command-internal/tenant-*",
     "!apps/cli/src/command-internal/test-db.*",
     "!apps/cli/src/command-internal/timestamp.format.*",
