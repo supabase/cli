@@ -1,5 +1,7 @@
 # `supabase db pull`
 
+Target: selectable, consent default No — see [Command target](../../../../docs/command-target.md)
+
 Pulls the remote schema into either a new timestamped
 migration (diffing a throwaway shadow against the remote, bundled pg-delta or
 migra) or declarative files (`--declarative`). The declarative mode runs the native
@@ -10,11 +12,7 @@ with IPv4 transaction-pooler fallback) and then appends the migra diff.
 `SUPABASE_EXPERIMENTAL` resolving true without `--declarative`) are removed — see
 "Removed surfaces" below.
 
-The default target is the local database, and in a linked checkout the `Target:` line adds
-`default; pass --remote for <project>`. `--remote` selects the linked project, `--remote=<ref>`
-another project, `--remote=<branch>` a branch of the linked project (by name or UUID) and
-`--remote=<url>` another database. One `Target: …` line on stderr names the resolved database. In
-migration mode a hosted target (a remote project or branch, or a non-local `--remote=<url>`) needs
+In migration mode a hosted target (a remote project or branch, or a non-local `--remote=<url>`) needs
 one confirmation (default **No**) that covers writing the migration file(s) and recording them in
 the remote migration history; see "Consent" below.
 
@@ -65,7 +63,7 @@ disables formatting without disabling safe compaction.
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar     | cache-enabled COLD shadow provision creates the current key's snapshot, migration-style pull only (never a declarative export, which provisions no shadow); a warm hit `touch`es its mtime (LRU); every cache-eligible acquire may delete other keys under LRU keep-3 + 2-day mtime TTL — ~90MB (`SUPABASE_HOME` overrides the root) |
 | managed snapshot key `<key>`                                                | backend | stack-mode cache-enabled cold shadow provision saves the database baseline; the last completed save replaces the key                                                                                                                                                                                                                 |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial` | tar     | during a cold export — the in-flight temp file, `rename`d into the tar above on success and removed on failure; only a crash/SIGKILL leaves it behind, and later cold exports / warm hits sweep leftovers older than 5 minutes                                                                                                       |
-| `~/.supabase/<workdir-hash>/linked-project.json`                            | JSON    | a remote project or branch (post-run cache)                                                                                                                                                                                                                                                                                          |
+| `<workdir>/supabase/.temp/linked-project.json`                              | JSON    | a remote project or branch (post-run cache)                                                                                                                                                                                                                                                                                          |
 | `~/.supabase/telemetry.json`                                                | JSON    | every invocation (post-run)                                                                                                                                                                                                                                                                                                          |
 
 ## Docker
@@ -149,13 +147,12 @@ at all, so nothing is cached for it.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                                                                                               |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success (migration written and recorded in the history; declarative export)                                                                                                                                                                                                                             |
-| `1`  | conflicting target flags (`--remote`/`--linked`/`--db-url`/`--local`); `--declarative` with `--diff-engine`; migration-history conflict; **no schema changes ("No schema changes found")**; `--remote=<branch>` naming no branch of the parent project; connection/shadow/engine failure; file IO error |
-| `1`  | `--use-pg-delta` passed at all (any value, including `=false`); `--experimental`/`SUPABASE_EXPERIMENTAL` resolving true without `--declarative` — removed, see Removed surfaces                                                                                                                         |
-| `1`  | `--project-ref` combined with `--local`, `--db-url` or `--remote=<value>`                                                                                                                                                                                                                               |
-| `1`  | hosted confirmation declined (`context canceled`), or needed in a run that cannot prompt (non-interactive, JSON, stream-json, agent) without `--yes`                                                                                                                                                    |
+| Code | Condition                                                                                                                                                                       |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success (migration written and recorded in the history; declarative export)                                                                                                     |
+| `1`  | `--declarative` with `--diff-engine`; migration-history conflict; **no schema changes ("No schema changes found")**; connection/shadow/engine failure; file IO error            |
+| `1`  | `--use-pg-delta` passed at all (any value, including `=false`); `--experimental`/`SUPABASE_EXPERIMENTAL` resolving true without `--declarative` — removed, see Removed surfaces |
+| `1`  | hosted confirmation declined (`context canceled`), or needed in a run that cannot prompt (non-interactive, JSON, stream-json, agent) without `--yes`                            |
 
 > Note: unlike `db diff`, an empty diff (`No schema changes found`) is a **non-zero
 > exit** for `db pull`. Instead of the generic
@@ -193,11 +190,6 @@ resolved `target` object is merged into the payload.
 - Declining exits non-zero with `context canceled` before any file is written; the migration
   history is never updated without the files and the files are never written without the history
   update.
-- `--yes` or a `SUPABASE_YES` in the shell environment confirms it (`Confirmed by --yes: …`). A
-  `SUPABASE_YES` in the project `supabase/.env` does not. JSON, stream-json, `-o` resource formats and
-  non-TTY runs cannot prompt and fail without `--yes`; a piped answer on stdin is ignored.
-- `--yes` also lets the connection remove a network ban that blocks the temporary login role;
-  without it the pull fails and points to `supabase network-bans remove`.
 
 ## Notes
 
@@ -206,24 +198,13 @@ resolved `target` object is merged into the payload.
   invalid value fails the command. A remote project or branch also applies a matching `[remotes.*]`
   block. The linked-database password env is withheld when the target differs from
   `.temp/project-ref`, with a `Not sending SUPABASE_DB_PASSWORD to <target>: ...` warning and a
-  temporary login role instead. `--password` is rejected with `--remote=<url>` and for the local default.
+  temporary login role instead.
 - `--declarative` is mutually exclusive with `--diff-engine`.
 - `--diff-engine` defaults to pg-delta. Without the flag, migra is selected only by
   `[experimental.pgdelta] enabled = false`; the historical
   `SUPABASE_EXPERIMENTAL_PG_DELTA` opt-in is not read.
-- **Target selection.** `--remote` is read as the linked project (bare), a project ref (20
-  lowercase letters), a Postgres URL, or else a branch of the linked project by name or UUID;
-  `--remote=false` fails with `--remote doesn't take false. Leave it out to target the local database.`, and `--remote=` with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A
-  bare `--remote` followed by a word that exactly matches a branch of the linked project, is within
-  a small edit distance of one, or can't be checked because the branch listing failed stops the run
-  with an error that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project. Any other word runs as the operand.
-- **Deprecated aliases.** `--linked`, `--project-ref=<ref>`, `--db-url=<url>` and `--local` still
-  work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
-  warns that local is the default). They are mutually exclusive with each other and with
-  `--remote`; a `false` switch counts as absent. `--project-ref` with `--local`, `--db-url` or
-  `--remote=<value>` is a hard error, and an empty `--db-url` or `--project-ref` fails with
-  `TargetEmptyValueError` instead of reading as absent. Unlike `SUPABASE_PROJECT_ID`, `--remote=<ref>` and
-  `--project-ref` do not affect the shadow container's project id/labels.
+- Unlike `SUPABASE_PROJECT_ID`, `--remote=<ref>` and `--project-ref` do not affect the shadow
+  container's project id/labels.
 - Migration-style pulls always compare migrations with the live target;
   declarative files and `schema_paths` do not replace that baseline.
 - Bundled nontransactional files begin with

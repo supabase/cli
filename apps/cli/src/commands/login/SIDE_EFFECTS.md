@@ -1,5 +1,7 @@
 # `supabase login`
 
+Target: account, no consent — see [Command target](../../../docs/command-target.md)
+
 Writes the access token, then stitches/clears the telemetry identity and
 captures `cli_login_completed`.
 

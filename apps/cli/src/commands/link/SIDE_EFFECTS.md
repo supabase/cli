@@ -1,5 +1,7 @@
 # `supabase link`
 
+Target: hosted, no consent — see [Command target](../../../docs/command-target.md)
+
 Writes flat state files under `<workdir>/supabase/.temp/`.
 
 `link` accepts an optional `[ref-or-branch]` positional

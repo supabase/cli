@@ -1,5 +1,7 @@
 # `supabase projects create`
 
+Target: account, consent default Yes — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                       | Format                    | When                                                       |
@@ -93,11 +95,7 @@ One `result` event on success.
 ## Notes
 
 - Before the `POST /v1/projects`, the command asks `create project "<name>" in organization <org>?`
-  (default **Yes**). `--yes` or a shell `SUPABASE_YES` answers it and prints
-  `Confirmed by --yes: …` on stderr; a `SUPABASE_YES` in a project `.env` does not count.
-  A run that can't prompt (piped stdin, `--output-format json`/`stream-json`, or
-  `-o json`/`yaml`/`toml`/`env`) without `--yes` fails with the consent-required error and
-  makes no `POST`. Stdin is never read for the answer.
+  (default **Yes**). Without consent the run makes no `POST`.
 - In interactive mode (default when stdin is a TTY), the user is prompted for any missing
   required fields (`--org-id`, `--db-password`, `--region`, project name).
 - In non-interactive mode (when stdin is not a TTY or `--interactive=false`), all three

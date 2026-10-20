@@ -31,7 +31,9 @@ Output rarely said which target a command had resolved.
 ### Target groups
 
 Every leaf command declares one group with `withTargetPolicy`. The declaration is the source of
-truth for the default target and for the consent default.
+truth for the default target, the consent default and the help labels, so none of them can drift from
+behaviour. `resolveTarget` and `requireHostedMutationConsent` require it, so a command that resolves
+a target or asks for consent without one fails to compile, and a handler never passes a default.
 
 - `local-only`: `start`, `stop`, `status`, `stack *`, `init`, `unlink`, `functions serve`,
   `migration new`, `gen signing-key`, `db schema declarative sync`. They act on the local stack or
@@ -68,25 +70,34 @@ line and nowhere else.
 | `--remote=<branch>` | A branch of the linked project, by name or UUID                          |
 
 Every command resolves a `--remote=<branch|uuid>` value with one resolver, the one `supabase link`
-uses. A value that matches no branch fails with link's error, which lists the branches. A branch
-UUID also resolves in a checkout with no linked project, where it is reported as the bare project
-ref, `unverified` in JSON, because the lookup does not say whether it is the default branch. A keyword
-connection string (`host=… user=…`) is rejected, not looked up as a branch. A URL applies only where the remote side is
-Postgres: `storage`, `seed buckets` and `hosted` commands need a project and reject one. `hosted`
-commands accept `--remote=<ref|branch>`, and bare `--remote` changes nothing for them. The linked
-project comes from `SUPABASE_PROJECT_ID`, then the link file. `SUPABASE_PROJECT_ID` alone never
-makes a `selectable` command remote; it is only a ref source once `--remote` is passed, and it
-alone is enough for the `default; pass --remote` hint. An unresolvable remote target fails. The CLI never falls back between local and remote.
+uses. A value that matches no branch fails with link's error, which lists the branches; a 20-letter
+value with an uppercase letter is still looked up as a branch, and the error hints that refs are
+lowercase. A branch UUID also resolves in a checkout with no linked project, where it is reported as
+the bare project ref, `unverified` in JSON, because the lookup does not say whether it is the
+default branch, and one the API can't look up fails as branch not found. A keyword connection string
+(`host=… user=…`) is rejected, not looked up as a branch. A URL applies only where the remote side
+is Postgres: `storage`, `seed buckets` and `hosted` commands need a project, so the `--remote`
+parser rejects a URL there as an invalid value, before any later check or request, without echoing
+it. `hosted` commands accept `--remote=<ref|branch>`, and bare `--remote` changes nothing for them.
+`SUPABASE_PROJECT_ID` alone never makes a `selectable` command remote; it is only a ref source once
+`--remote` is passed, and it alone is enough for the `default; pass --remote` hint. An unresolvable
+remote target fails. The CLI never falls back between local and remote.
 
 `--remote=<value>` always parses. `--remote <value>` is rewritten to `--remote=<value>` before
 parsing when the command takes no positional (a hidden one, such as `gen types`'s legacy language,
-does not count), when the token is a ref or URL, or when the command
-already has more bare tokens than positionals. The one ambiguous shape, a bare `--remote` directly
-followed by a token the command took as a positional, is checked against the linked project's
-branches before anything runs. A token that exactly matches a branch, is within a small edit
-distance of one, or can't be checked because the branch listing failed stops the run with an error
-that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project. Any
-other token runs as the command's operand.
+does not count), when the token is a database URL, or when the command already has more bare tokens
+than positionals. The one ambiguous shape, a bare `--remote` directly followed by a token the
+command took as a positional, is settled before anything runs. A project-ref-shaped token fails
+with no request, because a 20-letter operand such as a migration or function name must not silently
+retarget the command at another project: the error offers `--remote=<ref>` for that project and
+`--remote` last to keep the operand. Any other token is checked against the linked project's
+branches. It fails when it names a branch, equals one ignoring case, or is one edit (an adjacent swap
+counts as one) from a non-default branch name of five or more characters, so an ordinary word is not
+mistaken for a typo; otherwise it runs as the operand. When the branches can't be listed the run
+still fails closed, and the error names the cause (an HTTP status or the network error, with the fix
+for a 401, 403 or 404). Docs, help and examples put `--remote` last, in the `=` form when it has a
+value, so it cannot be read as anything else, and shell completion never offers a space-separated
+value for `--remote` on a command that has a positional.
 
 ### Deprecated aliases
 
@@ -94,15 +105,9 @@ other token runs as the command's operand.
 aliases. Each goes through the same resolver as the `--remote` form it maps to, prints a warning
 that names that form, and says v4 removes it. `--local` is still accepted and does nothing, because
 local is already the default; it warns the same way. v4 removes all of them, and `db diff`'s
-`linked` value for `--from` and `--to`, which `remote` replaces.
-
-A warning shows the command path, the command's operand placeholders and the `--remote`
-replacement, last. It never repeats the user's operands or other flags, because they can be secrets
-that a CI log would then keep:
-
-```text
-Warning: --project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase secrets set <NAME=VALUE>... --remote=<ref>
-```
+`linked` value for `--from` and `--to`, which `remote` replaces. A warning names only the
+replacement and carries no example command. It never repeats an operand, a flag value or a URL,
+because they can be secrets that a CI log would then keep.
 
 ### Selector rules
 
@@ -112,16 +117,18 @@ onto `--remote`:
 - `--remote` and the aliases name one target and are never resolved by precedence.
   `--remote=<value>` together with an alias is an error, and so are two of `--remote`, `--linked`,
   `--db-url` and `--local`, or `--project-ref` with `--local` or `--db-url`.
+- A repeated `--remote` is one selection when every occurrence resolves to the same target, with a
+  bare `--remote` counting as the linked project, and an error before anything runs when they differ.
 - A bare `--remote` together with `--project-ref=<x>` is accepted, as `--linked --project-ref=<x>`
   is: the alias's value wins and its warning prints.
 - `db diff` with `--remote` or an alias together with `--from` or `--to` is an error. In `--from`
   and `--to`, `remote` always means the linked project.
 - `--no-remote` and `--remote=false` fail and tell the user to leave `--remote` out.
-  `--remote yes`, `--remote 1`, `--remote true` and `--remote on` mean bare `--remote`.
-- An empty `--remote=` value is rejected, and the message names the values that command accepts.
-  Neither error prints the command's help.
+  `--remote yes`, `--remote 1`, `--remote true` and `--remote on` mean bare `--remote`. An empty
+  `--remote=` value is rejected, and the message names the values that command accepts. Neither
+  error prints the command's help.
 - A conflict error lists only the selector flags the command has and suggests the `--remote` form.
-- `--remote` on `link`, which takes the project as its argument, and on a `local-only` command
+  `--remote` on `link`, which takes the project as its argument, and on a `local-only` command
   fails with a message saying so instead of an unknown-flag error.
 - `--password` is rejected unless the target is a project, meaning bare `--remote`, a ref or a
   branch.
@@ -135,65 +142,20 @@ differs: `link` skips the ref file, `branches` derives the parent project, `proj
 for the project, and `projects list` and `services` read the ref for display only. Branch names and
 UUIDs go through the one branch resolver on every command, the `config` family included.
 
-### The target banner and JSON `target`
+### Announcing the target
 
-A command that resolves a target prints one line on stderr per distinct target, in every output
-format. It is best effort: it adds no API call and no auth requirement, and it never prints
-credentials.
-
-```text
-Target: local stack (<host>:<port>)
-Target: local stack (<host>:<port>) · default; pass --remote for <name> (<ref>)
-Target: custom Postgres (<host>:<port>)
-Target: project <name> (<ref>) · production
-Target: project <parent name> (<parent ref>) · branch <name> (<ref>)
-Target: project <ref>
-Target: project <ref> (not the linked project)
-```
-
-On `hosted` commands the banner is the notice that the command is talking to a remote project, and
-it names the linked project they default to. A bare `db push`, `db pull` or `migration fetch` in a
-linked checkout runs locally and prints the `default; pass --remote` hint.
-
-Project identity comes from `supabase/.temp/linked-project.json` with no API call. A cache that
-names the resolved ref itself is a production project. The cache can be stale or missing, so it
-never proves a branch: "branch" is shown only on positive evidence (a branch lookup by name or
-UUID, or a live probe), and anything else is the bare ref, reported `unverified` in JSON. The branch
-line names the parent project when the cache knows its name, and shows the parent ref otherwise.
-
-A project's default branch is production, not a preview branch. `--remote=<default branch>`, by name
-or UUID, resolves to the production project: the banner, the consent prompt and JSON
-`environment: "production"` all say so, so a script that checks `environment` to stay away from
+A command that resolves a target announces it once on stderr, in every output format, and reports
+the same identity as JSON `target`; [the command target doc](../../apps/cli/docs/command-target.md)
+has the formats. A command with two database endpoints (`db diff --from`/`--to`) announces each in
+resolution order, the local stack and a database URL included, and reports the first. The
+announcement is best effort: it adds no API call and no auth requirement, and it never prints
+credentials. Identity comes from `supabase/.temp/linked-project.json`, which can be stale or
+missing, so it never proves a branch: "branch" is shown only on positive evidence (a branch lookup
+by name or UUID, or a live probe), and anything else is the bare ref, `unverified` in JSON. A
+project's default branch is production, not a preview branch: `--remote=<default branch>`, by name
+or UUID, resolves to the production project, so the banner, the consent prompt and JSON
+`environment: "production"` all say so, and a script that checks `environment` to stay away from
 production sees it. A UUID looked up with no linked project cannot tell, so it stays `unverified`.
-The full table and the JSON shape live in [the command target doc](../../apps/cli/docs/command-target.md).
-
-JSON results carry the same information as `target`:
-
-```text
-{ kind: "local", host, port }
-{ kind: "db-url", host, port }
-{ kind: "linked", project_ref, project_name?, environment: "production" | "branch" | "unverified", parent_project_ref? }
-```
-
-It is merged into plain-object results, the stream-json result event and error envelopes. Arrays,
-`-o json|yaml|toml|env` encodings and generated artifacts such as `gen types` output are unchanged.
-A `target` the handler already owns wins, so `config diff` and `pull` keep their richer objects. A
-command that announces two targets (`db diff --from remote --to <url>`) prints both and reports the
-first in JSON.
-
-### Help and docs
-
-Help states each command's target from the same policy declaration, so labels cannot drift from
-behaviour. A group's help labels each subcommand `[local or remote]` (`selectable`), `[local only]`
-or `[remote only]` (`hosted`); account commands carry no label. A command's own help has a `TARGET`
-section above `USAGE`, and its `remote` flag row reads `--remote[=<ref|branch|url>]` on a command
-that takes a database URL and `--remote[=<ref|branch>]` on one that does not (`hosted` commands,
-`storage`, `seed buckets`); `branches *` commands act on a parent project and take
-`--remote[=<ref>]`. JSON help carries the same information as `target`, and gives the `remote` flag
-`value` and `valueOptional` fields in place of the bracketed name. Docs, examples, help and the deprecation warnings put `--remote` last, in the `=` form
-when it has a value (`db pull add_profiles --remote`, `db push --remote=<ref>`), so it cannot be
-read as anything else, and shell completion never offers a space-separated value for `--remote` on
-a command that has a positional.
 
 ### Hosted-mutation consent
 
@@ -211,8 +173,10 @@ hosted.
   because the checkout must not pre-approve its collaborators' and agents' production writes. The
   compiled binary also loads `.env`, `.env.local` and `.env.$NODE_ENV[.local]` from the working
   directory into the environment, so a `SUPABASE_YES` that any of those files also defines with the
-  same value is treated as the file's; a shell export of that value then needs `--yes` as well.
-  `--yes=false` wins over the environment.
+  same value is treated as the file's; a shell export of that value then needs `--yes` as well. The
+  last `--yes` on the command line wins, and `SUPABASE_YES` is read only when `--yes` never appears:
+  `--yes=false --yes` confirms and `--yes --yes=false` declines. A bare `--yes` followed by `false`,
+  `no`, `off`, `0` or `n` reads as false, as the flag parser does.
 - **No stdin.** The CLI never reads stdin for consent. A piped `y` does nothing.
 - **Interactive only.** A prompt appears only for text output on an interactive stdout with a TTY
   stdin. JSON, stream-json, `-o json|yaml|toml|env`, agents (`--agent`, or an AI tool detected from
@@ -229,26 +193,26 @@ hosted.
 - **Ordering.** Consent comes after the target is resolved and the plan is known, and before the
   first persistent effect. That includes local file writes that precede a remote history update:
   declining the `db pull` or `pull` history update aborts before any file is written. A temporary
-  login role may be created before consent. Removing a network ban may not: it needs `--yes`, and
-  without it the command fails with `LinkedDbNetworkBannedError` pointing at
-  `supabase network-bans remove`. This applies to reads too.
+  login role may be created before consent. Removing a network ban may not: it needs `--yes` and the
+  `HostedMutationConsent` token only the consent module constructs, and without `--yes` the command
+  fails with `LinkedDbNetworkBannedError`. Its suggestion is to re-run with `--yes` or to run
+  `supabase network-bans remove --remote=<ref>` with the ref of the project that failed, which need
+  not be the linked one. This applies to reads too.
 - **Reads never prompt.** `db query --read-only` is a read: it sends `read_only: true` to the
   Management API for a linked target, and runs the statement in a read-only transaction for a local
   or database URL target. It skips consent.
-- **Exemptions.** A leaf that never asks declares `consent: "none"`. A `selectable` leaf
-  must also give a `consentExemptReason`, enforced by the type of `withTargetPolicy` and by the tree
-  test, because it can reach a hosted database: they are reads or write only local files (`db lint`,
-  `db advisors`, `db dump`, `db diff`, `db schema declarative generate`, `gen types`, `storage ls`,
-  `inspect *`, `migration fetch`, `migration list`). Other leaves with a reason are `login` (mints
-  the caller's own token), `feedback add` (sending the message is the command's purpose),
-  `domains reverify` (re-runs verification and changes no configuration), `telemetry disable` (a
-  local preference), `notebooks pull` and the removed commands.
-- **Consent-free operations.** The tree test lets a `consent: "none"` leaf call five non-GET
-  operations: the temporary login role, network-ban removal during connection setup (token-gated as
-  above), the network-ban list and the vanity-subdomain availability check, which are POSTs that
-  only read, and DNS verification, which re-runs a check. A sixth, creating a notebook, is allowed
-  for `notebooks pull` alone: it only creates, and asks through the same prompt check as consent
-  before it does.
+- **Exemptions.** A leaf that never asks declares `consent: "none"`. A `selectable` leaf must also
+  give a `consentExemptReason`, because it can reach a hosted database: they are reads or write only
+  local files (`db lint`, `db advisors`, `db dump`, `db diff`, `db schema declarative generate`,
+  `gen types`, `storage ls`, `inspect *`, `migration fetch`, `migration list`). Other leaves with a
+  reason are `login` (mints the caller's own token), `feedback add` (sending the message is the
+  command's purpose), `domains reverify` (re-runs verification and changes no configuration),
+  `telemetry disable` (a local preference), `notebooks pull` and the removed commands.
+- **Consent-free operations.** A `consent: "none"` leaf may send a non-GET request only from a
+  reviewed list: the temporary login role, network-ban removal during connection setup (token-gated
+  as above), the network-ban list and the vanity-subdomain availability check, which are POSTs that
+  only read, and DNS verification, which re-runs a check. `notebooks pull` alone may also create a
+  notebook: it only creates, and asks through the same prompt check as consent before it does.
 - **Local prompts.** An explicitly requested local reset does not prompt: `migration down` and
   `migration repair --all` lose their local prompts. Incidental resets, `stack destroy`, checkout
   overwrites and `storage rm` keep theirs. Local prompts still honour a project `.env`
@@ -296,34 +260,6 @@ to No makes the Enter key safe.
   shows as the bare ref, and JSON reports it `unverified`.
 - The cancelled-error tags are consolidated and new tags are added, so telemetry keyed on the old
   tags needs updating.
-
-### Guardrails
-
-- `withTargetPolicy` stores the policy as a command annotation and provides a `TargetPolicy`
-  service. `resolveTarget` and `requireHostedMutationConsent` both require it, and it is not an
-  allowed runtime service, so a command that resolves a target or asks for consent without a
-  declared policy fails `tsc`. Handlers never pass a default.
-- `HostedMutationConsent` is a branded token only the consent module constructs. Network-ban removal
-  requires one.
-- `target-policy.unit.test.ts` walks the command tree for every backend variant and fails when:
-  - a leaf has no policy;
-  - a `local-only`, `account` or `hosted` leaf declares `--local`, `--linked` or `--db-url`;
-  - a `selectable` leaf lacks `--remote`;
-  - a declared database-target default disagrees with the group;
-  - a leaf with `consent: "none"` calls a non-GET operation outside the reviewed consent-free map;
-  - a leaf named for a mutating verb has `consent: "none"` and no exemption reason;
-  - a `selectable` leaf has `consent: "none"` and no exemption reason;
-  - a leaf-scoped consent-free operation belongs to a leaf without an exemption reason.
-- `code-structure.unit.test.ts` fails when:
-  - `--remote`, `--local`, `--linked`, `--db-url` or `--project-id` is declared with a raw `Flag.*`
-    outside the shared target flags;
-  - the old per-command resolvers and defaults return;
-  - network-ban removal is called outside connection setup and `network-bans remove`;
-  - a handler prints its own `Connecting to local|remote database` line.
-- Every leaf with `consent !== "none"` has a `describeHostedConsent` test. It runs seven cases:
-  JSON without `--yes`, a piped `y`, a declined prompt, an agent in an interactive terminal,
-  `--yes`, a shell `SUPABASE_YES`, and `SUPABASE_YES` only in `supabase/.env`. A coverage test
-  requires the set of consent leaves to equal the set of leaves under test.
 
 ## Alternatives Considered
 

@@ -1,5 +1,7 @@
 # `supabase functions delete <Function name>`
 
+Target: hosted, consent default No — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                            | Format     | When                                                           |
@@ -72,13 +74,8 @@ Prints the same structured success result, including `target`, and needs `--yes`
 
 ## Notes
 
-- Targets the linked project unless `--remote=<ref>` is given; a bare `--remote` also targets the linked project. `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked project (by name or UUID, resolved through `GET /v1/projects/{parent}/branches`, or `GET /v1/branches/{id}` for a UUID when no project is linked), or `true|yes|on|1` for the linked project. A database URL is rejected (`supabase functions delete` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A bare `--remote` followed by a word that exactly matches a branch of the linked project, is within a small edit distance of one, or can't be checked because the branch listing failed stops the run before any other work with an error that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project. Any other word runs as the operand.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
 - Requires exactly one argument: the function slug/name.
 - Does NOT remove the function from the local filesystem.
-- Requires a linked project (`--remote=<ref>` or linked project config).
 - Asks one question before the DELETE request: `Delete Function <slug>` on the announced target, default No. The slug is validated and the project resolved first, so a usage error never prompts.
-- `--yes` or a `SUPABASE_YES` set in the shell skips the question. A `SUPABASE_YES` in a project `.env*` file does not count, and piped stdin answers are never read.
 - Runs natively in TypeScript through the Management API.
 - Telemetry state is flushed on success and failure. The linked-project cache is filled post-run only under the conditions listed in Files Written.

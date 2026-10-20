@@ -1,5 +1,7 @@
 # `supabase config push`
 
+Target: hosted, consent default No — see [Command target](../../../../docs/command-target.md)
+
 Pushes the local `supabase/config.toml`'s declared, pushable properties to the
 linked project's (or, via `--remote=<branch-name-or-uuid>`, one of its
 branches') Management API. Reports which project/branch it resolved first, reads
@@ -60,7 +62,8 @@ question is declined (a decline writes nothing at all).
 is every resource's entire source of remote state. Rows -2/-1 are a
 DIFFERENT concern (resolving and describing WHAT `ref` is, before any
 resource is even considered) and run at most once per invocation, never
-per-resource. `UpdateSigningKeys` is **not**
+per-resource. A `--remote` naming a project's default branch resolves to that project's own ref
+and skips row -1: it is production, not probed. `UpdateSigningKeys` is **not**
 called by `config push`. No spinner on the read; 401/403/404 get
 purpose-written messages, every other status the generic
 `unexpected status N: body` shape. The read's response is echoed via a
@@ -157,9 +160,10 @@ cannot be resolved from either the read or the file — reported in their own
 ### `--output-format text`
 
 All diagnostics on **stderr**, no stdout. The `Target:` banner prints first
-(`Target: project <name> (<ref>) · production`, `Target: project <parent ref> · branch <name>
-(<ref>)` for a branch named with `--remote`, or `Target: project <ref>` when nothing vouches
-for the project; see [Command target](../../../../docs/command-target.md)). When a `[remotes.<name>]` block matches the target ref,
+(`Target: project <name> (<ref>) · production` for a project or its default branch,
+`Target: project <parent ref> · branch <name> (<ref>)` for any other branch named with `--remote`,
+or `Target: project <ref>` when nothing vouches for the project; see
+[Command target](../../../../docs/command-target.md)). When a `[remotes.<name>]` block matches the target ref,
 `Loading config override: [remotes.<name>]` follows. No target shape is gated separately: a
 branch is confirmed through the one consent question below, which names the target the banner
 announced.
@@ -215,13 +219,8 @@ When at least one resource (or the webhooks enable) will be written, a price lin
 `Enabling <name> will cost you <price>.` prints for each paid add-on the push would
 switch on, then one question is asked: `Push config changes to <API, DB and Auth…> on
 <target>?` — the services are the ones that will be written, in push order — with a
-default answer of **no**. `--yes` or a `SUPABASE_YES` set in the shell skips the question
-and echoes `Confirmed by --yes: Push config changes to … on <target>` to stderr; a
-`SUPABASE_YES` in a project `.env*` file does not count. Piped answers are never read, and
-a run that cannot prompt (stdin not a TTY, redirected stdout, or machine output) fails
-without `--yes`. A push with nothing to write never asks. Declining fails the command
-(`HostedMutationDeclinedError`, exit `1`, rendered as `context canceled`) with nothing
-written.
+default answer of **no**. A push with nothing to write never asks. Declining fails the
+command with nothing written.
 
 Afterwards, up to six `Note:` lines report anything the push couldn't do
 or had to work around:
@@ -249,19 +248,24 @@ something to write needs `--yes` or a shell `SUPABASE_YES`; without them the com
 {...}}` in `json` mode, a `{type: "error", ...}` NDJSON event in `stream-json` mode) and no
 success payload. A structured summary is emitted on stdout via `output.success(message,
 data)`, and carries a [`target`](../../../../docs/command-target.md) object next to the push
-summary. Its `environment` and `parent_project_ref` come from the live target probe (`production`
-for a project, `branch` for a branch); when the probe could not tell, the announced identity's
-`unverified` stands.
+summary. Its `environment` and `parent_project_ref` come from the resolved target: `production`
+for a project or for its default branch (named, or a UUID looked up under the linked project or
+`SUPABASE_PROJECT_ID`), which has no `parent_project_ref`, and `branch` for any other branch. When
+the target can't be told, the announced identity's `unverified` stands: a branch UUID looked up
+with no linked project and no `SUPABASE_PROJECT_ID` can't be told from a default branch, and a
+live probe that could not answer is neither a project nor a branch.
 
 `env_sourced` is additive and present only when a `SUPABASE_*` variable supplied a pushed value:
 `[{path: [...], origin: {source: "shell" | "project_env", env_variable, file?}}]`.
 
 `json` mode — one flat object (`message` is a one-sentence summary, with a
 caveat sentence appended for anything withheld — see below); `is_branch`/`branch`/
-`parent_project_ref` are additive (CLI-2168/CLI-2289) — `branch`/`parent_project_ref` are
-present only when resolved, and `is_branch` itself is OMITTED entirely (not `false`) for
-the "could not determine" target — an absent key is the honest "unknown" signal, since
-asserting `false` would be as misleading as asserting `true`:
+`parent_project_ref` are additive (CLI-2168/CLI-2289) — `is_branch` is `false` for a project and
+for a project's default branch (which has no `parent_project_ref`), `true` for any other branch,
+whose `branch`/`parent_project_ref` are present only when resolved, and OMITTED entirely (not
+`false`) for the "could not determine" target (a live probe that could not answer, or a branch
+UUID looked up with no linked project and no `SUPABASE_PROJECT_ID`) — an absent key is the honest
+"unknown" signal, since asserting `false` would be as misleading as asserting `true`:
 
 ```jsonc
 {
@@ -349,10 +353,7 @@ may itself contain a `.`.
 
 ## Notes
 
-- `--remote=<value>` selects the target: a project ref (20 lowercase letters), or the name or UUID of a branch of the linked project (resolved through `GET /v1/projects/{parent}/branches`, or `GET /v1/branches/{id}` for a UUID when no project is linked). A bare `--remote` and no selector both target the linked project. A database URL is rejected (`supabase config push` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` (it still accepts a branch name or UUID) and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
-- **`--remote` accepts a project ref, or the name (or UUID) of a branch of the linked project** (CLI-2289, the same vocabulary `link`/`config diff` already accept). A value that is exactly 20 lowercase letters is always treated as a ref. A name or UUID is resolved against the branches of the currently linked project (fails if none is linked, or if the linked ref is itself invalid); a UUID with no usable linked project resolves directly through `GET /v1/branches/{id}`.
-- **Every invocation detects whether the resolved ref is the linked project, one of its branches, or genuinely undeterminable** (CLI-2168) before doing anything else. When `--remote` already named a branch by name/UUID, this is known for free (certain, never re-derived from a live probe); otherwise it's a live `GET /v1/projects/{ref}` probe: 200 is a plain project, 404 confirms a branch, and EVERYTHING else (a TIMEOUT, a transport failure, or any other status) degrades to "unknown" — never "project" (that would assert an identity the probe could not verify) and never a hard failure (this probe is diagnostic-only and must never block a push that would otherwise succeed). A confirmed branch's own name/parent are recovered best-effort from `.temp/linked-project.json`/`.temp/project-ref` and a branch-list lookup. Every target shape goes through the same single consent question before the first write, so a branch resolved implicitly and one named with `--remote` are treated alike, and the question names the branch and its parent project.
+- **Every invocation detects whether the resolved ref is the linked project, one of its branches, or genuinely undeterminable** (CLI-2168) before doing anything else. When `--remote` already named a branch by name/UUID, this is known for free (never re-derived from a live probe): the project's default branch is the production project itself (`is_branch: false`, no parent), any other branch is certainly a branch, and a branch UUID looked up with no linked project and no `SUPABASE_PROJECT_ID` can't be told from a default branch, so it stays undeterminable (`unverified`, `is_branch` omitted). Otherwise it's a live `GET /v1/projects/{ref}` probe: 200 is a plain project, 404 confirms a branch, and EVERYTHING else (a TIMEOUT, a transport failure, or any other status) degrades to "unknown" — never "project" (that would assert an identity the probe could not verify) and never a hard failure (this probe is diagnostic-only and must never block a push that would otherwise succeed). A confirmed branch's own name/parent are recovered best-effort from `.temp/linked-project.json`/`.temp/project-ref` and a branch-list lookup. Every target shape goes through the same single consent question before the first write, so a branch resolved implicitly and one named with `--remote` are treated alike, and the question names the branch and its parent project.
 - **Resolution runs BEFORE the config load**, not after: a `[remotes.<name>]` overlay is merged inside the resolved config load before its one full schema decode, and only one decode may ever run per invocation — reloading with a different `projectRef` a second time would wrongly reject a base document that's only valid once its matching remote's overlay applies. The accepted tradeoff: a branch name/UUID resolution's network call can fire even when the local `config.toml` turns out to be malformed (this only affects `--remote=<name-or-uuid>`; a ref-shaped or absent target never needs a network call to resolve, so a malformed config there still aborts with zero requests made, matching this command's behavior before CLI-2168/CLI-2289).
 - The post-run linked-project telemetry cache fill (`Effect.ensuring`, unconditional) may issue its own `GET /v1/projects/{ref}` independent of the target-detection probe above — both are best-effort/non-fatal for that fill, so a branch ref 404ing there is expected and harmless.
 - Run from the project root (or pass `--workdir`); `config.toml` is read relative to it.

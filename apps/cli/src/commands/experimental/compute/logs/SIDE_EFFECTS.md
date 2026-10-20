@@ -1,5 +1,7 @@
 # `supabase compute logs <name>`
 
+Target: hosted, no consent — see [Command target](../../../../../docs/command-target.md)
+
 ## Feature gate
 
 This command is registered only when `experimental.compute` is enabled. Set
@@ -167,9 +169,3 @@ A `worker_guest_logs` message is bytes the tenant's own code printed. Control an
 escape sequences are stripped before it reaches a terminal, so a compute cannot
 reposition the cursor or forge CLI output; interior newlines and indentation are
 preserved so a stack trace survives intact.
-
-## Notes
-
-- Targets the linked project unless `--remote=<ref>` is given; a bare `--remote` also targets the linked project. `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked project (by name or UUID, resolved through `GET /v1/projects/{parent}/branches`, or `GET /v1/branches/{id}` for a UUID when no project is linked), or `true|yes|on|1` for the linked project. A database URL is rejected (`supabase experimental compute logs` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A bare `--remote` followed by a word that exactly matches a branch of the linked project, is within a small edit distance of one, or can't be checked because the branch listing failed stops the run before any other work with an error that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project. Any other word runs as the operand.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.

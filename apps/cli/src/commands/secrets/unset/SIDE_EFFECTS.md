@@ -1,5 +1,7 @@
 # `supabase secrets unset`
 
+Target: hosted, consent default No — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                           | Format                    | When                                                                                                             |
@@ -51,7 +53,6 @@
 | `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                                                                                                                                                                                                            |
 | `1`  | `InvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`                                                                                                                                                                                        |
 | `1`  | `ProjectRefNotLinkedError` — `--remote=<ref>` unset, env/file empty, and stdin not a TTY                                                                                                                                                                             |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`)                                               |
 | `1`  | `InvalidProjectRefError` — a `SUPABASE_PROJECT_ID` or link-file ref violates `^[a-z]{20}$`                                                                                                                                                                           |
 | `1`  | `HostedMutationConsentRequiredError` — no `--yes`/shell `SUPABASE_YES` and stdin is not a TTY or output is not interactive text; nothing is unset. An explicit-name run makes no secrets request; `--all` has already listed the secrets (GET) to build the question |
 | `1`  | `SecretsListUnexpectedStatusError` — non-2xx response from GET (`--all` path)                                                                                                                                                                                        |
@@ -101,18 +102,6 @@ One `result` NDJSON event on success containing `{project_ref, count, names, dry
 - Names and `--all` are mutually exclusive; with neither, the command fails. `--all` unsets every secret that does not have a `SUPABASE_` prefix.
 - Argument validation runs before the project ref resolves, so a usage error never opens the project picker and makes no API call.
 - Asks one question before the DELETE request: `unset N secret(s)` on the announced target, default No, listing the names. It runs after the names are resolved (`--all` lists the secrets first), so a usage error never prompts and a decline deletes nothing.
-- `--yes` or a `SUPABASE_YES` set in the shell skips the question with a stderr echo. A `SUPABASE_YES` in a project `.env*` file does not count, and piped stdin answers are never read.
 - Without `--yes`, a run whose stdin is not a TTY, or whose output is not interactive text (`json`, `stream-json`), fails before any DELETE.
 - `--dry-run` never prompts, never calls DELETE, and works without `--yes` in every output mode. With `--all` it still calls GET to list the secrets.
 - Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers.
-- Requires `--remote=<ref|branch>`, `SUPABASE_PROJECT_ID`, a linked project (`supabase/.temp/project-ref`)
-  or, on an interactive terminal, the project picker. A bare `--remote` targets the linked project.
-- `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
-  project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
-  (`supabase secrets unset` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A bare `--remote` followed by a word that exactly matches a branch of the linked project, is
-  within a small edit distance of one, or can't be checked because the branch listing failed stops
-  the run before any other work with an error that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project. Any other word runs as the operand.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
-  branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
-  be combined with `--remote=<value>`.

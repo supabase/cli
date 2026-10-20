@@ -1,5 +1,7 @@
 # `supabase migration fetch`
 
+Target: selectable, no consent — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                           | Format     | When                                                                                                                                                                                   |
@@ -42,13 +44,11 @@ Local targets and database URLs make none.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                              |
-| ---- | ---------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                |
-| `1`  | database connection failure                                                                                            |
-| `1`  | failed to write migration files                                                                                        |
-| `1`  | conflicting target selectors (see Notes)                                                                               |
-| `1`  | `--remote=<branch>` matches no branch of the linked project (`LinkBranchNotFoundError`, lists the branches that exist) |
+| Code | Condition                       |
+| ---- | ------------------------------- |
+| `0`  | success                         |
+| `1`  | database connection failure     |
+| `1`  | failed to write migration files |
 
 ## Output
 
@@ -76,30 +76,9 @@ Same structured `files` result delivered as an NDJSON `result` event.
   `SUPABASE_YES` (shell env or project `.env`) auto-confirms; a non-interactive /
   machine-output run takes the default (YES). An unrecognised answer declines. This is a
   prompt about local files, so a `SUPABASE_YES` in the project `.env` still answers it.
-- The command only reads the remote history, so it asks for no hosted-mutation consent.
-  `--yes` (or a shell `SUPABASE_YES`) additionally lets the connection remove a network ban
-  that blocks the temporary login role.
 
 ## Notes
 
-- **Target.** With no selector the command runs against the local database; when the directory is
-  linked the local `Target:` banner ends with `· default; pass --remote for <project>`. `--remote`
-  targets the linked project (`SUPABASE_PROJECT_ID`, else `.temp/project-ref`). `--remote=<value>`
-  is read as a project ref (20 lowercase letters), a database URL (`postgres://` or
-  `postgresql://`), `true|yes|on|1` (the linked project), or otherwise the name of a branch of the
-  linked project, which resolves to that branch's own project. `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to target the local database.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A word after a bare
-  `--remote` is read as its value, `--remote=<word>`, because the command takes no operands. The
-  resolved target is announced on stderr (`Target: …`) in every output format and, in JSON results,
-  as a `target` object.
-- **Deprecated selectors.** `--linked`, `--project-ref`, `--db-url` and `--local` are hidden aliases
-  that still select their target and print a warning on stderr naming the replacement, for example
-  `--linked is deprecated and will be removed in v4. Use --remote instead: supabase migration fetch --remote`
-  and
-  `--local isn't needed (local is the default) and will be removed in v4: supabase migration fetch`;
-  a database URL is never echoed. Two selectors together fail
-  (`Only one of --remote, --linked, --db-url and --local can be set; got …`), `--project-ref` cannot
-  be combined with `--local`, `--db-url` or `--remote=<value>`, an empty `--db-url` or
-  `--project-ref` is rejected, and `--linked=false` selects nothing.
 - Fetches migration file contents from the `supabase_migrations.schema_migrations` history table.
 - **Empty-statements rows:** a row whose `statements` array is empty
   (NULL/`{}` — possible on older projects or manually-inserted rows) is written as

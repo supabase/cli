@@ -1,5 +1,7 @@
 # `supabase whoami`
 
+Target: account, no consent — see [Command target](../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                                    | Format                    | When                                                                                       |

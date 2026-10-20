@@ -1,5 +1,7 @@
 # `supabase config pull`
 
+Target: hosted, no consent — see [Command target](../../../../docs/command-target.md)
+
 Writes the effective configuration of a remote project or branch back into the local
 `supabase/config.toml`/`config.json` — the write side of `supabase config diff` (same target
 resolution, fetch, and classification, `../diff/`). Prompts for confirmation before writing on an
@@ -182,8 +184,6 @@ the -o/--output flag is not supported by config pull; use --output-format json|s
 
 ## Notes
 
-- `--remote=<value>` selects the target: a project ref (20 lowercase letters), or the name or UUID of a branch of the linked project (resolved through `GET /v1/projects/{parent}/branches`, or `GET /v1/branches/{id}` for a UUID when no project is linked). A bare `--remote` and no selector both target the linked project. A database URL is rejected (`supabase config pull` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` (it still accepts a branch name or UUID) and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
 - **No hosted-mutation consent.** Pull changes only local files, so the one prompt is the local overwrite question above; `--yes` and `SUPABASE_YES` answer it, and nothing about the linked project is ever modified.
 - Run from the project root (or pass `--workdir`); `config.toml`/`config.json` is read and written
   relative to it.

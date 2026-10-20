@@ -1,5 +1,7 @@
 # `supabase encryption [get-root-key|update-root-key]`
 
+Target: hosted, consent default No for `update-root-key`, no consent for `get-root-key` — see [Command target](../../../docs/command-target.md)
+
 Manage a project's pgsodium root encryption key. Each subcommand resolves a
 project ref and calls one Management API endpoint. `update-root-key`
 additionally reads the new key from stdin.
@@ -83,16 +85,11 @@ One `result` event carrying `{root_key}` (both subcommands).
 
 ## Notes
 
-- Targets the linked project unless `--remote=<ref>` is given; a bare `--remote` also targets the linked project. `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked project (by name or UUID, resolved through `GET /v1/projects/{parent}/branches`, or `GET /v1/branches/{id}` for a UUID when no project is linked), or `true|yes|on|1` for the linked project. A database URL is rejected (these commands take a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes no operands.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
-- Requires `--remote=<ref>`, `SUPABASE_PROJECT_ID`, or a linked project.
 - `update-root-key` reads the key from stdin: a real TTY is read with a masked
   prompt; piped stdin is decoded as UTF-8 and whitespace-trimmed. An empty or
   whitespace-only key sends an empty `root_key` (the TTY masked prompt also trims).
 - The TTY prompt is a clack masked prompt labelled `Enter a new root key: `
   (clack adds its own framing). Piped (non-TTY) mode does not print the
   prompt at all — it reads stdin directly.
-- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../docs/command-target.md).
-- `update-root-key` asks `Replace the project's root encryption key on <target>?` (default No) before the first write. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.
+- `update-root-key` asks `Replace the project's root encryption key on <target>?` (default No) before the first write.
 - The new key is read (masked TTY prompt or piped stdin) before the confirmation, which never reads stdin.

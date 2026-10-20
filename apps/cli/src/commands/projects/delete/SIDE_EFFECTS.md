@@ -1,5 +1,7 @@
 # `supabase projects delete`
 
+Target: account, consent default No — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                   | Format                    | When                                                       |
@@ -63,9 +65,8 @@
 ### `--output-format text`
 
 Prints `This action is irreversible.` and asks `Delete project <ref>?` (default
-**No**), then on success prints `Deleted project: <name>` to stdout. `--yes` or a shell
-`SUPABASE_YES` answers the question and prints `Confirmed by --yes: Delete project <ref>`
-on stderr; a `SUPABASE_YES` in a project `.env` does not count.
+**No**), then on success prints `Deleted project: <name>` to stdout. Under `--yes` it prints
+`Confirmed by --yes: Delete project <ref>` on stderr instead of asking.
 
 ### `--output-format json`
 
@@ -96,5 +97,4 @@ On failure, an `error` event is emitted instead:
   user to select a project to delete.
 - In non-interactive mode (when stdin is not a TTY), the project ref positional argument
   is required.
-- The confirmation runs after the project ref is resolved and before the DELETE call;
-  stdin is never read for the answer.
+- The confirmation runs after the project ref is resolved and before the DELETE call.

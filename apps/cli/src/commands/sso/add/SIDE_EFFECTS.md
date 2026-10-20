@@ -1,5 +1,7 @@
 # `supabase sso add`
 
+Target: hosted, consent default No — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                           | Format                    | When                                                                                                            |
@@ -66,7 +68,6 @@ is sent. A 2xx response whose body does not match the provider schema fails as
 | `1`  | `SsoAddNetworkError` — transport failure or undecodable 2xx body                                                                                                                                                                                                                                     |
 | `1`  | declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed                                                                                                                                                                                         |
 | `1`  | JSON, stream-json, `-o` or non-interactive run without `--yes` (`HostedMutationConsentRequiredError`) — nothing is changed                                                                                                                                                                           |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`)                                                                               |
 
 ## Telemetry Events Fired
 
@@ -106,15 +107,4 @@ Single `success` event with the parsed response as data.
 - Metadata URL validation error message: `only HTTPS Metadata URLs are supported Use --skip-url-validation to suppress this error` (no trailing period; differs from `sso update`'s variant).
 - The `## Attribute Mapping` / `## SAML 2.0 Metadata XML` sections are emitted as plain markdown (heading + fence). The headings carry no extra styling; the XML body inside the fence is formatted by `formatSsoMetadataXml`.
 - **Missing `--type` parser error**: the error message itself is `Error: required flag(s) "type" not set` verbatim (mapped in `shared/output/normalize-error.ts`). Effect CLI's parser however dumps the full help block to stdout _before_ the error. The error string is unchanged; the surrounding help dump is an Effect CLI behavior that would require forking the CLI parser to suppress.
-- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
-- Asks `Add an SSO provider on <target>?` (default No) before the first write, after printing the type, domains and metadata source (file or URL; the URL itself is not printed). `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.
-- Requires `--remote=<ref|branch>`, `SUPABASE_PROJECT_ID`, a linked project (`supabase/.temp/project-ref`)
-  or, on an interactive terminal, the project picker. A bare `--remote` targets the linked project.
-- `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
-  project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
-  (`supabase sso add` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes
-  no operands.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
-  branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
-  be combined with `--remote=<value>`.
+- Asks `Add an SSO provider on <target>?` (default No) before the first write, after printing the type, domains and metadata source (file or URL; the URL itself is not printed).

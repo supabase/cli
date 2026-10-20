@@ -1,10 +1,8 @@
 # `supabase test db [path...]`
 
-Runs pgTAP tests against a database. With no selector the command runs against the local stack,
-and in a linked checkout the `Target:` line adds `default; pass --remote for <project>`. `--remote`
-selects the linked project, `--remote=<ref>` another project, `--remote=<branch>` a branch of the
-linked project (by name or UUID) and `--remote=<url>` a custom database (see
-[ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md)). The run enables pgTAP and drops it again, so a hosted target (a remote project, branch or
+Target: selectable, consent default No — see [Command target](../../../../docs/command-target.md)
+
+Runs pgTAP tests against a database. The run enables pgTAP and drops it again, so a hosted target (a remote project, branch or
 remote `--remote=<url>`) asks for one confirmation before anything runs; the local stack never prompts.
 
 ## Files Read
@@ -71,16 +69,14 @@ Managed local stack prove runs the catalog `pg_prove` tool through the owning st
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                            |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | all pgTAP tests pass                                                                                                                                                 |
-| `1`  | `pg_prove` exits non-zero (test failures) — `error running container: exit N`, or `error running pg_prove: exit N` on a managed stack or native external client      |
-| `1`  | `pg_prove` ran no tests (`Result: NOTESTS`) — `no pgTAP tests found in <paths>`                                                                                      |
-| `1`  | more than one of `--remote` / `--linked` / `--db-url` / `--local` (`TargetSelectorConflictError`)                                                                    |
-| `1`  | database connection failure / pgTAP enable failure / docker failure / remote-project auth or IPv6 errors; `--remote=<branch>` naming no branch of the parent project |
-| `1`  | `--project-ref` with `--local`, `--db-url` or `--remote=<value>` (`TargetProjectRefConflictError`)                                                                   |
-| `1`  | hosted target in a JSON, piped, agent or non-TTY run without `--yes` or a shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`); nothing runs                  |
-| `1`  | hosted target confirmation declined (`HostedMutationDeclinedError`, `context canceled`); nothing runs                                                                |
+| Code | Condition                                                                                                                                                       |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | all pgTAP tests pass                                                                                                                                            |
+| `1`  | `pg_prove` exits non-zero (test failures) — `error running container: exit N`, or `error running pg_prove: exit N` on a managed stack or native external client |
+| `1`  | `pg_prove` ran no tests (`Result: NOTESTS`) — `no pgTAP tests found in <paths>`                                                                                 |
+| `1`  | database connection failure / pgTAP enable failure / docker failure / remote-project auth or IPv6 errors                                                        |
+| `1`  | hosted target in a JSON, piped, agent or non-TTY run without `--yes` or a shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`); nothing runs             |
+| `1`  | hosted target confirmation declined (`HostedMutationDeclinedError`, `context canceled`); nothing runs                                                           |
 
 ## Telemetry Events Fired
 
@@ -104,10 +100,7 @@ subprocess's stdout is forwarded chunk-by-chunk, byte-exact and unframed) —
 
 ### `--output-format text`
 
-TAP streams to stdout. The alias deprecation warnings, the `Target: …` line (remote project `Target: <name> (<ref>)`,
-branch `Target: project <parent> · branch <name> (<ref>)`, `Target: local stack (<host>:<port>)`
-with ` · default; pass --remote for <project>` appended in a linked checkout when no selector was
-given, or `Target: custom Postgres (<host>:<port>)`) and the hosted
+TAP streams to stdout. The alias deprecation warnings, the `Target:` line and the hosted
 confirmation question are written to **stderr**, never to stdout — no
 spinner is used, so stdout carries only the raw TAP bytes.
 
@@ -122,22 +115,9 @@ command (exit 1).
 
 - Hidden command.
 - Stack `test db` runs catalog `pg_prove` through the owning stack runtime with runtime credentials for native and container runtimes. External targets use the catalog Postgres client. Compose stays on `supabase/pg_prove:3.36`. There is no PATH fallback or host major-version check.
-- **Target selection** (shared by `db test` via `testDbConfig`). `--remote` is read as the linked project (bare), a project ref (20
-  lowercase letters), a Postgres URL, or else a branch of the linked project by name or UUID;
-  `--remote=false` fails with `--remote doesn't take false. Leave it out to target the local database.`, and `--remote=` with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A
-  bare `--remote` followed by a word that exactly matches a branch of the linked project, is within
-  a small edit distance of one, or can't be checked because the branch listing failed stops the run
-  with an error that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project. Any other word runs as the operand.
-- **Deprecated aliases.** `--linked`, `--project-ref=<ref>`, `--db-url=<url>` and `--local` still
-  work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
-  warns that local is the default). They are mutually exclusive with each other and with
-  `--remote`; a `false` switch counts as absent. `--project-ref` with `--local`, `--db-url` or
-  `--remote=<value>` is a hard error.
 - **Hosted consent.** A remote project, branch or remote `--remote=<url>` asks once, after the target and the
   test paths are resolved and before pgTAP is enabled: `Run pgTAP tests`, listing the pgTAP
-  enable, the `pg_prove` run against the test paths, and the pgTAP drop, with default No. A
-  shell `SUPABASE_YES` or `--yes` grants it (`Confirmed by --yes: …`); a `SUPABASE_YES` in
-  `supabase/.env` and a piped answer do not. Stdin is never read for the answer. A `--remote=<url>`
+  enable, the `pg_prove` run against the test paths, and the pgTAP drop, with default No. A `--remote=<url>`
   that points at the local stack never prompts.
 - Postgres TLS behavior: local connections disable TLS
   (`ConnectLocalPostgres` sets `cc.TLSConfig = nil`); remote (`--remote`)
@@ -145,7 +125,7 @@ command (exit 1).
   `disable` → plaintext, `verify-ca` / `verify-full` → TLS **with** certificate
   verification, and everything else (`prefer` / `require` / unset) → TLS **without**
   verification (non-TLS fallbacks stripped).
-- `--remote=<url>` (and the deprecated `--db-url`) accepts both the WHATWG `postgres(ql)://…` URL form and the libpq
+- `--remote=<url>` accepts a WHATWG `postgres(ql)://…` URL; the deprecated `--db-url` also accepts the libpq
   keyword/value DSN form (`host=… dbname=… user=…`, incl. unix-socket paths), following libpq parsing. The `sslmode` and libpq `options` (Supavisor
   `?options=reference=<ref>`) parameters are preserved on both forms. A malformed URL or
   percent escape surfaces as a redacted `failed to parse connection string` error, never

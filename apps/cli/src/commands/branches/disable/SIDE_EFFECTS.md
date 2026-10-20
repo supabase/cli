@@ -1,5 +1,7 @@
 # `supabase branches disable`
 
+Target: hosted, consent default No — see [Command target](../../../../docs/command-target.md)
+
 Hidden subcommand. Operates on the entire linked project rather than a single branch.
 
 ## Files Read
@@ -55,7 +57,5 @@ Single `success` event carrying `{project_ref}`.
 
 ## Notes
 
-- `--remote=<ref>` names the parent project; with no selector or a bare `--remote` the parent comes from the chain above. A branch name or UUID is rejected with `` `supabase branches disable` acts on a parent project, so --remote takes its project ref, not a branch name. Use --remote=<ref>. ``, and a database URL with `` `supabase branches disable` needs a project, not a database URL. ``; `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref>; leave it out to use the linked project.` The branch itself stays a positional argument.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
-- Resolves the parent project and prints `Target: <project>` once on stderr in every output format, for example `Target: project <name> (<ref>) · production`. `--output-format json|stream-json` object results and error envelopes also carry a `target` object; `--output {json,yaml,toml,env}` payloads are unchanged.
-- **Consent.** Asks once, after the parent project is resolved and before the DELETE, with default No: `Disable preview branching`. `--yes` or a shell `SUPABASE_YES` approves it (`supabase/.env` does not) and echoes `Confirmed by --yes: <action> on <target>` to stderr. Without it, only an interactive text-mode terminal is asked: JSON, `-o`, piped and agent runs exit 1 with `HostedMutationConsentRequiredError` and change nothing, and declining exits 1 with `HostedMutationDeclinedError`. Stdin is never read.
+- `--remote=<ref>` names the parent project; with no selector or a bare `--remote` the parent comes from the chain above. A branch name or UUID is rejected with `` `supabase branches disable` acts on a parent project, so --remote takes its project ref, not a branch name. Use --remote=<ref>. `` The branch itself stays a positional argument.
+- **Consent.** Asks once, after the parent project is resolved and before the DELETE, with default No: `Disable preview branching`.

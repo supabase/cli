@@ -1,5 +1,7 @@
 # `supabase backups restore`
 
+Target: hosted, consent default No — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                      | Format                    | When                                                                                          |
@@ -81,14 +83,9 @@ One `result` NDJSON event on success with the project ref payload.
 
 ## Notes
 
-- Targets the linked project unless `--remote=<ref>` is given; a bare `--remote` also targets the linked project. `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked project (by name or UUID, resolved through `GET /v1/projects/{parent}/branches`, or `GET /v1/branches/{id}` for a UUID when no project is linked), or `true|yes|on|1` for the linked project. A database URL is rejected (`supabase backups restore` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes no operands.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
 - `--timestamp` / `-t` accepts seconds since Unix epoch (int64). Defaults to `0`, which the API interprets as "now".
 - Known gap: the generated `V1RestorePitrBackupInput` schema enforces `recovery_time_target_unix >= 0`, so a negative value is rejected locally with a schema decode error instead of being forwarded to the API (the underlying field has no lower bound). Resolving this requires an upstream OpenAPI spec change.
-- Requires `--remote=<ref>`, `SUPABASE_PROJECT_ID`, a populated `<workdir>/supabase/.temp/project-ref` file, or a TTY for the interactive project picker.
 - The interactive picker calls `GET /v1/projects` and writes `"Selected project: <ref>"` to stderr in text mode. It does **not** persist the choice; only `supabase link` and `supabase bootstrap` write the temp file.
 - Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers.
 
-- Prints `Target: <project>` once on stderr in every output format, for example `Target: project <name> (<ref>) · production`. `--output-format json|stream-json` object results and error envelopes also carry a `target` object; `--output {json,yaml,toml,env}` payloads are unchanged.
-- **Consent.** Asks once, after the project is resolved and before the POST, with default No: `Restore the database to Unix timestamp <t> (PITR)`. With no `--timestamp` the action reads `Start a PITR restore without a recovery time target`. `--yes` or a shell `SUPABASE_YES` approves it (`supabase/.env` does not) and echoes `Confirmed by --yes: <action> on <target>` to stderr. Without it, only an interactive text-mode terminal is asked: JSON, `-o`, piped and agent runs exit 1 with `HostedMutationConsentRequiredError` and change nothing, and declining exits 1 with `HostedMutationDeclinedError`. Stdin is never read.
+- **Consent.** Asks once, after the project is resolved and before the POST, with default No: `Restore the database to Unix timestamp <t> (PITR)`. With no `--timestamp` the action reads `Start a PITR restore without a recovery time target`.
