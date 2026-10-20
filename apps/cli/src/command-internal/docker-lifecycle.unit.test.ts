@@ -286,19 +286,16 @@ describe("inspectContainerState", () => {
     );
   });
 
-  it.live(
-    "treats a paused/restarting container as running, matching Go's boolean-based gate",
-    () => {
-      const mock = mockSpawner({
-        stdout: JSON.stringify({ Status: "paused", Running: true, ExitCode: 0 }),
-      });
-      return inspectContainerState(mock.spawner, "supabase_db_my-app").pipe(
-        Effect.map((state) => {
-          expect(state).toEqual({ running: true, status: "paused", exitCode: 0, oomKilled: false });
-        }),
-      );
-    },
-  );
+  it.live("treats a paused/restarting container as running", () => {
+    const mock = mockSpawner({
+      stdout: JSON.stringify({ Status: "paused", Running: true, ExitCode: 0 }),
+    });
+    return inspectContainerState(mock.spawner, "supabase_db_my-app").pipe(
+      Effect.map((state) => {
+        expect(state).toEqual({ running: true, status: "paused", exitCode: 0, oomKilled: false });
+      }),
+    );
+  });
 
   it.live(
     "fails with DockerLifecycleInspectError, preserving the real stderr, when the container does not exist",

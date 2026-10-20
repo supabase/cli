@@ -504,6 +504,13 @@ describe("encodeAuthBody", () => {
     expect(result.body).toEqual({ mailer_autoconfirm: false });
   });
 
+  it("inverts sms.enable_confirmations into sms_autoconfirm", () => {
+    const result = encodeAuthBody(
+      authInput({ changes: [change(["auth", "sms", "enable_confirmations"], true)] }),
+    );
+    expect(result.body).toEqual({ sms_autoconfirm: false });
+  });
+
   it("maps password_requirements through the character-class table", () => {
     const result = encodeAuthBody(
       authInput({ changes: [change(["auth", "password_requirements"], "letters_digits")] }),

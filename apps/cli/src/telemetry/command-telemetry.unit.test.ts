@@ -5,6 +5,7 @@ import { Flag } from "effect/cli";
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
 import {
   AgentFlag,
+  CreateTicketFlag,
   DebugFlag,
   DnsResolverFlag,
   OutputFlag,
@@ -27,13 +28,15 @@ import { ConfigDiffLoadConfigError } from "../commands/config/diff/diff.errors.t
 import { DbDumpRunError } from "../commands/db/dump/dump.errors.ts";
 import { StdoutClosedError } from "../shared/output/errors.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
+import { RemovedSurfaceError } from "../command-internal/removed-command.ts";
 import { withCommandTelemetry } from "./command-telemetry.ts";
 import { recordCommandTelemetry } from "./command-telemetry-attributes.ts";
 import { stackBackendLayer } from "../command-internal/stack-backend.ts";
 import {
   QUERY_OUTPUT_FORMATS,
   InvalidOutputFormatError,
-} from "../command-internal/go-output-flag.ts";
+} from "../command-internal/output-formats.ts";
+import { mockTelemetryStateTracked } from "../../tests/helpers/command-mocks.ts";
 import {
   mockContextualAnalytics,
   mockOutput,
@@ -199,7 +202,7 @@ describe("withCommandTelemetry", () => {
     );
   });
 
-  it.live("reports legacy Go machine output formats emitted through the text layer", () => {
+  it.live("reports machine output formats emitted through the text layer", () => {
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
@@ -601,7 +604,7 @@ describe("withCommandTelemetry", () => {
     );
   });
 
-  it.live("passes Flag.Literals values through verbatim (Go parity: isEnumFlag)", () => {
+  it.live("passes Flag.Literals values through verbatim", () => {
     const analytics = mockContextualAnalytics();
     const config = {
       lang: Flag.Literals("lang", ["typescript", "go", "python"] as const),
@@ -667,38 +670,35 @@ describe("withCommandTelemetry", () => {
     },
   );
 
-  it.live(
-    "resolves a Flag.Literals's shorthand alias to its canonical name (Go parity: pflag.Visit)",
-    () => {
-      const analytics = mockContextualAnalytics();
-      const config = {
-        type: Flag.Literals("type", ["saml"] as const).pipe(Flag.withAlias("t")),
-      };
+  it.live("resolves a Flag.Literals's shorthand alias to its canonical name", () => {
+    const analytics = mockContextualAnalytics();
+    const config = {
+      type: Flag.Literals("type", ["saml"] as const).pipe(Flag.withAlias("t")),
+    };
 
-      return Effect.void.pipe(
-        withCommandTelemetry({
-          flags: { type: "saml" },
-          config,
-          aliases: { t: "type" },
+    return Effect.void.pipe(
+      withCommandTelemetry({
+        flags: { type: "saml" },
+        config,
+        aliases: { t: "type" },
+      }),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["sso", "add", "-t", "saml"]) }),
+          commandRuntimeLayer(["sso", "add"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          expect(event?.properties.flags).toEqual({ type: "saml" });
         }),
-        Effect.provide(
-          Layer.mergeAll(
-            analytics.layer,
-            mockProcessControl().layer,
-            mockOutput({ format: "text" }).layer,
-            Stdio.layerTest({ args: Effect.succeed(["sso", "add", "-t", "saml"]) }),
-            commandRuntimeLayer(["sso", "add"]).pipe(Layer.provide(BunCrypto.layer)),
-          ),
-        ),
-        Effect.tap(() =>
-          Effect.sync(() => {
-            const event = analytics.captured[0];
-            expect(event?.properties.flags).toEqual({ type: "saml" });
-          }),
-        ),
-      );
-    },
-  );
+      ),
+    );
+  });
 
   it.live("passes an Optional-wrapped Flag.Literals value through verbatim", () => {
     const analytics = mockContextualAnalytics();
@@ -1165,7 +1165,7 @@ describe("withCommandTelemetry", () => {
     );
   });
 
-  it.live("sorts flag names alphabetically to match Go", () => {
+  it.live("sorts flag names alphabetically", () => {
     const analytics = mockContextualAnalytics();
 
     return Effect.void.pipe(
@@ -1533,7 +1533,7 @@ describe("withCommandTelemetry", () => {
   });
 
   it.live(
-    "still redacts a changed global string flag like --workdir (Go never marks it telemetry-safe)",
+    "still redacts a changed global string flag like --workdir (it is never marked telemetry-safe)",
     () => {
       const analytics = mockContextualAnalytics();
 
@@ -1561,66 +1561,60 @@ describe("withCommandTelemetry", () => {
     },
   );
 
-  it.live(
-    "passes a changed global choice flag like --dns-resolver through verbatim (Go parity: isEnumFlag, CLI-1904)",
-    () => {
-      const analytics = mockContextualAnalytics();
+  it.live("passes a changed global choice flag like --dns-resolver through verbatim", () => {
+    const analytics = mockContextualAnalytics();
 
-      return Effect.void.pipe(
-        withCommandTelemetry({ flags: {} }),
-        Effect.provide(
-          Layer.mergeAll(
-            analytics.layer,
-            mockProcessControl().layer,
-            mockOutput({ format: "text" }).layer,
-            Stdio.layerTest({
-              args: Effect.succeed(["backups", "list", "--dns-resolver", "https"]),
-            }),
-            commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
-            Layer.succeed(DnsResolverFlag, "https" as const),
-          ),
-        ),
-        Effect.tap(() =>
-          Effect.sync(() => {
-            const event = analytics.captured[0];
-            expect(event?.properties.flags).toEqual({ "dns-resolver": "https" });
+    return Effect.void.pipe(
+      withCommandTelemetry({ flags: {} }),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["backups", "list", "--dns-resolver", "https"]),
           }),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          Layer.succeed(DnsResolverFlag, "https" as const),
         ),
-      );
-    },
-  );
+      ),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          expect(event?.properties.flags).toEqual({ "dns-resolver": "https" });
+        }),
+      ),
+    );
+  });
 
-  it.live(
-    "passes a changed global choice flag like --agent through verbatim (Go parity: isEnumFlag, CLI-1904)",
-    () => {
-      const analytics = mockContextualAnalytics();
+  it.live("passes a changed global choice flag like --agent through verbatim", () => {
+    const analytics = mockContextualAnalytics();
 
-      return Effect.void.pipe(
-        withCommandTelemetry({ flags: {} }),
-        Effect.provide(
-          Layer.mergeAll(
-            analytics.layer,
-            mockProcessControl().layer,
-            mockOutput({ format: "text" }).layer,
-            Stdio.layerTest({
-              args: Effect.succeed(["backups", "list", "--agent", "yes"]),
-            }),
-            commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
-            Layer.succeed(AgentFlag, "yes" as const),
-          ),
-        ),
-        Effect.tap(() =>
-          Effect.sync(() => {
-            const event = analytics.captured[0];
-            expect(event?.properties.flags).toEqual({ agent: "yes" });
+    return Effect.void.pipe(
+      withCommandTelemetry({ flags: {} }),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["backups", "list", "--agent", "yes"]),
           }),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          Layer.succeed(AgentFlag, "yes" as const),
         ),
-      );
-    },
-  );
+      ),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          expect(event?.properties.flags).toEqual({ agent: "yes" });
+        }),
+      ),
+    );
+  });
 
   it.live(
-    "still redacts a global choice flag shadowed by a command's own differently-typed local flag (db diff's local string --output, Go parity)",
+    "still redacts a global choice flag shadowed by a command's own differently-typed local flag (db diff's local string --output)",
     () => {
       // `db diff` declares its own local `output: Flag.String("output")` (a file path) rather
       // than a `Flag.Literals`. Simulated here: `output` is in the handler's own `flags` record
@@ -1756,4 +1750,70 @@ describe("withCommandTelemetry", () => {
       );
     },
   );
+
+  describe("removed --create-ticket global flag", () => {
+    const runWith = (args: ReadonlyArray<string>, telemetryState = mockTelemetryStateTracked()) => {
+      const analytics = mockContextualAnalytics();
+      let ran = false;
+      const run = Effect.sync(() => {
+        ran = true;
+      }).pipe(
+        withCommandTelemetry(),
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(CreateTicketFlag, true),
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({ args: Effect.succeed(args) }),
+            commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+            telemetryState.layer,
+          ),
+        ),
+        Effect.exit,
+      );
+      return { run, analytics, telemetryState, didRun: () => ran };
+    };
+
+    for (const flag of ["--create-ticket", "--create-ticket=false"]) {
+      it.live(`fails with the removal error and records the event for ${flag}`, () => {
+        const { run, analytics, telemetryState, didRun } = runWith(["backups", "list", flag]);
+
+        return Effect.gen(function* () {
+          const exit = yield* run;
+
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (!Exit.isFailure(exit)) return;
+          const error = Cause.squash(exit.cause);
+          expect(error).toBeInstanceOf(RemovedSurfaceError);
+          if (!(error instanceof RemovedSurfaceError)) return;
+          expect(error.kind).toBe("flag");
+          expect(error.message).toBe("--create-ticket was removed.");
+          expect(error.suggestion).toBe("Report CLI problems with `supabase issue bug`.");
+          expect(didRun()).toBe(false);
+          expect(telemetryState.flushCount).toBe(1);
+          expect(analytics.captured).toHaveLength(1);
+          expect(analytics.captured[0]?.event).toBe("cli_command_executed");
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            command: "backups list",
+            exit_code: 1,
+            error_fingerprint: "tag:RemovedSurfaceError:removed_flag",
+            flags: { "create-ticket": true },
+          });
+        });
+      });
+    }
+
+    it.live("ignores --create-ticket after the -- operand terminator", () => {
+      const { run, analytics, didRun } = runWith(["backups", "list", "--", "--create-ticket"]);
+
+      return Effect.gen(function* () {
+        const exit = yield* run;
+
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(didRun()).toBe(true);
+        expect(analytics.captured[0]?.properties.exit_code).toBe(0);
+      });
+    });
+  });
 });

@@ -41,6 +41,7 @@ import {
   stubManagementApi,
   type StubbedRequest,
 } from "../../../../tests/helpers/permission-real-layers.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
@@ -74,7 +75,6 @@ import {
   runTestDbCommand,
   type TestDbFlags,
 } from "../../../command-internal/test-db.command-handler.ts";
-import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
 import { dbCommand } from "../db.command.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 
@@ -196,6 +196,7 @@ function setup(opts: SetupOpts = {}) {
   const args = ["db", "test"];
   const workdir = opts.workdir ?? "/work/project";
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     unusedStackServices,
     out.layer,
     processControl.layer,
@@ -331,6 +332,7 @@ describe("db test (alias) integration", () => {
       const args = ["db", "test", "--local", "--linked"];
       const analytics = mockContextualAnalytics();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         unusedStackServices,
         BunServices.layer,
         mockRuntimeInfo(),
@@ -343,8 +345,7 @@ describe("db test (alias) integration", () => {
         Stdio.layerTest({ args: Effect.succeed(args) }),
         Layer.succeed(CliArgs, { args }),
         // `dbCommand` is the whole `db` subtree, so its R includes every sibling subcommand's
-        // global-flag/Go-delegation requirements too, even though this test only dispatches
-        // `db test`.
+        // global-flag requirements too, even though this test only dispatches `db test`.
         Layer.succeed(AgentFlag, "auto"),
         Layer.succeed(CreateTicketFlag, false),
         Layer.succeed(DebugFlag, false),
@@ -355,10 +356,6 @@ describe("db test (alias) integration", () => {
         Layer.succeed(ProfileFlag, "supabase"),
         Layer.succeed(WorkdirFlag, Option.none()),
         Layer.succeed(YesFlag, false),
-        Layer.succeed(GoProxy, {
-          exec: () => Effect.die("GoProxy not needed for `db test` dispatch"),
-          execCapture: () => Effect.die("GoProxy not needed for `db test` dispatch"),
-        }),
         Layer.succeed(EdgeRuntimeScript, {
           run: () => Effect.die("EdgeRuntimeScript not needed for `db test` dispatch"),
         }),
@@ -392,7 +389,7 @@ describe("db test (alias) integration", () => {
   });
 
   it.effect(
-    "in json mode, a pg_prove failure writes to stderr and sets exit 1 without failing (Go's stdout-safety)",
+    "in json mode, a pg_prove failure writes to stderr and sets exit 1 without failing",
     () => {
       const { layer, out, processControl } = setup({ format: "json", exitCode: 1 });
       return Effect.gen(function* () {

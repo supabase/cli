@@ -14,6 +14,8 @@ import {
 } from "../../command-internal/docker-lifecycle.ts";
 import { dockerRemoveAll } from "../../command-internal/docker-remove-all.ts";
 import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";
+import { CliConfigValueError } from "../../config/cli-config.errors.ts";
+import { loadResolvedConfigSurfacingValueErrors } from "../../command-internal/config-value-passthrough.ts";
 import { resolveLocalConfigValues } from "../../command-internal/local-config-values.ts";
 import {
   loadLocalProjectContext,
@@ -36,7 +38,7 @@ import {
  * Resolves the Docker label filter `stop` searches on: `--all` bypasses config with an empty
  * filter; a non-empty `--project-id` (an empty string falls through like an absent flag)
  * overrides the resolved id directly, unsanitized; otherwise it resolves via config (env → toml
- * → workdir basename, see `resolveProjectEnvironmentValues`), sanitized with `sanitizeProjectId`
+ * → workdir basename, see `loadCliProjectEnvFiles`), sanitized with `sanitizeProjectId`
  * to match the string the Docker label `start` writes.
  */
 const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilter")(function* (
@@ -50,6 +52,10 @@ const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilte
     return flags.projectId.value;
   }
 
+  yield* loadResolvedConfigSurfacingValueErrors(
+    cliSettings.workdir,
+    (message) => new StopConfigLoadError({ message }),
+  );
   // `loadLocalProjectContext` covers the config-load/env/project-id resolution sequence; see its
   // own doc comment (workdir validation is handled separately, by `stop`'s own call above).
   const context = yield* loadLocalProjectContext(
@@ -68,13 +74,14 @@ const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilte
         context.config,
         context.hostname,
         cliSettings.workdir,
-        context.projectEnvValues,
-        context.loaded?.document,
+        context.resolvedConfig.loaded.document,
       ),
     catch: (cause) =>
-      new StopConfigLoadError({
-        message: cause instanceof Error ? cause.message : String(cause),
-      }),
+      cause instanceof CliConfigValueError
+        ? cause
+        : new StopConfigLoadError({
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
   });
 
   return context.projectId;

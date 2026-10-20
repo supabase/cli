@@ -8,7 +8,7 @@
 
 import { createHmac } from "node:crypto";
 
-import { decryptSecret } from "../../../command-internal/vault-decrypt.ts";
+import { decryptSecret } from "../../../shared/config/vault-decrypt.ts";
 
 const ENV_PATTERN = /^env\((.*)\)$/;
 const ENCRYPTED_PREFIX = "encrypted:";

@@ -4,7 +4,7 @@ import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import { makeMigrationListRows, migrationListTableCells } from "./list.format.ts";
 
 describe("makeMigrationListRows", () => {
-  it("tabulates short numeric versions in chronological order (Go TestMakeTable)", () => {
+  it("tabulates short numeric versions in chronological order", () => {
     expect(makeMigrationListRows(["0", "2"], ["0", "1"])).toEqual([
       { local: "0", remote: "0", time: "0" },
       { local: "1", remote: "", time: "1" },
@@ -59,7 +59,7 @@ describe("migrationListTableCells", () => {
     expect(cells).toEqual([["`20240101000000`", "` `", "`2024-01-01 00:00:00`"]]);
   });
 
-  it("produces a Glamour table whose body matches Go's `migration list` rendering", () => {
+  it("produces a Glamour table whose body matches the `migration list` rendering", () => {
     const rows = makeMigrationListRows(["20220727064248"], ["20220727064247"]);
     const out = renderGlamourTable(
       ["Local", "Remote", "Time (UTC)"],
