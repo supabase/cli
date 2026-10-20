@@ -180,7 +180,9 @@ describe("help value hints per command variant", () => {
       expect(text).toContain(`TARGET\n  ${target}\n`);
       expect(row).toContain(`--remote[=${hint}]`);
       expect(row).toContain(`--remote=${hint}`);
-      expect(row).not.toMatch(new RegExp(`\\]\\s+${hint.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s`));
+      expect(row).not.toMatch(
+        new RegExp(`\\]\\s+${hint.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s`),
+      );
     },
   );
 });
