@@ -138,6 +138,12 @@ const REGISTRY_NAME_EXEMPT: Readonly<Record<string, string>> = {
   "shared/telemetry/event-catalog.ts": "lists the variables whose presence the telemetry reports",
 };
 
+/** Foundation imports from `command-internal/` recorded as exceptions in ADR 0032, by importing file. */
+const FOUNDATION_IMPORT_EXEMPT: Readonly<Record<string, ReadonlyArray<string>>> = {
+  "config/cli-config-values.layer.ts": ["../command-internal/link-snapshot.ts"],
+  "config/cli-config-values.service.ts": ["../command-internal/project-link.ts"],
+};
+
 const AMBIENT_ENV_EXEMPT: ReadonlyArray<RegExp> = [
   /^shared\/cli\/bin\.ts$/,
   /^shared\/compute\/stacks\//,
@@ -355,6 +361,7 @@ layer(BunServices.layer)("code structure", (it) => {
       );
       const violations = yield* scanSource(files, (relativePath, source) =>
         allSpecifiers(source).filter((specifier) => {
+          if (FOUNDATION_IMPORT_EXEMPT[relativePath]?.includes(specifier) === true) return false;
           const resolved = resolveImport(path, path.join(srcDir, relativePath), specifier);
           return resolved.startsWith(commandsDir) || resolved.startsWith(commandInternalDir);
         }),

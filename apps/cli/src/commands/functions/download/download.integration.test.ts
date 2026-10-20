@@ -1435,17 +1435,16 @@ describe("functions download", () => {
     () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
-      const proxy = mockProxy();
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const supabaseHome = `${tempRoot.current}/home`;
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
           cliSettings: mockCommandSettings({ workdir: tempRoot.current, supabaseHome }),
         }),
         projectStateModeLayer("stack"),
-        proxy.layer,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed([

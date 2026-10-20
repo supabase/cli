@@ -48,6 +48,8 @@ interface SchemaLeaf {
   readonly segments: ReadonlyArray<string>;
   readonly node: SchemaAST.AST;
   readonly optional: boolean;
+  /** Whether an enclosing section is optional, so an empty document can omit the leaf. */
+  readonly withinOptional: boolean;
 }
 
 const unwrap = (ast: SchemaAST.AST): SchemaAST.AST =>
@@ -57,17 +59,23 @@ const collectSchemaLeaves = (
   ast: SchemaAST.AST,
   segments: ReadonlyArray<string>,
   out: Array<SchemaLeaf>,
+  withinOptional = false,
 ): void => {
   const node = unwrap(ast);
   if (node._tag === "Objects") {
     for (const property of node.propertySignatures) {
       if (typeof property.name === "string") {
-        collectSchemaLeaves(property.type, [...segments, property.name], out);
+        collectSchemaLeaves(
+          property.type,
+          [...segments, property.name],
+          out,
+          withinOptional || property.type.context?.isOptional === true,
+        );
       }
     }
     return;
   }
-  out.push({ segments, node, optional: node.context?.isOptional === true });
+  out.push({ segments, node, optional: node.context?.isOptional === true, withinOptional });
 };
 
 const codecForLeaf = (segments: ReadonlyArray<string>, node: SchemaAST.AST) => {
@@ -149,7 +157,12 @@ export const cliConfigSchemaKeyDefs = (root: SchemaAST.Objects): ReadonlyArray<C
   const leaves: Array<SchemaLeaf> = [];
   for (const property of root.propertySignatures) {
     if (typeof property.name === "string" && property.name !== "remotes") {
-      collectSchemaLeaves(property.type, [property.name], leaves);
+      collectSchemaLeaves(
+        property.type,
+        [property.name],
+        leaves,
+        property.type.context?.isOptional === true,
+      );
     }
   }
   return leaves.flatMap((leaf): ReadonlyArray<CliConfigKeyDef> => {
@@ -163,11 +176,13 @@ export const cliConfigSchemaKeyDefs = (root: SchemaAST.Objects): ReadonlyArray<C
     }
     const defaultFrom = contextDefaults[path];
     const configured = leaf.node.annotations?.["default"];
+    // A required leaf of an optional section with no default is absent until the section is written.
+    const optional = leaf.optional || (leaf.withinOptional && configured === undefined);
     return [
       {
         path,
         codec,
-        ...(leaf.optional && defaultFrom === undefined
+        ...(optional && defaultFrom === undefined
           ? { optional: true as const }
           : defaultFrom === undefined
             ? { default: configured }

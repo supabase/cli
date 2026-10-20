@@ -8,6 +8,7 @@ import { CliConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, FileSystem, Layer, Option, Path, Ref, Schema } from "effect";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
@@ -666,6 +667,7 @@ describe("stack shadow databases", () => {
         const settings = Layer.mergeAll(
           runtimeInfoLayer,
           mockCommandSettings({ workdir: root, supabaseHome: root }),
+          cliConfigValuesTestLayer,
         );
         const locked = unbundled(selection.database);
         yield* seedLock(root, (services) => ({
@@ -675,7 +677,7 @@ describe("stack shadow databases", () => {
         const context = yield* loadLocalProjectContext(root, (message) => message, ref).pipe(
           Effect.provide(settings),
         );
-        expect(context.loaded?.appliedRemote).toBeDefined();
+        expect(Option.isSome(context.resolvedConfig.appliedRemote)).toBe(true);
         expect(context.config.db.major_version).toBe(remote.major);
         expect(context.config.db.orioledb_version).toBe(remote.db.orioledb_version);
 

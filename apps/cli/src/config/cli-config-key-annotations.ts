@@ -141,6 +141,8 @@ export const CLI_CONFIG_SECTION_ENV_EXEMPT: Readonly<Record<string, string>> = {
     "a plain struct in the document model: its keys exist whether or not it is written",
   "experimental.pgdelta":
     "enabled defaults to true without the section, so the env rollback must apply while it is absent",
+  local: "holds only optional sections; each service's own section gates its env",
+  "local.services": "holds only optional sections; each service's own section gates its env",
 };
 
 /** The optional section a key's env override requires, when its path sits under one. */
@@ -155,6 +157,7 @@ export const envRequiresSectionFor = (
   const [root, group, name] = segments;
   if (name === undefined || segments.length < 4) return undefined;
   const dynamic =
+    (root === "local" && group === "services") ||
     (root === "auth" && group === "hook") ||
     (root === "auth" && group === "sms" && SMS_PROVIDER_SECTIONS.has(name)) ||
     (root === "auth" && group === "external" && name !== "apple");

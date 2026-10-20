@@ -69,6 +69,11 @@ variables, `.env` files, `[remotes.*]` blocks and `config.toml` combine. They di
   - `experimental.pgdelta` is exempt from section gating: `enabled` defaults to true, so the env
     rollback (`SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=false`) applies while the section is absent.
     `SUPABASE_EXPERIMENTAL_PG_DELTA` is not read.
+  - `local` and `local.services` are exempt from section gating: they hold only per-service
+    sections, and each `local.services.<service>` section gates its own `version` env.
+  - `cli-config-values.layer.ts` reads the linked ref through `command-internal/link-snapshot.ts`,
+    and `cli-config-values.service.ts` names its `LinkedProjectRefReadError`, because credential
+    scoping needs the link of either project-state mode (`.temp/project-ref` or `.link.json`).
   - `db.password` has no env tier: the local database password lives in config, and the linked
     password is a separate key with its own env name, flag and scoping.
   - Credential scoping covers the linked database password only. `SUPABASE_AUTH_SERVICE_ROLE_KEY`
@@ -125,7 +130,8 @@ order stays the same for every key.
     (`config/cli-config-*.ts`, `shared/config/cli-config-*.ts`), whatever the read pattern; only
     the telemetry event catalog is exempt;
   - the old overlay identifiers return;
-  - a foundation file imports from `commands/` or `command-internal/`;
+  - a foundation file imports from `commands/` or `command-internal/`, except the linked-ref
+    reader listed in the exceptions;
   - `CliConfigFlagInputs` is constructed outside `cli-config-flags.ts`;
   - a registry-backed flag is declared with a raw `Flag.*` instead of `key.flag`;
   - `process.env`, `Bun.env` or an aliased form is read outside the foundation, the entrypoint

@@ -15,6 +15,7 @@ import {
   mockTelemetryStateTracked,
   withConfigEnv,
 } from "../../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
 import {
@@ -76,6 +77,7 @@ const layer = (root: string, output: ReturnType<typeof mockOutput>) =>
       HttpClient.HttpClient,
       HttpClient.make(() => Effect.die("unused")),
     ),
+    cliConfigValuesTestLayer,
   );
 
 const seed = (root: string, host: ReleaseFixture, edit?: Parameters<typeof seedLock>[1]) =>

@@ -8,6 +8,7 @@ import {
   mockTelemetryStateTracked,
   withConfigEnv,
 } from "../../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
 import {
   publishRelease,
@@ -56,6 +57,7 @@ const layer = (root: string, output: ReturnType<typeof mockOutput>) =>
     mockTelemetryStateTracked().layer,
     mockCommandSettings({ workdir: root }),
     Layer.succeed(ExperimentalFlag, false),
+    cliConfigValuesTestLayer,
   );
 
 const seed = (root: string, host: ReleaseFixture) =>

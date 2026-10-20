@@ -5,6 +5,7 @@ import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import { TestClock } from "effect/testing";
 
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockAnalytics, mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
   legacyStateAccesses,
@@ -127,6 +128,7 @@ function setup(opts: SetupOpts = {}) {
       fileSystem: recorder.layer,
     }),
     projectStateModeLayer("stack"),
+    cliConfigValuesTestLayer,
   );
   return { layer, workdir: tempRoot.current, accessed: recorder.accessed };
 }

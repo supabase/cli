@@ -309,7 +309,7 @@ const publishStackLink = Effect.fn("link.lock")(function* (input: {
     workdir,
     (message) => new StackConfigError({ message }),
   );
-  if (context.loaded === null) {
+  if (!context.resolvedConfig.hasConfigFile) {
     yield* ensureProjectDirectory(workdir);
     yield* withProjectLease(workdir, publishLink);
     return undefined;

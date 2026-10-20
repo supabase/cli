@@ -18,6 +18,7 @@ import {
   useTempWorkdir,
   withConfigEnv,
 } from "../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
 import { mockAnalytics, mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { selection } from "../../../tests/helpers/pins.ts";
 import { seedProjectStack, unbundled } from "../../../tests/helpers/stack-lock.ts";
@@ -198,6 +199,7 @@ const layerFor = (
     projectStateModeLayer("stack"),
     mockRuntimeInfo({ platform: "linux", arch: "x64" }),
     Layer.succeed(ExperimentalFlag, false),
+    cliConfigValuesTestLayer,
   );
 };
 
