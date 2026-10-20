@@ -43,6 +43,7 @@ no new config reads.
 | `SUPABASE_ACCESS_TOKEN`                              | Management API auth (linked only)                                     | no (falls back to keyring / token file) |
 | `SUPABASE_PROJECT_ID`                                | project ref fallback (linked), superseded by `--project-ref` when set | no (config resolution fallback)         |
 | libpq vars (`PGSSLROOTCERT`, `PGCONNECT_TIMEOUT`, …) | honored when `--db-url` is used                                       | no                                      |
+| `PG*` libpq                                          | linked-project TLS, timeout, service; see `db push`                   | no                                      |
 
 ## Database Queries
 

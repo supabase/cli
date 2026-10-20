@@ -15,7 +15,7 @@ image), to stdout or `--file`.
 | `~/.supabase/access-token`        | plain text | `--linked` when `SUPABASE_ACCESS_TOKEN` unset                                                                                                |
 | `supabase/.temp/project-ref`      | plain text | `--linked` (and the default target) ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`/config.toml `project_id`) is set |
 | `supabase/.env*`                  | dotenv     | always (project env, feeds `SUPABASE_DB_PASSWORD` / `PG*`)                                                                                   |
-| `PGSSL*` PEM, `pg_service.conf`   | PEM, libpq | linked project, when set; see `db push`                                                                                                      |
+| `PGSSL*` PEM, `pg_service.conf`   | PEM, libpq | linked project, when set: `pg_service.conf`, plus the PEM files on the pooler temp-role probe or a native `pg_dump`; see `db push`           |
 
 ## Files Written
 
