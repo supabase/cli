@@ -6,9 +6,12 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeEnv, encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
-import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
-import { GO_SSL_ENFORCEMENT_RESPONSE } from "../ssl-enforcement.go-payload.ts";
+import { encodeEnv, encodeSortedJson } from "../../../command-internal/output.encoders.ts";
+import {
+  encodeStructToml,
+  encodeStructYaml,
+} from "../../../command-internal/struct-output.encoders.ts";
+import { SSL_ENFORCEMENT_RESPONSE_SHAPE } from "../ssl-enforcement.response-shape.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
   SslEnforcementMutuallyExclusiveFlagsError,
@@ -31,7 +34,7 @@ export const sslEnforcementUpdate = Effect.fn("ssl-enforcement.update")(function
   flags: SslEnforcementUpdateFlags,
 ) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
@@ -68,21 +71,21 @@ export const sslEnforcementUpdate = Effect.fn("ssl-enforcement.update")(function
         );
       yield* updating?.clear ?? Effect.void;
 
-      const goFmt = Option.getOrUndefined(goOutputFlag);
+      const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-      if (goFmt === "json") {
-        yield* output.raw(encodeGoJson(response));
+      if (outputFlagFormat === "json") {
+        yield* output.raw(encodeSortedJson(response));
         return;
       }
-      if (goFmt === "yaml") {
-        yield* output.raw(encodeGoYaml(response, GO_SSL_ENFORCEMENT_RESPONSE));
+      if (outputFlagFormat === "yaml") {
+        yield* output.raw(encodeStructYaml(response, SSL_ENFORCEMENT_RESPONSE_SHAPE));
         return;
       }
-      if (goFmt === "toml") {
-        yield* output.raw(encodeGoToml(response, GO_SSL_ENFORCEMENT_RESPONSE));
+      if (outputFlagFormat === "toml") {
+        yield* output.raw(encodeStructToml(response, SSL_ENFORCEMENT_RESPONSE_SHAPE));
         return;
       }
-      if (goFmt === "env") {
+      if (outputFlagFormat === "env") {
         yield* output.raw(encodeEnv(response) + "\n");
         return;
       }

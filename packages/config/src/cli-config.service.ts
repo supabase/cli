@@ -8,6 +8,7 @@ import type {
 } from "./config-document.ts";
 import type {
   CliConfigParseError,
+  CliConfigRemovedKeyError,
   CliProjectEnvParseError,
   DuplicateRemoteProjectIdError,
   InvalidRemoteProjectIdError,
@@ -15,14 +16,15 @@ import type {
 
 /**
  * Every error a `load`/`loadFile`/`save` rejection can carry: this package's
- * own tagged failures (a malformed config document, a duplicate or
- * malformed `[remotes.*]` block, a malformed `.env`/`.env.local` file) plus
+ * own tagged failures (a malformed config document, a config document using removed
+ * keys, a duplicate or malformed `[remotes.*]` block, a malformed `.env`/`.env.local` file) plus
  * `PlatformError`, the single tagged wrapper Effect's `FileSystem` service
  * uses for every host/OS failure (`effect/PlatformError`). A Promise-based
  * consumer (`@supabase/config/io`) can distinguish these via `instanceof`.
  */
 type CliConfigStoreError =
   | CliConfigParseError
+  | CliConfigRemovedKeyError
   | DuplicateRemoteProjectIdError
   | InvalidRemoteProjectIdError
   | CliProjectEnvParseError

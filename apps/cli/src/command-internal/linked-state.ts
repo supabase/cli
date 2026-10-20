@@ -5,7 +5,7 @@ import { PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
 import { findBranchName } from "./branch-target.ts";
 import { type CachedLinkedProject, parseCachedLinkedProject } from "./parent-project-ref.ts";
 import { formatNamedRef, sanitizeInlineName } from "./http-errors.ts";
-import { readProjectRefFile, tempPaths } from "./temp-paths.ts";
+import { readProjectRefFile, tempPaths } from "../shared/config/temp-paths.ts";
 
 /**
  * Discriminated linked-state result.
@@ -202,7 +202,7 @@ export function formatLinkedStateBlock(state: LinkedState): string {
  * what signals "not linked" for these formats. A degraded branch-linked
  * state still emits every field it knows; only `linked_branch` is absent.
  */
-export function linkedStateGoFields(state: LinkedState): Readonly<Record<string, string>> {
+export function linkedStateFields(state: LinkedState): Readonly<Record<string, string>> {
   if (!state.linked) return {};
   return {
     linked_project_ref: state.projectRef,
@@ -216,7 +216,7 @@ export function linkedStateGoFields(state: LinkedState): Readonly<Record<string,
 
 /**
  * The `linked_project` shape merged into a `--output-format json`/
- * `stream-json` structured success payload. See {@link linkedStateGoFields}
+ * `stream-json` structured success payload. See {@link linkedStateFields}
  * for the `-o` machine-format counterpart.
  */
 export interface LinkedStateJsonField {

@@ -39,7 +39,7 @@ import {
   type StubbedRequest,
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { cliConfigProviderLayer } from "../../../shared/config/cli-config-provider.layer.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
@@ -191,8 +191,9 @@ function setupReport(opts: SetupOpts = {}) {
       : mockRuntimeInfo({ cwd: opts.cwd }),
     mockTty({ stdoutIsTty: opts.stdoutIsTty ?? false }),
     BunServices.layer,
+    configValuesLayer(),
     opts.realLayers !== true
-      ? cliConfigProviderLayer
+      ? Layer.empty
       : ConfigProvider.layer(
           ConfigProvider.fromEnvRecord(
             { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
@@ -540,7 +541,7 @@ describe("inspect report", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("invalid keys: typo");
+        expect(causeText).toContain("unknown keys: typo");
       }
       // `base` is the pre-created temp dir itself; no dated subfolder is created.
       expect(connection.copiedSql.length).toBe(0);

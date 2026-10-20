@@ -93,11 +93,9 @@ the process exits non-zero (no error envelope is written over the payload).
 - `--fail-on` (`none` default) sets the level that forces a non-zero exit.
 - `--schema` / `-s` restricts linting to specific schemas; omitted ⇒ all user schemas.
 - `--db-url`, `--linked`, and `--local` (default true) are mutually exclusive.
-- **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution used for the connection and
+- **`--project-ref`** overrides ONLY the linked-ref resolution used for the connection and
   the linked-project cache (flag > `SUPABASE_PROJECT_ID` >
   `.temp/project-ref`). It never implies `--linked`: passing it with a
   resolved `--local`/`--db-url` target is a hard error rather than a silently
-  discarded flag (deliberately stricter than `SUPABASE_PROJECT_ID`, which Go's
-  equivalent env var simply leaves unused on a non-linked target).
+  discarded flag (stricter than `SUPABASE_PROJECT_ID`, which is simply left unused on a non-linked target).
 - Telemetry: only the standard `cli_command_executed` event (no custom events).

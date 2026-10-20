@@ -1334,7 +1334,7 @@ export const PUSH_AUTH_LEAF_MAP: ReadonlyArray<PushAuthLeafSpec> = [
   {
     configPath: ["auth", "sms", "enable_confirmations"],
     apiKey: "sms_autoconfirm",
-    transform: asBoolean,
+    transform: invert,
   },
   { configPath: ["auth", "sms", "template"], apiKey: "sms_template", transform: asString },
   { configPath: ["auth", "sms", "otp_length"], apiKey: "sms_otp_length", transform: asNumber },

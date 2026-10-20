@@ -44,11 +44,11 @@ const HOSTNAME_RESPONSE: typeof V1GetHostnameConfigOutput.Type = {
   },
 };
 
-type GoOutput = "env" | "pretty" | "json" | "toml" | "yaml";
+type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: GoOutput;
+  readonly outputFlag?: OutputFlagValue;
   readonly cname?: "ok" | "transport-fail" | "no-cname" | "mismatch" | "status-error";
   readonly apiStatus?: number;
   readonly apiNetwork?: "fail";
@@ -100,24 +100,22 @@ function setup(opts: SetupOpts = {}) {
     analytics,
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
-function flags(over: Partial<{ includeRawOutput: Option.Option<boolean> }> = {}) {
+function flags() {
   return {
     projectRef: Option.none<string>(),
     customHostname: CUSTOM_HOSTNAME,
-    includeRawOutput: over.includeRawOutput ?? Option.none<boolean>(),
+    includeRawOutput: Option.none<boolean>(),
   };
 }
 
 function postedToInitialize(api: { requests: ReadonlyArray<{ url: string }> }): boolean {
   return api.requests.some((r) => r.url.includes("/custom-hostname/initialize"));
 }
-
-const DeprecationJsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
 
 describe("domains create integration", () => {
   it.effect("verifies the CNAME, creates the hostname, and prints status to stderr", () => {
@@ -254,8 +252,8 @@ describe("domains create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("emits indented Go JSON to stdout with no status on stderr for -o json", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("emits indented JSON to stdout with no status on stderr for -o json", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* domainsCreate(flags());
       expect(out.stdoutText.startsWith("{")).toBe(true);
@@ -264,48 +262,12 @@ describe("domains create integration", () => {
   });
 
   it.effect("emits YAML to stdout with no status on stderr for -o yaml", () => {
-    const { layer, out } = setup({ goOutput: "yaml" });
+    const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* domainsCreate(flags());
-      // yaml.v3 lowercases the whole field name.
+      // YAML output lowercases the whole field name.
       expect(out.stdoutText).toContain(`customhostname: ${CUSTOM_HOSTNAME}`);
       expect(out.stderrText).toBe("");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect(
-    "warns on stderr and keeps stdout JSON parseable when --include-raw-output is set",
-    () => {
-      const { layer, out } = setup();
-      return Effect.gen(function* () {
-        yield* domainsCreate(flags({ includeRawOutput: Option.some(true) }));
-        expect(out.stderrText).toBe(
-          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
-        );
-        const parsed = yield* Schema.decodeEffect(DeprecationJsonObject)(out.stdoutText);
-        expect(parsed.custom_hostname).toBe(CUSTOM_HOSTNAME);
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect("warns but does not force JSON when --include-raw-output=false", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsCreate(flags({ includeRawOutput: Option.some(false) }));
-      expect(
-        out.stderrText.startsWith(
-          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n",
-        ),
-      ).toBe(true);
-      expect(out.stdoutText).toBe("");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("does not warn when --include-raw-output is not set", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsCreate(flags());
-      expect(out.stderrText).not.toContain("deprecated");
     }).pipe(Effect.provide(layer));
   });
 
