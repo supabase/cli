@@ -28,11 +28,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../tests/helpers/command-mocks.ts";
-import {
-  BRANCH_PROJECT_REF,
-  branchListApi,
-  warningsOf,
-} from "../../tests/helpers/remote-selection.ts";
+import { branchListApi } from "../../tests/helpers/remote-selection.ts";
 import { assertPermissionDrift } from "../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
@@ -43,6 +39,7 @@ import {
   type StubbedRequest,
 } from "../../tests/helpers/permission-real-layers.ts";
 import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
+import { describeDbTargetSelection } from "../../tests/helpers/db-target-selection.ts";
 import { describeHostedConsent } from "../../tests/helpers/hosted-consent.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { DebugFlag, DnsResolverFlag, NetworkIdFlag, OutputFlag, YesFlag } from "./global-flags.ts";
@@ -52,10 +49,6 @@ import { DbConfigResolver } from "./db-config.service.ts";
 import type { DbConnectionInput, ResolvedDbConnection } from "./db-config.types.ts";
 import { HostedMutationDeclinedError } from "./hosted-consent/hosted-consent.errors.ts";
 import { TargetPolicy } from "./target/target-policy.ts";
-import {
-  TargetProjectRefConflictError,
-  TargetSelectorConflictError,
-} from "./target/target.errors.ts";
 import { DbConnectError, DbExecError } from "./db-connection.errors.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
 import { DockerRunError } from "./docker-run.errors.ts";
@@ -718,61 +711,6 @@ describe("test db integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects mutually exclusive target flags (--linked + --local)", () => {
-    const { layer, resolver, connection } = setup();
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(testDb(flags({ linked: true, local: true })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.squash(exit.cause)).toBeInstanceOf(TargetSelectorConflictError);
-      }
-      expect(resolver.inputs).toEqual([]);
-      expect(connection.connectCalls).toEqual([]);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("treats --linked=false as absent and runs against the default local target", () => {
-    const { layer, resolver } = setup();
-    return Effect.gen(function* () {
-      yield* testDb(flags({ linked: false, local: false }));
-      expect(resolver.inputs[0]?.target.kind).toBe("local");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("targets the linked project for a bare --remote", () => {
-    const { layer, resolver } = setup({ conn: REMOTE_CONN, isLocal: false });
-    return Effect.gen(function* () {
-      yield* testDb(flags({ remote: Option.some({ _tag: "Linked" }) }));
-      expect(resolver.inputs[0]?.target.kind).toBe("linked");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("selects the project given via --remote=<ref> alone", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, resolver } = setup({ conn: REMOTE_CONN, isLocal: false });
-    return Effect.gen(function* () {
-      yield* testDb(flags({ remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const) }));
-      expect(resolver.inputs[0]?.target).toMatchObject({ kind: "linked", ref: FLAG_REF });
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("rejects --project-ref combined with --local", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, connection, docker, resolver } = setup();
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        testDb(flags({ local: true, projectRef: Option.some(FLAG_REF) })),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.squash(exit.cause)).toBeInstanceOf(TargetProjectRefConflictError);
-      }
-      expect(resolver.inputs).toEqual([]);
-      expect(connection.execCalls).toEqual([]);
-      expect(docker.lastOpts).toBeUndefined();
-    }).pipe(Effect.provide(layer));
-  });
-
   it.live("honors --network-id, overriding the generated local network name", () => {
     const { layer, docker } = setup({ networkId: "my-custom-net" });
     return Effect.gen(function* () {
@@ -914,115 +852,22 @@ describe("test db integration", () => {
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
-});
 
-describe("test db target selection", () => {
-  const FLAG_PROJECT_REF = "flagflagflagflagflag";
-
-  const resolvedTarget = (
-    selector: Partial<Parameters<typeof testDb>[0]>,
-    options: { readonly branchApi?: ReturnType<typeof branchListApi> } = {},
-  ) => {
-    const { layer, out, resolver } = setup({ conn: REMOTE_CONN });
-    const provided =
-      options.branchApi === undefined
-        ? layer
-        : Layer.mergeAll(
-            layer,
-            mockCommandSettings({ workdir: "/work/project", projectId: Option.some(VALID_REF) }),
-            options.branchApi.layer,
-          );
-    return Effect.gen(function* () {
-      yield* testDb(flags(selector)).pipe(Effect.provide(provided));
-      return { target: resolver.inputs[0]?.target, warnings: warningsOf(out) };
-    });
-  };
-
-  it.live("targets the local database, with no warning, when nothing selects one", () =>
-    Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget({});
-      expect(target).toEqual({ kind: "local" });
-      expect(warnings).toEqual([]);
-    }),
-  );
-
-  it.live("targets the project --remote=<ref> names, with no warning", () =>
-    Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget({
-        remote: Option.some({ _tag: "Ref", ref: FLAG_PROJECT_REF } as const),
-      });
-      expect(target).toMatchObject({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" });
-      expect(warnings).toEqual([]);
-    }),
-  );
-
-  it.live("targets the database --remote=<db-url> names, with no warning", () =>
-    Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget({
-        remote: Option.some({
-          _tag: "DbUrl",
-          url: "postgresql://postgres:pw@db.example.com/db",
-        } as const),
-      });
-      expect(target?.kind).toBe("db-url");
-      expect(warnings).toEqual([]);
-    }),
-  );
-
-  it.live("targets the project of the branch --remote=<branch> names", () => {
-    const branchApi = branchListApi();
-    return Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget(
-        { remote: Option.some({ _tag: "Branch", name: "feature-x" }) },
-        { branchApi },
-      );
-      expect(target).toMatchObject({ kind: "linked", ref: BRANCH_PROJECT_REF, source: "flag" });
-      expect(warnings).toEqual([]);
-      assertPermissionDrift({
-        command: "test db",
-        activeFlags: { remote: "feature-x" },
-        requests: branchApi.requests,
-      });
-    });
+  describeDbTargetSelection("test db", {
+    dbUrl: true,
+    workdir: () => tempWorkdir.current,
+    attempt: ({ workdir, target }) => {
+      const ctx = setup({ conn: REMOTE_CONN, workdir });
+      const branchApi = branchListApi();
+      return {
+        layer: Layer.merge(ctx.layer, branchApi.layer),
+        out: ctx.out,
+        run: testDb(flags(target)),
+        target: () => ctx.resolver.inputs[0]?.target,
+        branchLookups: () => branchApi.requests,
+      };
+    },
   });
-
-  it.live.each([
-    {
-      alias: "--linked",
-      flags: { linked: true },
-      kind: "linked",
-      warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
-    },
-    {
-      alias: "--project-ref",
-      flags: { projectRef: Option.some(FLAG_PROJECT_REF) },
-      kind: "linked",
-      warning: "--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead",
-    },
-    {
-      alias: "--db-url",
-      flags: { dbUrl: Option.some("postgresql://postgres:pw@db.example.com/db") },
-      kind: "db-url",
-      warning: "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead",
-    },
-    {
-      alias: "--local",
-      flags: { local: true },
-      kind: "local",
-      warning: "--local isn't needed (local is the default) and will be removed in v4",
-    },
-  ] satisfies ReadonlyArray<{
-    alias: string;
-    flags: Partial<Parameters<typeof testDb>[0]>;
-    kind: string;
-    warning: string;
-  }>)("keeps $alias working and warns that it is deprecated", ({ flags, kind, warning }) =>
-    Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget(flags);
-      expect(target?.kind).toBe(kind);
-      expect(warnings).toEqual([expect.stringContaining(warning)]);
-    }),
-  );
 });
 
 describeHostedConsent("test db", {
