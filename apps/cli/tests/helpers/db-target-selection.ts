@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, Layer, Option, Predicate } from "effect";
 import { CliOutput, Command } from "effect/cli";
 
 import type { RemoteValue } from "../../src/command-internal/target/remote-value.ts";
@@ -29,7 +29,9 @@ import { BRANCH_PROJECT_REF, warningsOf } from "./remote-selection.ts";
 
 const FLAG_REF = "flagflagflagflagflag";
 const DB_URL = "postgresql://postgres:postgres@db.example.com:5432/postgres";
-const BRANCH_LOOKUP = `GET https://api.supabase.com/v1/projects/${VALID_REF}/branches`;
+const branchListRequest = (ref: string) =>
+  `GET https://api.supabase.com/v1/projects/${ref}/branches`;
+const BRANCH_LOOKUP = branchListRequest(VALID_REF);
 
 /** Every selector flag absent, so a command takes its default target. */
 export const NO_TARGET: TargetFlagValuesWithDbUrl = {
@@ -53,6 +55,28 @@ type ObservedTarget =
   | { readonly kind: "local" }
   | { readonly kind: "linked"; readonly ref: string }
   | { readonly kind: "db-url" };
+
+/** The branch lookups, as `branchLookups` reports them, among the Management API method calls a fake recorded. */
+export const branchLookupsOf = (
+  calls: ReadonlyArray<{ readonly method: string; readonly input: unknown }>,
+): ReadonlyArray<string> =>
+  calls.flatMap(({ method, input }) =>
+    method === "listAllBranches" &&
+    Predicate.hasProperty(input, "ref") &&
+    Predicate.isString(input.ref)
+      ? [branchListRequest(input.ref)]
+      : [],
+  );
+
+/** The target a Storage leaf sent its first request to; `undefined` before it sent one. */
+export const storageTargetOf = (
+  requests: ReadonlyArray<{ readonly url: string }>,
+): ObservedTarget | undefined => {
+  const first = requests[0];
+  if (first === undefined) return undefined;
+  const ref = /^https:\/\/([a-z]{20})\.supabase\.co/.exec(first.url)?.[1];
+  return ref === undefined ? { kind: "local" } : { kind: "linked", ref };
+};
 
 interface DbTargetAttempt<R> {
   readonly layer: Layer.Layer<R, unknown>;
@@ -81,6 +105,8 @@ interface DbTargetSelectionScenario<R> {
   readonly dbUrl: boolean;
   /** The directory the leaf's layers read, which the linked-checkout row links to {@link VALID_REF}. */
   readonly workdir: () => string;
+  /** Positional arguments the parser needs before it reaches `--remote`, for a command that takes no database URL. */
+  readonly operands?: ReadonlyArray<string>;
   /**
    * One run of the leaf: its layers, its handler called with `target`, and what it observed. The
    * linked project the fakes answer for is {@link VALID_REF}, whose only branch is `feature-x`.
@@ -251,7 +277,7 @@ export function describeDbTargetSelection<R>(
         },
       );
     } else if (!optedOut("remote-db-url")) {
-      const args = [...words, `--remote=${DB_URL}`];
+      const args = [...words, ...(scenario.operands ?? []), `--remote=${DB_URL}`];
       it.effect(
         "rejects --remote=<postgres url> while parsing, since there is no database to connect to",
         () =>

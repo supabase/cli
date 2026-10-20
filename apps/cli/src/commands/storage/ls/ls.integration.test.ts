@@ -4,8 +4,12 @@ import { Cause, Effect, Exit, FileSystem, Option, Path, Predicate } from "effect
 
 import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import {
+  branchLookupsOf,
+  describeDbTargetSelection,
+  storageTargetOf,
+} from "../../../../tests/helpers/db-target-selection.ts";
+import {
   setupStorage,
-  STORAGE_TEST_BRANCH_REF,
   STORAGE_TEST_JWT_SECRET,
   storageTestBranch,
 } from "../../../../tests/helpers/storage.ts";
@@ -18,9 +22,7 @@ import { StorageGatewayStatusError } from "../../../command-internal/storage-gat
 import { storageLs } from "./ls.handler.ts";
 import type { StorageLsFlags } from "./ls.command.ts";
 import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
-import { warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
-const FLAG_REF = "flagflagflagflagflag";
 const BUCKET = "/storage/v1/bucket";
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
 const REVEALED_API_KEYS = `GET https://api.supabase.com/v1/projects/${VALID_REF}/api-keys?reveal=true`;
@@ -277,130 +279,26 @@ project_id = "env(STAGING_REF)"
     );
   });
 
-  it.effect("lists the project given via --remote=<ref>, overriding VALID_REF", () => {
-    // The fake's own fallback stays at its default (VALID_REF); the flag must win and drive
-    // the gateway host.
-    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
-      routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* storageLs({
-        ...lsFlags(),
-        remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const),
-      }).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(requests.some((r) => r.url.startsWith(`https://${FLAG_REF}.supabase.co`))).toBe(true);
-      expect(requests.some((r) => r.url.includes(VALID_REF))).toBe(false);
-      expect(linkedCache.cached).toBe(true);
-      expect(linkedCache.cachedRef).toBe(FLAG_REF);
-    });
-  });
-
-  it.effect("lists the project of the branch --remote=<branch> names", () => {
-    const { layer, requests, linkedCache, managementCalls, out } = setupStorage(tmp.current, {
-      branches: [storageTestBranch("feature-x")],
-      routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* storageLs({
-        ...lsFlags(),
-        remote: Option.some({ _tag: "Branch", name: "feature-x" } as const),
-      }).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(managementCalls.filter(({ method }) => method === "listAllBranches")).toEqual([
-        { method: "listAllBranches", input: { ref: VALID_REF } },
-      ]);
-      expect(
-        requests.some((r) => r.url.startsWith(`https://${STORAGE_TEST_BRANCH_REF}.supabase.co`)),
-      ).toBe(true);
-      expect(linkedCache.cachedRef).toBe(STORAGE_TEST_BRANCH_REF);
-      expect(warningsOf(out)).toEqual([]);
-    });
-  });
-
-  it.effect("fails with the branches that exist when --remote=<branch> matches none", () => {
-    const { layer, requests } = setupStorage(tmp.current, {
-      branches: [storageTestBranch("feature-x")],
-    });
-    return Effect.gen(function* () {
-      const error = yield* storageLs({
-        ...lsFlags(),
-        remote: Option.some({ _tag: "Branch", name: "feature-y" } as const),
-      }).pipe(Effect.provide(layer), Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "LinkBranchNotFoundError",
-        message: expect.stringContaining("Available branches: feature-x"),
+  describeDbTargetSelection("storage ls", {
+    dbUrl: false,
+    workdir: () => tmp.current,
+    attempt: ({ workdir, args, target }) => {
+      const ctx = setupStorage(workdir, {
+        toml: 'project_id = "test"\n[api]\nport = 65432\n',
+        branches: [storageTestBranch("feature-x")],
+        cliArgs: args,
+        commandPath: ["storage", "ls"],
+        routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
       });
-      expect(requests).toHaveLength(0);
-    });
-  });
-
-  describe("deprecated selectors", () => {
-    const cases = [
-      {
-        alias: "--linked",
-        cliArgs: ["storage", "ls", "--linked"],
-        flags: { linked: true },
-        host: `https://${VALID_REF}.supabase.co`,
-        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
-      },
-      {
-        alias: "--project-ref",
-        cliArgs: ["storage", "ls", "--project-ref", FLAG_REF],
-        flags: { projectRef: Option.some(FLAG_REF) },
-        host: `https://${FLAG_REF}.supabase.co`,
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
-      },
-      {
-        alias: "--local",
-        cliArgs: ["storage", "ls", "--local"],
-        flags: { local: true },
-        host: "http://127.0.0.1:65432",
-        warning: "--local isn't needed (local is the default) and will be removed in v4",
-      },
-    ] as const;
-
-    for (const testCase of cases) {
-      it.effect(`${testCase.alias} still selects its target and warns`, () => {
-        const { layer, requests, out } = setupStorage(tmp.current, {
-          toml: 'project_id = "test"\n[api]\nport = 65432\n',
-          cliArgs: testCase.cliArgs,
-          commandPath: ["storage", "ls"],
-          routes: [{ method: "GET", match: BUCKET, body: [{ name: "remote", id: "remote" }] }],
-        });
-        return Effect.gen(function* () {
-          const exit = yield* storageLs({ ...lsFlags(), ...testCase.flags }).pipe(
-            Effect.provide(layer),
-            Effect.exit,
-          );
-          expect(Exit.isSuccess(exit)).toBe(true);
-          expect(requests[0]?.url.startsWith(testCase.host)).toBe(true);
-          expect(warningsOf(out)).toEqual([testCase.warning]);
-        });
-      });
-    }
-
-    it.effect("rejects --project-ref combined with --local", () => {
-      const { layer, requests, linkedCache } = setupStorage(tmp.current, {
-        toml: 'project_id = "test"\n',
-        local: true,
-      });
-      return Effect.gen(function* () {
-        const exit = yield* storageLs({
-          ...lsFlags(),
-          local: true,
-          projectRef: Option.some(FLAG_REF),
-        }).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Cause.pretty(exit.cause)).toContain(
-            "--project-ref selects a remote project and cannot be combined with --local.",
-          );
-        }
-        expect(requests).toHaveLength(0);
-        expect(linkedCache.cached).toBe(false);
-      });
-    });
+      return {
+        layer: ctx.layer,
+        out: ctx.out,
+        run: storageLs({ ...lsFlags(), ...target }),
+        target: () => storageTargetOf(ctx.requests),
+        cachedRef: () => ctx.linkedCache.cachedRef,
+        branchLookups: () => branchLookupsOf(ctx.managementCalls),
+      };
+    },
   });
 
   it.effect(
@@ -1078,18 +976,6 @@ describe("stack backend", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests[0]?.url.includes(":65432")).toBe(true);
       expect(out.stderrText).toContain("Target: local stack (127.0.0.1:65432)");
-    });
-  });
-
-  it.effect("targets the local stack when no target flag is set", () => {
-    const { layer, requests } = setupStorage(tmp.current, {
-      toml: 'project_id = "test"\n[api]\nport = 65432\n',
-      routes: [{ method: "GET", match: BUCKET, body: [{ name: "test", id: "test" }] }],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* storageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(requests[0]?.url.startsWith("http://127.0.0.1:65432")).toBe(true);
     });
   });
 });

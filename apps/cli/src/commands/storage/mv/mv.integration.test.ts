@@ -3,10 +3,14 @@ import { Cause, Effect, Exit, FileSystem, Option, Predicate } from "effect";
 
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
 import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
+import {
+  branchLookupsOf,
+  describeDbTargetSelection,
+  storageTargetOf,
+} from "../../../../tests/helpers/db-target-selection.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import {
   setupStorage,
-  STORAGE_TEST_BRANCH_REF,
   STORAGE_TEST_JWT_SECRET,
   storageConsentApi,
   storageConsentServices,
@@ -16,9 +20,7 @@ import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { storageMv } from "./mv.handler.ts";
 import type { StorageMvFlags } from "./mv.command.ts";
-import { warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
-const FLAG_REF = "flagflagflagflagflag";
 const MOVE = "/storage/v1/object/move";
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
 const REVEALED_API_KEYS = `GET https://api.supabase.com/v1/projects/${VALID_REF}/api-keys?reveal=true`;
@@ -296,133 +298,31 @@ describe("storage mv", () => {
     });
   });
 
-  it.effect("moves within the project given via --remote=<ref>, overriding VALID_REF", () => {
-    // The fake's default projectRef is VALID_REF; the flag must win over it.
-    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
-      yes: true,
-      routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* storageMv({
-        ...mvFlags({ src: "ss:///private/a", dst: "ss:///private/b" }),
-        remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const),
-      }).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(requests.some((r) => r.url.startsWith(`https://${FLAG_REF}.supabase.co`))).toBe(true);
-      expect(requests.some((r) => r.url.includes(VALID_REF))).toBe(false);
-      expect(linkedCache.cached).toBe(true);
-      expect(linkedCache.cachedRef).toBe(FLAG_REF);
-    });
-  });
-
-  it.effect("moves within the project of the branch --remote=<branch> names", () => {
-    const { layer, requests, linkedCache, managementCalls, out } = setupStorage(tmp.current, {
-      branches: [storageTestBranch("feature-x")],
-      yes: true,
-      routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* storageMv({
-        ...mvFlags({ src: "ss:///private/a", dst: "ss:///private/b" }),
-        remote: Option.some({ _tag: "Branch", name: "feature-x" } as const),
-      }).pipe(Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(managementCalls.filter(({ method }) => method === "listAllBranches")).toEqual([
-        { method: "listAllBranches", input: { ref: VALID_REF } },
-      ]);
-      expect(
-        requests.some((r) => r.url.startsWith(`https://${STORAGE_TEST_BRANCH_REF}.supabase.co`)),
-      ).toBe(true);
-      expect(linkedCache.cachedRef).toBe(STORAGE_TEST_BRANCH_REF);
-      expect(warningsOf(out)).toEqual([]);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("fails with the branches that exist when --remote=<branch> matches none", () => {
-    const { layer, requests } = setupStorage(tmp.current, {
-      branches: [storageTestBranch("feature-x")],
-      yes: true,
-    });
-    return Effect.gen(function* () {
-      const error = yield* storageMv({
-        ...mvFlags({ src: "ss:///private/a", dst: "ss:///private/b" }),
-        remote: Option.some({ _tag: "Branch", name: "feature-y" } as const),
-      }).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "LinkBranchNotFoundError",
-        message: expect.stringContaining("Available branches: feature-x"),
+  describeDbTargetSelection("storage mv", {
+    dbUrl: false,
+    operands: ["ss:///private/a", "ss:///private/b"],
+    workdir: () => tmp.current,
+    attempt: ({ workdir, args, target }) => {
+      const ctx = setupStorage(workdir, {
+        toml: 'project_id = "test"\n[api]\nport = 65432\n',
+        branches: [storageTestBranch("feature-x")],
+        yes: true,
+        cliArgs: args,
+        commandPath: ["storage", "mv"],
+        routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
       });
-      expect(requests).toHaveLength(0);
-    }).pipe(Effect.provide(layer));
-  });
-
-  describe("deprecated selectors", () => {
-    const cases = [
-      {
-        alias: "--linked",
-        cliArgs: ["storage", "mv", "--linked"],
-        flags: { linked: true },
-        host: `https://${VALID_REF}.supabase.co`,
-        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
-      },
-      {
-        alias: "--project-ref",
-        cliArgs: ["storage", "mv", "--project-ref", FLAG_REF],
-        flags: { projectRef: Option.some(FLAG_REF) },
-        host: `https://${FLAG_REF}.supabase.co`,
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
-      },
-      {
-        alias: "--local",
-        cliArgs: ["storage", "mv", "--local"],
-        flags: { local: true },
-        host: "http://127.0.0.1:65432",
-        warning: "--local isn't needed (local is the default) and will be removed in v4",
-      },
-    ] as const;
-
-    for (const testCase of cases) {
-      it.effect(`${testCase.alias} still selects its target and warns`, () => {
-        const { layer, requests, out } = setupStorage(tmp.current, {
-          toml: 'project_id = "test"\n[api]\nport = 65432\n',
-          cliArgs: testCase.cliArgs,
-          commandPath: ["storage", "mv"],
-          yes: true,
-          routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
-        });
-        return Effect.gen(function* () {
-          const exit = yield* storageMv({
-            ...mvFlags({ src: "ss:///private/a", dst: "ss:///private/b" }),
-            ...testCase.flags,
-          }).pipe(Effect.exit);
-          expect(Exit.isSuccess(exit)).toBe(true);
-          expect(requests[0]?.url.startsWith(testCase.host)).toBe(true);
-          expect(warningsOf(out)).toEqual([testCase.warning]);
-        }).pipe(Effect.provide(layer));
-      });
-    }
-
-    it.effect("rejects --project-ref combined with --local", () => {
-      const { layer, requests, linkedCache } = setupStorage(tmp.current, {
-        toml: 'project_id = "test"\n',
-        local: true,
-      });
-      return Effect.gen(function* () {
-        const exit = yield* storageMv({
+      return {
+        layer: ctx.layer,
+        out: ctx.out,
+        run: storageMv({
           ...mvFlags({ src: "ss:///private/a", dst: "ss:///private/b" }),
-          local: true,
-          projectRef: Option.some(FLAG_REF),
-        }).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Cause.pretty(exit.cause)).toContain(
-            "--project-ref selects a remote project and cannot be combined with --local.",
-          );
-        }
-        expect(requests).toHaveLength(0);
-        expect(linkedCache.cached).toBe(false);
-      });
-    });
+          ...target,
+        }),
+        target: () => storageTargetOf(ctx.requests),
+        cachedRef: () => ctx.linkedCache.cachedRef,
+        branchLookups: () => branchLookupsOf(ctx.managementCalls),
+      };
+    },
   });
 
   it.effect("propagates a 503 from the move endpoint even when recursive", () => {
