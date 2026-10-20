@@ -2096,7 +2096,7 @@ describe("dbConfigResolver.resolveConnection", () => {
             Option.some(
               expect.objectContaining({
                 message: expect.stringContaining("203.0.113.7, 198.51.100.2"),
-                suggestion: `Re-run with --yes to remove them, or run supabase network-bans remove --remote=${ref} --db-unban-ip 203.0.113.7,198.51.100.2 --experimental --yes.`,
+                suggestion: `Re-run with --yes to remove them, or run supabase network-bans remove --db-unban-ip 203.0.113.7,198.51.100.2 --experimental --yes --remote=${ref}`,
               }),
             ),
           );

@@ -269,7 +269,7 @@ const removeBans = Effect.fnUntraced(function* (ref: string, addrs: ReadonlyArra
 const networkBannedError = (ref: string, addrs: ReadonlyArray<string>) =>
   new Errors.LinkedDbNetworkBannedError({
     message: `Network bans (${addrs.join(", ")}) may be blocking the connection. Removing them clears every listed address, so it needs --yes.`,
-    suggestion: `Re-run with --yes to remove them, or run supabase network-bans remove --remote=${ref} --db-unban-ip ${addrs.join(",")} --experimental --yes.`,
+    suggestion: `Re-run with --yes to remove them, or run supabase network-bans remove --db-unban-ip ${addrs.join(",")} --experimental --yes --remote=${ref}`,
   });
 
 // Verify-connect with backoff while the pooler refreshes the temp password. From attempt 3 on, look

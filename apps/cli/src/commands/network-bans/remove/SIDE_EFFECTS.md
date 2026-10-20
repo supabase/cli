@@ -94,4 +94,4 @@ One `result` event on success when the `--output` flag is unset.
   A closed gate exits 1 before project-ref resolution, the API call, the `linked-project.json`
   write, the `telemetry.json` write, and the `cli_command_executed` event.
 - Asks `Remove network bans on <target>?` (default No) before the first write, after printing the IPs to unban (or the caller's own IP when `--db-unban-ip` is omitted).
-- The `LinkedDbNetworkBannedError` raised by commands that connect to a linked database suggests this command as `supabase network-bans remove --remote=<ref> --db-unban-ip <addrs> --experimental --yes`, with `<ref>` the project whose bans blocked the connection; it needs `--experimental` and the confirmation above like any other run.
+- The `LinkedDbNetworkBannedError` raised by commands that connect to a linked database suggests this command as `supabase network-bans remove --db-unban-ip <addrs> --experimental --yes --remote=<ref>`, with `<ref>` the project whose bans blocked the connection; it needs `--experimental` and the confirmation above like any other run.
