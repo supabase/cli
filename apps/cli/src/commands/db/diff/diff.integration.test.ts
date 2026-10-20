@@ -1382,6 +1382,7 @@ describe("db diff", () => {
         target: () => s.resolverCalls[0]?.target,
         cachedRef: () => s.cache.cachedRef,
         branchLookups: () => branchApi.requests,
+        apiRequests: () => branchApi.requests,
       };
     },
   });
