@@ -432,6 +432,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     engineExportCalls,
     resolverCalls,
     projectHttp,
+    platformApi,
     localPostgresImageChecks,
     get ensureStartedCalls() {
       return ensureStartedCalls;
@@ -645,6 +646,7 @@ describe("db schema declarative generate integration", () => {
         target: () => s.resolverCalls[0]?.target,
         cachedRef: () => s.cache.cachedRef,
         branchLookups: () => branchApi.requests,
+        apiRequests: () => [...branchApi.requests, ...s.platformApi.requests],
       };
     },
   });
