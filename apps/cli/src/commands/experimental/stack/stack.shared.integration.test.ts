@@ -283,6 +283,20 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.effect("reports a missing project root as the project root, not as a stack lookup", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const { root, resolve } = yield* workspace;
+
+      const failure = yield* resolve({
+        projectRoot: path.join(root, "missing-project"),
+        runtime: "auto",
+      }).pipe(Effect.flip);
+
+      expect(failure).toMatchObject({ reason: "invalid-config", targetIssue: "project-root" });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("surfaces an unreadable saved stack that an id prefix selects", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

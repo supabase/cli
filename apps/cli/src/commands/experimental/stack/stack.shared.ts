@@ -159,6 +159,18 @@ export const stackTargetResolverLayer = Layer.effect(
     const stackApi = yield* StackApi;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const canonicalProjectRoot = (projectRoot: string) =>
+      fs.realPath(projectRoot).pipe(
+        Effect.mapError(
+          (cause) =>
+            new StackTargetError({
+              message: cause.message,
+              reason: "invalid-config",
+              targetIssue: "project-root",
+              cause,
+            }),
+        ),
+      );
     const findByIdPrefix = Effect.fn("StackTargetResolver.findByIdPrefix")(function* (
       stateRoot: string,
       prefix: string,
@@ -198,6 +210,9 @@ export const stackTargetResolverLayer = Layer.effect(
       const id = input.id === undefined ? undefined : yield* validateStackId(input.id);
       const requestedRuntime = runtimeForFlag(input.runtime);
       const stateRoot = path.join(settings.supabaseHome, "stacks");
+      // Canonicalized before the lookup so a missing project root is not reported as unreadable state.
+      const lookupRoot =
+        id === undefined ? yield* canonicalProjectRoot(input.projectRoot) : undefined;
       const found =
         id === undefined || isStackId(id)
           ? yield* stackApi
@@ -205,7 +220,7 @@ export const stackTargetResolverLayer = Layer.effect(
                 id === undefined
                   ? {
                       stateRoot,
-                      projectRoot: input.projectRoot,
+                      projectRoot: lookupRoot ?? input.projectRoot,
                       ...(input.name === undefined ? {} : { name: input.name }),
                     }
                   : { stateRoot, id },
@@ -230,17 +245,8 @@ export const stackTargetResolverLayer = Layer.effect(
       // A new stack saves paths under the canonical root its identity derives from.
       const projectRoot =
         found?.definition.identity.projectRoot ??
-        (yield* fs.realPath(input.projectRoot).pipe(
-          Effect.mapError(
-            (cause) =>
-              new StackTargetError({
-                message: cause.message,
-                reason: "invalid-config",
-                targetIssue: "project-root",
-                cause,
-              }),
-          ),
-        ));
+        lookupRoot ??
+        (yield* canonicalProjectRoot(input.projectRoot));
       return {
         projectRoot,
         ...(found === undefined ? {} : { id: found.definition.id, definition: found.definition }),
