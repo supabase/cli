@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { BunServices } from "@effect/platform-bun";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import {
@@ -21,7 +21,6 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import {
   type ApiHandler,
   buildTestRuntime,
@@ -36,7 +35,7 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
-import { mockContextualAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   assertBlockDrift,
   assertPermissionDrift,
@@ -48,7 +47,6 @@ import {
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
 import { sanitizeProjectId } from "../../../shared/config/project-id.ts";
 import { containerRuntimeNotFoundMessage } from "../../../command-internal/container-cli.ts";
-import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import {
   downloadFunctions,
   functionsDownload as functionsDownloadCalls,
@@ -57,7 +55,6 @@ import { functionsLocalConfigLoader } from "../../../command-internal/functions-
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ConflictingFunctionDownloadFlagsError } from "../../../shared/functions/download.errors.ts";
 import { FunctionsApiStatusError } from "../../../shared/functions/functions-api.errors.ts";
-import { functionsDownloadHandler } from "./download.command.ts";
 import type { FunctionsDownloadFlags } from "./download.command.ts";
 import { functionsDownload } from "./download.handler.ts";
 
@@ -1907,86 +1904,6 @@ describe("functions download", () => {
       }).pipe(Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("does not redact a --remote=<ref> in cli_command_executed", () => {
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi({
-      handler: (request) =>
-        request.url.endsWith("/body")
-          ? Effect.succeed(multipartResponse(request))
-          : Effect.succeed(jsonResponse(request, 200, {})),
-    });
-    const analytics = mockContextualAnalytics();
-    const layer = Layer.mergeAll(
-      cliConfigValuesTestLayer,
-      buildTestRuntime({
-        out,
-        api,
-        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-        analytics,
-      }),
-      commandRuntimeLayer(["functions", "download"]).pipe(Layer.provide(BunCrypto.layer)),
-      Stdio.layerTest({
-        args: Effect.succeed([
-          "functions",
-          "download",
-          "hello-world",
-          "--remote=abcdefghijklmnopqrst",
-        ]),
-      }),
-    );
-
-    return Effect.gen(function* () {
-      yield* functionsDownloadHandler({
-        ...baseFlags,
-        remote: Option.some({ _tag: "Ref", ref: "abcdefghijklmnopqrst" }),
-      });
-
-      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-      expect(event?.properties.flags).toEqual({ remote: "abcdefghijklmnopqrst" });
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("does not redact --project-ref in cli_command_executed", () => {
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi({
-      handler: (request) =>
-        request.url.endsWith("/body")
-          ? Effect.succeed(multipartResponse(request))
-          : Effect.succeed(jsonResponse(request, 200, {})),
-    });
-    const analytics = mockContextualAnalytics();
-    const layer = Layer.mergeAll(
-      cliConfigValuesTestLayer,
-      buildTestRuntime({
-        out,
-        api,
-        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-        analytics,
-      }),
-      commandRuntimeLayer(["functions", "download"]).pipe(Layer.provide(BunCrypto.layer)),
-      Stdio.layerTest({
-        args: Effect.succeed([
-          "functions",
-          "download",
-          "hello-world",
-          "--project-ref",
-          "abcdefghijklmnopqrst",
-        ]),
-      }),
-      Layer.succeed(TargetPolicy, { group: "hosted", consent: "none" }),
-    );
-
-    return Effect.gen(function* () {
-      yield* functionsDownloadHandler({
-        ...baseFlags,
-        projectRef: Option.some("abcdefghijklmnopqrst"),
-      });
-
-      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-      expect(event?.properties.flags).toEqual({ "project-ref": "abcdefghijklmnopqrst" });
     }).pipe(Effect.provide(layer));
   });
 

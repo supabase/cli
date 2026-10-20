@@ -122,11 +122,6 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
             "output-dir": merged.outputDir,
             reset: merged.reset,
             schema: merged.schema,
-            remote: merged.remote,
-            "db-url": merged.dbUrl,
-            linked: merged.linked,
-            local: merged.local,
-            "project-ref": merged.projectRef,
             // `password` must never be added to `safeFlags`: it's a credential and must always
             // reach telemetry as `<redacted>`.
             password: merged.password,

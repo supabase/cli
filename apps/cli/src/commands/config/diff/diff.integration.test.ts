@@ -30,7 +30,6 @@ import { realLinkedProjectCache } from "../../../../tests/helpers/permission-rea
 import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
 import { GLOBAL_OUTPUT_FORMATS } from "../../../command-internal/global-flags.ts";
 import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
-import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { configDiffHandler } from "./diff.command.ts";
 import { CONFIG_DIFF_PAYLOAD_VERSION } from "./diff.format.ts";
@@ -1484,56 +1483,6 @@ describe("config diff integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
-});
-
-describe("config diff telemetry wiring", () => {
-  // Uses configDiffHandler (not the bare handler) since telemetry wraps the handler in the command wiring.
-  const wiringLayer = (
-    analytics: ReturnType<typeof mockContextualAnalytics>,
-    args: ReadonlyArray<string>,
-  ) =>
-    Layer.mergeAll(
-      setup({ toml: 'project_id = "test"\n', analytics }).layer,
-      commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunServices.layer)),
-      Stdio.layerTest({ args: Effect.succeed(["config", "diff", ...args]) }),
-      Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
-    );
-
-  const flagsOf = (analytics: ReturnType<typeof mockContextualAnalytics>) =>
-    analytics.captured.find((c) => c.event === "cli_command_executed")?.properties["flags"];
-
-  it.effect("logs a ref-shaped --remote verbatim in cli_command_executed", () => {
-    const analytics = mockContextualAnalytics();
-    return Effect.gen(function* () {
-      yield* Effect.exit(configDiffHandler(remoteRef(VALID_REF)));
-      expect(flagsOf(analytics)).toEqual({ remote: VALID_REF });
-    }).pipe(Effect.provide(wiringLayer(analytics, [`--remote=${VALID_REF}`])));
-  });
-
-  it.effect("redacts a branch-name --remote", () => {
-    const analytics = mockContextualAnalytics();
-    return Effect.gen(function* () {
-      yield* Effect.exit(configDiffHandler(remoteBranch("staging")));
-      expect(flagsOf(analytics)).toEqual({ remote: "<redacted>" });
-    }).pipe(Effect.provide(wiringLayer(analytics, ["--remote=staging"])));
-  });
-
-  it.effect("logs a ref-shaped --project-ref verbatim in cli_command_executed", () => {
-    const analytics = mockContextualAnalytics();
-    return Effect.gen(function* () {
-      yield* Effect.exit(configDiffHandler({ ...noFlags, projectRef: Option.some(VALID_REF) }));
-      expect(flagsOf(analytics)).toEqual({ "project-ref": VALID_REF });
-    }).pipe(Effect.provide(wiringLayer(analytics, ["--project-ref", VALID_REF])));
-  });
-
-  it.effect("redacts a branch-name-shaped --project-ref", () => {
-    // A user-created branch name must never reach PostHog verbatim.
-    const analytics = mockContextualAnalytics();
-    return Effect.gen(function* () {
-      yield* Effect.exit(configDiffHandler({ ...noFlags, projectRef: Option.some("staging") }));
-      expect(flagsOf(analytics)).toEqual({ "project-ref": "<redacted>" });
-    }).pipe(Effect.provide(wiringLayer(analytics, ["--project-ref", "staging"])));
-  });
 });
 
 describe("config diff -o/--output wrapper wiring", () => {

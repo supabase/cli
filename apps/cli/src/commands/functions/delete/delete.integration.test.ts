@@ -1,10 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunCrypto } from "@effect/platform-bun";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema, Stdio } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
-import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { stripControlSequences } from "../../../shared/output/strip-control-sequences.ts";
 import {
   VALID_REF,
@@ -18,13 +16,12 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
-import { mockContextualAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
-import { functionsDeleteHandler } from "./delete.command.ts";
 import { functionsDelete } from "./delete.handler.ts";
 
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -196,42 +193,6 @@ describe("functions delete", () => {
       }).pipe(Effect.provide(layer));
     },
   );
-
-  it.effect("does not redact --project-ref in cli_command_executed", () => {
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi({ response: { status: 200, body: null } });
-    const analytics = mockContextualAnalytics();
-    const layer = Layer.mergeAll(
-      buildTestRuntime({
-        out,
-        api,
-        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-        analytics,
-      }),
-      commandRuntimeLayer(["functions", "delete"]).pipe(Layer.provide(BunCrypto.layer)),
-      approvedHostedMutation,
-      Stdio.layerTest({
-        args: Effect.succeed([
-          "functions",
-          "delete",
-          "hello-world",
-          "--project-ref",
-          "abcdefghijklmnopqrst",
-        ]),
-      }),
-    );
-
-    return Effect.gen(function* () {
-      yield* functionsDeleteHandler({
-        functionName: "hello-world",
-        remote: Option.none(),
-        projectRef: Option.some("abcdefghijklmnopqrst"),
-      });
-
-      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-      expect(event?.properties.flags).toEqual({ "project-ref": "abcdefghijklmnopqrst" });
-    }).pipe(Effect.provide(layer));
-  });
 });
 
 describeHostedConsent("functions delete", {

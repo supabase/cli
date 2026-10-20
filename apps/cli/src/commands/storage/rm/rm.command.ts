@@ -45,10 +45,6 @@ export const storageRmCommand = Command.make("rm", config).pipe(
       yield* requireExperimental;
       const telemetryFlags = {
         recursive: flags.recursive,
-        remote: flags.remote,
-        linked: flags.linked,
-        local: flags.local,
-        "project-ref": flags.projectRef,
       };
       return yield* storageRm({
         files: flags.files.map(String),

@@ -75,11 +75,6 @@ export const dbPushCommand = Command.make("push", config).pipe(
           "include-seed": flags.includeSeed,
           "skip-vault": flags.skipVault,
           "dry-run": flags.dryRun,
-          remote: flags.remote,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
         },

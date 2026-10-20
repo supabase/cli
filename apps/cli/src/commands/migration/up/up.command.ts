@@ -41,11 +41,6 @@ export const migrationUpCommand = Command.make("up", config).pipe(
       withCommandTelemetry({
         flags: {
           "include-all": flags.includeAll,
-          remote: flags.remote,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
         },
       }),
       withJsonErrorHandling,

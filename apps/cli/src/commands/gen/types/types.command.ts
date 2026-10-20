@@ -110,8 +110,7 @@ const remoteTarget: ReadonlyArray<EntryCondition> = [
   { flag: "postgrest-v9-compat", is: false },
 ];
 
-// Exported so integration tests can drive the exact wiring `Command.withHandler` uses below.
-export const genTypesHandler = (flags: CliCommand.Command.Config.Infer<typeof commandConfig>) =>
+const genTypesHandler = (flags: CliCommand.Command.Config.Infer<typeof commandConfig>) =>
   genTypes(flags).pipe(
     withCommandTelemetry({
       flags,

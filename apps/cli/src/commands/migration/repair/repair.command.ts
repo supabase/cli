@@ -57,16 +57,10 @@ export const migrationRepairCommand = Command.make("repair", config).pipe(
       withCommandTelemetry({
         flags: {
           status: flags.status,
-          remote: flags.remote,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
         },
-        // --status is auto-detected as safe via config below; password and
-        // --project-ref stay redacted.
+        // --status is auto-detected as safe via config below; password stays redacted.
         config,
         aliases: { p: "password" },
       }),

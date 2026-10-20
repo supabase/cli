@@ -53,17 +53,12 @@ export const dbLintCommand = Command.make("lint", config).pipe(
     dbLint(flags).pipe(
       withCommandTelemetry({
         flags: {
-          remote: flags.remote,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
           schema: flags.schema,
           level: flags.level,
           "fail-on": flags.failOn,
         },
-        // level/fail-on are auto-detected as safe (Flag.Literals); --schema and
-        // --project-ref stay redacted (no established safelist).
+        // level/fail-on are auto-detected as safe (Flag.Literals); --schema stays redacted (no
+        // established safelist).
         config,
         aliases: { s: "schema" },
       }),

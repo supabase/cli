@@ -38,11 +38,6 @@ export const inspectReportCommand = Command.make("report", config).pipe(
     inspectReport(flags).pipe(
       withCommandTelemetry({
         flags: {
-          remote: flags.remote,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
           "output-dir": flags.outputDir,
         },
       }),

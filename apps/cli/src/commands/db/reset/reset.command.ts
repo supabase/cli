@@ -56,11 +56,6 @@ export const dbResetCommand = Command.make("reset", config).pipe(
     dbReset(flags).pipe(
       withCommandTelemetry({
         flags: {
-          remote: flags.remote,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
           "no-seed": flags.noSeed,
           "sql-paths": flags.sqlPaths,
           version: flags.version,

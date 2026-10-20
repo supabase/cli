@@ -48,13 +48,8 @@ export const migrationSquashCommand = Command.make("squash", config).pipe(
       withCommandTelemetry({
         flags: {
           version: flags.version,
-          remote: flags.remote,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
-          "project-ref": flags.projectRef,
         },
         safeFlags: ["version"],
         aliases: { p: "password" },

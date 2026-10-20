@@ -25,16 +25,7 @@ export const bucketsCommand = Command.make("buckets").pipe(
   Command.withHandler(() =>
     Effect.gen(function* () {
       const flags: BucketsFlags = yield* readSeedTargetFlags();
-      return yield* seedBuckets(flags).pipe(
-        withCommandTelemetry({
-          flags: {
-            remote: flags.remote,
-            linked: flags.linked,
-            local: flags.local,
-            "project-ref": flags.projectRef,
-          },
-        }),
-      );
+      return yield* seedBuckets(flags).pipe(withCommandTelemetry());
     }).pipe(withJsonErrorHandling),
   ),
   Command.provide(Layer.mergeAll(storageGatewayRuntimeLayer(["seed", "buckets"]), stdinLayer)),

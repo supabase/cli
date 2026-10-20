@@ -71,11 +71,6 @@ export const dbAdvisorsCommand = Command.make("advisors", config).pipe(
     dbAdvisors(flags).pipe(
       withCommandTelemetry({
         flags: {
-          remote: flags.remote,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
           type: flags.type,
           level: flags.level,
           "fail-on": flags.failOn,

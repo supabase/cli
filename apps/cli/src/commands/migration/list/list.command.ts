@@ -45,11 +45,6 @@ export const migrationListCommand = Command.make("list", config).pipe(
     migrationList(flags).pipe(
       withCommandTelemetry({
         flags: {
-          remote: flags.remote,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
         },

@@ -97,10 +97,6 @@ export const storageCpCommand = Command.make("cp", config).pipe(
         cacheControl: flags.cacheControl,
         contentType: flags.contentType,
         jobs: flags.jobs,
-        remote: flags.remote,
-        linked: flags.linked,
-        local: flags.local,
-        "project-ref": flags.projectRef,
       };
       return yield* storageCp(flags).pipe(withCommandTelemetry({ flags: telemetryFlags }));
     }).pipe(withJsonErrorHandling),

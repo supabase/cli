@@ -88,11 +88,6 @@ const telemetryOptions = (flags: DbPullFlags) => ({
     "diff-engine": flags.diffEngine,
     "strict-coverage": flags.strictCoverage,
     schema: flags.schema,
-    remote: flags.remote,
-    "db-url": flags.dbUrl,
-    linked: flags.linked,
-    local: flags.local,
-    "project-ref": flags.projectRef,
     // `password` is a credential — always reaches telemetry as `<redacted>`.
     password: flags.password,
   },

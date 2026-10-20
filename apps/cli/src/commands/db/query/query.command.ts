@@ -61,11 +61,6 @@ export const dbQueryCommand = Command.make("query", config).pipe(
     dbQuery(flags).pipe(
       withCommandTelemetry({
         flags: {
-          remote: flags.remote,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
           file: flags.file,
           "read-only": flags.readOnly,
         },

@@ -24,24 +24,10 @@ export const withInspectDbTargetPolicy = withTargetPolicy({
   consentExemptReason: "read-only",
 });
 
-/**
- * Wraps an `inspect db` handler with the standard command-level pipeline: telemetry
- * instrumentation with the three connection flags, and the machine-format JSON error envelope.
- */
+/** Wraps an `inspect db` handler with telemetry and the machine-format JSON error envelope. */
 export function inspectDbCommandHandler<E, R>(
   handler: (flags: InspectConnectionFlags) => Effect.Effect<void, E, R>,
 ) {
   return (flags: InspectConnectionFlags) =>
-    handler(flags).pipe(
-      withCommandTelemetry({
-        flags: {
-          remote: flags.remote,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
-        },
-      }),
-      withJsonErrorHandling,
-    );
+    handler(flags).pipe(withCommandTelemetry(), withJsonErrorHandling);
 }

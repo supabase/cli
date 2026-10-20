@@ -2210,55 +2210,6 @@ describe("pull integration", () => {
   );
 });
 
-// The raw `--remote`/`--project-ref` value in `cli_command_executed`'s `flags` map is read from the
-// literal argv (`Stdio.args`), a separate source from the `PullFlags` object the handler runs
-// on, so each case below overrides `Stdio.args` on top of `setup()`'s default.
-describe("pull telemetry wiring", () => {
-  const withArgs = (base: ReturnType<typeof setup>["layer"], args: ReadonlyArray<string>) =>
-    Layer.mergeAll(base, Stdio.layerTest({ args: Effect.succeed(["pull", ...args]) }));
-
-  it.effect("logs a ref-shaped --remote verbatim in cli_command_executed", () => {
-    const { layer, analytics } = setup({ yes: true });
-    return Effect.gen(function* () {
-      yield* writeConfig();
-      yield* runPull(pullFlags({ remote: refRemote(VALID_REF), dryRun: true }));
-      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-      expect(event?.properties["flags"]).toEqual({ remote: VALID_REF });
-    }).pipe(Effect.provide(withArgs(layer, [`--remote=${VALID_REF}`])));
-  });
-
-  it.effect("redacts a branch-name --remote in cli_command_executed", () => {
-    // A user-created branch name must never reach PostHog verbatim.
-    const { layer, analytics } = setup({ yes: true });
-    return Effect.gen(function* () {
-      yield* writeConfig();
-      yield* runPull(pullFlags({ remote: branchRemote("staging"), dryRun: true }));
-      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-      expect(event?.properties["flags"]).toEqual({ remote: "<redacted>" });
-    }).pipe(Effect.provide(withArgs(layer, ["--remote=staging"])));
-  });
-
-  it.effect("logs a ref-shaped --project-ref verbatim in cli_command_executed", () => {
-    const { layer, analytics } = setup({ yes: true });
-    return Effect.gen(function* () {
-      yield* writeConfig();
-      yield* runPull(pullFlags({ projectRef: Option.some(VALID_REF), dryRun: true }));
-      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-      expect(event?.properties["flags"]).toEqual({ "project-ref": VALID_REF });
-    }).pipe(Effect.provide(withArgs(layer, ["--project-ref", VALID_REF])));
-  });
-
-  it.effect("redacts a branch-name-shaped --project-ref in cli_command_executed", () => {
-    const { layer, analytics } = setup({ yes: true });
-    return Effect.gen(function* () {
-      yield* writeConfig();
-      yield* runPull(pullFlags({ projectRef: Option.some("staging"), dryRun: true }));
-      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-      expect(event?.properties["flags"]).toEqual({ "project-ref": "<redacted>" });
-    }).pipe(Effect.provide(withArgs(layer, ["--project-ref", "staging"])));
-  });
-});
-
 // `streamJsonOutputLayer` nests the success payload under `data`, but its `fail`
 // implementation spreads `MachineErrorContext`'s payload at the top level alongside
 // `type`/`error`/`timestamp` — an asymmetry within the same layer.

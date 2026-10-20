@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vitest";
-import { BunCrypto, BunPath, BunServices } from "@effect/platform-bun";
+import { BunPath, BunServices } from "@effect/platform-bun";
 import type {
   V1CreateLoginRoleOutput,
   V1GetABranchConfigOutput,
@@ -33,7 +33,6 @@ import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
 import { DnsResolverFlag, OutputFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { rootCommandForFeatures } from "../../../cli/root.ts";
 import { cliArgsLayer, prepareCliArgs } from "../../../shared/cli/run.ts";
-import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
@@ -77,7 +76,7 @@ import type {
   ResolvedDbConfig,
   ResolvedDbConnection,
 } from "../../../command-internal/db-config.types.ts";
-import { genTypesHandler, type GenTypesFlags } from "./types.command.ts";
+import type { GenTypesFlags } from "./types.command.ts";
 import { GenTypesLocalDbInspectError, GenTypesLocalDbNotRunningError } from "./types.errors.ts";
 import { genTypes } from "./types.handler.ts";
 import { localDbContainerId, parseQueryTimeoutMillis, rootCaBundle } from "./types.shared.ts";
@@ -3792,67 +3791,6 @@ describe("gen types permissions through the real layers", () => {
       });
     }).pipe(Effect.provide(BunServices.layer)),
   );
-
-  describe("telemetry wiring", () => {
-    const reportedFlags = (
-      args: ReadonlyArray<string>,
-      overrides: Partial<GenTypesFlags>,
-      setup: { readonly projectRefFile?: string; readonly cacheRef?: string } = {},
-    ) =>
-      Effect.gen(function* () {
-        const analytics = mockContextualAnalytics();
-        const ctx = yield* setupRecorded({ args, analytics, ...setup });
-        yield* ctx.run(
-          genTypesHandler({ ...defaultFlags(overrides), language: Option.none() }).pipe(
-            Effect.provide(
-              commandRuntimeLayer(["gen", "types"]).pipe(Layer.provide(BunCrypto.layer)),
-            ),
-          ),
-        );
-        return analytics.captured.find((c) => c.event === "cli_command_executed")?.properties.flags;
-      }).pipe(Effect.provide(BunServices.layer));
-
-    it.effect("reports a ref-shaped --project-id verbatim", () =>
-      Effect.gen(function* () {
-        expect(
-          yield* reportedFlags(["gen", "types", "--project-id", VALID_REF], {
-            projectId: Option.some(VALID_REF),
-          }),
-        ).toEqual({ "project-id": VALID_REF });
-      }),
-    );
-
-    it.effect("redacts a --project-id that names a branch", () =>
-      Effect.gen(function* () {
-        const flags = yield* reportedFlags(
-          ["gen", "types", "--project-id", "feature-x"],
-          { projectId: Option.some("feature-x") },
-          { projectRefFile: VALID_REF, cacheRef: BRANCH_PROJECT_REF },
-        );
-        expect(flags).toEqual({ "project-id": "<redacted>" });
-      }),
-    );
-
-    it.effect("reports a ref-shaped --project-ref verbatim", () =>
-      Effect.gen(function* () {
-        expect(
-          yield* reportedFlags(["gen", "types", "--project-ref", VALID_REF], {
-            projectRef: Option.some(VALID_REF),
-          }),
-        ).toEqual({ "project-ref": VALID_REF });
-      }),
-    );
-
-    it.effect("reports --remote=<ref> through the central remote handling", () =>
-      Effect.gen(function* () {
-        expect(
-          yield* reportedFlags(["gen", "types", `--remote=${VALID_REF}`], {
-            remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
-          }),
-        ).toEqual({ remote: VALID_REF });
-      }),
-    );
-  });
 
   it.effect(
     "looks the branch --remote=<branch> names up in the linked project, then generates",

@@ -186,8 +186,10 @@ property shape (`flags`, `is_agent`, and `env_signals`), use canonical names and
 [event catalog](src/shared/telemetry/event-catalog.ts), and redact sensitive values.
 
 `safeFlags` may include only values that carry no user data. Keep the established safe project,
-project-id, org-id, and version cases. `withCommandTelemetry` reports the target flags itself for
-every command with a `hosted` or `selectable` target policy, so never list them in a command's `safeFlags`: `--remote`, `--linked`, `--local`,
+project-id, org-id, and version cases. For every command with a `hosted` or `selectable` target
+policy, `withCommandTelemetry` reads the target flags from the invoked arguments, so they need no
+entry in a command's `flags` or `safeFlags`: `--remote` (`true` when bare or linked, the project
+ref when it is one, otherwise redacted), `--linked` and `--local` (their boolean),
 `--project-ref`/`--project-id` (the value only when it matches `PROJECT_REF_PATTERN`, since it can
 be a user-created branch name) and `--db-url` (always redacted). Global boolean and choice flags
 are resolved by the wrapper from `globalFlagValues`; a command-local flag wins, so a local

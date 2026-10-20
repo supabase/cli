@@ -11,17 +11,12 @@ import {
   Path,
   PlatformError,
   Schema,
-  Stdio,
 } from "effect";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
-import {
-  mockAnalytics,
-  mockContextualAnalytics,
-  mockOutput,
-} from "../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
   DEFAULT_API_URL,
@@ -55,7 +50,6 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { secretDigestHex } from "./push.secret.ts";
 import { configDiff } from "../diff/diff.handler.ts";
 import { configPush } from "./push.handler.ts";
-import { configPushHandler } from "./push.command.ts";
 import { warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
 const tempRoot = useTempWorkdir("supabase-config-push-int-");
@@ -3733,62 +3727,6 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
-  });
-});
-
-describe("config push telemetry wiring", () => {
-  // Drives the `Command.withHandler` wiring (`configPushHandler`), not the bare handler: the
-  // safeFlags guard lives in the wiring, and nothing validates `--project-ref` before it fires.
-  const wiringLayer = (analytics: ReturnType<typeof mockAnalytics>, args: ReadonlyArray<string>) =>
-    Layer.mergeAll(
-      setup({ toml: `project_id = "test"\n`, yes: true, analytics }).layer,
-      commandRuntimeLayer(["config", "push"]).pipe(Layer.provide(BunServices.layer)),
-      Stdio.layerTest({ args: Effect.succeed(["config", "push", ...args]) }),
-    );
-
-  const flagsOf = (analytics: ReturnType<typeof mockAnalytics>) =>
-    analytics.captured.find((c) => c.event === "cli_command_executed")?.properties["flags"];
-
-  it.effect("logs a ref-shaped --remote verbatim in cli_command_executed", () => {
-    const analytics = mockContextualAnalytics();
-    return Effect.gen(function* () {
-      yield* Effect.exit(
-        configPushHandler({
-          remote: Option.some<RemoteValue>({ _tag: "Ref", ref: REF }),
-          projectRef: Option.none(),
-        }),
-      );
-      expect(flagsOf(analytics)).toEqual({ remote: REF });
-    }).pipe(Effect.provide(wiringLayer(analytics, [`--remote=${REF}`])));
-  });
-
-  it.effect("redacts a branch-name --remote", () => {
-    const analytics = mockContextualAnalytics();
-    return Effect.gen(function* () {
-      yield* Effect.exit(configPushHandler(pushRemoteBranch("staging")));
-      expect(flagsOf(analytics)).toEqual({ remote: "<redacted>" });
-    }).pipe(Effect.provide(wiringLayer(analytics, ["--remote=staging"])));
-  });
-
-  it.effect("logs a ref-shaped --project-ref verbatim in cli_command_executed", () => {
-    const analytics = mockContextualAnalytics();
-    return Effect.gen(function* () {
-      yield* Effect.exit(
-        configPushHandler({ remote: Option.none(), projectRef: Option.some(REF) }),
-      );
-      expect(flagsOf(analytics)).toEqual({ "project-ref": REF });
-    }).pipe(Effect.provide(wiringLayer(analytics, ["--project-ref", REF])));
-  });
-
-  it.effect("redacts a --project-ref value that is not ref-shaped", () => {
-    const analytics = mockContextualAnalytics();
-    const value = "s3cret-paste-mistake";
-    return Effect.gen(function* () {
-      yield* Effect.exit(
-        configPushHandler({ remote: Option.none(), projectRef: Option.some(value) }),
-      );
-      expect(flagsOf(analytics)).toEqual({ "project-ref": "<redacted>" });
-    }).pipe(Effect.provide(wiringLayer(analytics, ["--project-ref", value])));
   });
 });
 

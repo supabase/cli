@@ -42,9 +42,7 @@ export type ConfigPullFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 const configPullHandler = (flags: ConfigPullFlags) =>
   configPull(flags).pipe(
-    // --project-ref accepts branch names too, so it's only safe to log verbatim when
-    // ref-shaped; a branch name must never reach PostHog. --remote-label is free-form user text
-    // and is never safe to log.
+    // --remote-label is free-form user text and is never safe to log.
     withCommandTelemetry({
       flags,
       // The handler rejects every -o/--output value itself, so the full global choice set is

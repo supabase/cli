@@ -30,14 +30,7 @@ const onRunFailure = (error: TestDbRunError | TestDbNoTestsError) =>
     yield* processControl.setExitCode(1);
   });
 
-/**
- * Flag config shared verbatim by `supabase test db` and its hidden alias
- * `supabase db test`.
- *
- * Lives in `command-internal/` because it (with `runTestDbCommand` and
- * `testDbRuntimeLayer`) is shared across the `db` and `test` command
- * families — see "Hoist Before You Duplicate" in `apps/cli/CLAUDE.md`.
- */
+/** Flag config shared by `supabase test db` and its hidden `supabase db test` alias. */
 export const testDbConfig = {
   paths: Argument.String("path").pipe(
     Argument.withDescription("Paths to test files or directories."),
@@ -50,11 +43,7 @@ export interface TestDbFlags extends TargetFlagValuesWithDbUrl {
   readonly paths: ReadonlyArray<string>;
 }
 
-/**
- * Assembled `test db` / `db test` handler: telemetry, run-failure routing
- * (`onRunFailure`), and JSON-error-handling wiring shared by both entry
- * points.
- */
+/** The `test db` / `db test` handler: telemetry, run-failure routing and JSON error handling. */
 export function runTestDbCommand(flags: CliCommand.Command.Config.Infer<typeof testDbConfig>) {
   return testDb({
     paths: flags.paths,
@@ -64,15 +53,7 @@ export function runTestDbCommand(flags: CliCommand.Command.Config.Infer<typeof t
     local: flags.local,
     projectRef: flags.projectRef,
   }).pipe(
-    withCommandTelemetry({
-      flags: {
-        remote: flags.remote,
-        "db-url": flags.dbUrl,
-        linked: flags.linked,
-        local: flags.local,
-        "project-ref": flags.projectRef,
-      },
-    }),
+    withCommandTelemetry(),
     // Run failures must not corrupt the TAP stream in machine modes; see `onRunFailure`.
     Effect.catchTag(["TestDbRunError", "TestDbNoTestsError"], onRunFailure),
     withJsonErrorHandling,

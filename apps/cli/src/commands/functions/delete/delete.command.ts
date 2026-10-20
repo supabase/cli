@@ -21,9 +21,7 @@ const config = {
 
 export type FunctionsDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// Exported so integration tests can drive the exact wiring `Command.withHandler`
-// uses below, instead of re-asserting the generic instrumentation mechanism.
-export const functionsDeleteHandler = (flags: FunctionsDeleteFlags) =>
+const functionsDeleteHandler = (flags: FunctionsDeleteFlags) =>
   functionsDelete(flags).pipe(
     withCommandTelemetry({
       flags,

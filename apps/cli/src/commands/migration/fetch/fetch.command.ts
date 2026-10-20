@@ -31,18 +31,7 @@ export const migrationFetchCommand = Command.make("fetch", config).pipe(
     ),
   ),
   Command.withHandler((flags) =>
-    migrationFetch(flags).pipe(
-      withCommandTelemetry({
-        flags: {
-          remote: flags.remote,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
-        },
-      }),
-      withJsonErrorHandling,
-    ),
+    migrationFetch(flags).pipe(withCommandTelemetry(), withJsonErrorHandling),
   ),
   Command.provide(migrationDbRuntimeLayer(["migration", "fetch"])),
   Command.provide(cliConfigValuesLayer),

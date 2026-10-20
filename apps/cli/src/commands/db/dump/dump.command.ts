@@ -130,11 +130,6 @@ export const dbDumpCommand = Command.make("dump", config).pipe(
           "role-only": flags.roleOnly,
           "keep-comments": flags.keepComments,
           file: flags.file,
-          remote: flags.remote,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
           // Never add `password` to `safeFlags`; it must stay `<redacted>` in telemetry.
           password: flags.password,
           schema: flags.schema,

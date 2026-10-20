@@ -52,11 +52,6 @@ export const migrationDownCommand = Command.make("down", config).pipe(
       withCommandTelemetry({
         flags: {
           last: flags.last,
-          remote: flags.remote,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
         },
       }),
       withJsonErrorHandling,
