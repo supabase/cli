@@ -1,5 +1,5 @@
 import { makeApiClient } from "@supabase/api/effect";
-import { Effect, FileSystem, Layer, Option, Path, type Redacted } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, type Redacted, Schema } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import { publish } from "@supabase/stack/effect";
 
@@ -24,6 +24,17 @@ export const linkedProjectCache = block("linked-project-cache", [
       "an access token, no cached project metadata (supabase/.temp/linked-project.json, or $SUPABASE_HOME/project-cache/<ref>.json in stack mode), and no linked ref naming a different project",
   },
 ]);
+
+const encodeLinkedProjectCache = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      ref: Schema.String,
+      name: Schema.String,
+      organization_id: Schema.String,
+      organization_slug: Schema.String,
+    }),
+  ),
+);
 
 /**
  * Writes the project's metadata after a `--project-ref` has been resolved: `<workdir>/supabase/.temp/linked-project.json`
@@ -124,7 +135,10 @@ export const linkedProjectCacheLayer = Layer.effect(
           };
 
           yield* fs.makeDirectory(path.dirname(cachePath), { recursive: true });
-          yield* publish(fs, path, { target: cachePath, content: JSON.stringify(linked) });
+          yield* publish(fs, path, {
+            target: cachePath,
+            content: yield* encodeLinkedProjectCache(linked),
+          });
 
           yield* identifyProjectGroups(analytics, linked);
         }).pipe(Effect.withSpan("LinkedProjectCache.cache"), Effect.ignore),

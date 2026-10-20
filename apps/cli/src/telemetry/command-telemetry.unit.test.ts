@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunCrypto } from "@effect/platform-bun";
-import { Cause, Effect, Exit, Layer, Option, Stdio } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Schema, Stdio } from "effect";
 import { Flag } from "effect/cli";
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
 import {
@@ -51,6 +51,8 @@ const FAILURE_PROPERTY_NAMES = [
   PropWorkflow,
 ] as const;
 
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 function mockIdentityStitch(opts: { stitchedDistinctId?: string }) {
   return {
     layer: Layer.succeed(
@@ -92,13 +94,15 @@ describe("withCommandTelemetry", () => {
     Effect.currentSpan.pipe(
       Effect.map((span) => Object.fromEntries(span.attributes)),
       withCommandTelemetry(),
-      Effect.provide(mockContextualAnalytics().layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.provide(
-        mockTelemetryRuntime({ consent, deviceId: "device-1", sessionId: "session-1" }),
+        Layer.mergeAll(
+          mockContextualAnalytics().layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) }),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          mockTelemetryRuntime({ consent, deviceId: "device-1", sessionId: "session-1" }),
+        ),
       ),
     );
 
@@ -136,15 +140,17 @@ describe("withCommandTelemetry", () => {
       expect(typeof span.attributes.get("command_run_id")).toBe("string");
     }).pipe(
       withCommandTelemetry(),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["backups", "list"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["backups", "list"]),
+          }),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -170,12 +176,16 @@ describe("withCommandTelemetry", () => {
     return recordCommandTelemetry({ [PropOrioleDb]: true }).pipe(
       Effect.andThen(Effect.fail(new DbDumpRunError({ message: "dump failed" }))),
       withCommandTelemetry(),
-      Effect.provide(stackBackendLayer("legacy")),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "dump", "--local"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.provide(
+        Layer.mergeAll(
+          stackBackendLayer("legacy"),
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "dump", "--local"]) }),
+          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
@@ -194,15 +204,17 @@ describe("withCommandTelemetry", () => {
 
     return Effect.void.pipe(
       withCommandTelemetry(),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["backups", "list", "--output", "yaml"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["backups", "list", "--output", "yaml"]),
+          }),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured[0]?.properties.output_format).toBe("yaml");
@@ -216,22 +228,24 @@ describe("withCommandTelemetry", () => {
 
     return Effect.void.pipe(
       withCommandTelemetry(),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "json" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "backups",
-            "list",
-            "--output",
-            "pretty",
-            "--output-format",
-            "json",
-          ]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "json" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "backups",
+              "list",
+              "--output",
+              "pretty",
+              "--output-format",
+              "json",
+            ]),
+          }),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured[0]?.properties.output_format).toBe("json");
@@ -247,15 +261,17 @@ describe("withCommandTelemetry", () => {
       withCommandTelemetry({
         flags: { projectRef: Option.some("abcdefghijklmnopqrst") },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["secrets", "list", "--project-ref", "abcdefghijklmnopqrst"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["secrets", "list", "--project-ref", "abcdefghijklmnopqrst"]),
+          }),
+          commandRuntimeLayer(["secrets", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["secrets", "list"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -275,15 +291,17 @@ describe("withCommandTelemetry", () => {
       withCommandTelemetry({
         flags: { envFile: Option.some("/path/to/.env") },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["secrets", "set", "--env-file=/path/to/.env"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["secrets", "set", "--env-file=/path/to/.env"]),
+          }),
+          commandRuntimeLayer(["secrets", "set"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["secrets", "set"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -300,13 +318,15 @@ describe("withCommandTelemetry", () => {
       withCommandTelemetry({
         flags: { password: Option.some("super-secret") },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({ args: Effect.succeed(["db", "dump", "--password", "super-secret"]) }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "dump", "--password", "super-secret"]) }),
+          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -324,15 +344,17 @@ describe("withCommandTelemetry", () => {
         flags: { schema: Option.some(["public"]) },
         aliases: { s: "schema" },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["db", "lint", "-s", "public"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["db", "lint", "-s", "public"]),
+          }),
+          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -356,15 +378,17 @@ describe("withCommandTelemetry", () => {
           config,
           aliases: { f: "follow" },
         }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
         Effect.provide(
-          Stdio.layerTest({
-            args: Effect.succeed(["stack", "logs", "-f", "--service", "database"]),
-          }),
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({
+              args: Effect.succeed(["stack", "logs", "-f", "--service", "database"]),
+            }),
+            commandRuntimeLayer(["stack", "logs"]).pipe(Layer.provide(BunCrypto.layer)),
+          ),
         ),
-        Effect.provide(commandRuntimeLayer(["stack", "logs"]).pipe(Layer.provide(BunCrypto.layer))),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];
@@ -383,15 +407,17 @@ describe("withCommandTelemetry", () => {
         flags: { exclude: ["public.users"], file: Option.some("out.sql") },
         aliases: { s: "schema", x: "exclude", f: "file", p: "password" },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["db", "dump", "-x", "public.users", "-f", "out.sql"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["db", "dump", "-x", "public.users", "-f", "out.sql"]),
+          }),
+          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -409,15 +435,17 @@ describe("withCommandTelemetry", () => {
         flags: { file: Option.some("query.sql") },
         aliases: { f: "file" },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["db", "query", "-f", "query.sql"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["db", "query", "-f", "query.sql"]),
+          }),
+          commandRuntimeLayer(["db", "query"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "query"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -435,26 +463,26 @@ describe("withCommandTelemetry", () => {
         flags: { schema: ["public"], password: Option.some("secret") },
         aliases: { s: "schema", p: "password" },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "db",
-            "schema",
-            "declarative",
-            "generate",
-            "-s",
-            "public",
-            "-p",
-            "secret",
-          ]),
-        }),
-      ),
-      Effect.provide(
-        commandRuntimeLayer(["db", "schema", "declarative", "generate"]).pipe(
-          Layer.provide(BunCrypto.layer),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "db",
+              "schema",
+              "declarative",
+              "generate",
+              "-s",
+              "public",
+              "-p",
+              "secret",
+            ]),
+          }),
+          commandRuntimeLayer(["db", "schema", "declarative", "generate"]).pipe(
+            Layer.provide(BunCrypto.layer),
+          ),
         ),
       ),
       Effect.tap(() =>
@@ -474,26 +502,26 @@ describe("withCommandTelemetry", () => {
         flags: { schema: ["public"], file: Option.some("out.sql") },
         aliases: { s: "schema", f: "file" },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "db",
-            "schema",
-            "declarative",
-            "sync",
-            "-s",
-            "public",
-            "-f",
-            "out.sql",
-          ]),
-        }),
-      ),
-      Effect.provide(
-        commandRuntimeLayer(["db", "schema", "declarative", "sync"]).pipe(
-          Layer.provide(BunCrypto.layer),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "db",
+              "schema",
+              "declarative",
+              "sync",
+              "-s",
+              "public",
+              "-f",
+              "out.sql",
+            ]),
+          }),
+          commandRuntimeLayer(["db", "schema", "declarative", "sync"]).pipe(
+            Layer.provide(BunCrypto.layer),
+          ),
         ),
       ),
       Effect.tap(() =>
@@ -515,21 +543,21 @@ describe("withCommandTelemetry", () => {
           disableDbSslEnforcement: false,
         },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "ssl-enforcement",
-            "update",
-            "--enable-db-ssl-enforcement",
-            "--disable-db-ssl-enforcement",
-          ]),
-        }),
-      ),
-      Effect.provide(
-        commandRuntimeLayer(["ssl-enforcement", "update"]).pipe(Layer.provide(BunCrypto.layer)),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "ssl-enforcement",
+              "update",
+              "--enable-db-ssl-enforcement",
+              "--disable-db-ssl-enforcement",
+            ]),
+          }),
+          commandRuntimeLayer(["ssl-enforcement", "update"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
       Effect.tap(() =>
         Effect.sync(() => {
@@ -551,15 +579,17 @@ describe("withCommandTelemetry", () => {
         flags: { projectRef: Option.some("abcdefghijklmnopqrst") },
         safeFlags: ["project-ref"],
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["link", "--project-ref", "abcdefghijklmnopqrst"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["link", "--project-ref", "abcdefghijklmnopqrst"]),
+          }),
+          commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -582,13 +612,15 @@ describe("withCommandTelemetry", () => {
         flags: { lang: "python" },
         config,
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({ args: Effect.succeed(["gen", "types", "--lang", "python"]) }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["gen", "types", "--lang", "python"]) }),
+          commandRuntimeLayer(["gen", "types"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["gen", "types"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -614,14 +646,16 @@ describe("withCommandTelemetry", () => {
           flags: { algorithm: "RS256" },
           config,
         }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
         Effect.provide(
-          Stdio.layerTest({ args: Effect.succeed(["gen", "signing-key", "--algorithm", "RS256"]) }),
-        ),
-        Effect.provide(
-          commandRuntimeLayer(["gen", "signing-key"]).pipe(Layer.provide(BunCrypto.layer)),
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({
+              args: Effect.succeed(["gen", "signing-key", "--algorithm", "RS256"]),
+            }),
+            commandRuntimeLayer(["gen", "signing-key"]).pipe(Layer.provide(BunCrypto.layer)),
+          ),
         ),
         Effect.tap(() =>
           Effect.sync(() => {
@@ -647,11 +681,15 @@ describe("withCommandTelemetry", () => {
           config,
           aliases: { t: "type" },
         }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
-        Effect.provide(Stdio.layerTest({ args: Effect.succeed(["sso", "add", "-t", "saml"]) })),
-        Effect.provide(commandRuntimeLayer(["sso", "add"]).pipe(Layer.provide(BunCrypto.layer))),
+        Effect.provide(
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({ args: Effect.succeed(["sso", "add", "-t", "saml"]) }),
+            commandRuntimeLayer(["sso", "add"]).pipe(Layer.provide(BunCrypto.layer)),
+          ),
+        ),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];
@@ -673,14 +711,14 @@ describe("withCommandTelemetry", () => {
         flags: { algorithm: Option.some("ES256") },
         config,
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({ args: Effect.succeed(["gen", "signing-key", "--algorithm", "ES256"]) }),
-      ),
-      Effect.provide(
-        commandRuntimeLayer(["gen", "signing-key"]).pipe(Layer.provide(BunCrypto.layer)),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["gen", "signing-key", "--algorithm", "ES256"]) }),
+          commandRuntimeLayer(["gen", "signing-key"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
       Effect.tap(() =>
         Effect.sync(() => {
@@ -703,15 +741,17 @@ describe("withCommandTelemetry", () => {
         flags: { lang: "go", schema: "public" },
         config,
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["gen", "types", "--lang", "go", "--schema", "public"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["gen", "types", "--lang", "go", "--schema", "public"]),
+          }),
+          commandRuntimeLayer(["gen", "types"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["gen", "types"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -726,11 +766,15 @@ describe("withCommandTelemetry", () => {
 
     return Effect.void.pipe(
       withCommandTelemetry({ flags: {} }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) }),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -744,11 +788,15 @@ describe("withCommandTelemetry", () => {
     const analytics = mockContextualAnalytics();
 
     return withCommandTelemetry()(Effect.die(new StdoutClosedError())).pipe(
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) }),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
       Effect.exit,
       Effect.tap(() =>
         Effect.sync(() => {
@@ -766,14 +814,18 @@ describe("withCommandTelemetry", () => {
     const secret = "dump failed for postgres://customer.internal/private";
 
     return withCommandTelemetry()(Effect.fail(new DbDumpRunError({ message: secret }))).pipe(
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) }),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
       Effect.exit,
       Effect.tap(() =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           expect(analytics.captured).toHaveLength(1);
           expect(analytics.captured[0]?.properties).toMatchObject({
             exit_code: 1,
@@ -785,7 +837,7 @@ describe("withCommandTelemetry", () => {
           });
           expect(analytics.captured[0]?.properties).not.toHaveProperty(PropSuggestedCommand);
           expect(analytics.captured[0]?.properties).not.toHaveProperty(PropWorkflow);
-          expect(JSON.stringify(analytics.captured[0])).not.toContain(secret);
+          expect(yield* encodeJson(analytics.captured[0])).not.toContain(secret);
         }),
       ),
       Effect.asVoid,
@@ -797,11 +849,15 @@ describe("withCommandTelemetry", () => {
 
     return Effect.fail(failure).pipe(
       withCommandTelemetry(),
-      Effect.provide(failingAnalytics(new Error("telemetry defect"))),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.provide(
+        Layer.mergeAll(
+          failingAnalytics(new Error("telemetry defect")),
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) }),
+          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
@@ -821,11 +877,15 @@ describe("withCommandTelemetry", () => {
     // landing during the trailing capture must not be.
     return Effect.void.pipe(
       withCommandTelemetry(),
-      Effect.provide(interruptingAnalytics()),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.provide(
+        Layer.mergeAll(
+          interruptingAnalytics(),
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) }),
+          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
@@ -848,11 +908,15 @@ describe("withCommandTelemetry", () => {
       yield* pc.setExitCode(1);
     }).pipe(
       withCommandTelemetry(),
-      Effect.provide(analytics.layer),
-      Effect.provide(processControl.layer),
-      Effect.provide(mockOutput({ format: "json" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "lint"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          processControl.layer,
+          mockOutput({ format: "json" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "lint"]) }),
+          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -878,11 +942,15 @@ describe("withCommandTelemetry", () => {
       yield* pc.setExitCode(1);
     }).pipe(
       withCommandTelemetry(),
-      Effect.provide(analytics.layer),
-      Effect.provide(processControl.layer),
-      Effect.provide(mockOutput({ format: "json" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "advisors"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "advisors"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          processControl.layer,
+          mockOutput({ format: "json" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "advisors"]) }),
+          commandRuntimeLayer(["db", "advisors"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured[0]?.properties).toMatchObject({
@@ -913,11 +981,15 @@ describe("withCommandTelemetry", () => {
           yield* pc.setExitCode(1);
         }),
       ),
-      Effect.provide(analytics.layer),
-      Effect.provide(processControl.layer),
-      Effect.provide(mockOutput({ format: "json" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          processControl.layer,
+          mockOutput({ format: "json" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) }),
+          commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured[0]?.properties).toMatchObject({
@@ -941,12 +1013,14 @@ describe("withCommandTelemetry", () => {
       yield* pc.setExitCode(2);
     }).pipe(
       withCommandTelemetry(),
-      Effect.provide(analytics.layer),
-      Effect.provide(processControl.layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["unknown", "command"]) })),
       Effect.provide(
-        commandRuntimeLayer(["unknown", "command"]).pipe(Layer.provide(BunCrypto.layer)),
+        Layer.mergeAll(
+          analytics.layer,
+          processControl.layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["unknown", "command"]) }),
+          commandRuntimeLayer(["unknown", "command"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
       Effect.tap(() =>
         Effect.sync(() => {
@@ -974,14 +1048,14 @@ describe("withCommandTelemetry", () => {
         yield* pc.setExitCode(2);
       }).pipe(
         withCommandTelemetry(),
-        Effect.provide(analytics.layer),
-        Effect.provide(processControl.layer),
-        Effect.provide(mockOutput({ format: "json" }).layer),
         Effect.provide(
-          Stdio.layerTest({ args: Effect.succeed(["config", "diff", "--exit-code"]) }),
-        ),
-        Effect.provide(
-          commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunCrypto.layer)),
+          Layer.mergeAll(
+            analytics.layer,
+            processControl.layer,
+            mockOutput({ format: "json" }).layer,
+            Stdio.layerTest({ args: Effect.succeed(["config", "diff", "--exit-code"]) }),
+            commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunCrypto.layer)),
+          ),
         ),
         Effect.tap(() =>
           Effect.sync(() => {
@@ -1011,12 +1085,14 @@ describe("withCommandTelemetry", () => {
         yield* pc.setExitCode(2);
       }).pipe(
         withCommandTelemetry(),
-        Effect.provide(analytics.layer),
-        Effect.provide(processControl.layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
-        Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
         Effect.provide(
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          Layer.mergeAll(
+            analytics.layer,
+            processControl.layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) }),
+            commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          ),
         ),
         Effect.tap(() =>
           Effect.sync(() => {
@@ -1041,11 +1117,15 @@ describe("withCommandTelemetry", () => {
 
     return Effect.fail(failure).pipe(
       withCommandTelemetry(),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["config", "diff"]) })),
-      Effect.provide(commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["config", "diff"]) }),
+          commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
       Effect.exit,
       Effect.tap(() =>
         Effect.sync(() => {
@@ -1066,14 +1146,16 @@ describe("withCommandTelemetry", () => {
   it.live("skips analytics capture when analytics are disabled", () => {
     const analytics = mockContextualAnalytics();
 
-    return Effect.sync(() => "ok").pipe(
+    return Effect.succeed("ok").pipe(
       withCommandTelemetry({ analytics: false }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["telemetry", "enable"]) })),
       Effect.provide(
-        commandRuntimeLayer(["telemetry", "enable"]).pipe(Layer.provide(BunCrypto.layer)),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["telemetry", "enable"]) }),
+          commandRuntimeLayer(["telemetry", "enable"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
       Effect.tap(() =>
         Effect.sync(() => {
@@ -1093,22 +1175,22 @@ describe("withCommandTelemetry", () => {
           timestamp: Option.some(1707407047),
         },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "backups",
-            "restore",
-            "--timestamp=1707407047",
-            "--project-ref",
-            "abcdefghijklmnopqrst",
-          ]),
-        }),
-      ),
-      Effect.provide(
-        commandRuntimeLayer(["backups", "restore"]).pipe(Layer.provide(BunCrypto.layer)),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "backups",
+              "restore",
+              "--timestamp=1707407047",
+              "--project-ref",
+              "abcdefghijklmnopqrst",
+            ]),
+          }),
+          commandRuntimeLayer(["backups", "restore"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
       Effect.tap(() =>
         Effect.sync(() => {
@@ -1123,20 +1205,24 @@ describe("withCommandTelemetry", () => {
   it.live("rejects an -o value outside the command's enum, before running it", () => {
     const analytics = mockContextualAnalytics();
 
-    return Effect.sync(() => "must not run").pipe(
+    return Effect.succeed("must not run").pipe(
       withCommandTelemetry({ flags: {} }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list", "-o", "table"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
-      // `table` is valid on the shared global union but not for a resource command.
-      Effect.provide(Layer.succeed(OutputFlag, Option.some("table" as const))),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockOutput({ format: "text" }).layer,
+          mockProcessControl().layer,
+          Stdio.layerTest({ args: Effect.succeed(["backups", "list", "-o", "table"]) }),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          // `table` is valid on the shared global union but not for a resource command.
+          Layer.succeed(OutputFlag, Option.some("table" as const)),
+        ),
+      ),
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
           expect(error).toBeInstanceOf(InvalidOutputFormatError);
-          expect((error as InvalidOutputFormatError).message).toBe(
+          expect(error.message).toBe(
             'invalid argument "table" for "-o, --output" flag: must be one of [ env | pretty | json | toml | yaml ]',
           );
           expect(analytics.captured).toEqual([]);
@@ -1148,14 +1234,18 @@ describe("withCommandTelemetry", () => {
   it.live("accepts a command-specific -o value declared via outputFormats", () => {
     const analytics = mockContextualAnalytics();
 
-    return Effect.sync(() => "ok").pipe(
+    return Effect.succeed("ok").pipe(
       withCommandTelemetry({ flags: {}, outputFormats: QUERY_OUTPUT_FORMATS }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "query", "-o", "csv"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "query"]).pipe(Layer.provide(BunCrypto.layer))),
-      Effect.provide(Layer.succeed(OutputFlag, Option.some("csv" as const))),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockOutput({ format: "text" }).layer,
+          mockProcessControl().layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "query", "-o", "csv"]) }),
+          commandRuntimeLayer(["db", "query"]).pipe(Layer.provide(BunCrypto.layer)),
+          Layer.succeed(OutputFlag, Option.some("csv" as const)),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -1171,12 +1261,16 @@ describe("withCommandTelemetry", () => {
 
     return Effect.void.pipe(
       withCommandTelemetry(),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["link"]) })),
-      Effect.provide(commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer))),
-      Effect.provide(stitch.layer),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["link"]) }),
+          commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
+          stitch.layer,
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -1189,18 +1283,22 @@ describe("withCommandTelemetry", () => {
   it.live("rejects a resource-only -o value for db query's narrower enum", () => {
     const analytics = mockContextualAnalytics();
 
-    return Effect.sync(() => "must not run").pipe(
+    return Effect.succeed("must not run").pipe(
       withCommandTelemetry({ flags: {}, outputFormats: QUERY_OUTPUT_FORMATS }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "query", "-o", "yaml"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "query"]).pipe(Layer.provide(BunCrypto.layer))),
-      Effect.provide(Layer.succeed(OutputFlag, Option.some("yaml" as const))),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockOutput({ format: "text" }).layer,
+          mockProcessControl().layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "query", "-o", "yaml"]) }),
+          commandRuntimeLayer(["db", "query"]).pipe(Layer.provide(BunCrypto.layer)),
+          Layer.succeed(OutputFlag, Option.some("yaml" as const)),
+        ),
+      ),
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
-          expect((error as InvalidOutputFormatError).message).toBe(
+          expect(error.message).toBe(
             'invalid argument "yaml" for "-o, --output" flag: must be one of [ json | table | csv ]',
           );
         }),
@@ -1214,12 +1312,16 @@ describe("withCommandTelemetry", () => {
 
     return Effect.void.pipe(
       withCommandTelemetry(),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["link"]) })),
-      Effect.provide(commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer))),
-      Effect.provide(stitch.layer),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["link"]) }),
+          commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
+          stitch.layer,
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -1236,12 +1338,14 @@ describe("withCommandTelemetry", () => {
 
       return Effect.void.pipe(
         withCommandTelemetry(),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
-        Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
         Effect.provide(
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) }),
+            commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          ),
         ),
         Effect.tap(() =>
           Effect.sync(() => {
@@ -1261,15 +1365,17 @@ describe("withCommandTelemetry", () => {
         flags: { schema: Option.some(["--linked"]) },
         aliases: { s: "schema" },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["db", "lint", "--schema", "--linked"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["db", "lint", "--schema", "--linked"]),
+          }),
+          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
@@ -1288,15 +1394,17 @@ describe("withCommandTelemetry", () => {
         flags: { schema: Option.some(["public"]), linked: true },
         aliases: { s: "schema" },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["db", "lint", "--schema=public", "--linked"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["db", "lint", "--schema=public", "--linked"]),
+          }),
+          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
@@ -1314,15 +1422,17 @@ describe("withCommandTelemetry", () => {
         flags: { schema: Option.some(["public"]), linked: true },
         aliases: { s: "schema" },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["db", "lint", "-s", "public", "--linked"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["db", "lint", "-s", "public", "--linked"]),
+          }),
+          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
@@ -1340,15 +1450,17 @@ describe("withCommandTelemetry", () => {
       withCommandTelemetry({
         flags: { dbUrl: Option.some("x"), local: true },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["db", "lint", "--db-url", "x", "--local"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["db", "lint", "--db-url", "x", "--local"]),
+          }),
+          commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
@@ -1364,12 +1476,16 @@ describe("withCommandTelemetry", () => {
 
     return Effect.void.pipe(
       withCommandTelemetry({ flags: {} }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list", "--debug"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
-      Effect.provide(Layer.succeed(DebugFlag, true)),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["backups", "list", "--debug"]) }),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          Layer.succeed(DebugFlag, true),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -1386,22 +1502,24 @@ describe("withCommandTelemetry", () => {
       withCommandTelemetry({
         flags: { projectRef: Option.some("abcdefghijklmnopqrst") },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "secrets",
-            "list",
-            "--project-ref",
-            "abcdefghijklmnopqrst",
-            "--debug",
-          ]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "secrets",
+              "list",
+              "--project-ref",
+              "abcdefghijklmnopqrst",
+              "--debug",
+            ]),
+          }),
+          commandRuntimeLayer(["secrets", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          Layer.succeed(DebugFlag, true),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["secrets", "list"]).pipe(Layer.provide(BunCrypto.layer))),
-      Effect.provide(Layer.succeed(DebugFlag, true)),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -1421,18 +1539,18 @@ describe("withCommandTelemetry", () => {
 
       return Effect.void.pipe(
         withCommandTelemetry({ flags: {} }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
         Effect.provide(
-          Stdio.layerTest({
-            args: Effect.succeed(["backups", "list", "--workdir", "/tmp/project"]),
-          }),
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({
+              args: Effect.succeed(["backups", "list", "--workdir", "/tmp/project"]),
+            }),
+            commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+            Layer.succeed(WorkdirFlag, Option.some("/tmp/project")),
+          ),
         ),
-        Effect.provide(
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
-        ),
-        Effect.provide(Layer.succeed(WorkdirFlag, Option.some("/tmp/project"))),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];
@@ -1450,18 +1568,18 @@ describe("withCommandTelemetry", () => {
 
       return Effect.void.pipe(
         withCommandTelemetry({ flags: {} }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
         Effect.provide(
-          Stdio.layerTest({
-            args: Effect.succeed(["backups", "list", "--dns-resolver", "https"]),
-          }),
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({
+              args: Effect.succeed(["backups", "list", "--dns-resolver", "https"]),
+            }),
+            commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+            Layer.succeed(DnsResolverFlag, "https" as const),
+          ),
         ),
-        Effect.provide(
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
-        ),
-        Effect.provide(Layer.succeed(DnsResolverFlag, "https" as const)),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];
@@ -1479,18 +1597,18 @@ describe("withCommandTelemetry", () => {
 
       return Effect.void.pipe(
         withCommandTelemetry({ flags: {} }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
         Effect.provide(
-          Stdio.layerTest({
-            args: Effect.succeed(["backups", "list", "--agent", "yes"]),
-          }),
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({
+              args: Effect.succeed(["backups", "list", "--agent", "yes"]),
+            }),
+            commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+            Layer.succeed(AgentFlag, "yes" as const),
+          ),
         ),
-        Effect.provide(
-          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
-        ),
-        Effect.provide(Layer.succeed(AgentFlag, "yes" as const)),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];
@@ -1512,15 +1630,17 @@ describe("withCommandTelemetry", () => {
 
       return Effect.void.pipe(
         withCommandTelemetry({ flags: { output: "diff.sql" } }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
         Effect.provide(
-          Stdio.layerTest({
-            args: Effect.succeed(["db", "diff", "--output", "diff.sql"]),
-          }),
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({
+              args: Effect.succeed(["db", "diff", "--output", "diff.sql"]),
+            }),
+            commandRuntimeLayer(["db", "diff"]).pipe(Layer.provide(BunCrypto.layer)),
+          ),
         ),
-        Effect.provide(commandRuntimeLayer(["db", "diff"]).pipe(Layer.provide(BunCrypto.layer))),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];
@@ -1536,11 +1656,15 @@ describe("withCommandTelemetry", () => {
 
     return Effect.void.pipe(
       withCommandTelemetry({ flags: {} }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list", "--debug"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["backups", "list", "--debug"]) }),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -1555,15 +1679,17 @@ describe("withCommandTelemetry", () => {
 
     return Effect.void.pipe(
       withCommandTelemetry({ flags: {} }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["test", "db", "--", "--linked"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["test", "db", "--", "--linked"]),
+          }),
+          commandRuntimeLayer(["test", "db"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["test", "db"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags;
@@ -1578,12 +1704,16 @@ describe("withCommandTelemetry", () => {
 
     return Effect.void.pipe(
       withCommandTelemetry({ flags: {} }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list", "-o", "json"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
-      Effect.provide(Layer.succeed(OutputFlag, Option.some("json" as const))),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["backups", "list", "-o", "json"]) }),
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          Layer.succeed(OutputFlag, Option.some("json" as const)),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -1606,16 +1736,16 @@ describe("withCommandTelemetry", () => {
         withCommandTelemetry({
           flags: { envFile: Option.some("--debug") },
         }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
         Effect.provide(
-          Stdio.layerTest({
-            args: Effect.succeed(["secrets", "set", "--env-file", "--debug"]),
-          }),
-        ),
-        Effect.provide(
-          commandRuntimeLayer(["secrets", "set"]).pipe(Layer.provide(BunCrypto.layer)),
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({
+              args: Effect.succeed(["secrets", "set", "--env-file", "--debug"]),
+            }),
+            commandRuntimeLayer(["secrets", "set"]).pipe(Layer.provide(BunCrypto.layer)),
+          ),
         ),
         Effect.tap(() =>
           Effect.sync(() => {

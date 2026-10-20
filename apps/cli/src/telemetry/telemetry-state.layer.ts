@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Crypto, DateTime, Effect, FileSystem, Layer, Path } from "effect";
 import { homedir } from "node:os";
 
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
@@ -93,11 +93,9 @@ function parseGoRfc3339Ms(text: string): number | undefined {
   if (day < 1 || day > daysInMonth(year, month)) return undefined;
   if (hour > 23 || minute > 59 || second > 59) return undefined;
   if (match[9] !== undefined && (Number(match[9]) > 24 || Number(match[10]) > 60)) return undefined;
-  // `setUTCFullYear` (not `Date.UTC`) so years 0000-0099 aren't remapped to
-  // 1900-1999; components are already range-checked, so no rollover occurs.
-  const date = new Date(0);
-  date.setUTCFullYear(year, month - 1, day);
-  date.setUTCHours(hour, minute, second, 0);
+  /* `DateTime.makeUnsafe` parts (not `Date.UTC`) so years 0000-0099 aren't remapped to
+     1900-1999; components are already range-checked, so no rollover occurs. */
+  const date = DateTime.makeUnsafe({ year, month, day, hour, minute, second, millisecond: 0 });
   // At most 9 fractional digits (nanoseconds) are read; ms precision is exact for the 30-minute
   // comparison this feeds.
   const fractionMs = match[7] !== undefined ? Number(`0.${match[7].slice(0, 9)}`) * 1000 : 0;
@@ -105,7 +103,7 @@ function parseGoRfc3339Ms(text: string): number | undefined {
     match[8] !== undefined
       ? (match[8] === "-" ? -1 : 1) * (Number(match[9]) * 3600 + Number(match[10]) * 60) * 1000
       : 0;
-  return date.getTime() + fractionMs - offsetMs;
+  return DateTime.toEpochMillis(date) + fractionMs - offsetMs;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -390,16 +388,17 @@ export function readExistingState(text: string): PriorState | undefined {
 }
 
 export const loadOrCreateTelemetryState = Effect.fn("telemetry.loadOrCreateState")(function* (
-  opts: { readonly now?: Date } = {},
+  opts: { readonly now?: DateTime.Utc } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const pathSvc = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
   const filePath = telemetryPath(process.env, pathSvc);
   const exists = yield* fs.exists(filePath);
   const existing = exists ? yield* fs.readFileString(filePath) : undefined;
   const prior = existing !== undefined ? readExistingState(existing) : undefined;
-  const now = opts.now ?? new Date();
-  const nowIso = now.toISOString();
+  const now = opts.now ?? (yield* DateTime.now);
+  const nowIso = DateTime.formatIso(now);
 
   // The expiry comparison uses the epoch computed by `parseGoRfc3339Ms` during decode, not a
   // `new Date(string)` re-parse — a valid form JS can't parse (comma fraction `…00,5Z`, offsets
@@ -407,13 +406,14 @@ export const loadOrCreateTelemetryState = Effect.fn("telemetry.loadOrCreateState
   // though the instant decoded fine and is still inside the 30-minute window.
   const priorActiveMs = prior?.sessionLastActiveMs;
   const expired =
-    priorActiveMs === undefined || now.getTime() - priorActiveMs > SESSION_ROTATION_MS;
+    priorActiveMs === undefined ||
+    DateTime.toEpochMillis(now) - priorActiveMs > SESSION_ROTATION_MS;
 
   const state: State = {
     enabled: prior?.enabled ?? true,
-    device_id: prior?.device_id ?? crypto.randomUUID(),
+    device_id: prior?.device_id ?? (yield* crypto.randomUUIDv4),
     session_id:
-      !expired && prior?.session_id !== undefined ? prior.session_id : crypto.randomUUID(),
+      !expired && prior?.session_id !== undefined ? prior.session_id : yield* crypto.randomUUIDv4,
     session_last_active: nowIso,
     ...(prior?.distinct_id !== undefined ? { distinct_id: prior.distinct_id } : {}),
     // A decoded file's non-zero schema_version is kept. The numeric field is for in-memory
@@ -432,7 +432,7 @@ export const loadOrCreateTelemetryState = Effect.fn("telemetry.loadOrCreateState
 
 export const setTelemetryEnabled = Effect.fn("telemetry.setEnabled")(function* (
   enabled: boolean,
-  opts: { readonly now?: Date } = {},
+  opts: { readonly now?: DateTime.Utc } = {},
 ) {
   const state = yield* loadOrCreateTelemetryState(opts);
   if (state.enabled === enabled) return state;
@@ -469,8 +469,9 @@ const persistIdentityReset = Effect.fn("telemetry.persistIdentityReset")(functio
   const base = yield* loadOrCreateTelemetryState();
   const fs = yield* FileSystem.FileSystem;
   const pathSvc = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
   const { distinct_id: _drop, ...rest } = base;
-  const nextState: State = { ...rest, device_id: crypto.randomUUID() };
+  const nextState: State = { ...rest, device_id: yield* crypto.randomUUIDv4 };
   const filePath = telemetryPath(process.env, pathSvc);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
   yield* fs.writeFileString(filePath, serializeTelemetryState(nextState));
@@ -494,13 +495,17 @@ export const telemetryStateLayer = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const pathSvc = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
     const analytics = yield* Analytics;
     const runtime = yield* TelemetryRuntime;
 
-    const provide = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) =>
+    const provide = <A, E>(
+      effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Crypto.Crypto>,
+    ) =>
       effect.pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, pathSvc),
+        Effect.provideService(Crypto.Crypto, crypto),
       );
 
     return TelemetryState.of({

@@ -159,9 +159,7 @@ export const remoteTargetLayer = Layer.effect(
         const ref = yield* assertValid(chosen);
         return yield* done({ ref, source: "flag" });
       }
-      return yield* Effect.fail(
-        new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
-      );
+      return yield* new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE });
     });
 
     const flagKeyOf = (flagValue: Option.Option<string>): string =>
@@ -195,11 +193,9 @@ export const remoteTargetLayer = Layer.effect(
         const chosen = yield* prompt("Select a project:");
         return { ref: yield* assertValid(chosen), source: "flag" } as const;
       }
-      return yield* Effect.fail(
-        new ProjectRefRequiredError({
-          message: `required flag(s) "project-ref" not set`,
-        }),
-      );
+      return yield* new ProjectRefRequiredError({
+        message: `required flag(s) "project-ref" not set`,
+      });
     });
 
     const resolveOptional = Effect.fn("RemoteTarget.resolveOptional")(function* (

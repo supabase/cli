@@ -253,6 +253,18 @@ describe("service catalog", () => {
         yield* sql.unsafe(
           "INSERT INTO public.catalog_native_probe (id, value) VALUES (1, 'catalog-native');",
         );
+        yield* sql.unsafe(`CREATE OR REPLACE FUNCTION public.catalog_native_hook() RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF current_setting('request.headers', true)::json->>'x-app-secret' IS DISTINCT FROM 'expected' THEN
+    RAISE SQLSTATE 'PGRST' USING MESSAGE = '{"code":"APP_403","message":"Unauthorized."}',
+      DETAIL = '{"status":403,"headers":{}}';
+  END IF;
+END $$;`);
+        yield* sql.unsafe("GRANT EXECUTE ON FUNCTION public.catalog_native_hook() TO anon;");
+        yield* sql.unsafe(
+          "ALTER ROLE supabase_admin SET pgrst.db_pre_request = 'public.catalog_native_hook';",
+        );
         const restRecipe = yield* makeServiceRecipe(
           {
             service: "rest",
@@ -274,6 +286,9 @@ describe("service catalog", () => {
         yield* rest.start;
         yield* rest.ready;
         const endpoint = yield* restRecipe.endpoint("http");
+        const base = "http://" + httpHost(endpoint) + ":" + endpoint.port;
+        const rejected = yield* client.execute(HttpClientRequest.get(base + "/"));
+        expect(rejected.status).toBe(403);
         const token = yield* Effect.tryPromise(() =>
           new SignJWT({ role: "anon" })
             .setProtectedHeader({ alg: "HS256", typ: "JWT" })
@@ -282,9 +297,10 @@ describe("service catalog", () => {
             .sign(new TextEncoder().encode(secret)),
         );
         const response = yield* client.execute(
-          HttpClientRequest.get(
-            "http://" + httpHost(endpoint) + ":" + endpoint.port + "/catalog_native_probe",
-          ).pipe(HttpClientRequest.setHeader("Authorization", "Bearer " + token)),
+          HttpClientRequest.get(base + "/catalog_native_probe").pipe(
+            HttpClientRequest.setHeader("Authorization", "Bearer " + token),
+            HttpClientRequest.setHeader("x-app-secret", "expected"),
+          ),
         );
         const responseBody = yield* response.text;
         expect(response.status).toBe(200);

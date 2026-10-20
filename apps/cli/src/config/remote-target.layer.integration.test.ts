@@ -1,10 +1,7 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option } from "effect";
+import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import {
   VALID_REF,
@@ -112,16 +109,18 @@ describe("remoteTargetLayer Management API requests", () => {
   });
 
   it.effect("requests nothing when supabase/.temp/project-ref links the project", () => {
-    const tempDir = join(workdir.current, "supabase", ".temp");
-    mkdirSync(tempDir, { recursive: true });
-    writeFileSync(join(tempDir, "project-ref"), VALID_REF);
     const { api, layer } = setup({});
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = path.join(workdir.current, "supabase", ".temp");
+      yield* fs.makeDirectory(tempDir, { recursive: true });
+      yield* fs.writeFileString(path.join(tempDir, "project-ref"), VALID_REF);
       const { resolve } = yield* RemoteTarget;
       const { ref } = yield* resolve(Option.none());
       expect(ref).toBe(VALID_REF);
       expect(api.requests).toEqual([]);
-    }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide([layer, BunServices.layer]));
   });
 });
 
@@ -158,7 +157,9 @@ describe("remoteTargetLayer in stack mode", () => {
       Layer.provide(api.factoryLayer),
       Layer.provide(BunServices.layer),
     );
-    return effect.pipe(Effect.provide(layer), Effect.provide(projectStateModeLayer("stack")));
+    return effect.pipe(
+      Effect.provide(layer.pipe(Layer.provideMerge(projectStateModeLayer("stack")))),
+    );
   };
 
   const resolveWith = (flag: Option.Option<string>, projectId?: string) =>

@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Layer, Option } from "effect";
+import { ConfigProvider, Effect, Layer, Option, Schema } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
@@ -12,6 +12,7 @@ import { writeProjectLink } from "../command-internal/project-link.ts";
 import { analyticsLayer, analyticsLayerFor } from "./analytics.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-analytics-destination-");
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 describe("analytics destination", () => {
   it.live("uses ambient telemetry configuration despite project destination settings", () => {
@@ -65,13 +66,13 @@ describe("analytics destination", () => {
   it.live("attributes events to the organization and project of a stack-mode link document", () => {
     const events: unknown[] = [];
     const recordingClient = HttpClient.make((request) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         if (request.body._tag === "Raw" && request.body.body instanceof Uint8Array) {
           const bytes =
             request.headers["content-encoding"] === "gzip"
               ? gunzipSync(request.body.body)
               : request.body.body;
-          const payload: unknown = JSON.parse(new TextDecoder().decode(bytes));
+          const payload = yield* decodeJson(new TextDecoder().decode(bytes)).pipe(Effect.orDie);
           const batch =
             typeof payload === "object" ? Reflect.get(payload ?? {}, "batch") : undefined;
           if (Array.isArray(batch)) events.push(...batch);

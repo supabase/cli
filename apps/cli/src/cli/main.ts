@@ -44,13 +44,15 @@ const selectedProjectState = Exit.isSuccess(selectionExit)
   : undefined;
 
 if (
-  !(await tryComplete(
-    defaultCompleteDeps(
-      Exit.isSuccess(selectionExit) ? selectedRoot : undefined,
-      selectionCause,
-      selectedProjectState !== undefined && Exit.isSuccess(selectedProjectState)
-        ? selectedProjectState.value
-        : "legacy",
+  !(await Effect.runPromise(
+    tryComplete(
+      defaultCompleteDeps(
+        Exit.isSuccess(selectionExit) ? selectedRoot : undefined,
+        selectionCause,
+        selectedProjectState !== undefined && Exit.isSuccess(selectedProjectState)
+          ? selectedProjectState.value
+          : "legacy",
+      ),
     ),
   ))
 ) {

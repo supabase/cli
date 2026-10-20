@@ -97,6 +97,8 @@ export interface ProcessRecipeSpec<C extends RecipeCreation<ServiceKind, unknown
   readonly executable: string;
   readonly ports: Readonly<Record<string, number>>;
   readonly healthPath: string;
+  /** The `ports` entry `healthPath` is probed on; defaults to `http`. */
+  readonly healthPort?: string;
   readonly args: (
     creation: C,
     endpoints: ReadonlyMap<string, ServiceEndpoint>,
@@ -626,12 +628,12 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         type NativeAttempt = Effect.Success<ReturnType<typeof spawnAttempt>>;
 
         const readyCondition = (attempt: NativeAttempt, timeout: Duration.Input) => {
-          const http = attempt.selected.get("http");
-          if (http === undefined)
+          const ready = attempt.selected.get(spec.healthPort ?? "http");
+          if (ready === undefined)
             return Effect.fail(serviceError("health", "Recipe has no HTTP readiness endpoint"));
           return Effect.all(
             [
-              readiness(deps.client, http, spec.healthPath, timeout),
+              readiness(deps.client, ready, spec.healthPath, timeout),
               spec.nativeReadinessOutput === undefined
                 ? Effect.void
                 : Deferred.await(attempt.output.bindReady),
@@ -890,7 +892,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
       yield* Ref.set(endpoints, selected);
       yield* publishProcessLogs(launched, yield* output.part, context.scope);
       const runtime = runtimeFromContainer(launched);
-      const ready = selected.get("http");
+      const ready = selected.get(spec.healthPort ?? "http");
       const noReadinessEndpoint = Effect.fail(
         serviceError("health", "Recipe has no HTTP readiness endpoint"),
       );
