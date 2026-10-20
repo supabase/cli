@@ -39,15 +39,14 @@ describe("deprecationMessages", () => {
   const messages = (deprecations: ReadonlyArray<TargetDeprecation>) =>
     deprecationMessages(deprecations, HOST);
 
-  it("points a deprecated --project-ref at --remote=<ref>", () => {
-    expect(
-      messages([
-        { kind: "remote-alias", flags: ["--project-ref"], remote: { _tag: "Ref", ref: REF } },
-      ]),
-    ).toEqual([
-      "--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead",
-    ]);
-  });
+  it.each(["--project-ref", "--project-id"] as const)(
+    "points a deprecated %s at --remote=<ref>",
+    (flag) => {
+      expect(
+        messages([{ kind: "remote-alias", flags: [flag], remote: { _tag: "Ref", ref: REF } }]),
+      ).toEqual([`${flag} is deprecated and will be removed in v4. Use --remote=<ref> instead`]);
+    },
+  );
 
   it("points a deprecated --linked at a bare --remote", () => {
     expect(
