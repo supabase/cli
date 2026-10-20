@@ -226,6 +226,73 @@ describe("live branch lifecycle helpers", () => {
     }),
   );
 
+  it.effect(
+    "re-issues create once after a platform database restart, clearing the half-made branch",
+    () =>
+      Effect.gen(function* () {
+        const state: State = { calls: [], listed: false, getReady: false, deleteAttempts: 0 };
+        let creates = 0;
+        const cli: BranchCli = (args) =>
+          Effect.sync(() => {
+            state.calls.push(args.join(" "));
+            if (args[1] === "create") {
+              creates += 1;
+              state.listed = true;
+              return creates === 1
+                ? result(
+                    JSON.stringify({
+                      _tag: "Error",
+                      error: {
+                        message:
+                          "unexpected create branch status 400: FATAL:  57P01: terminating connection due to administrator command",
+                      },
+                    }),
+                    "",
+                    1,
+                  )
+                : result(JSON.stringify(branch));
+            }
+            if (args[1] === "delete") {
+              state.listed = false;
+              return result();
+            }
+            if (args[1] === "list")
+              return result(
+                JSON.stringify(state.listed ? [defaultBranch, branch] : [defaultBranch]),
+              );
+            return result();
+          });
+        const ref = yield* createLiveBranchEffect(cli, project, branch.name);
+        expect(ref).toBe(branchRef);
+        expect(creates).toBe(2);
+        const deleteIndex = state.calls.indexOf(
+          `branches delete ${branch.name} --project-ref ${project.ref} --yes`,
+        );
+        expect(deleteIndex).toBeGreaterThan(-1);
+        expect(
+          state.calls.findLastIndex((call) => call.includes("branches create")),
+        ).toBeGreaterThan(deleteIndex);
+      }),
+  );
+
+  it.effect("fails a create rejected by a second platform database restart", () =>
+    Effect.gen(function* () {
+      let creates = 0;
+      const cli: BranchCli = (args) =>
+        Effect.sync(() => {
+          if (args[1] === "create") {
+            creates += 1;
+            return result("", "status 400: the database system is shutting down", 1);
+          }
+          return result(JSON.stringify([defaultBranch]));
+        });
+      const exit = yield* Effect.exit(createLiveBranchEffect(cli, project, branch.name));
+      if (!Exit.isFailure(exit)) throw new Error("expected create failure");
+      expect(String(exit.cause)).toContain("the database system is shutting down");
+      expect(creates).toBe(2);
+    }),
+  );
+
   it.effect("never echoes branches get stdout, which prints the branch secrets", () =>
     Effect.gen(function* () {
       const cli: BranchCli = () => Effect.succeed(result("DB_PASSWORD sentinel-secret", "", 1));
