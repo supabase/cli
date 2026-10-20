@@ -31,7 +31,7 @@ export class StackCommandInstallError extends Data.TaggedError("ExperimentalStac
       case "runtime":
         return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
       case "stack":
-        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability;
+        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability(this.cause);
     }
   }
 }

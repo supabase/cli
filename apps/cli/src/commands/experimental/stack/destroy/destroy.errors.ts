@@ -36,7 +36,7 @@ export class StackCommandDestroyError extends Data.TaggedError("ExperimentalStac
       case "uploads":
         return { ...actionability.runtimeCrash, fingerprint_suffix: "filesystem_io" };
       case "stack":
-        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability;
+        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability(this.cause);
     }
   }
 }

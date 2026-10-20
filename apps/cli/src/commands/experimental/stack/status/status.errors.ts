@@ -26,7 +26,7 @@ export class StackCommandStatusError extends Data.TaggedError("ExperimentalStack
       case "output":
         return { ...actionability.provideFlags, fingerprint_suffix: "output_format" };
       case "stack":
-        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability;
+        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability(this.cause);
     }
   }
 }

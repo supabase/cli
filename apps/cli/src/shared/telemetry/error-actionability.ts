@@ -93,6 +93,7 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "connect",
   "container_configuration",
   "container_killed",
+  "credentials_conflict",
   "daemon_protocol",
   "daemon_start",
   "daemon_status",
@@ -116,6 +117,7 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "filesystem_io",
   "flags",
   "forbidden",
+  "functions_env",
   "gateway_auth",
   "health_check",
   "health_timeout",
@@ -126,6 +128,8 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "invalid_url",
   "lease_held",
   "lifecycle",
+  "missing_credentials",
+  "missing_database",
   "network",
   "not_found",
   "operation_timeout",
@@ -143,6 +147,7 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "process_exit",
   "process_spawn",
   "process_stop",
+  "project_config",
   "query",
   "registry_pull",
   "release_mismatch",
@@ -152,10 +157,29 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "request_input",
   "runtime_stopped",
   "saml_disabled",
+  "saved_stack_changes",
   "seed_buckets",
+  "service_config",
   "stack_configuration",
   "state_file",
   "unclassified",
+  "unclassified_configure_composition",
+  "unclassified_create",
+  "unclassified_create_service",
+  "unclassified_credentials",
+  "unclassified_definition",
+  "unclassified_endpoint_changes",
+  "unclassified_open",
+  "unclassified_plan",
+  "unclassified_plan_composition",
+  "unclassified_prepare",
+  "unclassified_prepare_service",
+  "unclassified_ready",
+  "unclassified_ready_service",
+  "unclassified_start",
+  "unclassified_start_composition",
+  "unclassified_start_service",
+  "unclassified_status",
 ] as const;
 
 type CliErrorFingerprintSuffix = (typeof CLI_ERROR_FINGERPRINT_SUFFIXES)[number];
@@ -538,11 +562,48 @@ const stackErrorReasonActionability = {
   "release-mismatch": { ...actionability.invalidInput, fingerprint_suffix: "release_mismatch" },
 } as const satisfies Record<NonNullable<StackError["reason"]>, CliErrorActionabilityDeclaration>;
 
-/** Reported when nothing in a stack failure classifies it. */
-export const unclassifiedStackFailureActionability: CliErrorActionabilityDeclaration = {
+const unclassifiedStackFailure: CliErrorActionabilityDeclaration = {
   ...actionability.unknown,
   fingerprint_suffix: "unclassified",
 };
+
+// The stack operations `stack start` runs; a failure in any other operation stays `unclassified`.
+const unclassifiedStackOperationSuffixes = {
+  configureComposition: "unclassified_configure_composition",
+  create: "unclassified_create",
+  createService: "unclassified_create_service",
+  credentials: "unclassified_credentials",
+  definition: "unclassified_definition",
+  open: "unclassified_open",
+  plan: "unclassified_plan",
+  prepare: "unclassified_prepare",
+  prepareService: "unclassified_prepare_service",
+  ready: "unclassified_ready",
+  readyService: "unclassified_ready_service",
+  start: "unclassified_start",
+  startComposition: "unclassified_start_composition",
+  startService: "unclassified_start_service",
+  startupEndpointChanges: "unclassified_endpoint_changes",
+  status: "unclassified_status",
+  supabaseComposition: "unclassified_plan_composition",
+} as const satisfies Record<string, CliErrorFingerprintSuffix>;
+
+/** Reported when nothing in a stack failure classifies it, named by the failed stack operation. */
+export function unclassifiedStackFailureActionability(
+  cause: unknown,
+): CliErrorActionabilityDeclaration {
+  const error = unwrapNativeFailure(cause);
+  const operation =
+    isErrorRecord(error) && readErrorTag(error) === "StackError"
+      ? ownValue(error, "operation")
+      : undefined;
+  return isTableKey(unclassifiedStackOperationSuffixes, operation)
+    ? {
+        ...actionability.unknown,
+        fingerprint_suffix: unclassifiedStackOperationSuffixes[operation],
+      }
+    : unclassifiedStackFailure;
+}
 
 function isTableKey<T extends object>(table: T, value: unknown): value is keyof T {
   return typeof value === "string" && Object.hasOwn(table, value);
@@ -971,7 +1032,7 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
           isErrorRecord(outcome) ? stackKindDeclaration(outcome["kind"]) : undefined,
         )
         .find((declaration) => declaration !== undefined) ??
-      unclassifiedStackFailureActionability
+      unclassifiedStackFailure
     );
   },
 };
@@ -997,7 +1058,7 @@ export function causeDeclaration(cause: unknown): CliErrorActionabilityDeclarati
       return undefined;
     const external = externalActionabilityByTag[tag]?.(error);
     // An unclassified stack failure leaves the wrapper's own fallback in charge.
-    return external === unclassifiedStackFailureActionability ? undefined : external;
+    return external === unclassifiedStackFailure ? undefined : external;
   } finally {
     causeDeclarationDepth--;
   }
