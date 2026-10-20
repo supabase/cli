@@ -369,6 +369,19 @@ describe("resolveProjectTarget", () => {
     }),
   );
 
+  it.effect("reports a UUID-shaped value the API would reject as an unknown branch", () =>
+    Effect.gen(function* () {
+      const name = "11111111-2222-3333-4444-555555555555";
+      const result = yield* run({ remote: { _tag: "Branch", name } });
+      expect(failureOf(result.exit)).toMatchObject({
+        _tag: "LinkBranchListStatusError",
+        status: 404,
+        message: `Branch "${name}" not found. Run \`supabase branches list\` to see available branches.`,
+      });
+      expect(result.requestedUrls).toEqual([]);
+    }),
+  );
+
   it.effect("reports a branch UUID whose project is still provisioning", () =>
     Effect.gen(function* () {
       const result = yield* run(

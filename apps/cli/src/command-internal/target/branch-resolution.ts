@@ -222,15 +222,14 @@ export const resolveLinkBranchRef = Effect.fn("Target.resolveBranch")(function* 
 
 const resolveBranchById = Effect.fnUntraced(function* (id: string) {
   const api = yield* acquireApi();
+  const notFoundMessage = `Branch "${sanitizeInlineName(id)}" not found. Run \`supabase branches list\` to see available branches.`;
   const mapBranchGetError = mapHttpError({
     networkError: LinkBranchListNetworkError,
     statusError: LinkBranchListStatusError,
     networkMessage: (cause) => `failed to look up branch: ${cause}`,
     statusMessage: (status, body) => {
       if (status === 401) return AUTHENTICATION_FAILED_STATUS_MESSAGE;
-      return status === 404
-        ? `Branch "${sanitizeInlineName(id)}" not found. Run \`supabase branches list\` to see available branches.`
-        : `unexpected get branch status ${status}: ${body}`;
+      return status === 404 ? notFoundMessage : `unexpected get branch status ${status}: ${body}`;
     },
   });
 
@@ -238,6 +237,11 @@ const resolveBranchById = Effect.fnUntraced(function* (id: string) {
   const detail = yield* api.v1.getABranchConfig({ branch_id_or_ref: id }).pipe(
     Effect.tapError(() => task?.fail() ?? Effect.void),
     Effect.catch(mapBranchGetError),
+    Effect.catchTag("SupabaseApiInputError", () =>
+      Effect.fail(
+        new LinkBranchListStatusError({ status: 404, body: "", message: notFoundMessage }),
+      ),
+    ),
   );
   yield* task?.clear ?? Effect.void;
 
