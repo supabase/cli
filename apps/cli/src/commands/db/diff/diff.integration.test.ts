@@ -85,7 +85,10 @@ import {
   ProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/project-ref.service.ts";
-import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
+import {
+  DbConfigIpv6Error,
+  DbConfigLoadError,
+} from "../../../command-internal/db-config.errors.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type {
   DbConnectionInput,
@@ -157,6 +160,8 @@ interface SetupOpts {
   // Simulates an unlinked workdir: the project-ref resolver fails with
   // `ProjectRefNotLinkedError` absent an explicit `--remote=<ref>`.
   readonly linkedFails?: boolean;
+  // Makes every hosted connection resolve fail with this error.
+  readonly resolveFailsWith?: DbConfigIpv6Error;
   // Per-differ-run `--json-diff` stdout, indexed by run order; falls back to `""`
   // once exhausted, so a single-run test only needs one element.
   readonly pgadminStdout?: ReadonlyArray<string>;
@@ -504,6 +509,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const resolver = Layer.succeed(DbConfigResolver, {
     resolveConnection: (input: DbConnectionInput) => {
       resolverCalls.push(input);
+      if (opts.resolveFailsWith !== undefined) return Effect.fail(opts.resolveFailsWith);
       return Effect.succeed({
         conn: {
           host: "127.0.0.1",
@@ -1666,6 +1672,59 @@ describe("db diff", () => {
           activeFlags: { from: "feature-x", to: "migrations" },
           requests: branchApi.requests,
         });
+      });
+    });
+
+    describe("when the project's database is unreachable over IPv6 and has no pooler URL", () => {
+      const message = "IPv6 is not supported on your current network";
+
+      it.effect(
+        "suggests the pooler URL as --from/--to for a project other than the linked one",
+        () => {
+          const s = setup(tmp.current, {
+            isLocal: false,
+            resolveFailsWith: new DbConfigIpv6Error({
+              message,
+              remedy: "pooler-url",
+              suggestion:
+                "Pass the project's connection pooler URL with --remote=<pooler db-url> to connect over IPv4.",
+            }),
+          });
+          return Effect.gen(function* () {
+            const error = yield* dbDiff(
+              flags({ from: Option.some(FLAG_PROJECT_REF), to: Option.some("migrations") }),
+            ).pipe(Effect.flip);
+            expect(error).toMatchObject({
+              _tag: "DbConfigIpv6Error",
+              message,
+              suggestion:
+                "Pass the project's connection pooler URL as --from=<url> or --to=<url> to connect over IPv4.",
+            });
+            expect(error).toMatchObject({ suggestion: expect.not.stringContaining("--remote") });
+            expect(s.explicitDiffCalls).toEqual([]);
+          }).pipe(Effect.provide(Layer.merge(s.layer, branchListApi().layer)));
+        },
+      );
+
+      it.effect("keeps the link suggestion for the linked project", () => {
+        const suggestion = `Run supabase link --project-ref ${VALID_REF} to setup IPv4 connection.`;
+        const s = setup(tmp.current, {
+          isLocal: false,
+          projectId: Option.some(VALID_REF),
+          resolveFailsWith: new DbConfigIpv6Error({ message, remedy: "link", suggestion }),
+        });
+        return Effect.gen(function* () {
+          const error = yield* dbDiff(
+            flags({ from: Option.some("remote"), to: Option.some("migrations") }),
+          ).pipe(Effect.flip);
+          expect(error).toMatchObject({
+            _tag: "DbConfigIpv6Error",
+            message,
+            remedy: "link",
+            suggestion,
+          });
+          expect(s.explicitDiffCalls).toEqual([]);
+        }).pipe(Effect.provide(Layer.merge(s.layer, branchListApi().layer)));
       });
     });
   });

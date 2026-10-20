@@ -1,5 +1,6 @@
 import { Result } from "effect";
 
+import { DbConfigIpv6Error } from "../../../command-internal/db-config.errors.ts";
 import {
   parseNamedRemote,
   type NamedRemoteRejection,
@@ -115,3 +116,14 @@ export const explicitSelectorError = (error: TargetSelectorError): TargetSelecto
       });
   }
 };
+
+/** An IPv6 failure for another project suggests `--from`/`--to`, as explicit mode rejects `--remote`. */
+export const explicitIpv6Error = (error: DbConfigIpv6Error): DbConfigIpv6Error =>
+  error.remedy === "pooler-url"
+    ? new DbConfigIpv6Error({
+        message: error.message,
+        remedy: error.remedy,
+        suggestion:
+          "Pass the project's connection pooler URL as --from=<url> or --to=<url> to connect over IPv4.",
+      })
+    : error;

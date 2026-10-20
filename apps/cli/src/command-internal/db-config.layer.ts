@@ -573,6 +573,7 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
   if (Option.isNone(poolerConn)) {
     return yield* new Errors.DbConfigIpv6Error({
       message: "IPv6 is not supported on your current network",
+      remedy: adHocProjectRef ? "pooler-url" : "link",
       suggestion: adHocProjectRef
         ? "Pass the project's connection pooler URL with --remote=<pooler db-url> to connect over IPv4."
         : `Run supabase link --project-ref ${ref} to setup IPv4 connection.`,

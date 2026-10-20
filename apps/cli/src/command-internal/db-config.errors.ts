@@ -112,17 +112,19 @@ export class DbConfigUnbanStatusError extends Data.TaggedError("DbConfigUnbanSta
 }
 
 /**
- * The linked project's direct database host is unreachable (IPv6-only) and no connection pooler
- * is configured. The message text is exact: `"IPv6 is not supported on your current network"`.
+ * A project's direct database host is unreachable (IPv6-only) and no connection pooler is
+ * configured. The message text is exact: `"IPv6 is not supported on your current network"`.
  */
 export class DbConfigIpv6Error extends Data.TaggedError("DbConfigIpv6Error")<{
   readonly message: string;
   readonly suggestion?: string;
+  /** `pooler-url` for a project other than the linked one; `link` (the default) otherwise. */
+  readonly remedy?: "link" | "pooler-url";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // The rendered remediation is "Run supabase link --project-ref <ref> to
-    // setup IPv4 connection", so the suggestion is link-shaped even though the
-    // category stays db_connection.
+    if (this.remedy === "pooler-url") {
+      return { ...actionability.dbConnection, suggestion_type: CliSuggestionType.ProvideFlags };
+    }
     return {
       ...actionability.dbConnection,
       suggestion_type: CliSuggestionType.LinkProject,

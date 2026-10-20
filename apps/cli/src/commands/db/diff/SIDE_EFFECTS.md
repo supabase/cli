@@ -278,6 +278,12 @@ a postgresql:// URL; convert a connection string to a postgresql:// URL and pass
   empty `--project-ref` or `--db-url`, and a URL in `--project-ref` keep their usual messages; each
   suggestion names `--from`/`--to` instead of `--remote`, which this mode rejects.
 
+- **Explicit `--from`/`--to` with a project whose database is unreachable over IPv6.** A project
+  or branch endpoint falls back to the pooler URL the API returns. With none, the run fails with
+  `IPv6 is not supported on your current network`. The suggestion for the linked project is
+  `Run supabase link --project-ref <ref> to setup IPv4 connection.`; for any other project or
+  branch it is `Pass the project's connection pooler URL as --from=<url> or --to=<url> to connect over IPv4.`
+
 - **Explicit `--from`/`--to` config and URLs.** The config is read when the first endpoint that
   needs it resolves, not before. A hosted endpoint resolved first merges its `[remotes.<ref>]`
   block into that read, before validation and before its temporary login role is minted, so

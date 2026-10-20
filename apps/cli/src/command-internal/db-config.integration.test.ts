@@ -1474,6 +1474,7 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
           Effect.sync(() => {
             expect(error).toMatchObject({
               _tag: "DbConfigIpv6Error",
+              remedy: "pooler-url",
               suggestion:
                 "Pass the project's connection pooler URL with --remote=<pooler db-url> to connect over IPv4.",
             });
@@ -1528,6 +1529,7 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
               expect(Option.isSome(error)).toBe(true);
               if (Option.isSome(error)) {
                 expect(error.value).toMatchObject({
+                  remedy: "link",
                   suggestion: `Run supabase link --project-ref ${ref} to setup IPv4 connection.`,
                 });
               }
@@ -2042,6 +2044,7 @@ describe("dbConfigResolver.resolveConnection", () => {
             Effect.sync(() => {
               expect(error).toMatchObject({
                 _tag: "DbConfigIpv6Error",
+                remedy: "link",
                 suggestion: `Run supabase link --project-ref ${ref} to setup IPv4 connection.`,
               });
               expect(requests).toEqual([]);
