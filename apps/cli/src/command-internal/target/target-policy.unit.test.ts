@@ -33,7 +33,7 @@ const CONSENT_FREE_OPERATIONS: ReadonlyMap<string, string> = new Map([
   ["v1-check-vanity-subdomain-availability", "a POST that only reads availability"],
 ]);
 
-/** Non-GET operations one leaf may call without consent; the leaf must also declare `consentExemptReason`. */
+/** Non-GET operations a single leaf may call without consent, keyed by its command path. */
 const LEAF_CONSENT_FREE_OPERATIONS: ReadonlyMap<string, ReadonlyMap<string, string>> = new Map([
   [
     "notebooks pull",

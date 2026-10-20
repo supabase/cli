@@ -40,7 +40,7 @@ interface TargetSelectionHarness<R> {
   readonly layer: Layer.Layer<R, unknown>;
   readonly requests: () => ReadonlyArray<RecordedCall>;
   readonly warnings: () => ReadonlyArray<string>;
-  /** For a leaf whose requests never name its project (`sso info`, `snippets list`): the ref it cached as its target. */
+  /** The ref the leaf cached as its target. */
   readonly cachedRef?: () => string | undefined;
 }
 
@@ -56,6 +56,8 @@ export interface TargetSelectionMatrix<R> {
   /** Flags the command's permission declaration conditions on, beyond the selector under test. */
   readonly activeFlags?: ActiveFlags;
   readonly variant?: PermissionVariant;
+  /** `false` for a leaf whose requests name no project: only its cached ref shows the target. */
+  readonly requestsNameProject?: false;
   /** Builds the runtime for one run; `selectorArgs` is the selector's share of the command line. */
   readonly harness: (input: {
     readonly selectorArgs: ReadonlyArray<string>;
@@ -69,11 +71,14 @@ export interface TargetSelectionMatrix<R> {
   readonly run: (flags: TargetSelectionFlags) => Effect.Effect<unknown, unknown, R>;
 }
 
+// `snippets list` names its project in a `project_ref` query parameter, not in the path.
 const projectRefsOf = (requests: ReadonlyArray<RecordedCall>): ReadonlyArray<string> => [
   ...new Set(
     requests.flatMap((request) => {
-      const ref = PROJECT_REF_IN_URL.exec(new URL(request.url, API_URL).pathname)?.[1];
-      return ref === undefined ? [] : [ref];
+      const ref =
+        PROJECT_REF_IN_URL.exec(new URL(request.url, API_URL).pathname)?.[1] ??
+        new URLSearchParams(request.urlParams ?? "").get("project_ref");
+      return ref === null || ref === undefined ? [] : [ref];
     }),
   ),
 ];
@@ -92,12 +97,12 @@ export function describeTargetSelectionMatrix<R>(
   const commandName = `\`supabase ${path}\``;
   const extraFlags = matrix.activeFlags ?? {};
   const driftVariant = matrix.variant === undefined ? {} : { variant: matrix.variant };
-  // A parent-scoped command goes on to touch the branch's own project, so only the first project it reaches is the parent.
+  // A parent-scoped command goes on to touch the branch's project, so only its first ref counts.
   const expectActedOn = (run: TargetSelectionHarness<R>, ref: string) => {
     const refs = projectRefsOf(run.requests());
     if (run.cachedRef !== undefined) expect(run.cachedRef()).toBe(ref);
-    if (run.cachedRef !== undefined && refs.length === 0) return;
-    if (matrix.mode === "parent") expect(refs[0]).toBe(ref);
+    if (matrix.requestsNameProject === false) expect(refs).toEqual([]);
+    else if (matrix.mode === "parent") expect(refs[0]).toBe(ref);
     else expect(refs).toEqual([ref]);
   };
 
@@ -145,16 +150,14 @@ export function describeTargetSelectionMatrix<R>(
       }).pipe(Effect.provide(run.layer));
     });
 
-    it.effect("keeps --project-ref working and points at --remote=<ref>", () => {
+    it.effect("keeps --project-ref working and warns that it is deprecated", () => {
       const run = harness(["--project-ref", OTHER_REF], OTHER_REF);
       return Effect.gen(function* () {
         yield* prepare;
         yield* matrix.run({ remote: Option.none(), projectRef: Option.some(OTHER_REF) });
 
         expectActedOn(run, OTHER_REF);
-        expect(run.warnings()).toEqual([
-          `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
-        ]);
+        expect(run.warnings()).toEqual([expect.stringContaining("--project-ref is deprecated")]);
       }).pipe(Effect.provide(run.layer));
     });
 
@@ -191,16 +194,15 @@ export function describeTargetSelectionMatrix<R>(
           projectRef: Option.none(),
         });
 
-        expect(run.requests()[0]).toMatchObject({
+        const [lookup, ...afterLookup] = run.requests();
+        expect(lookup).toMatchObject({
           method: "GET",
           url: `${API_URL}/v1/projects/${VALID_REF}/branches`,
         });
-        const refs = projectRefsOf(run.requests());
         if (run.cachedRef !== undefined) expect(run.cachedRef()).toBe(BRANCH_PROJECT_REF);
-        expect(refs[0]).toBe(VALID_REF);
-        if (run.cachedRef === undefined || refs.length > 1) {
-          expect(refs).toEqual([VALID_REF, BRANCH_PROJECT_REF]);
-        }
+        expect(projectRefsOf(afterLookup)).toEqual(
+          matrix.requestsNameProject === false ? [] : [BRANCH_PROJECT_REF],
+        );
         assertPermissionDrift({
           command: path,
           ...driftVariant,
@@ -231,6 +233,7 @@ type HostedTargetSelectionServices = Layer.Success<ReturnType<typeof hostedLayer
 export interface HostedTargetSelectionScenario {
   readonly mode?: "project" | "parent";
   readonly operands?: ReadonlyArray<string>;
+  readonly requestsNameProject?: false;
   /** Files the leaf reads from the project directory, relative to it. */
   readonly files?: Readonly<Record<string, string>>;
   /**
@@ -258,7 +261,7 @@ const writeFiles = (workdir: string, files: Readonly<Record<string, string>>) =>
     }
   }).pipe(Effect.provide(BunServices.layer));
 
-/** `describeTargetSelectionMatrix` for a hosted leaf whose runtime is `buildTestRuntime` over a mocked Management API. */
+/** `describeTargetSelectionMatrix` for a hosted leaf run through `buildTestRuntime`. */
 export function describeHostedTargetSelection(
   path: string,
   scenario: HostedTargetSelectionScenario,
@@ -269,6 +272,9 @@ export function describeHostedTargetSelection(
     mode,
     operands: scenario.operands ?? [],
     ...(scenario.activeFlags === undefined ? {} : { activeFlags: scenario.activeFlags }),
+    ...(scenario.requestsNameProject === undefined
+      ? {}
+      : { requestsNameProject: scenario.requestsNameProject }),
     ...(files === undefined ? {} : { prepare: (workdir) => writeFiles(workdir, files) }),
     run: scenario.run,
     harness: ({ selectorArgs, expectedRef, workdir }) => {

@@ -406,7 +406,7 @@ export const storageConsentApi = {
   byMethod: { GET: { status: 200, body: STORAGE_TEST_API_KEYS } },
 } as const;
 
-/** The Storage-side services a handler needs under `describeHostedConsent`, plus its write count. */
+/** The Storage services a handler needs under `describeHostedConsent`, plus its write count. */
 export function storageConsentServices(workdir: string, routes: ReadonlyArray<StorageRoute>) {
   const http = recordingStorageHttp(routes);
   const layer = Layer.mergeAll(

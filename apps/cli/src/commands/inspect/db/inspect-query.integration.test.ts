@@ -401,6 +401,7 @@ describe("inspect db query runner", () => {
         run: inspectDbDbStats(flags(target)),
         target: () => ctx.resolver.connectionInput?.target,
         branchLookups: () => ctx.branchRequests,
+        apiRequests: () => ctx.branchRequests,
       };
     },
   });

@@ -240,7 +240,7 @@ interface SetupOpts {
   readonly interactive?: boolean;
   readonly yes?: boolean;
   readonly confirm?: boolean;
-  /** Overrides whether the resolved connection counts as local (a `--db-url` can point either way). */
+  /** Whether the resolved connection counts as local; a `--db-url` can point either way. */
   readonly isLocal?: boolean;
   readonly failResolve?: boolean;
   readonly failSql?: string;
@@ -1505,6 +1505,7 @@ describeDbTargetSelection("migration squash", {
       target: () => s.resolverCalls[0]?.target,
       cachedRef: () => s.cache.cachedRef,
       branchLookups: () => s.branchRequests,
+      apiRequests: () => s.branchRequests,
     };
   },
 });

@@ -206,6 +206,7 @@ describe("sso info integration", () => {
 });
 
 describeHostedTargetSelection("sso info", {
+  requestsNameProject: false,
   respond: (request) => Effect.succeed(jsonResponse(request, 200, {})),
   run: (flags) => ssoInfo(flags),
 });

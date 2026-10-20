@@ -83,7 +83,7 @@ function selectorShapeOf(activeFlags: ActiveFlags): SelectorShape {
   }
 }
 
-/** The target `activeFlags` selects (`db-url`, `local`, `linked`, `remote`, or `project-ref`, which imply linked unless `remote` is a database URL), else the local stack. */
+/** The database target `activeFlags` selects, or the local stack when it selects none. */
 function dbTargetOf(activeFlags: ActiveFlags): DbTarget {
   for (const flag of ["db-url", "local", "linked"] as const satisfies ReadonlyArray<DbTarget>) {
     if (Object.hasOwn(activeFlags, flag)) return flag;

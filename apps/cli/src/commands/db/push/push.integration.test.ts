@@ -1036,6 +1036,7 @@ describe("db push", () => {
         target: () => ctx.resolver.calls[0]?.target,
         cachedRef: () => ctx.linkedCache.cachedRef,
         branchLookups: () => branchApi.requests,
+        apiRequests: () => branchApi.requests,
       };
     },
   });

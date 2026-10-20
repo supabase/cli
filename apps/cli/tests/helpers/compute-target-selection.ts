@@ -11,7 +11,7 @@ import { branchRow, warningsOf } from "./remote-selection.ts";
 
 type ComputeSetup = ReturnType<typeof setupCompute>;
 
-/** Everything a compute leaf's handler can require while `describeComputeTargetSelection` runs it. */
+/** Everything a compute leaf's handler can require under `describeComputeTargetSelection`. */
 type ComputeTargetSelectionServices = Layer.Success<ComputeSetup["layer"]>;
 
 export interface ComputeTargetSelectionScenario {
@@ -37,7 +37,7 @@ const writeFiles = (workdir: string, files: Readonly<Record<string, string>>) =>
     }
   }).pipe(Effect.provide(BunServices.layer));
 
-/** `describeTargetSelectionMatrix` for a `compute` leaf, whose runtime is `setupCompute` over stubbed routes. */
+/** `describeTargetSelectionMatrix` for a `compute` leaf, run through `setupCompute`. */
 export function describeComputeTargetSelection(
   path: string,
   scenario: ComputeTargetSelectionScenario,

@@ -687,6 +687,7 @@ describe("db pull", () => {
         target: () => s.resolveCalls[0]?.target,
         cachedRef: () => s.cache.cachedRef,
         branchLookups: () => branchApi.requests,
+        apiRequests: () => branchApi.requests,
       };
     },
   });

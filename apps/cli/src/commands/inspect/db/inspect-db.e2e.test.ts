@@ -21,13 +21,14 @@ describe("supabase inspect db", () => {
     () =>
       withTempHome((home) =>
         Effect.gen(function* () {
-          const { exitCode, stderr } = yield* runSupabaseEffect(
+          const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
             ["inspect", "db", "locks", TEXT_MODE, TEXT_MODE_VALUE, `--remote=${DEAD_DB_URL}`],
             { home: home.dir, env: { HOME: home.dir } },
           );
           expect(exitCode).toBe(1);
           expect(stderr).toContain("Target: custom Postgres (127.0.0.1:1)");
           expect(stderr).toMatch(/failed to connect to postgres|connection refused|ECONNREFUSED/i);
+          expect(`${stdout}${stderr}`).not.toContain(DEAD_DB_URL);
         }),
       ),
     E2E_TIMEOUT_MS,

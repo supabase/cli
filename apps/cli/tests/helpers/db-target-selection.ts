@@ -66,7 +66,7 @@ interface RecordedLookup {
   readonly urlParams?: string;
 }
 
-/** The branch lookups, as `branchLookups` reports them, among the Management API method calls a fake recorded. */
+/** The `branchLookups` entries among the Management API method calls a fake recorded. */
 export const branchLookupsOf = (
   calls: ReadonlyArray<{ readonly method: string; readonly input: unknown }>,
 ): ReadonlyArray<RecordedLookup> =>
@@ -92,11 +92,13 @@ interface DbTargetAttempt<R> {
   readonly layer: Layer.Layer<R, unknown>;
   readonly out: ReturnType<typeof mockOutput>;
   readonly run: Effect.Effect<unknown, unknown, R | Scope.Scope>;
-  /** The target the leaf opened its connection or requests for; `undefined` until it reached one. */
+  /** The target the leaf connected or sent requests to; `undefined` until it reached one. */
   readonly target: () => ObservedTarget | undefined;
   readonly cachedRef?: () => string | undefined;
   /** The branch-list requests the leaf sent, for a leaf that records them. */
   readonly branchLookups?: () => ReadonlyArray<RecordedLookup>;
+  /** Every Management API request the leaf sent, for a leaf that records them. */
+  readonly apiRequests?: () => ReadonlyArray<unknown>;
 }
 
 type Row =
@@ -111,11 +113,11 @@ type Row =
   | "remote-with-local";
 
 interface DbTargetSelectionScenario<R> {
-  /** Whether the command takes a database URL; storage and seed take a project ref or a branch name. */
+  /** Whether the command takes a database URL; storage and seed take a ref or a branch name. */
   readonly dbUrl: boolean;
-  /** The directory the leaf's layers read, which the linked-checkout row links to {@link VALID_REF}. */
+  /** The directory the leaf's layers read; the linked rows link it to {@link VALID_REF}. */
   readonly workdir: () => string;
-  /** Positional arguments the parser needs before it reaches `--remote`, for a command that takes no database URL. */
+  /** Operands the parser needs before `--remote`, for a command that takes no database URL. */
   readonly operands?: ReadonlyArray<string>;
   /**
    * One run of the leaf: its layers, its handler called with `target`, and what it observed. The
@@ -220,6 +222,7 @@ export function describeDbTargetSelection<R>(
         check: (ctx) =>
           Effect.gen(function* () {
             yield* ctx.run;
+            // The banner carries the hint only if the leaf's `resolveTarget` called `hintLocal`.
             yield* announceTarget(renderLocalTarget("127.0.0.1", 54322));
             expect(stripAnsi(ctx.out.stderrText)).toContain(
               `default; pass --remote for ${VALID_REF}`,
@@ -307,6 +310,7 @@ export function describeDbTargetSelection<R>(
               expect(ctx.target()).toMatchObject({ kind: "db-url" });
               expect(warningsOf(ctx.out)).toEqual([]);
               expectCachedRef(ctx, undefined);
+              if (ctx.apiRequests !== undefined) expect(ctx.apiRequests()).toEqual([]);
             }),
         },
       );

@@ -639,6 +639,7 @@ describeDbTargetSelection("db lint", {
       target: () => ctx.resolver.resolveInput?.target,
       cachedRef: () => ctx.cache.cachedRef,
       branchLookups: () => branchApi.requests,
+      apiRequests: () => branchApi.requests,
     };
   },
 });

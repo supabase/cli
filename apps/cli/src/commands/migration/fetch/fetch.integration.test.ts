@@ -619,6 +619,7 @@ describeDbTargetSelection("migration fetch", {
       target: () => ctx.resolveCalls[0]?.target,
       cachedRef: () => ctx.cache.cachedRef,
       branchLookups: () => ctx.branchRequests,
+      apiRequests: () => ctx.branchRequests,
     };
   },
 });

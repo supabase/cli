@@ -85,7 +85,7 @@ const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
   },
 };
 
-/** A branch row of the linked project's branch list, which every branch `--remote` is looked up in. */
+/** A branch row of the linked project's branch list. */
 const BRANCH_BY_NAME = {
   id: BRANCH_UUID,
   name: "staging",
