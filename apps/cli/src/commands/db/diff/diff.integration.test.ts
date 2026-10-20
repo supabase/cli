@@ -2766,7 +2766,7 @@ describe("db diff", () => {
         expected: {
           _tag: "TargetInvalidValueError",
           message: "--project-ref takes a project ref or a branch name, not a URL.",
-          suggestion: "Pass a project ref as --from=<ref> or --to=<ref>.",
+          suggestion: `Use --from=${FLAG_PROJECT_REF} or --to=${FLAG_PROJECT_REF}.`,
         },
       },
       {

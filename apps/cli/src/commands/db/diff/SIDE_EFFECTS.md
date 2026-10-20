@@ -278,9 +278,11 @@ a postgresql:// URL; convert a connection string to a postgresql:// URL and pass
   empty `--project-ref` or `--db-url`, and a URL in `--project-ref` keep their usual messages,
   except that a conflict among `--linked`, `--db-url` and `--local` leaves `--remote` out of the
   flags it allows (`Only one of --linked, --db-url and --local can be set; got --linked and --local.`).
-  Each suggestion names `--from`/`--to` instead of `--remote`, which this mode rejects, and a
+  Each suggestion names `--from`/`--to` instead of `--remote`, which this mode rejects. A
   conflict's suggestion has one clause per flag passed
-  (`Use --from=remote or --to=remote instead of --linked, and drop --local.`).
+  (`Use --from=remote or --to=remote instead of --linked, and drop --local.`), and a
+  `--project-ref` URL that names a project (`https://<ref>.supabase.co`) suggests
+  `Use --from=<ref> or --to=<ref>.` with that ref.
 
 - **Explicit `--from`/`--to` with a project whose database is unreachable over IPv6.** A project
   or branch endpoint falls back to the pooler URL the API returns. With none, the run fails with

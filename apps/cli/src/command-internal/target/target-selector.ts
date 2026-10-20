@@ -174,14 +174,16 @@ export const parseTargetSelector = (
   const aliasRemote = aliasValue === undefined ? undefined : parseNamedRemote(aliasValue);
   const rejectedAlias = aliasRejection(aliasRemote, input.dbUrl !== undefined);
   if (rejectedAlias !== undefined) {
+    const ref = rejectedAlias._tag === "ForeignUrl" ? rejectedAlias.ref : undefined;
     return Result.fail(
       new TargetInvalidValueError({
         flag: aliasFlag,
         message: `${aliasFlag} takes a project ref or a branch name, not a ${rejectedAlias._tag === "ForeignUrl" ? "URL" : "connection string"}.`,
         suggestion:
-          rejectedAlias._tag === "ForeignUrl" && rejectedAlias.ref !== undefined
-            ? `Use --remote=${rejectedAlias.ref}.`
-            : "Pass a project ref or a branch name, for example --remote=abcdefghijklmnopqrst",
+          ref === undefined
+            ? "Pass a project ref or a branch name, for example --remote=abcdefghijklmnopqrst"
+            : `Use --remote=${ref}.`,
+        ref,
       }),
     );
   }

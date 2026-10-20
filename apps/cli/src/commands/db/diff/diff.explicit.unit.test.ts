@@ -183,8 +183,19 @@ describe("explicitSelectorError", () => {
       },
     },
     {
-      label: "a --project-ref URL",
+      label: "a --project-ref URL naming a project",
       overrides: { projectRef: Option.some(`https://${REF}.supabase.co`) },
+      expected: {
+        _tag: "TargetInvalidValueError",
+        flag: "--project-ref",
+        message: "--project-ref takes a project ref or a branch name, not a URL.",
+        suggestion: `Use --from=${REF} or --to=${REF}.`,
+        ref: REF,
+      },
+    },
+    {
+      label: "a --project-ref URL naming no project",
+      overrides: { projectRef: Option.some("https://db.example.com/x") },
       expected: {
         _tag: "TargetInvalidValueError",
         flag: "--project-ref",

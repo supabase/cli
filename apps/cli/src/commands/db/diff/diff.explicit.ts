@@ -108,7 +108,11 @@ export const explicitSelectorError = (error: TargetSelectorError): TargetSelecto
       return new TargetInvalidValueError({
         flag: error.flag,
         message: error.message,
-        suggestion: "Pass a project ref as --from=<ref> or --to=<ref>.",
+        suggestion:
+          error.ref === undefined
+            ? "Pass a project ref as --from=<ref> or --to=<ref>."
+            : `Use --from=${error.ref} or --to=${error.ref}.`,
+        ref: error.ref,
       });
     case "TargetProjectRefConflictError":
       return new TargetProjectRefConflictError({

@@ -170,10 +170,11 @@ describe("parseTargetSelector", () => {
       expect(JSON.stringify(error)).not.toContain("hunter2");
     });
 
-    it("suggests the ref a project URL already names", () => {
+    it("suggests the ref a project URL already names and keeps it on the error", () => {
       expect(failure({ projectRef: Option.some(`https://${REF}.supabase.co`) })).toMatchObject({
         _tag: "TargetInvalidValueError",
         suggestion: `Use --remote=${REF}.`,
+        ref: REF,
       });
     });
 
