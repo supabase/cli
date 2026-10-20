@@ -267,10 +267,10 @@ const removeBans = Effect.fnUntraced(function* (ref: string, addrs: ReadonlyArra
     .pipe(Effect.catch(unbanErrorMapper));
 });
 
-const networkBannedError = (addrs: ReadonlyArray<string>) =>
+const networkBannedError = (ref: string, addrs: ReadonlyArray<string>) =>
   new Errors.LinkedDbNetworkBannedError({
     message: `Network bans (${addrs.join(", ")}) may be blocking the connection. Removing them clears every listed address, so it needs --yes.`,
-    suggestion: `Re-run with --yes to remove them, or run supabase network-bans remove --db-unban-ip ${addrs.join(",")} --experimental --yes.`,
+    suggestion: `Re-run with --yes to remove them, or run supabase network-bans remove --remote=${ref} --db-unban-ip ${addrs.join(",")} --experimental --yes.`,
   });
 
 // Verify-connect with backoff while the pooler refreshes the temp password. From attempt 3 on, look
@@ -298,7 +298,7 @@ const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
         if (n > MAX_RETRIES) {
           return Effect.fail(
             listedBans.length > 0
-              ? networkBannedError(listedBans)
+              ? networkBannedError(ref, listedBans)
               : new Errors.DbConfigConnectTempRoleError({
                   message: `failed to connect as temp role: ${cause.message}`,
                   suggestion: SUGGEST_ENV_VAR,
