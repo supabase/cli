@@ -209,10 +209,8 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           message: `${selectorFlag} doesn't apply with --from/--to; use --from=${side} or --to=${side}.`,
         });
       }
-      // `mergedLinkedRef` tracks the linked ref resolved so far so `loadCfg` and a later
-      // `migrations` catalog export merge the matching `[remotes.<ref>]` override. Undefined until
-      // a linked ref resolves, so a `local` or `migrations` ref resolved before any linked ref
-      // uses base.
+      // The linked ref resolved so far: later config reads and `migrations` catalog exports merge
+      // its `[remotes.<ref>]` override; endpoints resolved before any linked ref use the base.
       let mergedLinkedRef: string | undefined;
       // The first migrations endpoint resolved wins: the engine provisions a single migrations
       // shadow/catalog, so only refs resolved before that point should influence it.

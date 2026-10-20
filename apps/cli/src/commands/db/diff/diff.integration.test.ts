@@ -240,7 +240,6 @@ function fakeShadowDbConnection(opts: { readonly neverConnectableShadow?: boolea
 
 const STACK_SQL_PORT = 54329;
 
-/** A registered project stack whose healthy database serves SQL on `STACK_SQL_PORT`. */
 const runningStackApi = (projectRoot: string) => {
   const unused = Effect.die("unused by db diff");
   const database: DatabaseInstance = {
