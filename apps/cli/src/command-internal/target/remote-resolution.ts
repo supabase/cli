@@ -19,7 +19,7 @@ import {
   findBranch,
   isDefaultBranch,
   listBranchesFailureCause,
-  listParentBranches,
+  listLinkedParentBranches,
   previewBranchHint,
   resolveRemoteBranchRef,
 } from "./branch-resolution.ts";
@@ -168,7 +168,9 @@ const checkRemoteOperand = Effect.fn("Target.checkRemoteOperand")(function* (raw
   const usage = yield* commandUsage();
   const options = `For the branch: ${usage} ${remoteFlagText({ _tag: "Branch", name: operand })}. For the linked project: ${usage} ${shellQuote(operand)} --remote`;
 
-  const listed = yield* listParentBranches(parent.ref, "Checking branches...").pipe(Effect.result);
+  const listed = yield* listLinkedParentBranches(parent, "Checking branches...").pipe(
+    Effect.result,
+  );
   if (Result.isFailure(listed)) {
     const { accessToken } = yield* CommandSettings;
     const failure = listingFailure(
@@ -184,17 +186,15 @@ const checkRemoteOperand = Effect.fn("Target.checkRemoteOperand")(function* (raw
       cause: listed.failure,
     });
   }
-  const branches = listed.success;
+  const { parentRef, branches } = listed.success;
   if (findBranch(branches, operand) !== undefined) {
-    const name = yield* linkedProjectName(parent.ref);
-    const project = name === undefined ? `project ${parent.ref}` : formatNamedRef(name, parent.ref);
+    const name = yield* linkedProjectName(parentRef);
+    const project = name === undefined ? `project ${parentRef}` : formatNamedRef(name, parentRef);
     return yield* new TargetRemoteAmbiguousError({
       message: `"${operand}" is a branch of ${project}. ${options}`,
     });
   }
-  const closest = nearMissByName(branches, operand, (branch) =>
-    isDefaultBranch(branch, parent.ref),
-  );
+  const closest = nearMissByName(branches, operand, (branch) => isDefaultBranch(branch, parentRef));
   if (closest !== undefined) {
     const closestName = sanitizeInlineName(closest.name);
     return yield* new TargetRemoteAmbiguousError({

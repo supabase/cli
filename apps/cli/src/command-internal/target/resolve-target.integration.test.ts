@@ -50,6 +50,8 @@ const remote = (value: RemoteValue): Partial<TargetFlagValues> => ({
 const FILE_REF = "filefilefilefilefile";
 const FLAG_REF = "flagflagflagflagflag";
 const BRANCH_REF = "branchprojectrefabcd";
+const STALE_REF = "stalestalestalestale";
+const GONE_REF = "gonegonegonegonegone";
 const SECRET_URL =
   "postgresql://postgres:hunter2@db.abcdefghijklmnopqrst.supabase.co:5432/postgres";
 
@@ -72,6 +74,8 @@ const failingListings = {
   forbidden: { status: 403, message: "Forbidden" },
   missing: { status: 404, message: "Not found" },
 } as const;
+
+type Listing = ReadonlyArray<ReturnType<typeof branchRow>> | keyof typeof failingListings;
 
 const root = rootCommandForFeatures();
 
@@ -112,7 +116,8 @@ const run = (
     readonly tokenFailure?: AccessTokenRequiredError | InvalidAccessTokenError;
     readonly storedToken?: boolean;
     readonly unreachable?: string;
-    readonly branches?: ReadonlyArray<ReturnType<typeof branchRow>> | keyof typeof failingListings;
+    readonly branches?: Listing;
+    readonly listings?: Readonly<Record<string, Listing>>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -139,7 +144,8 @@ const run = (
         if (options.unreachable !== undefined) {
           return Effect.fail(transportFailure(request, options.unreachable));
         }
-        const { branches = [] } = options;
+        const parentRef = new URL(request.url).pathname.split("/")[3] ?? "";
+        const branches = options.listings?.[parentRef] ?? options.branches ?? [];
         if (typeof branches === "string") {
           const { status, message } = failingListings[branches];
           return Effect.succeed(jsonResponse(request, status, { message }));
@@ -309,6 +315,59 @@ describe("resolveTarget", () => {
         expect(result.stderr).toContain(
           `Target: project alpha (${FILE_REF}) · branch feature-x (${BRANCH_REF})\n`,
         );
+      }),
+    );
+
+    it.effect("looks a branch up under the cached parent that lists the linked project", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "feature-x" }) },
+          {
+            savedRef: BRANCH_REF,
+            cache: { ref: FILE_REF },
+            listings: { [FILE_REF]: [branchRow("feature-x"), branchRow("other", FLAG_REF)] },
+          },
+        );
+        expect(succeeded(result.exit)).toMatchObject({ ref: BRANCH_REF, parentRef: FILE_REF });
+        expect(result.apiRequests).toEqual([`GET /v1/projects/${FILE_REF}/branches`]);
+      }),
+    );
+
+    it.effect("ignores a cached parent that does not list the linked project", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "feature-x" }) },
+          {
+            savedRef: FILE_REF,
+            cache: { ref: STALE_REF },
+            listings: {
+              [STALE_REF]: [branchRow("feature-x", FLAG_REF)],
+              [FILE_REF]: [branchRow("feature-x")],
+            },
+          },
+        );
+        expect(succeeded(result.exit)).toMatchObject({
+          ref: BRANCH_REF,
+          branch: "feature-x",
+          parentRef: FILE_REF,
+        });
+      }),
+    );
+
+    it.effect("keeps the cached parent when the linked project cannot list branches", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "feature-x" }) },
+          {
+            savedRef: GONE_REF,
+            cache: { ref: FILE_REF },
+            listings: { [FILE_REF]: [branchRow("feature-x")], [GONE_REF]: "missing" },
+          },
+        );
+        expect(succeeded(result.exit)).toMatchObject({ ref: BRANCH_REF, parentRef: FILE_REF });
       }),
     );
 
@@ -482,6 +541,25 @@ describe("resolveTarget", () => {
           message: `"feature-x" is a branch of project ${FILE_REF}. ${options}`,
         });
         expect(result.refFlags).toEqual([]);
+      }),
+    );
+
+    it.effect("checks the branches of the linked project when the cached parent is stale", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args,
+          command,
+          savedRef: FILE_REF,
+          cache: { ref: STALE_REF },
+          listings: {
+            [STALE_REF]: [branchRow("other", FLAG_REF)],
+            [FILE_REF]: [branchRow("feature-x")],
+          },
+        });
+        expect(failureOf(result.exit)).toMatchObject({
+          _tag: "TargetRemoteAmbiguousError",
+          message: `"feature-x" is a branch of project ${FILE_REF}. ${options}`,
+        });
       }),
     );
 

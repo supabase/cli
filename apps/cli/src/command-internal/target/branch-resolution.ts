@@ -151,8 +151,8 @@ export const listBranchesFailureCause = (error: LinkBranchListNetworkError): str
 export const previewBranchHint = (ref: string): string =>
   `If ${ref} is itself a preview branch, link its parent project first: supabase link --project-ref <parent-ref>`;
 
-/** `GET /v1/projects/{ref}/branches`, shared by every branch-name lookup. */
-export const listParentBranches = Effect.fnUntraced(function* (parentRef: string, label: string) {
+/** `GET /v1/projects/{ref}/branches`, shared by every branch-name lookup; no `label` means no spinner. */
+const listParentBranches = Effect.fnUntraced(function* (parentRef: string, label?: string) {
   const api = yield* acquireApi();
 
   const mapBranchListError = mapHttpError({
@@ -167,7 +167,7 @@ export const listParentBranches = Effect.fnUntraced(function* (parentRef: string
     },
   });
 
-  const task = yield* startBranchLookupTask(label);
+  const task = label === undefined ? undefined : yield* startBranchLookupTask(label);
   const branches: Branches = yield* api.v1.listAllBranches({ ref: parentRef }).pipe(
     Effect.tapError(() => task?.fail() ?? Effect.void),
     Effect.catch(mapBranchListError),
@@ -176,8 +176,30 @@ export const listParentBranches = Effect.fnUntraced(function* (parentRef: string
   return branches;
 });
 
-const resolveInParent = Effect.fnUntraced(function* (value: string, parentRef: string) {
-  const branches = yield* listParentBranches(parentRef, "Resolving branch...");
+type ResolvedParent = Extract<ParentRefResolution, { readonly kind: "resolved" }>;
+
+/**
+ * The branches of the parent a lookup runs under. A cached parent stands only while it lists the
+ * linked project as a branch; otherwise the linked project's own branches are used, unless they
+ * cannot be listed, as for a deleted branch's project, which keeps the cached parent.
+ */
+export const listLinkedParentBranches = Effect.fnUntraced(function* (
+  parent: ResolvedParent,
+  label: string,
+) {
+  const cached = yield* listParentBranches(parent.ref, label);
+  const { linkedRef } = parent;
+  if (linkedRef === undefined || cached.some((branch) => branch.project_ref === linkedRef)) {
+    return { parentRef: parent.ref, branches: cached };
+  }
+  const own = yield* listParentBranches(linkedRef).pipe(Effect.option);
+  return Option.isSome(own)
+    ? { parentRef: linkedRef, branches: own.value }
+    : { parentRef: parent.ref, branches: cached };
+});
+
+const resolveInParent = Effect.fnUntraced(function* (value: string, parent: ResolvedParent) {
+  const { parentRef, branches } = yield* listLinkedParentBranches(parent, "Resolving branch...");
   yield* Effect.annotateCurrentSpan({
     "project.parent_ref": parentRef,
     "branch.count": branches.length,
@@ -217,7 +239,7 @@ const resolveInParent = Effect.fnUntraced(function* (value: string, parentRef: s
 export const resolveLinkBranchRef = Effect.fn("Target.resolveBranch")(function* (value: string) {
   const parent = yield* resolveLinkedParentRef();
   if (parent.kind !== "resolved") return yield* unresolvedParent(parent, value);
-  return yield* resolveInParent(value, parent.ref);
+  return yield* resolveInParent(value, parent);
 });
 
 const resolveBranchById = Effect.fnUntraced(function* (id: string) {
@@ -269,7 +291,7 @@ export const resolveRemoteBranchRef = Effect.fn("Target.resolveRemoteBranch")(fu
   value: string,
 ) {
   const parent = yield* resolveLinkedParentRef();
-  if (parent.kind === "resolved") return yield* resolveInParent(value, parent.ref);
+  if (parent.kind === "resolved") return yield* resolveInParent(value, parent);
   if (BRANCH_UUID_PATTERN.test(value)) return yield* resolveBranchById(value);
   return yield* unresolvedParent(parent, value);
 });
