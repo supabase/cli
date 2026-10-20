@@ -235,6 +235,20 @@ describe("parseTargetSelector", () => {
       });
     });
 
+    it.each([
+      { name: "with a database input", overrides: {}, hint: "<ref|branch|url>" },
+      { name: "without one", overrides: { dbUrl: undefined }, hint: "<ref|branch>" },
+    ])("rejects a --remote given twice with different values, $name", ({ overrides, hint }) => {
+      expect(
+        failure({ ...remote({ _tag: "Linked" }), ...overrides }, { remoteConflict: true }),
+      ).toMatchObject({
+        _tag: "TargetSelectorConflictError",
+        flags: ["--remote"],
+        message: "--remote is given more than once with different values; pass it once.",
+        suggestion: `Pass --remote once, as --remote or --remote=${hint}.`,
+      });
+    });
+
     it("rejects --local with --linked", () => {
       expect(failure({ local: true, linked: true })).toMatchObject({
         flags: ["--linked", "--local"],

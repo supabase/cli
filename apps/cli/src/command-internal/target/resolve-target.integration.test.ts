@@ -832,6 +832,48 @@ describe("resolveTarget", () => {
     );
   });
 
+  describe("a repeated --remote", () => {
+    const command = ["db", "push"];
+    const bare = { ...none, ...remote({ _tag: "Linked" }) };
+
+    it.effect("fails before anything runs when the values differ", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "feature-x" }) },
+          {
+            args: ["db", "push", "--remote=feature-x", "--remote"],
+            command,
+            savedRef: FILE_REF,
+            branches: [branchRow("feature-x")],
+          },
+        );
+        const error = failureOf(result.exit);
+        expect(error).toMatchObject({
+          _tag: "TargetSelectorConflictError",
+          flags: ["--remote"],
+          message: "--remote is given more than once with different values; pass it once.",
+          suggestion: "Pass --remote once, as --remote or --remote=<ref|branch|url>.",
+        });
+        expect((error as { [ErrorActionabilityId]: unknown })[ErrorActionabilityId]).toEqual(
+          actionability.provideFlags,
+        );
+        expect(result.apiRequests).toEqual([]);
+        expect(result.refFlags).toEqual([]);
+      }),
+    );
+
+    it.effect.each([
+      { name: "the same value", args: ["db", "push", "--remote=feature-x", "--remote=feature-x"] },
+      { name: "a bare switch", args: ["db", "push", "--remote", "--remote"] },
+    ])("accepts $name given twice", ({ args }) =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, { args, command, savedRef: FILE_REF });
+        expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FILE_REF });
+      }),
+    );
+  });
+
   describe("deprecated selectors", () => {
     it.effect("warns that --linked is replaced by --remote, with the command as run", () =>
       Effect.gen(function* () {

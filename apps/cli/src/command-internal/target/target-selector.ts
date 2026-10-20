@@ -49,6 +49,8 @@ export interface TargetSelectorOptions {
   readonly commandName?: string;
   /** What `--remote` takes on this command, for the suggestions; a command with no `dbUrl` input defaults to `<ref|branch>`. */
   readonly valueHint?: string;
+  /** `--remote` is given more than once with values that differ. */
+  readonly remoteConflict?: boolean;
 }
 
 /** Lists flag names as `a`, `a and b` or `a, b and c`. */
@@ -96,6 +98,16 @@ export const parseTargetSelector = (
   if (dbUrl === "") return Result.fail(emptyValueError("--db-url"));
   if (projectRef === "") return Result.fail(emptyValueError("--project-ref"));
   if (projectId === "") return Result.fail(emptyValueError("--project-id"));
+
+  if (options.remoteConflict === true) {
+    return Result.fail(
+      new TargetSelectorConflictError({
+        flags: ["--remote"],
+        message: "--remote is given more than once with different values; pass it once.",
+        suggestion: `Pass --remote once, as --remote or --remote=${valueHint}.`,
+      }),
+    );
+  }
 
   const selected = [
     ...(remote === undefined ? [] : ["--remote"]),

@@ -190,6 +190,27 @@ describe("resolveProjectTarget", () => {
     }),
   );
 
+  it.effect("fails before any lookup when --remote is given twice with different values", () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        { remote: { _tag: "Branch", name: "feature-x" } },
+        {
+          savedRef: FILE_REF,
+          args: ["functions", "deploy", "--remote=feature-x", `--remote=${FLAG_REF}`],
+          branches: [branchRow("feature-x")],
+        },
+      );
+      expect(failureOf(result.exit)).toMatchObject({
+        _tag: "TargetSelectorConflictError",
+        flags: ["--remote"],
+        message: "--remote is given more than once with different values; pass it once.",
+        suggestion: "Pass --remote once, as --remote or --remote=<ref|branch>.",
+      });
+      expect(result.branchRequests).toBe(0);
+      expect(result.refFlags).toEqual([]);
+    }),
+  );
+
   it.effect("uses the project --remote=<ref> names, with no deprecation warning", () =>
     Effect.gen(function* () {
       const result = yield* run({ remote: { _tag: "Ref", ref: FLAG_REF } });

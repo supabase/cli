@@ -63,6 +63,7 @@ import {
 } from "./agent-output.ts";
 import {
   bareRemoteOperand,
+  hasConflictingRemotes,
   joinRemoteOperands,
   remoteOperandCapacity,
   type RemoteArgvLeaf,
@@ -201,7 +202,7 @@ export function remoteArgvLeafFor(
   rootCommand: Command.Command.Any,
   args: ReadonlyArray<string>,
 ): RemoteArgvLeaf | undefined {
-  if (!args.includes("--remote")) return undefined;
+  if (!args.some((arg) => arg === "--remote" || arg.startsWith("--remote="))) return undefined;
   const path = resolvedCommandPathForArgv(rootCommand, extractCommandPath(args));
   const operandCapacity = remoteOperandCapacity(rootCommand, path);
   if (operandCapacity === undefined) return undefined;
@@ -221,7 +222,8 @@ export function remoteArgvLeafFor(
 
 /**
  * `rawArgs` with a bare `--remote <word>` joined to `--remote=<word>` wherever the command's
- * operands leave no other reading, plus the word a bare `--remote` is still followed by.
+ * operands leave no other reading, plus the word a bare `--remote` is still followed by and
+ * whether `--remote` is given more than once with different values.
  */
 export function prepareCliArgs(
   rootCommand: Command.Command.Any,
@@ -230,7 +232,11 @@ export function prepareCliArgs(
   const leaf = remoteArgvLeafFor(rootCommand, rawArgs);
   if (leaf === undefined) return { args: rawArgs };
   const args = joinRemoteOperands(rawArgs, leaf);
-  return { args, bareRemoteOperand: bareRemoteOperand(args, leaf) };
+  return {
+    args,
+    bareRemoteOperand: bareRemoteOperand(args, leaf),
+    remoteConflict: hasConflictingRemotes(args, leaf),
+  };
 }
 
 /** `CliArgs` and a `Stdio` whose `args` is the same argv, so every reader of either sees the rewritten command line. */

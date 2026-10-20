@@ -72,8 +72,10 @@ export const selectTarget = Effect.fnUntraced(function* (
   const commandName = Option.isSome(runtime)
     ? `\`supabase ${getCommandRuntimeCommand(runtime.value)}\``
     : "This command";
+  const cliArgs = yield* Effect.serviceOption(CliArgs);
+  const remoteConflict = Option.getOrUndefined(cliArgs)?.remoteConflict === true;
   const { selection, deprecations } = yield* Result.match(
-    parseTargetSelector(flags, { commandName, ...options }),
+    parseTargetSelector(flags, { commandName, remoteConflict, ...options }),
     { onFailure: Effect.fail, onSuccess: Effect.succeed },
   );
   yield* warnTargetDeprecations(deprecations);

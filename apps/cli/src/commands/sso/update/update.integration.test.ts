@@ -39,8 +39,11 @@ import {
   projectResponse,
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
+import { rootCommandForFeatures } from "../../../cli/root.ts";
 import { ProfileFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { prepareCliArgs } from "../../../shared/cli/run.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import type { SsoUpdateFlags } from "./update.command.ts";
@@ -595,6 +598,25 @@ describe("sso update integration", () => {
         expect.stringContaining(`/v1/projects/${OTHER_REF}/`),
       ]);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails before any API call when --remote is given twice with different values", () => {
+    const cliArgs = ["sso", "update", VALID_PROVIDER_ID, `--remote=${OTHER_REF}`, "--remote"];
+    const { layer, api } = setup({ cliArgs });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toMatchObject({
+          _tag: "TargetSelectorConflictError",
+          message: "--remote is given more than once with different values; pass it once.",
+        });
+      }
+      expect(api.requests).toEqual([]);
+    }).pipe(
+      Effect.provideService(CliArgs, prepareCliArgs(rootCommandForFeatures(), cliArgs)),
+      Effect.provide(layer),
+    );
   });
 
   it.effect(

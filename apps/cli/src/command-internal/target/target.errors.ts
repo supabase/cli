@@ -7,7 +7,7 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-/** More than one of `--remote`, `--linked`, `--db-url` and `--local` was set. */
+/** More than one of `--remote`, `--linked`, `--db-url` and `--local` was set, or `--remote` was given twice with different values. */
 export class TargetSelectorConflictError extends Data.TaggedError("TargetSelectorConflictError")<{
   readonly flags: ReadonlyArray<string>;
   readonly message: string;

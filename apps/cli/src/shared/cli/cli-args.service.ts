@@ -5,6 +5,7 @@ export interface CliArgsShape {
   readonly args: ReadonlyArray<string>;
   /** The word a bare `--remote` is followed by when it was taken as an operand and could name a branch. */
   readonly bareRemoteOperand?: string | undefined;
+  readonly remoteConflict?: boolean;
 }
 
 export class CliArgs extends Context.Service<CliArgs, CliArgsShape>()("supabase/cli/CliArgs") {}

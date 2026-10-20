@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { rootCommandForFeatures } from "../../cli/root.ts";
-import { bareRemoteOperand, joinRemoteOperands, type RemoteArgvLeaf } from "./remote-argv.ts";
+import {
+  bareRemoteOperand,
+  hasConflictingRemotes,
+  joinRemoteOperands,
+  type RemoteArgvLeaf,
+} from "./remote-argv.ts";
 import { prepareCliArgs } from "./run.ts";
 
 const REF = "abcdefghijklmnopqrst";
@@ -223,6 +228,92 @@ describe("bareRemoteOperand", () => {
   });
 });
 
+describe("hasConflictingRemotes", () => {
+  const cases: ReadonlyArray<{
+    readonly name: string;
+    readonly leaf: RemoteArgvLeaf;
+    readonly args: ReadonlyArray<string>;
+    readonly expected: boolean;
+  }> = [
+    {
+      name: "is false for a single --remote",
+      leaf: noOperands,
+      args: ["db", "push", "--remote=feature-x"],
+      expected: false,
+    },
+    {
+      name: "is false for identical values",
+      leaf: noOperands,
+      args: ["db", "push", "--remote=feature-x", "--remote=feature-x"],
+      expected: false,
+    },
+    {
+      name: "is false for a repeated bare --remote",
+      leaf: noOperands,
+      args: ["db", "push", "--remote", "--remote"],
+      expected: false,
+    },
+    {
+      name: "is true for two different branch names",
+      leaf: noOperands,
+      args: ["db", "push", "--remote=feature-x", "--remote=feature-y"],
+      expected: true,
+    },
+    {
+      name: "is true for a project ref and a database URL",
+      leaf: noOperands,
+      args: ["db", "push", `--remote=${REF}`, `--remote=${URL}`],
+      expected: true,
+    },
+    {
+      name: "is true for a bare --remote and a value",
+      leaf: noOperands,
+      args: ["db", "push", "--remote", `--remote=${REF}`],
+      expected: true,
+    },
+    {
+      name: "reads a linked boolean literal as the bare --remote",
+      leaf: variadic,
+      args: ["functions", "deploy", "--remote=YES", "--remote", "--remote=on"],
+      expected: false,
+    },
+    {
+      name: "reads a space-form word joined to --remote against a bare --remote",
+      leaf: noOperands,
+      args: ["db", "push", "--remote", "feature-x", "--remote"],
+      expected: true,
+    },
+    {
+      name: "counts a bare --remote followed by an operand as the linked project",
+      leaf: oneOperand,
+      args: ["storage", "ls", "--remote", "feature-x", "--remote=feature-x"],
+      expected: true,
+    },
+    {
+      name: "ignores a value --remote rejects, which its parser reports",
+      leaf: noOperands,
+      args: ["db", "push", "--remote=false", "--remote=feature-x"],
+      expected: false,
+    },
+    {
+      name: "ignores a --remote after --",
+      leaf: variadic,
+      args: ["functions", "deploy", "--remote=feature-x", "--", "--remote=feature-y"],
+      expected: false,
+    },
+    {
+      name: "ignores a --remote another flag takes as its value",
+      leaf: noOperands,
+      args: ["db", "push", "--password", "--remote=feature-y", "--remote=feature-x"],
+      expected: false,
+    },
+  ];
+
+  it.each(cases)("$name", ({ leaf, args, expected }) => {
+    expect(hasConflictingRemotes(joinRemoteOperands(args, leaf), leaf)).toBe(expected);
+  });
+});
+
 describe("prepareCliArgs argv", () => {
   const root = rootCommandForFeatures();
   const cases: ReadonlyArray<{
@@ -342,5 +433,32 @@ describe("prepareCliArgs bareRemoteOperand on the real command tree", () => {
 
   it("finds nothing once every word is joined into --remote=<word>", () => {
     expect(operandOf(["db", "push", "--remote", "feature-x"])).toBeUndefined();
+  });
+});
+
+describe("prepareCliArgs remoteConflict on the real command tree", () => {
+  const root = rootCommandForFeatures();
+  const conflictOf = (raw: ReadonlyArray<string>) => prepareCliArgs(root, raw).remoteConflict;
+
+  it.each([
+    { name: "a leaf's own --remote", args: ["db", "push", "--remote=feature-x", "--remote"] },
+    {
+      name: "seed's persistent --remote",
+      args: ["seed", "buckets", `--remote=${REF}`, "--remote=feature-x"],
+    },
+    {
+      name: "a space-form word joined into --remote",
+      args: ["db", "push", "--remote", "feature-x", "--remote=feature-y"],
+    },
+  ])("is set for $name given twice with different values", ({ args }) => {
+    expect(conflictOf(args)).toBe(true);
+  });
+
+  it("is not set when the repeated values are the same", () => {
+    expect(conflictOf(["db", "push", "--remote=feature-x", "--remote=feature-x"])).toBe(false);
+  });
+
+  it("is not set when db pull's operand follows a bare --remote that is repeated bare", () => {
+    expect(conflictOf(["db", "pull", "--remote", "feature-x", "--remote"])).toBe(false);
   });
 });
