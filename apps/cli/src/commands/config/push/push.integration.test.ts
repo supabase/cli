@@ -231,6 +231,14 @@ const BRANCH_BY_NAME = {
   with_data: false,
 };
 
+/** The production branch's list row: its project is the project itself, so its ref is the parent's. */
+const DEFAULT_BRANCH = {
+  ...BRANCH_BY_NAME,
+  name: "main",
+  project_ref: REF,
+  is_default: true,
+};
+
 /** `V1GetABranchConfig` body for a UUID `--remote` lookup. */
 const BRANCH_CONFIG = {
   ref: UUID_TARGET_REF,
@@ -3533,6 +3541,66 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
       expect(api.requests.some((r) => r.method === "PATCH")).toBe(false);
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect.each([
+    { label: "name", value: DEFAULT_BRANCH.name },
+    { label: "UUID", value: DEFAULT_BRANCH.id },
+  ])(
+    "--remote=<default-branch $label> reports the production project, not a branch",
+    ({ value }) => {
+      const { layer, out, api } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: true,
+        format: "json",
+        branchList: { status: 200, body: [DEFAULT_BRANCH] },
+        v2: { status: 200, body: v2Response({ ref: REF }) },
+      });
+      return Effect.gen(function* () {
+        yield* configPush(pushRemoteBranch(value));
+        const data = yield* decodeJsonRecord(out.messages.find((m) => m.type === "success")?.data);
+        expect(data["is_branch"]).toBe(false);
+        expect("branch" in data).toBe(false);
+        expect("parent_project_ref" in data).toBe(false);
+        expect(data["target"]).toEqual({
+          kind: "linked",
+          project_ref: REF,
+          environment: "production",
+        });
+        expect(api.requests.some((r) => new URL(r.url).pathname === `/v1/projects/${REF}`)).toBe(
+          false,
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "--remote=<uuid> with no linked project reports an unverified target, not a branch",
+    () => {
+      const { layer, out, api } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: true,
+        format: "json",
+        projectId: Option.none(),
+        project: { status: 404, body: {} },
+        branchById: { status: 200, body: BRANCH_CONFIG },
+        v2: { status: 200, body: v2Response({ ref: UUID_TARGET_REF }) },
+      });
+      return Effect.gen(function* () {
+        yield* configPush(pushRemoteBranch(BRANCH_UUID));
+        const data = yield* decodeJsonRecord(out.messages.find((m) => m.type === "success")?.data);
+        expect(data["project_ref"]).toBe(UUID_TARGET_REF);
+        expect("is_branch" in data).toBe(false);
+        expect(data["target"]).toEqual({
+          kind: "linked",
+          project_ref: UUID_TARGET_REF,
+          environment: "unverified",
+        });
+        expect(
+          api.requests.some((r) => new URL(r.url).pathname === `/v1/projects/${UUID_TARGET_REF}`),
+        ).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("--project-ref still resolves a branch name and warns to use --remote", () => {
     const { layer, out } = setup({

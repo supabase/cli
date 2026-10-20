@@ -274,6 +274,7 @@ export const resolveRemoteTarget = Effect.fn("Target.resolveRemote")(function* (
       }),
       branch: remote.name,
       ...(found.parentRef === undefined ? {} : { parentRef: found.parentRef }),
+      ...(found.isDefault === undefined ? {} : { isDefault: found.isDefault }),
     } satisfies LinkedTarget;
   }
   const projectRef = yield* ProjectRefResolver;

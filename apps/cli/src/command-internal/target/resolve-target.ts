@@ -21,6 +21,8 @@ export type ResolvedTarget =
       readonly branch?: string | undefined;
       /** The linked project the branch was found under, when it was looked up through one. */
       readonly parentRef?: string | undefined;
+      /** Whether the branch is the production branch, when its lookup said so. */
+      readonly isDefault?: boolean | undefined;
     }
   | { readonly kind: "db-url"; readonly url: Redacted.Redacted<string> };
 

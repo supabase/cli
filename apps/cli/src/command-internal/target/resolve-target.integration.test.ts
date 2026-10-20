@@ -294,6 +294,7 @@ describe("resolveTarget", () => {
           matchesLinkedRef: false,
           branch: "feature-x",
           parentRef: FILE_REF,
+          isDefault: false,
         });
         expect(result.apiRequests).toEqual([`GET /v1/projects/${FILE_REF}/branches`]);
         expect(result.refFlags).toEqual([]);

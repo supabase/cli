@@ -437,7 +437,21 @@ describe("resolveProjectTarget with detail", () => {
         matchesLinkedRef: false,
         branch: "feature-x",
         parentRef: FILE_REF,
+        isDefault: false,
       });
+    }),
+  );
+
+  it.effect("marks the production branch as the default", () =>
+    Effect.gen(function* () {
+      const result = yield* runDetailed(
+        { remote: { _tag: "Branch", name: "main" } },
+        {
+          savedRef: FILE_REF,
+          branches: [{ ...branchRow("main"), project_ref: FILE_REF, is_default: true }],
+        },
+      );
+      expect(successOf(result.exit)).toMatchObject({ ref: FILE_REF, isDefault: true });
     }),
   );
 
