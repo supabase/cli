@@ -614,12 +614,14 @@ describe("withCommandTelemetry", () => {
       const analytics = mockContextualAnalytics();
       return Effect.void.pipe(
         withCommandTelemetry({ flags: { remote }, safeFlags }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
-        Effect.provide(Stdio.layerTest({ args: Effect.succeed(["functions", "deploy", arg]) })),
         Effect.provide(
-          commandRuntimeLayer(["functions", "deploy"]).pipe(Layer.provide(BunCrypto.layer)),
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({ args: Effect.succeed(["functions", "deploy", arg]) }),
+            commandRuntimeLayer(["functions", "deploy"]).pipe(Layer.provide(BunCrypto.layer)),
+          ),
         ),
         Effect.map(() => analytics.captured[0]),
       );
@@ -654,8 +656,9 @@ describe("withCommandTelemetry", () => {
       Effect.gen(function* () {
         const event = yield* recordedFlags(Option.some(remote), arg);
         expect(event?.properties.flags).toEqual({ remote: expected });
-        expect(JSON.stringify(event)).not.toContain(DB_URL);
-        expect(JSON.stringify(event)).not.toContain("customer-acme");
+        const eventJson = yield* encodeJson(event);
+        expect(eventJson).not.toContain(DB_URL);
+        expect(eventJson).not.toContain("customer-acme");
       }),
     );
 
@@ -667,16 +670,16 @@ describe("withCommandTelemetry", () => {
             flags: { remote: Option.some<RemoteValue>({ _tag: "Linked" }), projectRef: REF },
             safeFlags: ["project-ref"],
           }),
-          Effect.provide(analytics.layer),
-          Effect.provide(mockProcessControl().layer),
-          Effect.provide(mockOutput({ format: "text" }).layer),
           Effect.provide(
-            Stdio.layerTest({
-              args: Effect.succeed(["functions", "deploy", "--remote", "--project-ref", REF]),
-            }),
-          ),
-          Effect.provide(
-            commandRuntimeLayer(["functions", "deploy"]).pipe(Layer.provide(BunCrypto.layer)),
+            Layer.mergeAll(
+              analytics.layer,
+              mockProcessControl().layer,
+              mockOutput({ format: "text" }).layer,
+              Stdio.layerTest({
+                args: Effect.succeed(["functions", "deploy", "--remote", "--project-ref", REF]),
+              }),
+              commandRuntimeLayer(["functions", "deploy"]).pipe(Layer.provide(BunCrypto.layer)),
+            ),
           ),
           Effect.map(() => analytics.captured[0]),
         );
@@ -704,13 +707,15 @@ describe("withCommandTelemetry", () => {
       const analytics = mockContextualAnalytics();
       return Effect.void.pipe(
         withCommandTelemetry({ flags }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
-        Effect.provide(Layer.succeed(TargetPolicy, { group, consent: "none" })),
-        Effect.provide(Stdio.layerTest({ args: Effect.succeed(["functions", "list", ...args]) })),
         Effect.provide(
-          commandRuntimeLayer(["functions", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Layer.succeed(TargetPolicy, { group, consent: "none" }),
+            Stdio.layerTest({ args: Effect.succeed(["functions", "list", ...args]) }),
+            commandRuntimeLayer(["functions", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          ),
         ),
         Effect.map(() => analytics.captured[0]?.properties.flags),
       );
@@ -751,8 +756,9 @@ describe("withCommandTelemetry", () => {
       Effect.gen(function* () {
         const recorded = yield* recordedFlags("hosted", flags, args);
         expect(recorded).toEqual(expected);
-        expect(JSON.stringify(recorded)).not.toContain(DB_URL);
-        expect(JSON.stringify(recorded)).not.toContain("customer-acme");
+        const recordedJson = yield* encodeJson(recorded);
+        expect(recordedJson).not.toContain(DB_URL);
+        expect(recordedJson).not.toContain("customer-acme");
       }),
     );
 
