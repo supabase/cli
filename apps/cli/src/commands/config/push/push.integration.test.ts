@@ -16,7 +16,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
-import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
   DEFAULT_API_URL,
@@ -28,13 +28,14 @@ import {
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockCommandPlatformApiService,
-  type MockCommandPlatformApiOpts,
+  type ApiHandler,
   mockTelemetryStateTracked,
   useTempWorkdir,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { v2ProjectConfigResponse } from "../../../../tests/helpers/config-fixtures.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { mockRuntimeInfo, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
@@ -49,7 +50,6 @@ import { cliConfigProviderLayer } from "../../../shared/config/cli-config-provid
 import { secretDigestHex } from "./push.secret.ts";
 import { configDiff } from "../diff/diff.handler.ts";
 import { configPush } from "./push.handler.ts";
-import { warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
 const tempRoot = useTempWorkdir("supabase-config-push-int-");
 
@@ -274,8 +274,6 @@ interface SetupOptions {
   readonly workdir?: string;
   /** cliSettings.explicitWorkdir override — true iff --workdir/SUPABASE_WORKDIR was set verbatim. */
   readonly explicitWorkdir?: boolean;
-  /** Analytics mock for tests asserting on captured telemetry events. */
-  readonly analytics?: ReturnType<typeof mockAnalytics>;
   // Live target-detection probe and branch-name/UUID resolution. Defaults keep every
   // plain-project scenario working without opting in: the project probe succeeds with an
   // unnamed project, and branch-lookup endpoints degrade to "not found"/empty rather than
@@ -294,8 +292,6 @@ interface SetupOptions {
   /** Answers the project picker with `REF` and writes the linked-project cache through the real
    *  cache layer. */
   readonly pickerAndRealCache?: boolean;
-  /** The command path the deprecation warnings name in their example. */
-  readonly commandPath?: ReadonlyArray<string>;
 }
 
 type PushApiRoutes = Pick<
@@ -311,7 +307,9 @@ type PushApiRoutes = Pick<
   | "branchById"
 >;
 
-function pushApiHandler(opts: PushApiRoutes): MockCommandPlatformApiOpts["handler"] {
+function pushApiHandler(
+  opts: PushApiRoutes,
+): (request: Parameters<ApiHandler>[0]) => ReturnType<ApiHandler> {
   return (request) => {
     const url = request.url;
     if (url.includes("/billing/addons")) {
@@ -451,8 +449,6 @@ function setup(opts: SetupOptions) {
           (opts.stdinIsTty ?? true) &&
           (opts.interactive ?? true),
       }),
-      ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
-      ...(opts.commandPath === undefined ? {} : { commandPath: opts.commandPath }),
     }),
     mockStdin(opts.stdinIsTty ?? true),
     Layer.succeed(YesFlag, opts.yes ?? false),
@@ -3460,19 +3456,6 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
     },
   );
 
-  it.effect("--remote=<branch-name> announces the parent project and resolved branch", () => {
-    const { layer, out } = setup({
-      toml: BRANCH_PUSH_TOML,
-      yes: true,
-      branchList: { status: 200, body: [BRANCH_BY_NAME] },
-      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
-    });
-    return Effect.gen(function* () {
-      yield* configPush(pushRemoteBranch("staging"));
-      expect(out.stderrText).toContain(`Target: project ${REF} · branch staging (${BRANCH_REF})\n`);
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("--remote=<branch-name> resolution works without a spinner in json output mode", () => {
     const { layer, out } = setup({
       toml: BRANCH_PUSH_TOML,
@@ -3595,42 +3578,6 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
     },
   );
 
-  it.effect("--project-ref still resolves a branch name and warns to use --remote", () => {
-    const { layer, out } = setup({
-      toml: BRANCH_PUSH_TOML,
-      yes: true,
-      branchList: { status: 200, body: [BRANCH_BY_NAME] },
-      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
-      commandPath: ["config", "push"],
-    });
-    return Effect.gen(function* () {
-      yield* configPush({ remote: Option.none(), projectRef: Option.some("staging") });
-      expect(warningsOf(out)).toEqual([
-        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead",
-      ]);
-      expect(out.stderrText).toContain(`Target: project ${REF} · branch staging (${BRANCH_REF})\n`);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--remote=<ref> pushes to that project without a branch lookup", () => {
-    const { layer, api } = setup({
-      toml: BRANCH_PUSH_TOML,
-      yes: true,
-      projectId: Option.none(),
-      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
-    });
-    return Effect.gen(function* () {
-      yield* configPush({
-        remote: Option.some<RemoteValue>({ _tag: "Ref", ref: BRANCH_REF }),
-        projectRef: Option.none(),
-      });
-      expect(api.requests.some((r) => r.url.includes("/branches"))).toBe(false);
-      expect(api.requests.some((r) => r.url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(
-        true,
-      );
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("--remote=<unknown-branch-name> fails listing the available branches", () => {
     const { layer, api, telemetry, linkedProjectCache } = setup({
       toml: BRANCH_PUSH_TOML,
@@ -3654,26 +3601,6 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
       expect(linkedProjectCache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
-
-  it.effect(
-    "a branch-name lookup failure in json mode still resolves cleanly without a spinner",
-    () => {
-      const { layer, api } = setup({
-        toml: BRANCH_PUSH_TOML,
-        yes: true,
-        format: "json",
-        branchList: { status: 200, body: [BRANCH_BY_NAME] },
-      });
-      return Effect.gen(function* () {
-        const exit = yield* configPush(pushRemoteBranch("ghost")).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Cause.pretty(exit.cause)).toContain("LinkBranchNotFoundError");
-        }
-        expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
-      }).pipe(Effect.provide(layer));
-    },
-  );
 
   it.effect("--remote=<branch-name> in an unlinked directory fails naming the value", () => {
     const { layer, api, telemetry, linkedProjectCache } = setup({
@@ -3770,6 +3697,13 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
       expect(linkedProjectCache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedTargetSelection("config push", {
+  files: { "supabase/config.toml": BRANCH_PUSH_TOML },
+  respond: (request, ref) =>
+    pushApiHandler({ v2: { status: 200, body: v2Response({ ref }) } })(request),
+  run: (flags) => configPush(flags).pipe(Effect.provide(cliConfigValuesTestLayer)),
 });
 
 describeHostedConsent("config push", {

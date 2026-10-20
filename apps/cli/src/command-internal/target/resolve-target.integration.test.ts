@@ -262,6 +262,7 @@ describe("resolveTarget", () => {
           matchesLinkedRef: false,
         });
         expect(result.refFlags).toEqual([Option.some(FLAG_REF)]);
+        expect(result.apiRequests).toEqual([]);
       }),
     );
 

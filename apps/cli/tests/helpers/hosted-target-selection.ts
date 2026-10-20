@@ -231,6 +231,8 @@ type HostedTargetSelectionServices = Layer.Success<ReturnType<typeof hostedLayer
 export interface HostedTargetSelectionScenario {
   readonly mode?: "project" | "parent";
   readonly operands?: ReadonlyArray<string>;
+  /** Files the leaf reads from the project directory, relative to it. */
+  readonly files?: Readonly<Record<string, string>>;
   /**
    * The command's own success response, given the project ref the run should act on; in
    * `"project"` mode the harness answers the branch lookup itself.
@@ -245,16 +247,29 @@ export interface HostedTargetSelectionScenario {
   readonly activeFlags?: ActiveFlags;
 }
 
+const writeFiles = (workdir: string, files: Readonly<Record<string, string>>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    for (const [relativePath, contents] of Object.entries(files)) {
+      const absolutePath = path.join(workdir, relativePath);
+      yield* fs.makeDirectory(path.dirname(absolutePath), { recursive: true });
+      yield* fs.writeFileString(absolutePath, contents);
+    }
+  }).pipe(Effect.provide(BunServices.layer));
+
 /** `describeTargetSelectionMatrix` for a hosted leaf whose runtime is `buildTestRuntime` over a mocked Management API. */
 export function describeHostedTargetSelection(
   path: string,
   scenario: HostedTargetSelectionScenario,
 ): void {
   const mode = scenario.mode ?? "project";
+  const { files } = scenario;
   describeTargetSelectionMatrix<HostedTargetSelectionServices>(path, {
     mode,
     operands: scenario.operands ?? [],
     ...(scenario.activeFlags === undefined ? {} : { activeFlags: scenario.activeFlags }),
+    ...(files === undefined ? {} : { prepare: (workdir) => writeFiles(workdir, files) }),
     run: scenario.run,
     harness: ({ selectorArgs, expectedRef, workdir }) => {
       const out = mockOutput({ format: "text" });
@@ -282,13 +297,6 @@ export function describeHostedTargetSelection(
         cachedRef: () => cache.cachedRef,
       };
     },
-    linkParent: (workdir) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const temp = path.join(workdir, "supabase", ".temp");
-        yield* fs.makeDirectory(temp, { recursive: true });
-        yield* fs.writeFileString(path.join(temp, "project-ref"), VALID_REF);
-      }).pipe(Effect.provide(BunServices.layer)),
+    linkParent: (workdir) => writeFiles(workdir, { "supabase/.temp/project-ref": VALID_REF }),
   });
 }
