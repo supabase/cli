@@ -3,22 +3,22 @@ import type { StartContainerSpec } from "../../../command-internal/db-bootstrap/
 
 /**
  * This service's `containerSuffix` in `SERVICE_CATALOG`. Kept as "inbucket" (the product Mailpit
- * replaced) even though the user-facing service and config section are "Mailpit"/`config.inbucket`.
+ * replaced) even though the user-facing service and config section are "Mailpit"/`config.local_smtp`.
  */
 const MAILPIT_CONTAINER_SUFFIX = "inbucket";
 
 export interface MailpitContainerSpecInput {
-  /** The already-resolved `config.inbucket.image`; resolution is the caller's responsibility. */
+  /** The already-resolved `config.local_smtp.image`; resolution is the caller's responsibility. */
   readonly image: string;
   /** The project id, used to derive this container's own name via {@link serviceContainerName}. */
   readonly projectId: string;
   /** `container.HostConfig.NetworkMode`'s target; resolved once per `start` run, not per-container. */
   readonly networkId: string;
-  /** `config.inbucket.port` — always published as `8025/tcp`. */
+  /** `config.local_smtp.port` — always published as `8025/tcp`. */
   readonly port: number;
-  /** `config.inbucket.smtp_port`; published as `1025/tcp` only when set (not `undefined`) and non-zero. */
+  /** `config.local_smtp.smtp_port`; published as `1025/tcp` only when set (not `undefined`) and non-zero. */
   readonly smtpPort?: number;
-  /** `config.inbucket.pop3_port`; published as `1110/tcp` only when set (not `undefined`) and non-zero. */
+  /** `config.local_smtp.pop3_port`; published as `1110/tcp` only when set (not `undefined`) and non-zero. */
   readonly pop3Port?: number;
 }
 

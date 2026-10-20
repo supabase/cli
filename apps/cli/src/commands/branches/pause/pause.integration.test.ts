@@ -202,7 +202,7 @@ describe("branches pause integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("does not emit anything on stdout/stderr on success (silent like Go)", () => {
+  it.effect("does not emit anything on stdout/stderr on success", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* branchesPause({ ...baseFlags, name: Option.some(BRANCH_REF) });

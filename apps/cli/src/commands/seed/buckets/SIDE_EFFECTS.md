@@ -34,7 +34,7 @@ credential, capability-state, and error behavior. `db reset --local`'s bucket se
 ### Storage gateway routes (local and remote)
 
 **Local (legacy backend):** `api.external_url` (default `http://<host>:54321`, where `<host>` resolves as:
-`SUPABASE_SERVICES_HOSTNAME` → TCP `DOCKER_HOST` → `127.0.0.1`). The
+`SUPABASE_SERVICES_HOSTNAME` (shell env, then project `.env*`) → TCP shell `DOCKER_HOST` → `127.0.0.1`). The
 `api.{enabled,external_url,port}` and `api.tls.{enabled,cert_path,key_path}`
 values are resolved with their `SUPABASE_API_*` shell/dotenv overrides applied
 first, so the gateway targets the same port/scheme the stack was actually
@@ -87,8 +87,8 @@ Analytics bucket routes (`/storage/v1/iceberg/...`) are only reached when
 | Variable                                                                                                                                                        | Purpose                                                                                                                                                                                                                                                                                          | Required?                            |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
 | `SUPABASE_EXPERIMENTAL_STACK`                                                                                                                                   | `1`/`0` selects the stack backend for local runs, overriding `experimental.stack`                                                                                                                                                                                                                | no (→ `experimental.stack` → legacy) |
-| `SUPABASE_SERVICES_HOSTNAME`                                                                                                                                    | legacy backend only: override the local services host (highest precedence)                                                                                                                                                                                                                       | no                                   |
-| `DOCKER_HOST`                                                                                                                                                   | legacy backend only: when a `tcp://host:port` endpoint, the local services host falls back to it before `127.0.0.1`                                                                                                                                                                              | no                                   |
+| `SUPABASE_SERVICES_HOSTNAME`                                                                                                                                    | legacy backend only: override the local services host (highest precedence; shell env, then project `.env*`)                                                                                                                                                                                      | no                                   |
+| `DOCKER_HOST`                                                                                                                                                   | legacy backend only, shell env only (a project `.env*` value is ignored): when a `tcp://host:port` endpoint, the local services host falls back to it before `127.0.0.1`                                                                                                                         | no                                   |
 | `SUPABASE_AUTH_SERVICE_ROLE_KEY`                                                                                                                                | when set and non-empty: for `--linked`, used as the service-role key (skips Management API key fetch; shell env only); for local, legacy-backend runs, used as the service-role key instead of `auth.service_role_key` — shell env OR project dotenv (shell wins), `encrypted:` values decrypted | no                                   |
 | `SUPABASE_AUTH_JWT_SECRET`                                                                                                                                      | local, legacy-backend runs only: when set and non-empty, overrides `auth.jwt_secret` for service-role key derivation — shell env OR project dotenv (shell wins), `encrypted:` values decrypted                                                                                                   | no                                   |
 | `SUPABASE_YES`                                                                                                                                                  | auto-confirms the overwrite/prune prompts, same as `--yes`; read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` files (shell wins; CLI-1878)                                                                                                                         | no                                   |
@@ -157,7 +157,7 @@ Bucket <name> not found in supabase/config.toml. Do you want to prune it? [y/N]
 
 ### `--output-format json`
 
-Additive (no Go equivalent). A final `result` object summarising the run is
+A final `result` object summarising the run is
 emitted on stdout; progress/prompts are suppressed (prompts use their defaults:
 overwrite → yes, prune → no).
 
@@ -168,13 +168,12 @@ stdout and a terminal `result`/`error` event is emitted.
 
 ## Notes
 
-- **`--project-ref`** (TS-only, no Go equivalent — Go's `seed` defines no
-  `--project-ref` at all) overrides ONLY the linked-ref resolution used above
+- **`--project-ref`** overrides ONLY the linked-ref resolution used above
   (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies
   `--linked`: passing it without `--linked` (i.e. targeting local) is a hard
   error rather than a silently discarded flag.
 - **Remote (`--linked`) — config override merge.** The project ref is resolved
-  BEFORE config is loaded. `loadCliConfig` then merges the `[remotes.<name>]`
+  BEFORE config is loaded. The config load then merges the `[remotes.<name>]`
   block whose `project_id` equals the resolved ref over the base config (including
   `storage.buckets`, `storage.vector`, `storage.analytics`).
   Local runs load the base config verbatim with no merge.
@@ -204,7 +203,7 @@ configured`, or a 404 on `ListVectorBuckets`), a WARNING is printed and object
 - **Idempotent.** Existing buckets are updated (after an overwrite confirm),
   objects are uploaded with `x-upsert: true`.
 - **Content-Type** for uploaded objects: the first
-  512 bytes are sniffed with a 1:1 port of Go's `http.DetectContentType`
+  512 bytes are sniffed using the WHATWG-style content-type sniffing algorithm
   (`command-internal/detect-content-type.ts`), and only a generic `text/plain`
   result is refined by extension via a built-in MIME table (the host OS MIME
   database is not consulted; the deterministic built-in table is used instead).

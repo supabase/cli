@@ -12,6 +12,7 @@ import {
   Schema,
 } from "effect";
 
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import {
   mockOutput,
   mockRuntimeInfo,
@@ -31,7 +32,7 @@ import {
   projectResponse,
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import { secretsSet } from "./set.handler.ts";
 
@@ -75,7 +76,7 @@ function permissionDeniedReadLayer(name: string) {
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
-  goOutput?: "pretty" | "json" | "yaml" | "toml" | "env";
+  outputFlag?: "pretty" | "json" | "yaml" | "toml" | "env";
   status?: number;
   network?: "fail";
   env?: Record<string, string | undefined>;
@@ -97,10 +98,11 @@ function setup(opts: SetupOpts = {}) {
       out,
       api,
       cliSettings,
-      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     }),
     mockRuntimeInfo({ cwd: tempRoot.current }),
     processEnvLayer(opts.env ?? {}),
+    cliConfigValuesTestLayer,
     debugLogger.layer,
   );
   return { layer, out, api, debugLogger };
@@ -233,6 +235,7 @@ describe("secrets set integration", () => {
       }),
       mockRuntimeInfo({ cwd: tempRoot.current }),
       processEnvLayer({}),
+      cliConfigValuesTestLayer,
       mockDebugLoggerTracked().layer,
     );
     return Effect.gen(function* () {
@@ -379,37 +382,34 @@ DB_URL = "env(MY_DB_URL)"
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect(
-    "skips secrets whose env() reference cannot be resolved (Go set.go:48-52 parity)",
-    () => {
-      const { layer, api } = setup({ env: { MY_DB_URL: "postgres://x" } });
-      return Effect.gen(function* () {
-        yield* writeConfig(
-          `[edge_runtime.secrets]
+  it.effect("skips secrets whose env() reference cannot be resolved", () => {
+    const { layer, api } = setup({ env: { MY_DB_URL: "postgres://x" } });
+    return Effect.gen(function* () {
+      yield* writeConfig(
+        `[edge_runtime.secrets]
 RESOLVED = "env(MY_DB_URL)"
 UNRESOLVED = "env(NOT_SET_ANYWHERE)"
 LITERAL = "plain-value"
 `,
-        );
-        yield* secretsSet({
-          projectRef: Option.none(),
-          envFile: Option.none(),
-          secrets: [],
-        });
-        const body = yield* decodePostBody(api.requests[0]?.body);
-        expect(body).toEqual(
-          expect.arrayContaining([
-            { name: "RESOLVED", value: "postgres://x" },
-            { name: "LITERAL", value: "plain-value" },
-          ]),
-        );
-        expect(body.find((entry) => entry.name === "UNRESOLVED")).toBeUndefined();
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      );
+      yield* secretsSet({
+        projectRef: Option.none(),
+        envFile: Option.none(),
+        secrets: [],
+      });
+      const body = yield* decodePostBody(api.requests[0]?.body);
+      expect(body).toEqual(
+        expect.arrayContaining([
+          { name: "RESOLVED", value: "postgres://x" },
+          { name: "LITERAL", value: "plain-value" },
+        ]),
+      );
+      expect(body.find((entry) => entry.name === "UNRESOLVED")).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect(
-    "skips an empty [edge_runtime.secrets] value instead of overwriting a remote secret (Go set.go:48-52 parity)",
+    "skips an empty [edge_runtime.secrets] value instead of overwriting a remote secret",
     () => {
       // An empty `EMPTY = ""` value in config.toml is never sent, which prevents it from
       // silently overwriting a same-named remote secret with an empty string.
@@ -578,37 +578,34 @@ FOO = "literal-foo"
     },
   );
 
-  it.effect(
-    "recovers [edge_runtime.secrets] when an unrelated field fails schema decode (CLI-1867 Go parity)",
-    () => {
-      // Valid TOML throughout, but `analytics.port` has the wrong type. The CLI's established
-      // per-field decode tolerance means an unrelated type error doesn't stop
-      // `edge_runtime.secrets` from being read; Effect Schema's `decodeUnknownSync` is atomic
-      // and would otherwise discard the whole document, silently dropping `FROM_CONFIG` too.
-      const { layer, api, debugLogger } = setup();
-      return Effect.gen(function* () {
-        yield* writeConfig(
-          `[edge_runtime.secrets]
+  it.effect("recovers [edge_runtime.secrets] when an unrelated field fails schema decode", () => {
+    // Valid TOML throughout, but `analytics.port` has the wrong type. The CLI's established
+    // per-field decode tolerance means an unrelated type error doesn't stop
+    // `edge_runtime.secrets` from being read; Effect Schema's `decodeUnknownSync` is atomic
+    // and would otherwise discard the whole document, silently dropping `FROM_CONFIG` too.
+    const { layer, api, debugLogger } = setup();
+    return Effect.gen(function* () {
+      yield* writeConfig(
+        `[edge_runtime.secrets]
 FROM_CONFIG = "config-value"
 
 [analytics]
 port = "not-a-number"
 `,
-        );
-        yield* secretsSet({
-          projectRef: Option.none(),
-          envFile: Option.none(),
-          secrets: [],
-        });
-        expect(api.requests[0]?.body).toEqual([{ name: "FROM_CONFIG", value: "config-value" }]);
-        expect(debugLogger.messages).toHaveLength(1);
-        expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      );
+      yield* secretsSet({
+        projectRef: Option.none(),
+        envFile: Option.none(),
+        secrets: [],
+      });
+      expect(api.requests[0]?.body).toEqual([{ name: "FROM_CONFIG", value: "config-value" }]);
+      expect(debugLogger.messages).toHaveLength(1);
+      expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect(
-    "recovers [edge_runtime.secrets] when a sibling field in the same edge_runtime table fails schema decode (CLI-1867 Go parity)",
+    "recovers [edge_runtime.secrets] when a sibling field in the same edge_runtime table fails schema decode",
     () => {
       // Valid TOML throughout, but `edge_runtime.inspector_port` (a sibling of `secrets` in
       // the same table, not an unrelated top-level table) has the wrong type. The recovery
@@ -637,9 +634,9 @@ FROM_CONFIG = "config-value"
   );
 
   it.effect(
-    "tolerates a malformed supabase/.env, logs it to the debug logger, and still sets CLI-arg secrets (CLI-1867 Go parity)",
+    "tolerates a malformed supabase/.env, logs it to the debug logger, and still sets CLI-arg secrets",
     () => {
-      // `loadCliConfig` resolves `env(VAR)` references against `.env`/`.env.local` before
+      // The resolved config load resolves `env(VAR)` references against `.env`/`.env.local` before
       // schema decode, so a malformed dotenv line fails with `CliProjectEnvParseError` rather
       // than `CliConfigParseError`, and this must not abort the command either. `.env` is only
       // read once a config.toml/.json is found, so one must exist here too.
@@ -665,7 +662,7 @@ FROM_CONFIG = "config-value"
   );
 
   it.effect(
-    "recovers valid [edge_runtime.secrets] entries when a sibling entry in the same map fails schema decode (CLI-1867 Go parity)",
+    "recovers valid [edge_runtime.secrets] entries when a sibling entry in the same map fails schema decode",
     () => {
       // `GOOD` is a valid secret value; `BAD` is a non-string TOML value for a field whose
       // schema expects a string-like secret. The recovery decodes each `edge_runtime.secrets`
@@ -692,7 +689,7 @@ BAD = 123
   );
 
   it.effect(
-    "skips an empty recovered [edge_runtime.secrets] entry alongside an unrelated schema error (Go set.go:48-52 parity)",
+    "skips an empty recovered [edge_runtime.secrets] entry alongside an unrelated schema error",
     () => {
       // Same empty-value skip as the happy path, exercised through the recovery path instead:
       // `EMPTY` decodes fine on its own, so it must be dropped downstream in the same merge
@@ -720,37 +717,34 @@ port = "not-a-number"
     },
   );
 
-  it.effect(
-    "does not fabricate a secret named 0 when [edge_runtime.secrets] is an array (CLI-1867 Go parity)",
-    () => {
-      // `edge_runtime.secrets` as an array (instead of a table) is not recoverable: the whole
-      // field is left empty rather than being misread as `{ "0": "actual-secret" }` via
-      // `Object.entries`.
-      const { layer, api, debugLogger } = setup();
-      return Effect.gen(function* () {
-        yield* writeConfig(
-          `[analytics]
+  it.effect("does not fabricate a secret named 0 when [edge_runtime.secrets] is an array", () => {
+    // `edge_runtime.secrets` as an array (instead of a table) is not recoverable: the whole
+    // field is left empty rather than being misread as `{ "0": "actual-secret" }` via
+    // `Object.entries`.
+    const { layer, api, debugLogger } = setup();
+    return Effect.gen(function* () {
+      yield* writeConfig(
+        `[analytics]
 port = "not-a-number"
 
 [edge_runtime]
 secrets = ["actual-secret"]
 `,
-        );
-        yield* secretsSet({
-          projectRef: Option.none(),
-          envFile: Option.none(),
-          secrets: ["FOO=bar"],
-        });
-        const body = yield* decodePostBody(api.requests[0]?.body);
-        expect(body).toEqual([{ name: "FOO", value: "bar" }]);
-        expect(body.find((entry) => entry.name === "0")).toBeUndefined();
-        expect(debugLogger.messages).toHaveLength(1);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      );
+      yield* secretsSet({
+        projectRef: Option.none(),
+        envFile: Option.none(),
+        secrets: ["FOO=bar"],
+      });
+      const body = yield* decodePostBody(api.requests[0]?.body);
+      expect(body).toEqual([{ name: "FOO", value: "bar" }]);
+      expect(body.find((entry) => entry.name === "0")).toBeUndefined();
+      expect(debugLogger.messages).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect(
-    "recovers the selected remote's [edge_runtime.secrets] override, not the base, on schema-decode error (CLI-1867 Go parity)",
+    "recovers the selected remote's [edge_runtime.secrets] override, not the base, on schema-decode error",
     () => {
       // `analytics.port` triggers the recovery path. `remotes.staging.project_id` matches the
       // resolved ref, so the remote override is merged before the tolerant decode — the
@@ -787,7 +781,7 @@ FROM_CONFIG = "remote-value"
   );
 
   it.effect(
-    "prints the remote override notice to stderr when [remotes.*] matches the resolved ref (Go parity: pkg/config/config.go:605)",
+    "prints the remote override notice to stderr when [remotes.*] matches the resolved ref",
     () => {
       // No decode error here — the plain success path. The override notice still prints
       // unconditionally whenever a `[remotes.*]` block's `project_id` matches the resolved
@@ -800,6 +794,35 @@ FROM_CONFIG = "base-value"
 
 [remotes.staging]
 project_id = "${VALID_REF}"
+
+[remotes.staging.edge_runtime.secrets]
+FROM_CONFIG = "remote-value"
+`,
+        );
+        yield* secretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: [],
+        });
+        expect(api.requests[0]?.body).toEqual([{ name: "FROM_CONFIG", value: "remote-value" }]);
+        expect(out.stderrText).toContain("Loading config override: [remotes.staging]\n");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "selects the [remotes.*] block named by SUPABASE_REMOTES_<NAME>_PROJECT_ID and uses its secrets",
+    () => {
+      const { layer, out, api } = setup({
+        env: { SUPABASE_REMOTES_STAGING_PROJECT_ID: VALID_REF },
+      });
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
+FROM_CONFIG = "base-value"
+
+[remotes.staging]
+project_id = "aaaaaaaaaaaaaaaaaaaa"
 
 [remotes.staging.edge_runtime.secrets]
 FROM_CONFIG = "remote-value"
@@ -838,7 +861,7 @@ FROM_CONFIG = "config-value"
   );
 
   it.effect(
-    "tolerates two [remotes.*] blocks sharing the target project_id, logs it, and still sets CLI-arg secrets (CLI-1867 Go parity)",
+    "tolerates two [remotes.*] blocks sharing the target project_id, logs it, and still sets CLI-arg secrets",
     () => {
       // Swallowed non-fatally like every other load error here. There's no parsed document to
       // recover a subtree from, so config-sourced secrets are dropped entirely — only
@@ -869,7 +892,7 @@ project_id = "dupe-project-id"
   );
 
   it.effect(
-    "tolerates a [remotes.*] block with a malformed project_id and still sets CLI-arg secrets (Go parity)",
+    "tolerates a [remotes.*] block with a malformed project_id and still sets CLI-arg secrets",
     () => {
       // Swallowed non-fatally like every other load error here. There's no parsed document to
       // recover a subtree from, so config-sourced secrets are dropped entirely — only
@@ -972,6 +995,35 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
     },
   );
 
+  it.effect(
+    "fails with CliConfigRemovedKeyError naming [local_smtp] and sends no request when config.toml uses [inbucket]",
+    () => {
+      const { layer, out, api } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[inbucket]
+enabled = true
+
+[edge_runtime.secrets]
+FROM_CONFIG = "config-value"
+`,
+        );
+        const message = yield* secretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: ["FOO=bar"],
+        }).pipe(
+          Effect.catchTag("CliConfigRemovedKeyError", (error) => Effect.succeed(error.message)),
+        );
+        expect(message).toBe(
+          "[inbucket] in supabase/config.toml is no longer supported. Use [local_smtp] instead.",
+        );
+        expect(api.requests).toHaveLength(0);
+        expect(out.stdoutText).not.toContain("Finished supabase secrets set.");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("fails with SecretsSetNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
@@ -1027,7 +1079,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
   it.effect(
     "text mode prints `Finished supabase secrets set.\\n` regardless of --output value",
     () => {
-      const { layer, out } = setup({ goOutput: "json" });
+      const { layer, out } = setup({ outputFlag: "json" });
       return Effect.gen(function* () {
         yield* secretsSet({
           projectRef: Option.none(),

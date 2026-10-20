@@ -19,11 +19,11 @@ import {
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { domainsDelete } from "./delete.handler.ts";
 
-type GoOutput = "env" | "pretty" | "json" | "toml" | "yaml";
+type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml";
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
-  readonly goOutput?: GoOutput;
+  readonly outputFlag?: OutputFlagValue;
   readonly status?: number;
   readonly network?: "fail";
 }
@@ -47,7 +47,7 @@ function setup(opts: SetupOpts = {}) {
     cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
   });
   return { layer, out, api, telemetry, linkedProjectCache };
 }
@@ -85,39 +85,12 @@ describe("domains delete integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("ignores -o json and still only prints to stderr (Go parity)", () => {
-    const { layer, out } = setup({ goOutput: "json" });
+  it.effect("ignores -o json and still only prints to stderr", () => {
+    const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* domainsDelete(baseFlags);
       expect(out.stdoutText).toBe("");
       expect(out.stderrText).toBe("Deleted custom hostname config successfully.\n");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect(
-    "is inert apart from the stderr deprecation warning when --include-raw-output is set",
-    () => {
-      const { layer, out } = setup({ goOutput: "json" });
-      return Effect.gen(function* () {
-        yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: Option.some(true) });
-        expect(out.stdoutText).toBe("");
-        expect(out.stderrText).toBe(
-          "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n" +
-            "Deleted custom hostname config successfully.\n",
-        );
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect("warns when --include-raw-output=false", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* domainsDelete({ projectRef: Option.none(), includeRawOutput: Option.some(false) });
-      expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe(
-        "Flag --include-raw-output is deprecated and will be removed in v3, use -o json instead.\n" +
-          "Deleted custom hostname config successfully.\n",
-      );
     }).pipe(Effect.provide(layer));
   });
 

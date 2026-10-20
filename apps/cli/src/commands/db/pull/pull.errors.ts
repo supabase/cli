@@ -19,8 +19,8 @@ export class DbPullTargetFlagsError extends Data.TaggedError("DbPullTargetFlagsE
 }
 
 /**
- * `--declarative` / `--use-pg-delta` combined with `--diff-engine`; message
- * text is an established output contract.
+ * `--declarative` combined with `--diff-engine`; message text is an established output
+ * contract.
  */
 export class DbPullEngineConflictError extends Data.TaggedError("DbPullEngineConflictError")<{
   readonly message: string;
