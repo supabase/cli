@@ -14,8 +14,17 @@ import {
 import { yellow } from "../colors.ts";
 import { formatNamedRef, sanitizeInlineName } from "../http-errors.ts";
 import { readCachedLinkedProject, resolveLinkedParentRef } from "../parent-project-ref.ts";
-import { findBranch, listParentBranches, resolveRemoteBranchRef } from "./branch-resolution.ts";
-import { LinkBranchListStatusError } from "./branch-resolution.errors.ts";
+import {
+  findBranch,
+  listBranchesFailureCause,
+  listParentBranches,
+  previewBranchHint,
+  resolveRemoteBranchRef,
+} from "./branch-resolution.ts";
+import {
+  LinkBranchListNetworkError,
+  LinkBranchListStatusError,
+} from "./branch-resolution.errors.ts";
 import { closestByName } from "./closest-branch.ts";
 import type { RemoteValue } from "./remote-value.ts";
 import { stripUserinfo } from "./remote-vocabulary.ts";
@@ -79,6 +88,10 @@ const linkedProjectName = Effect.fnUntraced(function* (ref: string) {
 
 const LOGIN_SUGGESTION =
   "Run `supabase login` with an account that can list this project's branches.";
+const SET_TOKEN_SUGGESTION = "Set SUPABASE_ACCESS_TOKEN to a valid access token.";
+const FORBIDDEN_SUGGESTION = "Use an access token that can read this project's branches.";
+
+type TokenSource = "env" | "stored";
 
 interface ListingFailure {
   readonly reason: string;
@@ -87,14 +100,36 @@ interface ListingFailure {
   readonly authFailure?: "login" | "token";
 }
 
-const listingFailure = (error: unknown): ListingFailure => {
+const statusFailure = (
+  status: number,
+  parentRef: string,
+  tokenSource: TokenSource,
+): ListingFailure => {
+  const reason = `: HTTP ${status}`;
+  switch (status) {
+    case 401:
+      return tokenSource === "env"
+        ? { status, reason, suggestion: SET_TOKEN_SUGGESTION, authFailure: "token" }
+        : { status, reason, suggestion: LOGIN_SUGGESTION };
+    case 403:
+      return { status, reason, suggestion: FORBIDDEN_SUGGESTION };
+    case 404:
+      return { status, reason, suggestion: previewBranchHint(parentRef) };
+    default:
+      return { status, reason };
+  }
+};
+
+const listingFailure = (
+  error: unknown,
+  parentRef: string,
+  tokenSource: TokenSource,
+): ListingFailure => {
   if (error instanceof LinkBranchListStatusError) {
-    const { status } = error;
-    return {
-      status,
-      reason: ` with HTTP ${status}`,
-      suggestion: status === 401 || status === 403 ? LOGIN_SUGGESTION : undefined,
-    };
+    return statusFailure(error.status, parentRef, tokenSource);
+  }
+  if (error instanceof LinkBranchListNetworkError) {
+    return { reason: `: ${sanitizeInlineName(stripUserinfo(listBranchesFailureCause(error)))}` };
   }
   if (error instanceof AccessTokenRequiredError) {
     return {
@@ -107,7 +142,7 @@ const listingFailure = (error: unknown): ListingFailure => {
     return error.source === "env"
       ? {
           reason: " because SUPABASE_ACCESS_TOKEN is not a valid access token",
-          suggestion: "Set SUPABASE_ACCESS_TOKEN to a valid access token.",
+          suggestion: SET_TOKEN_SUGGESTION,
           authFailure: "token",
         }
       : {
@@ -130,7 +165,12 @@ const checkRemoteOperand = Effect.fn("Target.checkRemoteOperand")(function* (raw
 
   const listed = yield* listParentBranches(parent.ref, "Checking branches...").pipe(Effect.result);
   if (Result.isFailure(listed)) {
-    const failure = listingFailure(listed.failure);
+    const { accessToken } = yield* CommandSettings;
+    const failure = listingFailure(
+      listed.failure,
+      parent.ref,
+      Option.isSome(accessToken) ? "env" : "stored",
+    );
     return yield* new TargetRemoteAmbiguousError({
       message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${parent.ref} failed${failure.reason}). For the branch: ${usage} --remote=<branch>. For the linked project, put --remote last: ${usage} <operands> --remote`,
       ...(failure.suggestion === undefined ? {} : { suggestion: failure.suggestion }),

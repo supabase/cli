@@ -76,9 +76,9 @@ export class TargetRemoteAmbiguousError extends Data.TaggedError("TargetRemoteAm
   readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.authFailure === "token") return actionability.authToken;
     if (this.status === 401 || this.status === 403) return statusCodeActionability(this.status);
     if (this.authFailure === "login") return actionability.authLogin;
-    if (this.authFailure === "token") return actionability.authToken;
     return actionability.provideFlags;
   }
 }

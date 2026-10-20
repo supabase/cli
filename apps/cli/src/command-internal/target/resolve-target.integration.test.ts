@@ -7,6 +7,7 @@ import {
   jsonResponse,
   mockCommandPlatformApi,
   mockCommandSettings,
+  transportFailure,
 } from "../../../tests/helpers/command-mocks.ts";
 import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
@@ -22,7 +23,11 @@ import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.
 import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 import { announceTarget } from "../../shared/output/command-target.service.ts";
 import type { OutputFormat } from "../../shared/output/types.ts";
-import { actionability, ErrorActionabilityId } from "../../shared/telemetry/error-actionability.ts";
+import {
+  actionability,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../../shared/telemetry/error-actionability.ts";
 import type { RemoteValue } from "./remote-value.ts";
 import { resolveTarget } from "./resolve-target.ts";
 import { renderLocalTarget } from "./target-identity.ts";
@@ -61,6 +66,13 @@ const branchRow = (name: string, projectRef = BRANCH_REF, isDefault = false) => 
   with_data: true,
 });
 
+const failingListings = {
+  unavailable: { status: 500, message: "boom" },
+  unauthorized: { status: 401, message: "Unauthorized" },
+  forbidden: { status: 403, message: "Forbidden" },
+  missing: { status: 404, message: "Not found" },
+} as const;
+
 const root = rootCommandForFeatures();
 
 const projectRefResolver = (options: { readonly linked: boolean }) => {
@@ -98,11 +110,9 @@ const run = (
     readonly command?: ReadonlyArray<string>;
     readonly format?: OutputFormat;
     readonly tokenFailure?: AccessTokenRequiredError | InvalidAccessTokenError;
-    readonly branches?:
-      | ReadonlyArray<ReturnType<typeof branchRow>>
-      | "unavailable"
-      | "unauthorized"
-      | "forbidden";
+    readonly storedToken?: boolean;
+    readonly unreachable?: string;
+    readonly branches?: ReadonlyArray<ReturnType<typeof branchRow>> | keyof typeof failingListings;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -125,16 +135,17 @@ const run = (
     const resolver = projectRefResolver({ linked: options.linked ?? true });
     const out = mockOutput({ format: options.format ?? "text" });
     const api = mockCommandPlatformApi({
-      handler: (request) =>
-        Effect.succeed(
-          options.branches === "unavailable"
-            ? jsonResponse(request, 500, { message: "boom" })
-            : options.branches === "unauthorized"
-              ? jsonResponse(request, 401, { message: "Unauthorized" })
-              : options.branches === "forbidden"
-                ? jsonResponse(request, 403, { message: "Forbidden" })
-                : jsonResponse(request, 200, options.branches ?? []),
-        ),
+      handler: (request) => {
+        if (options.unreachable !== undefined) {
+          return Effect.fail(transportFailure(request, options.unreachable));
+        }
+        const { branches = [] } = options;
+        if (typeof branches === "string") {
+          const { status, message } = failingListings[branches];
+          return Effect.succeed(jsonResponse(request, status, { message }));
+        }
+        return Effect.succeed(jsonResponse(request, 200, branches));
+      },
     });
     const spans: Array<Tracer.NativeSpan> = [];
     const tracer = Tracer.make({
@@ -158,6 +169,7 @@ const run = (
           mockCommandSettings({
             workdir: dir,
             projectId: options.projectId ?? Option.none(),
+            ...(options.storedToken === true ? { accessToken: Option.none() } : {}),
           }),
           options.args === undefined
             ? Layer.empty
@@ -454,7 +466,7 @@ describe("resolveTarget", () => {
         const error = failureOf(result.exit);
         expect(error).toMatchObject({
           _tag: "TargetRemoteAmbiguousError",
-          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed with HTTP 500). ${placeholderOptions}`,
+          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed: HTTP 500). ${placeholderOptions}`,
           status: 500,
           cause: { _tag: "LinkBranchListStatusError", status: 500 },
         });
@@ -462,23 +474,95 @@ describe("resolveTarget", () => {
       }),
     );
 
-    it.effect.each([
-      { name: "unauthorized", status: 401 },
-      { name: "forbidden", status: 403 },
-    ] as const)("suggests logging in when the branch listing is $name", ({ name, status }) =>
+    it.effect("names the transport failure when the listing never gets a response", () =>
       Effect.gen(function* () {
         const result = yield* run("selectable", bare, {
           args,
           command,
           savedRef: FILE_REF,
-          branches: name,
+          unreachable: "ECONNREFUSED",
         });
-        expect(failureOf(result.exit)).toMatchObject({
+        const error = failureOf(result.exit);
+        expect(error).toMatchObject({
           _tag: "TargetRemoteAmbiguousError",
-          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed with HTTP ${status}). ${placeholderOptions}`,
-          suggestion: "Run `supabase login` with an account that can list this project's branches.",
-          status,
+          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed: ECONNREFUSED). ${placeholderOptions}`,
+          cause: { _tag: "LinkBranchListNetworkError" },
         });
+        expect(error).not.toHaveProperty("status");
+        expect(error).not.toHaveProperty("suggestion");
+      }),
+    );
+
+    it.effect("keeps URL credentials out of a transport failure it names", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args,
+          command,
+          savedRef: FILE_REF,
+          unreachable:
+            "connect ECONNREFUSED https://proxy-user:hunter2@proxy.test:8080\nsecond line",
+        });
+        const message = String((failureOf(result.exit) as Error).message);
+        expect(message).toContain(
+          `failed: connect ECONNREFUSED https://proxy.test:8080). ${placeholderOptions}`,
+        );
+        expect(message).not.toContain("hunter2");
+        expect(message).not.toContain("second line");
+      }),
+    );
+
+    it.effect.each([
+      {
+        name: "unauthorized with a token from SUPABASE_ACCESS_TOKEN",
+        branches: "unauthorized",
+        storedToken: false,
+        status: 401,
+        suggestion: "Set SUPABASE_ACCESS_TOKEN to a valid access token.",
+        actionability: actionability.authToken,
+      },
+      {
+        name: "unauthorized with a stored token",
+        branches: "unauthorized",
+        storedToken: true,
+        status: 401,
+        suggestion: "Run `supabase login` with an account that can list this project's branches.",
+        actionability: statusCodeActionability(401),
+      },
+      {
+        name: "forbidden",
+        branches: "forbidden",
+        storedToken: false,
+        status: 403,
+        suggestion: "Use an access token that can read this project's branches.",
+        actionability: statusCodeActionability(403),
+      },
+      {
+        name: "not found",
+        branches: "missing",
+        storedToken: false,
+        status: 404,
+        suggestion: `If ${FILE_REF} is itself a preview branch, link its parent project first: supabase link --project-ref <parent-ref>`,
+        actionability: actionability.provideFlags,
+      },
+    ] as const)("suggests the fix when the branch listing is $name", (testCase) =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args,
+          command,
+          savedRef: FILE_REF,
+          branches: testCase.branches,
+          storedToken: testCase.storedToken,
+        });
+        const error = failureOf(result.exit);
+        expect(error).toMatchObject({
+          _tag: "TargetRemoteAmbiguousError",
+          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed: HTTP ${testCase.status}). ${placeholderOptions}`,
+          suggestion: testCase.suggestion,
+          status: testCase.status,
+        });
+        expect((error as { [ErrorActionabilityId]: unknown })[ErrorActionabilityId]).toEqual(
+          testCase.actionability,
+        );
       }),
     );
 
@@ -557,7 +641,7 @@ describe("resolveTarget", () => {
         const error = failureOf(result.exit);
         expect(error).toMatchObject({
           _tag: "TargetRemoteAmbiguousError",
-          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed with HTTP 403). For the branch: supabase secrets unset --remote=<branch>. For the linked project, put --remote last: supabase secrets unset <operands> --remote`,
+          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed: HTTP 403). For the branch: supabase secrets unset --remote=<branch>. For the linked project, put --remote last: supabase secrets unset <operands> --remote`,
         });
         expect(JSON.stringify(error)).not.toContain("sk_live_secret");
       }),

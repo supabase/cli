@@ -133,6 +133,20 @@ const startBranchLookupTask = Effect.fnUntraced(function* (label: string) {
   return output.format === "text" && output.interactive ? yield* output.task(label) : undefined;
 });
 
+const LIST_BRANCHES_FAILED = "failed to list branches: ";
+
+/** The transport failure behind a branch-list error, without the `failed to list branches: ` lead the error message carries. */
+export const listBranchesFailureCause = (error: LinkBranchListNetworkError): string => {
+  const [firstLine = ""] = error.message.split("\n");
+  return firstLine.startsWith(LIST_BRANCHES_FAILED)
+    ? firstLine.slice(LIST_BRANCHES_FAILED.length)
+    : firstLine;
+};
+
+/** What to try when the project whose branches were listed is itself a preview branch, which has none. */
+export const previewBranchHint = (ref: string): string =>
+  `If ${ref} is itself a preview branch, link its parent project first: supabase link --project-ref <parent-ref>`;
+
 /** `GET /v1/projects/{ref}/branches`, shared by every branch-name lookup. */
 export const listParentBranches = Effect.fnUntraced(function* (parentRef: string, label: string) {
   const api = yield* acquireApi();
@@ -140,11 +154,11 @@ export const listParentBranches = Effect.fnUntraced(function* (parentRef: string
   const mapBranchListError = mapHttpError({
     networkError: LinkBranchListNetworkError,
     statusError: LinkBranchListStatusError,
-    networkMessage: (cause) => `failed to list branches: ${cause}`,
+    networkMessage: (cause) => `${LIST_BRANCHES_FAILED}${cause}`,
     statusMessage: (status, body) => {
       if (status === 401) return AUTHENTICATION_FAILED_STATUS_MESSAGE;
       return status === 404
-        ? `Cannot list branches for project ${parentRef} (HTTP 404). If ${parentRef} is itself a preview branch, link its parent project first: supabase link --project-ref <parent-ref>`
+        ? `Cannot list branches for project ${parentRef} (HTTP 404). ${previewBranchHint(parentRef)}`
         : `unexpected list branches status ${status}: ${body}`;
     },
   });
