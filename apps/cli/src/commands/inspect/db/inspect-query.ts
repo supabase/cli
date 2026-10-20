@@ -13,6 +13,7 @@ import { DbConfigResolver } from "../../../command-internal/db-config.service.ts
 import type { ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
+import { warnLinkedTargetDefault } from "../../../command-internal/target-default-warning.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 
 /**
@@ -140,6 +141,7 @@ export const runInspectQuery = Effect.fn("Inspect.runQuery")(function* (
   spec: InspectQuerySpec,
   flags: InspectConnectionFlags,
   dnsResolver: "native" | "https",
+  command = `inspect db ${spec.name}`,
 ) {
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
@@ -149,6 +151,10 @@ export const runInspectQuery = Effect.fn("Inspect.runQuery")(function* (
   // Mutual exclusivity is keyed off raw argv (which flags were explicitly passed), not the
   // parsed boolean value — `--local=false` counts as explicitly set.
   const target = resolveDbTargetFlags(cliArgs.args);
+  yield* warnLinkedTargetDefault({
+    command,
+    targetSelected: target.connType !== undefined || Option.isSome(flags.projectRef),
+  });
   if (target.setFlags.length > 1) {
     return yield* new InspectMutuallyExclusiveFlagsError({
       message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
@@ -232,7 +238,7 @@ export function makeInspectDbHandler(
         const output = yield* Output;
         yield* output.raw(deprecation, "stderr");
       }
-      yield* runInspectQuery(spec, flags, dnsResolver);
+      yield* runInspectQuery(spec, flags, dnsResolver, traceName.replaceAll(".", " "));
     }).pipe(Effect.ensuring(telemetryState.flush));
   });
 }

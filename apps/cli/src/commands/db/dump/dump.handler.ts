@@ -7,6 +7,7 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
+import { warnLinkedTargetDefault } from "../../../command-internal/target-default-warning.ts";
 import {
   loadProjectEnv,
   readDbToml,
@@ -145,6 +146,14 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       }
     }
 
+    yield* warnLinkedTargetDefault({
+      command: "db dump",
+      targetSelected:
+        Option.isSome(flags.dbUrl) ||
+        Option.isSome(flags.linked) ||
+        Option.isSome(flags.local) ||
+        Option.isSome(flags.projectRef),
+    });
     // 3. Resolve the connection: db-url > local > linked, defaulting to linked when
     //    neither is set (unlike other db subcommands, which default to local).
     const useLocal = Option.isNone(flags.dbUrl) && Option.isSome(flags.local);

@@ -143,6 +143,14 @@ Not applicable.
 
 Not applicable.
 
+### Target default warning
+
+A run that passes none of `--local`, `--linked` (in any form, including `--linked=false`), `--db-url` or `--project-id` writes one line to **stderr** in every `--output-format`, once the linked project ref has resolved from `SUPABASE_PROJECT_ID`, the link file or the picker. A run that cannot resolve a ref prints only the existing "Must specify one of" error. stdout is unchanged. The next major version targets the local database by default.
+
+```
+Warning: supabase gen types will target the local database by default in the next major version. Pass --linked to keep targeting the linked project.
+```
+
 ## Notes
 
 - TypeScript generated in-process is unformatted. stderr suggests `npx oxfmt <generated-file.ts>`.

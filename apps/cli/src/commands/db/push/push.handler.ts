@@ -14,6 +14,7 @@ import {
 } from "../../../command-internal/db-config.toml-read.ts";
 import { dbPushCore } from "../../../command-internal/db-push-core.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
+import { warnLinkedTargetDefault } from "../../../command-internal/target-default-warning.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { DbPushFlags } from "./push.command.ts";
@@ -47,6 +48,10 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
 
   const body = Effect.gen(function* () {
     const target = resolveDbTargetFlags(cliArgs.args);
+    yield* warnLinkedTargetDefault({
+      command: "db push",
+      targetSelected: target.connType !== undefined || Option.isSome(flags.projectRef),
+    });
     // Mutually-exclusive db-url/linked/local group, keyed off the
     // explicitly-set flags, not the `--linked` default value.
     if (target.setFlags.length > 1) {

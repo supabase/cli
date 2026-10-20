@@ -22,6 +22,10 @@ import {
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
+  assertTargetDefaultWarning,
+  setLinkedRefFile,
+} from "../../../../tests/helpers/target-default-warning.ts";
+import {
   asRecordedRequests,
   provideEnv,
   realDbConfigResolver,
@@ -54,6 +58,7 @@ interface SetupOpts {
   readonly isLocal?: boolean;
   readonly remote?: ReadonlyArray<string>;
   readonly remoteError?: DbExecError;
+  readonly noProjectId?: boolean;
   /** Runs the real `DbConfigResolver` and linked-project cache against `workdir`. */
   readonly realLayers?: boolean;
 }
@@ -133,7 +138,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       : resolver,
     connection,
     projectRef,
-    mockCommandSettings({ workdir }),
+    mockCommandSettings({
+      workdir,
+      ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
+    }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     BunServices.layer,
@@ -428,4 +436,47 @@ describe("migration list", () => {
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
+});
+
+describe("migration list target default warning", () => {
+  const selectors = [
+    { label: "--linked", args: ["--linked"], over: {} },
+    { label: "--linked=false", args: ["--linked=false"], over: { linked: false } },
+    { label: "--local", args: ["--local"], over: { linked: false, local: true } },
+    {
+      label: "--db-url",
+      args: ["--db-url", "postgresql://x"],
+      over: { dbUrl: Option.some("postgresql://x") },
+    },
+    {
+      label: "--project-ref",
+      args: ["--project-ref", VALID_REF],
+      over: { projectRef: Option.some(VALID_REF) },
+    },
+  ] as const;
+
+  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) => {
+    setLinkedRefFile(tmp.current, linked);
+    const { layer, out } = setup(tmp.current, {
+      args: selector?.args ?? [],
+      remote: ["20240101000000"],
+      noProjectId: true,
+    });
+    return migrationList(flags(selector?.over)).pipe(
+      Effect.provide(layer),
+      Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
+    );
+  };
+
+  it.effect(
+    "warns on a bare run in a linked workdir and stays silent with every selector or when unlinked",
+    () =>
+      assertTargetDefaultWarning({
+        command: "migration list",
+        sameTarget: selectors[0],
+        selectors,
+        run: runWith(true),
+        runUnlinked: runWith(false),
+      }),
+  );
 });

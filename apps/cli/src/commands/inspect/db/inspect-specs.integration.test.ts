@@ -1,6 +1,8 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
+import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
@@ -36,6 +38,8 @@ function setup(rows: ReadonlyArray<Record<string, unknown>>) {
   let queryParams: ReadonlyArray<unknown> | undefined;
   const layer = Layer.mergeAll(
     out.layer,
+    mockCommandSettings({ workdir: "/work/project" }),
+    BunServices.layer,
     Layer.succeed(CliArgs, { args: [] }),
     Layer.succeed(DbConfigResolver, {
       resolve: (_flags: DbConfigFlags) =>

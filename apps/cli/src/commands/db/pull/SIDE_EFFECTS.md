@@ -180,6 +180,16 @@ Progress strings still go to stderr; stdout carries a single structured envelope
 `{ declarative, schemaWritten, remoteHistoryUpdated, engine }` and suppresses the
 `Finished supabase db pull.` line.
 
+### Target default warning
+
+A run that passes none of `--local`, `--linked`, `--db-url` or `--project-ref` (in any form, including `--linked=false`) writes one line to **stderr** before the target is resolved, in every `--output-format`, when a linked project ref is configured (from `SUPABASE_PROJECT_ID` or the link file). An unlinked run prints only the existing not-linked error. stdout is unchanged. The next major version targets the local database by default.
+
+```
+Warning: supabase db pull will target the local database by default in the next major version. Pass --linked to keep targeting the linked project.
+```
+
+`db remote commit`, which reuses the pull implementation, and top-level `pull` never print it.
+
 ## Notes
 
 - `--declarative` / deprecated `--use-pg-delta` are mutually exclusive with

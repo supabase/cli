@@ -1,9 +1,10 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { Flag } from "effect/cli";
 
 import { compose, withCondition } from "../../command-internal/command-permissions/model.ts";
 import { changedLinkedLocalFlags } from "../../command-internal/db-target-flags.ts";
 import { storageCredentials } from "../../command-internal/storage-credentials.ts";
+import { warnLinkedTargetDefault } from "../../command-internal/target-default-warning.ts";
 import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
 import { StorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
 
@@ -52,3 +53,15 @@ export const assertStorageTargetsExclusive = Effect.fnUntraced(function* (
     });
   }
 });
+
+/** Warns when a storage leaf's run carries none of `--linked`, `--local`, or `--project-ref`. */
+export const warnStorageTargetDefault = (
+  command: string,
+  args: ReadonlyArray<string>,
+  projectRef: Option.Option<string>,
+) =>
+  warnLinkedTargetDefault({
+    command,
+    targetSelected: changedLinkedLocalFlags(args).length > 0 || Option.isSome(projectRef),
+    localTarget: "the local Storage API",
+  });

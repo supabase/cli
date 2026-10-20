@@ -14,6 +14,12 @@ vi.mock("node:net", (importOriginal) =>
 
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
+import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
+import {
+  assertTargetDefaultWarning,
+  setLinkedRefFile,
+  targetDefaultWarning,
+} from "../../../../tests/helpers/target-default-warning.ts";
 import {
   asRecordedRequests,
   provideEnv,
@@ -1390,4 +1396,64 @@ describe("db push", () => {
       expect(linkedCache.cached).toBe(false);
     });
   });
+});
+
+describe("db push target default warning", () => {
+  const tmp = useTempWorkdir("supabase-db-push-warning-");
+  const selectors = [
+    { label: "--linked", args: ["--linked"], over: { linked: true, local: false } },
+    { label: "--linked=false", args: ["--linked=false"], over: { linked: false, local: false } },
+    { label: "--local", args: ["--local"], over: { linked: false, local: true } },
+    {
+      label: "--db-url",
+      args: ["--db-url", "postgresql://x"],
+      over: { dbUrl: Option.some("postgresql://x"), linked: false, local: false },
+    },
+    {
+      label: "--project-ref",
+      args: ["--project-ref", VALID_REF],
+      over: { projectRef: Option.some(VALID_REF), linked: false, local: false },
+    },
+  ] as const;
+
+  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) => {
+    setLinkedRefFile(tmp.current, linked);
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      args: ["db", "push", ...(selector?.args ?? [])],
+      isLocal: false,
+      noProjectId: true,
+    });
+    return dbPush({ ...DEFAULT_FLAGS, ...selector?.over }).pipe(
+      Effect.provide(layer),
+      Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
+    );
+  };
+
+  it.effect(
+    "warns on a bare run in a linked workdir and stays silent with every selector or when unlinked",
+    () =>
+      assertTargetDefaultWarning({
+        command: "db push",
+        sameTarget: selectors[0],
+        selectors,
+        run: runWith(true),
+        runUnlinked: runWith(false),
+      }),
+  );
+
+  it.effect(
+    "warns on a bare run when only SUPABASE_PROJECT_ID configures the linked project",
+    () => {
+      const { layer, out } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "push"],
+        isLocal: false,
+      });
+      return Effect.gen(function* () {
+        yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(stripAnsi(out.stderrText)).toContain(targetDefaultWarning("db push"));
+      });
+    },
+  );
 });
