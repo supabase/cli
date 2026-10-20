@@ -95,11 +95,11 @@ const config = {
 
 export type DbDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// An explicit `--from`/`--to` of `remote` or the deprecated `linked` resolves the linked project without `--remote`.
+// An explicit `--from`/`--to` of `remote` or the deprecated `linked` resolves the linked project.
 const explicitLinkedSide = (flag: "from" | "to") =>
   withCondition(compose(dbConfigLinked, linkedProjectCache), { flag, oneOf: ["linked", "remote"] });
 
-// A condition can't tell a ref or branch value from `local`, `migrations` or a URL, so any value declares the block.
+// Conditions can't tell a ref or branch from `local`, `migrations` or a URL; any value declares it.
 const explicitNamedProjectSide = (flag: "from" | "to") =>
   withContext(
     withCondition(compose(dbConfigNamedProject, linkedProjectCache), { flag, present: true }),

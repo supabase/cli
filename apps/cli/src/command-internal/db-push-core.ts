@@ -77,7 +77,7 @@ export interface DbPushCoreInput {
   readonly dnsResolver: "native" | "https";
   /** Already loaded + validated `config.toml`, e.g. via `checkDbToml`. */
   readonly toml: DbTomlValues;
-  /** Consent the caller already obtained for this push; `None` asks once after the plan is known (never for a local database). */
+  /** Consent the caller already obtained; `None` asks once after the plan (never for local). */
   readonly preapproved: Option.Option<HostedMutationConsent>;
   /**
    * Standalone `db push` emits a `--output-format` json/stream-json success result for its own

@@ -13,7 +13,7 @@ import type { PgDeltaDatabaseEndpoint } from "../../shared/pgdelta-engine.servic
 import { DeclarativeApplyError, readErrorSuggestion } from "./declarative.errors.ts";
 import { DeclarativeSeam } from "../../shared/pgdelta.seam.service.ts";
 
-/** Resolves a target's connection, which announces it, without discarding TLS and connection options. */
+/** Resolves a target's connection, announcing it, while keeping TLS and connection options. */
 export const resolveTargetEndpoint = Effect.fnUntraced(function* (
   target: ResolvedTarget,
   password: Option.Option<string> = Option.none(),

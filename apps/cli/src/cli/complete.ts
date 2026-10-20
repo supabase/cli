@@ -133,8 +133,8 @@ function flattenSubcommands(command: Command.Command.Any): ReadonlyArray<Command
 }
 
 /**
- * `choiceKeys` (a `Choice` primitive's valid value set) is attached via `Object.assign` at runtime and
- * isn't part of the public `Primitive<A>` type, so it narrows through the same guard as `CommandInternal`.
+ * `choiceKeys` (a `Choice` primitive's valid values) is attached via `Object.assign`, so it is
+ * absent from the public `Primitive<A>` type and narrows via the same guard as `CommandInternal`.
  */
 interface ChoicePrimitive {
   readonly choiceKeys: ReadonlyArray<string>;

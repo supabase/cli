@@ -1,11 +1,11 @@
 /** Serializable description of the Management API operations a command may call, keyed by the spec's `operationId`. */
 
-/** `best-effort` keeps the command's useful result when the call gets a 403; anything else is `required`. */
+/** `best-effort` keeps the command's result on a 403; anything else is `required`. */
 type PermissionKind = "required" | "best-effort";
 
 interface FlagConditionBase {
   readonly flag: string;
-  /** The block that wrote this condition ({@link block}); without one, the flag must belong to the command it is declared on. */
+  /** The block that wrote this condition; absent, the flag must belong to the declaring command. */
   readonly source?: string;
   readonly dbTarget?: never;
   readonly selector?: never;
@@ -18,7 +18,7 @@ interface PresenceCondition extends FlagConditionBase {
   readonly is?: never;
 }
 
-/** The switch's effective value, default included, must equal `is`; a switch the command lacks counts as `false`. */
+/** The switch's effective value, default included, must equal `is`; a missing switch is `false`. */
 interface SwitchCondition extends FlagConditionBase {
   readonly is: boolean;
   readonly present?: never;
@@ -34,10 +34,13 @@ interface ValueCondition extends FlagConditionBase {
 
 type FlagCondition = PresenceCondition | SwitchCondition | ValueCondition;
 
-/** The target a command talks to: the local stack, a database URL, or a hosted project; `seed buckets` uses it for its Storage target. */
+/** The target a command talks to: the local stack, a database URL, or a hosted project. */
 export type DbTarget = "local" | "db-url" | "linked";
 
-/** The run's database target must be one of `dbTarget`: `--db-url` or `--remote=<url>`, else `--local`, else a linked selector, else the local stack. */
+/**
+ * The run's database target must be one of `dbTarget`: `--db-url` or `--remote=<url>`, else
+ * `--local`, else a linked selector, else the local stack.
+ */
 interface DbTargetCondition {
   readonly dbTarget: ReadonlyArray<DbTarget>;
   readonly source?: string;
@@ -48,7 +51,7 @@ interface DbTargetCondition {
   readonly oneOf?: never;
 }
 
-/** What the target selector carries once the deprecated aliases are folded in; `bare` is `--remote` or `--linked` with no value, `uuid` a branch's UUID. */
+/** The selector's shape after folding in the deprecated aliases; `bare` carries no value. */
 export type SelectorShape = "none" | "bare" | "ref" | "branch" | "uuid" | "url";
 
 /** Holds when the selector's shape is one of `selector`, whichever flag spelled it. */
@@ -93,7 +96,7 @@ export type CommandPermissions =
     }
   | { readonly status: "unmapped"; readonly reason: "go-delegated" };
 
-/** Builds a named block for the calls a shared module makes for its callers, tagging each entry and condition with `source`; commands include it with {@link compose}. */
+/** A shared module's calls, tagged with `source`; commands include it via {@link compose}. */
 export function block(
   source: string,
   operations: ReadonlyArray<Omit<OperationEntry, "source">>,
@@ -119,7 +122,7 @@ export function compose(...fragments: ReadonlyArray<PermissionFragment>): Permis
   };
 }
 
-/** Adds `condition` ahead of every entry's own `when`; it keeps no block `source`, so it must name a flag or target of the declaring command. */
+/** Prepends `condition` to each `when`; it must name a flag or target the command declares. */
 export function withCondition(
   fragment: PermissionFragment,
   condition: EntryCondition,
@@ -133,7 +136,7 @@ export function withCondition(
   };
 }
 
-/** Adds `prerequisite` to every entry's `context`, for a condition that isn't a flag, such as a prompt choice. */
+/** Adds `prerequisite` to each entry's `context`, for a non-flag condition like a prompt choice. */
 export function withContext(
   fragment: PermissionFragment,
   prerequisite: string,
@@ -148,7 +151,7 @@ export function withContext(
 }
 
 /**
- * Gives every entry the `kind` the including command handles it with when that differs from the block's.
+ * Overrides every entry's `kind` with the one the including command handles it with.
  * @public
  */
 export function withKind(fragment: PermissionFragment, kind: PermissionKind): PermissionFragment {

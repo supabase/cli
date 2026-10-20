@@ -2015,6 +2015,45 @@ describe("dbConfigResolver.resolveConnection", () => {
     },
   );
 
+  const unusableTokens: ReadonlyArray<readonly [string, Record<string, string>]> = [
+    ["no access token", { SUPABASE_NO_KEYRING: "1" }],
+    [
+      "a malformed access token",
+      { SUPABASE_NO_KEYRING: "1", SUPABASE_ACCESS_TOKEN: "not-a-token" },
+    ],
+  ];
+  for (const [label, configEnv] of unusableTokens) {
+    it.effect(
+      `a linked target with a password and ${label} keeps the IPv6 error and makes no API request`,
+      () => {
+        const ref = "tokenlessrefabcdefgh";
+        const requests: Array<{ readonly method: string; readonly path: string }> = [];
+        return Effect.gen(function* () {
+          yield* stubManagementApi(requests, () => undefined);
+          const dir = yield* withWorkdir();
+          return yield* resolveConnection(
+            dir,
+            inputFor(linkedTarget(ref), { password: Option.some("pw") }),
+            { projectHost: "invalid", configEnv },
+          );
+        }).pipe(
+          Effect.flip,
+          Effect.tap((error) =>
+            Effect.sync(() => {
+              expect(error).toMatchObject({
+                _tag: "DbConfigIpv6Error",
+                suggestion: `Run supabase link --project-ref ${ref} to setup IPv4 connection.`,
+              });
+              expect(requests).toEqual([]);
+            }),
+          ),
+          Effect.scoped,
+          Effect.provide(BunServices.layer),
+        );
+      },
+    );
+  }
+
   it.effect("a linked target that is not the linked workdir ignores the saved pooler URL", () => {
     const linkedRef = "abcdefghijklmnopqrst";
     const ref = "otherpoolerrefabcdef";

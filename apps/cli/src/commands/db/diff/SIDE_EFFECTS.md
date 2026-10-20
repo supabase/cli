@@ -274,8 +274,9 @@ a postgresql:// URL; convert a connection string to a postgresql:// URL and pass
   lines and the JSON `target` show that project. With no `remote` side it fails with
   `--project-ref only applies when --from or --to is remote; to diff another project, use --from=<ref> or --to=<ref>.`
   and a URL value fails with `--project-ref takes a project ref or a branch name, not a URL.`
-  Selector flags that conflict (`--linked` with `--local`, `--project-ref` with `--db-url`) fail as
-  they do without `--from`/`--to`.
+  Selector flags that conflict (`--linked` with `--local`, `--project-ref` with `--db-url`), an
+  empty `--project-ref` or `--db-url`, and a URL in `--project-ref` keep their usual messages; each
+  suggestion names `--from`/`--to` instead of `--remote`, which this mode rejects.
 
 - **Explicit `--from`/`--to` config and URLs.** The config is read when the first endpoint that
   needs it resolves, not before. A hosted endpoint resolved first merges its `[remotes.<ref>]`

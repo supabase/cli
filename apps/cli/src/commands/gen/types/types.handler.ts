@@ -118,7 +118,7 @@ function isPoolerHost(host: string, poolerHost: string): boolean {
 
 const GEN_TYPES_COMMAND_PATH = ["gen", "types"] as const;
 
-// A hosted project target excludes these flags; only the first one passed is reported, in this order.
+// A hosted project target excludes these flags; only the first passed, in this order, is reported.
 const HOSTED_EXCLUDED_FLAGS: ReadonlyArray<string> = [
   "postgrest-v9-compat",
   "query-timeout",
@@ -304,8 +304,8 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         })
       : Effect.void;
 
-  // `--schema` skips the config load entirely, so a `--remote=<url> --schema ...` invocation must not
-  // fail just because the workdir has no project config.
+  // `--schema` skips the config load, so a `--remote=<url> --schema ...` invocation must not fail
+  // just because the workdir has no project config.
   const resolveIncludedSchemas = (projectRef?: string) =>
     schemas.length > 0
       ? Effect.succeed(schemas)
@@ -672,15 +672,11 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
           user: "postgres",
           password: config.password,
           database: "postgres",
-          ...(linkedCheckout
-            ? {
-                suggestionContext: {
-                  dashboardUrl: cliSettings.dashboardUrl,
-                  profileName: cliSettings.profile,
-                  linkedCheckout,
-                },
-              }
-            : {}),
+          suggestionContext: {
+            dashboardUrl: cliSettings.dashboardUrl,
+            profileName: cliSettings.profile,
+            linkedCheckout,
+          },
         },
         isLocal: true,
         includedSchemas,

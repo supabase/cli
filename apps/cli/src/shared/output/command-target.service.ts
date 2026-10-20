@@ -20,7 +20,7 @@ const LinkedTargetJson = Schema.Struct({
   parent_project_ref: Schema.optionalKey(Schema.String),
 });
 
-/** The machine-readable form of a target, merged into JSON results and error envelopes as `target`. See `apps/cli/docs/command-target.md`. */
+/** The target as merged into JSON results and error envelopes; see `docs/command-target.md`. */
 export const CommandTargetJson = Schema.Union([
   LocalTargetJson,
   DbUrlTargetJson,
@@ -59,7 +59,7 @@ export const announceTarget = (rendered: RenderedTarget) =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** Adds the announced target's identity fields in front of the payload's own `target` fields, which win on a clash. */
+/** Adds the announced target's identity fields to the payload's `target`; the payload's own win. */
 export const withAnnouncedTarget = Effect.fnUntraced(function* (
   payload: Readonly<Record<string, unknown>>,
 ) {

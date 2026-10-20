@@ -2546,7 +2546,9 @@ describe("db diff", () => {
             projectRef: Option.some(FLAG_PROJECT_REF),
           }),
         );
-        expect(s.resolverCalls).toHaveLength(1);
+        expect(s.resolverCalls.map((call) => call.target)).toEqual([
+          expect.objectContaining({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" }),
+        ]);
         expect(targetLines(s.out)).toEqual([`Target: project ${FLAG_PROJECT_REF}`]);
         expect(warningsOf(s.out)).toEqual([PROJECT_REF_WARNING]);
       }).pipe(Effect.provide(s.layer));
@@ -2668,6 +2670,8 @@ describe("db diff", () => {
         label: "--linked with --local",
         selector: { linked: true, local: true },
         tag: "TargetSelectorConflictError",
+        suggestion:
+          "Use --from=remote or --to=remote instead of --linked, --from=<url> or --to=<url> instead of --db-url, and drop --local.",
       },
       {
         label: "--project-ref with --db-url",
@@ -2676,22 +2680,61 @@ describe("db diff", () => {
           dbUrl: Option.some(CREDENTIALED_URL),
         },
         tag: "TargetProjectRefConflictError",
+        suggestion:
+          "Use --from=<ref> or --to=<ref> instead of --project-ref, and --from=<url> or --to=<url> instead of --db-url.",
       },
-    ] satisfies ReadonlyArray<{ label: string; selector: Partial<DbDiffFlags>; tag: string }>)(
-      "still rejects $label",
-      ({ selector, tag }) => {
-        const s = hostedSetup();
-        return Effect.gen(function* () {
-          const error = yield* dbDiff(
-            flags({ from: Option.some("remote"), to: Option.some("migrations"), ...selector }),
-          ).pipe(Effect.flip);
-          expect(error).toMatchObject({ _tag: tag });
-          expect(s.resolverCalls).toEqual([]);
-          expect(s.explicitDiffCalls).toEqual([]);
-          expect(warningsOf(s.out)).toEqual([]);
-        }).pipe(Effect.provide(s.layer));
+    ] satisfies ReadonlyArray<{
+      label: string;
+      selector: Partial<DbDiffFlags>;
+      tag: string;
+      suggestion: string;
+    }>)("still rejects $label, suggesting --from/--to", ({ selector, tag, suggestion }) => {
+      const s = hostedSetup();
+      return Effect.gen(function* () {
+        const error = yield* dbDiff(
+          flags({ from: Option.some("remote"), to: Option.some("migrations"), ...selector }),
+        ).pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: tag, suggestion });
+        expect(s.resolverCalls).toEqual([]);
+        expect(s.explicitDiffCalls).toEqual([]);
+        expect(warningsOf(s.out)).toEqual([]);
+      }).pipe(Effect.provide(s.layer));
+    });
+
+    it.effect.each([
+      {
+        label: "a --project-ref URL",
+        selector: { projectRef: Option.some(`https://${FLAG_PROJECT_REF}.supabase.co`) },
+        expected: {
+          _tag: "TargetInvalidValueError",
+          message: "--project-ref takes a project ref or a branch name, not a URL.",
+          suggestion: "Pass a project ref as --from=<ref> or --to=<ref>.",
+        },
       },
-    );
+      {
+        label: "an empty --project-ref",
+        selector: { projectRef: Option.some("") },
+        expected: {
+          _tag: "TargetEmptyValueError",
+          message: "--project-ref cannot be empty.",
+          suggestion: "Pass a project ref as --from=<ref> or --to=<ref>.",
+        },
+      },
+    ] satisfies ReadonlyArray<{
+      label: string;
+      selector: Partial<DbDiffFlags>;
+      expected: { _tag: string; message: string; suggestion: string };
+    }>)("suggests --from/--to, not --remote, for $label", ({ selector, expected }) => {
+      const s = hostedSetup();
+      return Effect.gen(function* () {
+        const error = yield* dbDiff(
+          flags({ from: Option.some("remote"), to: Option.some("migrations"), ...selector }),
+        ).pipe(Effect.flip);
+        expect(error).toMatchObject(expected);
+        expect(s.resolverCalls).toEqual([]);
+        expect(s.explicitDiffCalls).toEqual([]);
+      }).pipe(Effect.provide(s.layer));
+    });
   });
 
   it.effect("fails when --from is set without --to", () => {

@@ -45,7 +45,7 @@ export const describeLinkedTarget = (input: {
   readonly cache: Option.Option<CachedLinkedProject>;
   /** The name the project picker showed for `ref`. */
   readonly name?: string;
-  /** The ref in `supabase/.temp/project-ref`, when the caller compares against the linked project. */
+  /** The `project-ref` file's ref, when the caller compares against the linked project. */
   readonly linkedRef?: Option.Option<string>;
 }): RenderedTarget => {
   const { ref } = input;
@@ -66,7 +66,7 @@ export const describeLinkedTarget = (input: {
   };
 };
 
-/** The suffix a default-local banner carries when the checkout is linked, naming the project `--remote` would use. */
+/** The suffix of a default-local banner when linked, naming the project `--remote` would use. */
 export const linkedAlternativeHint = (input: {
   readonly ref: string;
   readonly cache: Option.Option<CachedLinkedProject>;
@@ -76,7 +76,7 @@ export const linkedAlternativeHint = (input: {
   return `default; pass --remote for ${named(name, input.ref)}`;
 };
 
-/** The `config.target_is_branch` span attribute: the default branch is the production project, and it is omitted while a branch UUID's default-ness is unknown. */
+/** The `config.target_is_branch` attribute: false for the default branch, omitted when unknown. */
 export const targetIsBranchAttribute = (target: {
   readonly branch?: string | undefined;
   readonly isDefault?: boolean | undefined;

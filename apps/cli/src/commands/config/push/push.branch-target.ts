@@ -13,8 +13,9 @@ import { readProjectRefFile, tempPaths } from "../../../shared/config/temp-paths
 import { Output } from "../../../shared/output/output.service.ts";
 
 /**
- * What `ref` is for `config push`'s payload: the linked or production `"project"`, a confirmed preview `"branch"` (`parentRef`/`branch` present only when known),
- * or `"unknown"` when nothing could settle it, which the payload asserts as neither.
+ * What `ref` is for `config push`'s payload: the linked or production `"project"`, a confirmed
+ * preview `"branch"` (`parentRef`/`branch` present only when known), or `"unknown"` when nothing
+ * could settle it, which the payload asserts as neither.
  */
 export type ConfigPushTarget =
   | { readonly kind: "project"; readonly ref: string }
@@ -27,8 +28,10 @@ export type ConfigPushTarget =
   | { readonly kind: "unknown"; readonly ref: string };
 
 /**
- * What the caller knows about the `--remote` branch `ref` came from, so {@link resolveConfigPushTarget} skips the live probe: a `"name"` (parent known),
- * a `"uuid"` (certainly a branch; the parent is recovered best-effort), the `"production"` default branch (the project itself) or an `"unverified"` UUID (says nothing about `ref`).
+ * What the caller knows about the `--remote` branch `ref` came from, so
+ * {@link resolveConfigPushTarget} skips the live probe: a `"name"` (parent known), a `"uuid"`
+ * (certainly a branch; the parent is recovered best-effort), the `"production"` default branch
+ * (the project itself) or an `"unverified"` UUID (says nothing about `ref`).
  */
 export type ConfigPushKnownBranch =
   | { readonly kind: "name"; readonly branchName: string; readonly parentRef: string }
@@ -57,8 +60,10 @@ type ProbeOutcome = Data.TaggedEnum<{
 const ProbeOutcome = Data.taggedEnum<ProbeOutcome>();
 
 /**
- * Resolves what `ref` is so `config push` can tell a branch from the linked project. Never fails, since this diagnostic must not abort a push: `GET /v1/projects/{ref}`
- * (bounded at {@link BRANCH_LOOKUP_TIMEOUT}) is a project on 200, `"unknown"` on any other failure, and on a 404 recovers the parent and name from `.temp` when they can be trusted.
+ * Resolves what `ref` is so `config push` can tell a branch from the linked project. Never fails,
+ * since this diagnostic must not abort a push: `GET /v1/projects/{ref}` (bounded at
+ * {@link BRANCH_LOOKUP_TIMEOUT}) is a project on 200, `"unknown"` on any other failure, and on a
+ * 404 recovers the parent and name from `.temp` when they can be trusted.
  */
 export function resolveConfigPushTarget(
   ref: string,

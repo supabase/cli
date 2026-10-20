@@ -10,7 +10,7 @@ export const shellQuote = (token: string): string =>
 
 const BRANCH_BY_REF = "--remote=<its ref or UUID>";
 
-/** The `--remote` spelling for `value`; a database URL is never echoed, nor is a branch name's userinfo. */
+/** The `--remote` spelling for `value`; never echoes a database URL or a branch name's userinfo. */
 export const remoteFlagText = (value: RemoteValue): string => {
   switch (value._tag) {
     case "Linked":
@@ -26,7 +26,7 @@ export const remoteFlagText = (value: RemoteValue): string => {
   }
 };
 
-/** The `--remote` form a deprecated flag's value maps to, with a placeholder where the user's own value goes. */
+/** The `--remote` form a deprecated flag's value maps to, with a placeholder for the value. */
 const replacementOf = (value: RemoteValue): string => {
   switch (value._tag) {
     case "Linked":
@@ -40,7 +40,7 @@ const replacementOf = (value: RemoteValue): string => {
   }
 };
 
-/** The project ref a Supabase connection string already names: `db.<ref>.<host>` or a `postgres.<ref>` pooler user. */
+/** The ref a Supabase connection string names: `db.<ref>.<host>` or a `postgres.<ref>` user. */
 export const refFromDbUrl = (url: string, projectHost: string): string | undefined => {
   try {
     const parsed = new URL(url);
@@ -56,7 +56,7 @@ export const refFromDbUrl = (url: string, projectHost: string): string | undefin
   }
 };
 
-/** The first sentence of every alias warning: which flags are deprecated, and that v4 removes them. */
+/** The first sentence of every alias warning: the deprecated flags, and that v4 removes them. */
 export const deprecationLead = (flags: ReadonlyArray<string>): string =>
   `${joinFlags(flags)} ${flags.length > 1 ? "are" : "is"} deprecated and will be removed in v4.`;
 
@@ -81,7 +81,7 @@ const aliasMessage = (
   return `${lead} Use ${replacementOf(remote)} instead${alternative}`;
 };
 
-/** The warning for each deprecated selector the run used, naming its `--remote` replacement; a database URL is never echoed. */
+/** The warning per deprecated selector, naming its `--remote` replacement; no URL is echoed. */
 export const deprecationMessages = (
   deprecations: ReadonlyArray<TargetDeprecation>,
   projectHost: string,

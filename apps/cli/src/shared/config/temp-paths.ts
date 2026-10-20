@@ -78,7 +78,7 @@ export const readProjectRefFile = (
     return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
   });
 
-/** Whether `SUPABASE_PROJECT_ID` is set or `<workdir>/supabase/.temp/project-ref` names a linked project; an unreadable file counts as unlinked. */
+/** Whether `SUPABASE_PROJECT_ID` or `project-ref` names a project; unreadable is unlinked. */
 export const isCheckoutLinked = (
   fs: FileSystem.FileSystem,
   path: Path.Path,

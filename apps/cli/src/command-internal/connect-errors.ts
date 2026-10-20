@@ -85,7 +85,7 @@ export interface ConnectSuggestionContext {
   readonly dashboardUrl: string;
   /** Active profile name. */
   readonly profileName: string;
-  /** Whether the checkout is linked to a hosted project, so a local failure can point at `--remote`. */
+  /** Whether the checkout is linked, so a local failure can point at `--remote`. */
   readonly linkedCheckout?: boolean;
 }
 

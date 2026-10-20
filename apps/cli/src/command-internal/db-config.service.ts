@@ -60,19 +60,20 @@ export type DbConfigError =
   | DbConfigPoolerLoginError
   | DbConnectError
   // The `--linked` path resolves the access token lazily via
-  // `CommandPlatformApiFactory.make` (only when minting a temp login role), so the
+  // `CommandPlatformApiFactory.make` (when minting a temp login role), so the
   // auth-required / invalid-token / api-config errors surface from the resolver effect — not a
-  // layer-build channel. `--linked --password` skips `make` entirely and never raises these.
+  // layer-build channel. `--linked --password` never raises these: a failed `make` only skips
+  // the pooler-config fallback.
   | CommandPlatformApiFactoryError
   // The lazy linked runtime rebuilds `commandSettingsLayer`, whose strict
   // profile resolution can fail inside the resolver effect the same way.
   | ProfileLoadError;
 
-// The `--linked` path builds a lazy Management API runtime (so `--local`/`--db-url` never resolve an
+// The `--linked` path builds a lazy Management API runtime (so `--local`/`--db-url` never need an
 // access token) from the resolver's captured context, so `resolve`'s R stays `never` and the
 // auth-required error surfaces through the resolver effect, not a layer-build error channel.
 interface DbConfigResolverShape {
-  /** Connects to a resolved target (the local stack, a `--db-url` database or the linked project's temp-role connection) and announces it. */
+  /** Connects to a resolved target (local, `--db-url` or the linked temp role) and announces it. */
   readonly resolveConnection: (
     input: DbConnectionInput,
   ) => Effect.Effect<ResolvedDbConnection, DbConfigError>;

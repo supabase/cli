@@ -12,6 +12,13 @@ import {
   LOCAL_NOT_NEEDED_MESSAGE,
 } from "../../../command-internal/target/target-deprecation.ts";
 import type { TargetDeprecation } from "../../../command-internal/target/target-selector.ts";
+import {
+  TargetEmptyValueError,
+  TargetInvalidValueError,
+  TargetProjectRefConflictError,
+  TargetSelectorConflictError,
+  type TargetSelectorError,
+} from "../../../command-internal/target/target.errors.ts";
 
 /** What an explicit `--from`/`--to` value names. */
 export type ExplicitRef =
@@ -22,9 +29,8 @@ export type ExplicitRef =
   | NamedRemoteValue;
 
 /**
- * `local`, `migrations` and `remote` (the linked project) are keywords and `linked` is the deprecated spelling of `remote`;
- * anything else is classified like a `--remote` value, so a branch sharing a keyword's name is reached by its ref or UUID.
- * A value `--remote` rejects is returned as that rejection, never as a branch name, so it is not echoed.
+ * `local`, `migrations` and `remote` (`linked` is its deprecated spelling) are keywords; anything
+ * else is classified like a `--remote` value, and a rejected value comes back as that rejection.
  */
 export function classifyExplicitRef(ref: string): ExplicitRef {
   switch (ref) {
@@ -56,7 +62,7 @@ const replacementOf = (remote: RemoteValue): string => {
   }
 };
 
-/** The warning for each deprecated selector flag an explicit run used, naming the `--from`/`--to` value that replaces it; a database URL is never echoed. */
+/** The warning per deprecated flag, naming its `--from`/`--to` replacement; no URL is echoed. */
 export const explicitDeprecationMessages = (
   deprecations: ReadonlyArray<TargetDeprecation>,
 ): ReadonlyArray<string> =>
@@ -72,3 +78,40 @@ export const explicitDeprecationMessages = (
     }
     return `${lead} Use ${replacementOf(remote)} instead`;
   });
+
+/** A selector error whose suggestion names `--from`/`--to`, as explicit mode rejects `--remote`. */
+export const explicitSelectorError = (error: TargetSelectorError): TargetSelectorError => {
+  switch (error._tag) {
+    case "TargetEmptyValueError":
+      return new TargetEmptyValueError({
+        flag: error.flag,
+        message: error.message,
+        suggestion:
+          error.flag === "--db-url"
+            ? "Pass a postgresql:// URL as --from=<url> or --to=<url>."
+            : "Pass a project ref as --from=<ref> or --to=<ref>.",
+      });
+    case "TargetInvalidValueError":
+      return new TargetInvalidValueError({
+        flag: error.flag,
+        message: error.message,
+        suggestion: "Pass a project ref as --from=<ref> or --to=<ref>.",
+      });
+    case "TargetProjectRefConflictError":
+      return new TargetProjectRefConflictError({
+        conflictsWith: error.conflictsWith,
+        message: error.message,
+        suggestion:
+          error.conflictsWith === "--db-url"
+            ? "Use --from=<ref> or --to=<ref> instead of --project-ref, and --from=<url> or --to=<url> instead of --db-url."
+            : "Use --from=<ref> or --to=<ref> instead of --project-ref, and drop --local.",
+      });
+    case "TargetSelectorConflictError":
+      return new TargetSelectorConflictError({
+        flags: error.flags,
+        message: error.message,
+        suggestion:
+          "Use --from=remote or --to=remote instead of --linked, --from=<url> or --to=<url> instead of --db-url, and drop --local.",
+      });
+  }
+};

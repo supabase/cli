@@ -24,7 +24,8 @@ interface Platform {
   readonly cwd: string;
 }
 
-// Without a filesystem the origin of `SUPABASE_YES` cannot be checked, so callers treat it as unverified.
+// Without a filesystem the origin of `SUPABASE_YES` cannot be checked, so callers treat it as
+// unverified.
 const platform = Effect.gen(function* () {
   const fs = yield* Effect.serviceOption(FileSystem.FileSystem);
   const path = yield* Effect.serviceOption(Path.Path);
@@ -77,7 +78,7 @@ export const resolveHostedYes = Effect.gen(function* () {
   return fromFile ? Option.none<HostedYesSource>() : Option.some<HostedYesSource>("SUPABASE_YES");
 });
 
-/** Dotenv files, relative to the working directory, whose `SUPABASE_YES` does not confirm a hosted change. */
+/** Dotenv files, relative to the cwd, whose `SUPABASE_YES` does not confirm a hosted change. */
 export const ignoredYesFiles = Effect.gen(function* () {
   const host = yield* platform;
   if (Option.isNone(host)) return [];

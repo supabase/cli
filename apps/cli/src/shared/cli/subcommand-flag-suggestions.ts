@@ -32,7 +32,7 @@ interface CommandWithHelpDoc extends Command.Command.Any {
   readonly buildHelpDoc: (path: ReadonlyArray<string>) => HelpDoc.HelpDoc;
 }
 
-/** `"optional-value"` is a flag that is a switch bare and takes its value only through `=` (`--remote`). */
+/** `"optional-value"` is a switch when bare and takes a value only through `=` (`--remote`). */
 type FlagArity = "switch" | "value" | "optional-value";
 
 interface CommandFlag {
@@ -58,7 +58,10 @@ export function helpDocFor(
   return hasHelpDoc(command) ? command.buildHelpDoc(commandPath) : undefined;
 }
 
-/** The operands a command takes, leaving out a hidden positional: it still parses but is never offered or counted. */
+/**
+ * The operands a command takes, leaving out a hidden positional: it still parses but is never
+ * offered or counted.
+ */
 export function visibleOperandsOf(
   command: Command.Command.Any,
 ): ReadonlyArray<{ readonly name: string; readonly variadic: boolean }> {
@@ -75,7 +78,7 @@ const flagArityOf = (single: Param.Single<Param.ParamKind, unknown>): FlagArity 
   return isRemoteFlag(single) ? "optional-value" : "switch";
 };
 
-/** Every flag the command parses, hidden aliases included: parsing consumes their values like any other flag's. */
+/** Every flag the command parses, hidden aliases included: parsing consumes their values too. */
 function commandFlagsFor(command: Command.Command.Any): ReadonlyArray<CommandFlag> {
   return commandInternals(command).config.flags.flatMap((param) => {
     const single = unwrapToSingleParam(param);
@@ -287,7 +290,7 @@ function findValueAfterOption(args: ReadonlyArray<string>, option: string): stri
   return undefined;
 }
 
-/** What to say when `--remote` is passed to `link` or a local-only command, which take no such flag. */
+/** What to say when `--remote` goes to `link` or a local-only command, which take no such flag. */
 function remoteFlagMisuseMessage(
   rootCommand: Command.Command.Any,
   commandPath: ReadonlyArray<string>,
@@ -303,7 +306,7 @@ function remoteFlagMisuseMessage(
     : undefined;
 }
 
-/** Whether `error` is `--remote` given to a command that takes no such flag and has its own message for it. */
+/** Whether `error` is `--remote` given to a command with no such flag and its own message. */
 export function isRemoteFlagMisuse(
   error: CliError.CliError,
   rootCommand: Command.Command.Any,

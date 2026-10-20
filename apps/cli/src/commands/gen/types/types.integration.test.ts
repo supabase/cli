@@ -2594,6 +2594,11 @@ describe("gen types", () => {
             user: "postgres",
             password: "postgres",
             database: "postgres",
+            suggestionContext: {
+              dashboardUrl: "https://supabase.com/dashboard",
+              profileName: "supabase",
+              linkedCheckout: false,
+            },
             runtimeParams: { statement_timeout: "15000" },
             connectTimeoutSeconds: 15,
           });
@@ -2987,7 +2992,11 @@ describe("gen types", () => {
         suggestion:
           "Make sure Docker is running, then run: supabase start\nTo use the linked project instead, pass --remote.",
       },
-      { name: "an unlinked checkout", linked: false, suggestion: undefined },
+      {
+        name: "an unlinked checkout",
+        linked: false,
+        suggestion: "Make sure Docker is running, then run: supabase start",
+      },
     ])(
       "reports a refused local connection in $name in the JSON error envelope",
       ({ linked, suggestion }) =>
@@ -3032,6 +3041,11 @@ describe("gen types", () => {
           user: "postgres",
           password: "postgres",
           database: "postgres",
+          suggestionContext: {
+            dashboardUrl: "https://supabase.com/dashboard",
+            profileName: "supabase",
+            linkedCheckout: false,
+          },
           runtimeParams: { statement_timeout: "15000" },
           connectTimeoutSeconds: 15,
         });

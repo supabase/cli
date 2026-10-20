@@ -390,7 +390,7 @@ export function splitAndTrim(sql: string): string[] {
 
 /**
  * `splitAndTrim`, plus whether `sql` ends inside a block comment, quote or dollar quote, and
- * whether the splitter read a `BEGIN ATOMIC` body, which hides its inner statements from `statements`.
+ * whether the splitter read a `BEGIN ATOMIC` body, whose inner statements `statements` omits.
  */
 export function splitAndTrimChecked(sql: string): {
   readonly statements: string[];

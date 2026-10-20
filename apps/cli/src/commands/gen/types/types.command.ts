@@ -104,7 +104,7 @@ export type GenTypesFlags = CliCommand.Command.Config.Infer<typeof flagsConfig> 
 const NON_TYPESCRIPT = GEN_TYPES_LANGUAGES.filter((lang) => lang !== "typescript");
 const nonTypescript = { flag: "lang", oneOf: NON_TYPESCRIPT } as const;
 const notBranch = "the ref names a project, not a preview branch";
-// Without a linked target the run uses a local or `--remote=<url>` database, or fails before calling the API.
+// A run without a linked target uses a local or `--remote=<url>` database, or fails before the API.
 const remoteTarget: ReadonlyArray<EntryCondition> = [
   { dbTarget: ["linked"] },
   { flag: "postgrest-v9-compat", is: false },
