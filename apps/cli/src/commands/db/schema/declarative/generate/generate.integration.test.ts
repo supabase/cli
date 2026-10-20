@@ -15,12 +15,9 @@ vi.mock("node:net", (importOriginal) =>
 
 const reachableDirectHost = withReachableDirectHost(fixtureNet);
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
+import { describeDbTargetSelection } from "../../../../../../tests/helpers/db-target-selection.ts";
 import { withReachableDirectHost } from "../../../../../../tests/helpers/refuse-invalid-db-hosts.ts";
-import {
-  BRANCH_PROJECT_REF,
-  branchListApi,
-  warningsOf,
-} from "../../../../../../tests/helpers/remote-selection.ts";
+import { branchListApi } from "../../../../../../tests/helpers/remote-selection.ts";
 import { assertPermissionDrift } from "../../../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
@@ -498,20 +495,6 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("--local --linked with --experimental fails with the selector conflict", () => {
-    const { layer } = setup(tmp.current, { experimental: true });
-    return Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        dbSchemaDeclarativeGenerate(flags({ local: true, linked: true })),
-      );
-      expect(error).toMatchObject({
-        _tag: "TargetSelectorConflictError",
-        message:
-          "Only one of --remote, --linked, --db-url and --local can be set; got --linked and --local.",
-      });
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect(
     "--local --linked without --experimental fails with the gate error, not the selector conflict",
     () => {
@@ -526,24 +509,14 @@ describe("db schema declarative generate integration", () => {
     },
   );
 
-  it.effect(
-    "--local --linked with SUPABASE_EXPERIMENTAL env (no --experimental flag) fails with the selector conflict",
-    () => {
-      const { layer } = setup(tmp.current, { experimental: false });
-      const ENV = "SUPABASE_EXPERIMENTAL";
-      return Effect.gen(function* () {
-        const error = yield* withConfigEnv(
-          { [ENV]: "1" },
-          Effect.flip(dbSchemaDeclarativeGenerate(flags({ local: true, linked: true }))),
-        );
-        expect(error).toMatchObject({
-          _tag: "TargetSelectorConflictError",
-          message:
-            "Only one of --remote, --linked, --db-url and --local can be set; got --linked and --local.",
-        });
-      }).pipe(Effect.provide(layer));
-    },
-  );
+  it.effect("SUPABASE_EXPERIMENTAL in the shell opens a gate that config.toml closes", () => {
+    const s = setup(tmp.current, { experimental: false });
+    return Effect.gen(function* () {
+      yield* disablePgDelta(tmp.current);
+      yield* withConfigEnv({ SUPABASE_EXPERIMENTAL: "1" }, dbSchemaDeclarativeGenerate(flags()));
+      expect(s.engineExportCalls).toHaveLength(1);
+    }).pipe(Effect.provide(s.layer));
+  });
 
   it.effect(
     "an explicit --experimental=false closes the gate even when SUPABASE_EXPERIMENTAL is set",
@@ -565,27 +538,21 @@ describe("db schema declarative generate integration", () => {
   );
 
   it.effect(
-    "--local --linked with SUPABASE_EXPERIMENTAL set only in the project .env fails with the selector conflict",
+    "SUPABASE_EXPERIMENTAL set only in the project .env opens a gate that config.toml closes",
     () => {
-      const { layer } = setup(tmp.current, { experimental: false });
+      const s = setup(tmp.current, { experimental: false });
       return withEmptyConfigEnv(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+          yield* disablePgDelta(tmp.current);
           yield* fs.writeFileString(
             path.join(tmp.current, "supabase", ".env"),
             "SUPABASE_EXPERIMENTAL=true\n",
           );
-          const error = yield* Effect.flip(
-            dbSchemaDeclarativeGenerate(flags({ local: true, linked: true })),
-          );
-          expect(error).toMatchObject({
-            _tag: "TargetSelectorConflictError",
-            message:
-              "Only one of --remote, --linked, --db-url and --local can be set; got --linked and --local.",
-          });
-        }).pipe(Effect.provide(layer)),
+          yield* dbSchemaDeclarativeGenerate(flags());
+          expect(s.engineExportCalls).toHaveLength(1);
+        }).pipe(Effect.provide(s.layer)),
       );
     },
   );
@@ -661,30 +628,25 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("selects the linked project for a bare --remote", () => {
-    const s = setup(tmp.current, { experimental: true, projectId: Option.some(VALID_REF) });
-    return Effect.gen(function* () {
-      yield* dbSchemaDeclarativeGenerate(flags({ remote: Option.some({ _tag: "Linked" }) }));
-      expect(s.resolverCalls.map((call) => call.target)).toEqual([
-        expect.objectContaining({ kind: "linked", ref: VALID_REF }),
-      ]);
-      expect(s.ensureStartedCalls).toBe(0);
-      expect(s.engineExportCalls[0]?.projectRef).toBe(VALID_REF);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("--remote=<ref> selects that project without a linked workdir", () => {
-    const s = setup(tmp.current, { experimental: true, projectId: Option.none() });
-    return Effect.gen(function* () {
-      yield* dbSchemaDeclarativeGenerate(
-        flags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
-      );
-      expect(s.resolverCalls.map((call) => call.target)).toEqual([
-        expect.objectContaining({ kind: "linked", ref: VALID_REF, source: "flag" }),
-      ]);
-      expect(s.engineExportCalls[0]?.projectRef).toBe(VALID_REF);
-      expect(s.ensureStartedCalls).toBe(0);
-    }).pipe(Effect.provide(s.layer));
+  describeDbTargetSelection("db schema declarative generate", {
+    dbUrl: true,
+    workdir: () => tmp.current,
+    attempt: ({ workdir, args, target }) => {
+      const s = setup(workdir, {
+        experimental: true,
+        projectId: Option.some(VALID_REF),
+        args,
+      });
+      const branchApi = branchListApi();
+      return {
+        layer: Layer.merge(s.layer, branchApi.layer),
+        out: s.out,
+        run: dbSchemaDeclarativeGenerate(flags({ ...target })),
+        target: () => s.resolverCalls[0]?.target,
+        cachedRef: () => s.cache.cachedRef,
+        branchLookups: () => branchApi.requests,
+      };
+    },
   });
 
   it.effect("--reset recreates the local database before exporting", () => {
@@ -1004,15 +966,6 @@ describe("db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("does not cache the linked project for a local run in a linked workdir", () => {
-    const s = setup(tmp.current, { experimental: true, projectId: Option.some(VALID_REF) });
-    return Effect.gen(function* () {
-      yield* dbSchemaDeclarativeGenerate(flags());
-      expect(s.cache.cached).toBe(false);
-      expect(s.telemetry.flushCount).toBe(1);
-    }).pipe(Effect.provide(s.layer));
-  });
-
   it.effect("--remote gates pg-delta on base config, not a remote enabled override", () => {
     const ref = "abcdefghijklmnopqrst";
     const s = setup(tmp.current, { experimental: false, projectId: Option.some(ref) });
@@ -1281,108 +1234,4 @@ describe("db schema declarative generate permissions through the real resolver a
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
-});
-
-describe("db schema declarative generate target selection", () => {
-  const tmp = useTempWorkdir();
-  const FLAG_PROJECT_REF = "flagflagflagflagflag";
-
-  const resolvedTarget = (
-    selector: Partial<DbSchemaDeclarativeGenerateFlags>,
-    options: { readonly branchApi?: ReturnType<typeof branchListApi> } = {},
-  ) => {
-    const s = setup(tmp.current, { experimental: true, projectId: Option.some(VALID_REF) });
-    const provided =
-      options.branchApi === undefined ? s.layer : Layer.merge(s.layer, options.branchApi.layer);
-    return Effect.gen(function* () {
-      yield* dbSchemaDeclarativeGenerate(flags(selector)).pipe(Effect.provide(provided));
-      return { target: s.resolverCalls[0]?.target, warnings: warningsOf(s.out) };
-    });
-  };
-
-  it.effect("targets the local database, with no warning, when nothing selects one", () =>
-    Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget({});
-      expect(target).toEqual({ kind: "local" });
-      expect(warnings).toEqual([]);
-    }),
-  );
-
-  it.effect("targets the project --remote=<ref> names, with no warning", () =>
-    Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget({
-        remote: Option.some({ _tag: "Ref", ref: FLAG_PROJECT_REF } as const),
-      });
-      expect(target).toMatchObject({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" });
-      expect(warnings).toEqual([]);
-    }),
-  );
-
-  it.effect("targets the database --remote=<db-url> names, with no warning", () =>
-    Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget({
-        remote: Option.some({
-          _tag: "DbUrl",
-          url: "postgresql://postgres:pw@db.example.com/db",
-        } as const),
-      });
-      expect(target?.kind).toBe("db-url");
-      expect(warnings).toEqual([]);
-    }),
-  );
-
-  it.effect("targets the project of the branch --remote=<branch> names", () => {
-    const branchApi = branchListApi();
-    return Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget(
-        { remote: Option.some({ _tag: "Branch", name: "feature-x" }) },
-        { branchApi },
-      );
-      expect(target).toMatchObject({ kind: "linked", ref: BRANCH_PROJECT_REF, source: "flag" });
-      expect(warnings).toEqual([]);
-      assertPermissionDrift({
-        command: "db schema declarative generate",
-        activeFlags: { remote: "feature-x" },
-        requests: branchApi.requests,
-      });
-    });
-  });
-
-  it.effect.each([
-    {
-      alias: "--linked",
-      flags: { linked: true },
-      kind: "linked",
-      warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
-    },
-    {
-      alias: "--project-ref",
-      flags: { projectRef: Option.some(FLAG_PROJECT_REF) },
-      kind: "linked",
-      warning: "--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead",
-    },
-    {
-      alias: "--db-url",
-      flags: { dbUrl: Option.some("postgresql://postgres:pw@db.example.com/db") },
-      kind: "db-url",
-      warning: "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead",
-    },
-    {
-      alias: "--local",
-      flags: { local: true },
-      kind: "local",
-      warning: "--local isn't needed (local is the default) and will be removed in v4",
-    },
-  ] satisfies ReadonlyArray<{
-    alias: string;
-    flags: Partial<DbSchemaDeclarativeGenerateFlags>;
-    kind: string;
-    warning: string;
-  }>)("keeps $alias working and warns that it is deprecated", ({ flags, kind, warning }) =>
-    Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget(flags);
-      expect(target?.kind).toBe(kind);
-      expect(warnings).toEqual([expect.stringContaining(warning)]);
-    }),
-  );
 });
