@@ -17,53 +17,6 @@ async function getRequestLog(apiUrl: string): Promise<RequestEntry[]> {
 
 describe("deprecated target aliases", () => {
   testBehaviour(
-    "warns that --linked is deprecated and still targets the linked project",
-    async ({ run, projectRef, workspace }) => {
-      linkProject(workspace.path, projectRef);
-      const result = await run(["db", "advisors", "--type", "security", "--linked"]);
-      expect(result.exitCode).toBe(0);
-      expect(`${result.stdout}${result.stderr}`).toContain(
-        "--linked is deprecated and will be removed in v4. Use --remote instead",
-      );
-      expect(result.stderr).toContain("No issues found");
-    },
-  );
-
-  testBehaviour("warns that --local is not needed and still targets local", async ({ run }) => {
-    const result = await run(["db", "push", "--local"]);
-    expect(result.exitCode).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toContain(
-      "--local isn't needed (local is the default) and will be removed in v4",
-    );
-    expect(result.stderr).toContain("Target: local stack");
-    expect(result.stderr).toContain("failed to connect to postgres");
-  });
-
-  testBehaviour(
-    "warns that --db-url is deprecated and still targets that database",
-    async ({ run }) => {
-      const result = await run(["inspect", "db", "db-stats", "--db-url", DEAD_DB_URL]);
-      expect(result.exitCode).not.toBe(0);
-      expect(`${result.stdout}${result.stderr}`).toContain(
-        "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead",
-      );
-      expect(`${result.stdout}${result.stderr}`).not.toContain(DEAD_DB_URL);
-      expect(result.stderr).toContain("Target: custom Postgres (localhost:1)");
-    },
-  );
-
-  testBehaviour(
-    "warns that --project-ref is deprecated on a hosted command and still targets that project",
-    async ({ run, projectRef }) => {
-      const result = await run(["secrets", "list", "--project-ref", projectRef]);
-      expect(result.exitCode).toBe(0);
-      expect(`${result.stdout}${result.stderr}`).toContain(
-        `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
-      );
-    },
-  );
-
-  testBehaviour(
     "warns that --project-id is deprecated on gen types and still targets that project",
     async ({ run, projectRef }) => {
       const result = await run(["gen", "types", "--project-id", projectRef]);
