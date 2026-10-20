@@ -169,12 +169,17 @@ export const resolveParentScopedProjectRef = Effect.fn("ParentProjectRef.resolve
 
 /**
  * A value made entirely of lowercase letters (but not 20 of them, or it would already have
- * been treated as a ref) is a plausible ref typo. Appended to both {@link parentNotLinkedMessage}
- * and `link`'s own branch-not-found message.
+ * been treated as a ref), or 20 letters with an uppercase one, is a plausible ref typo. Appended
+ * to both {@link parentNotLinkedMessage} and `link`'s own branch-not-found message.
  */
 export function parentRefTypoHint(value: string): string {
-  if (!/^[a-z]+$/.test(value)) return "";
-  return `\n  If you meant a project ref: refs are exactly 20 lowercase letters ("${value}" has ${value.length}).`;
+  if (/^[a-z]+$/.test(value)) {
+    return `\n  If you meant a project ref: refs are exactly 20 lowercase letters ("${value}" has ${value.length}).`;
+  }
+  if (/^[A-Za-z]{20}$/.test(value)) {
+    return `\n  If you meant a project ref: refs are exactly 20 lowercase letters (try "${value.toLowerCase()}").`;
+  }
+  return "";
 }
 
 /**

@@ -382,6 +382,33 @@ describe("resolveTarget", () => {
       }),
     );
 
+    it.effect("suggests the lowercased ref when a 20-letter value has uppercase letters", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "ABCDEFGHIJKLMNOPQRST" }) },
+          { savedRef: FILE_REF, branches: [branchRow("main")] },
+        );
+        expect(failureOf(result.exit)).toMatchObject({
+          _tag: "LinkBranchNotFoundError",
+          message: `Branch "ABCDEFGHIJKLMNOPQRST" not found for project ${FILE_REF}. Available branches: main.\n  If you meant a project ref: refs are exactly 20 lowercase letters (try "abcdefghijklmnopqrst").`,
+        });
+      }),
+    );
+
+    it.effect("gives no ref hint to a mixed-case value that is not 20 letters", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "ABCDEFGHIJKLMNOPQRS" }) },
+          { savedRef: FILE_REF, branches: [branchRow("main")] },
+        );
+        expect(String((failureOf(result.exit) as Error).message)).not.toContain(
+          "If you meant a project ref",
+        );
+      }),
+    );
+
     it.effect("tells an expired token to log in instead of showing the response body", () =>
       Effect.gen(function* () {
         const result = yield* run(
@@ -405,6 +432,21 @@ describe("resolveTarget", () => {
         });
         expect(failureOf(result.exit)).toMatchObject({ _tag: "LinkBranchNotLinkedError" });
         expect(result.apiRequests).toEqual([]);
+      }),
+    );
+
+    it.effect("suggests the lowercased ref when no project is linked", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", {
+          ...none,
+          ...remote({ _tag: "Branch", name: "ABCDEFGHIJKLMNOPQRST" }),
+        });
+        expect(failureOf(result.exit)).toMatchObject({
+          _tag: "LinkBranchNotLinkedError",
+          message: expect.stringContaining(
+            'If you meant a project ref: refs are exactly 20 lowercase letters (try "abcdefghijklmnopqrst").',
+          ),
+        });
       }),
     );
 
