@@ -5,6 +5,7 @@ import { pathHasUncommittedChanges } from "../../../command-internal/git-status.
 import { sanitizeInlineName } from "../../../command-internal/http-errors.ts";
 import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import type { LinkedTarget } from "../../../command-internal/target/resolve-target.ts";
+import { targetIsBranchAttribute } from "../../../command-internal/target/target-identity.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -226,9 +227,9 @@ export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullF
     // and a malformed document doesn't burn a branch-resolution round trip.
     const source = yield* openConfigPullSource();
 
-    const { ref, branch } = yield* resolveProjectTarget(flags, { detail: true });
+    const { ref, branch, isDefault } = yield* resolveProjectTarget(flags, { detail: true });
     yield* Ref.set(resolvedRef, Option.some(ref));
-    yield* Effect.annotateCurrentSpan("config.target_is_branch", branch !== undefined);
+    yield* Effect.annotateCurrentSpan(targetIsBranchAttribute({ branch, isDefault }));
 
     yield* runConfigPull({
       target: { ref, branch },

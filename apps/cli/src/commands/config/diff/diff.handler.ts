@@ -17,6 +17,7 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
 import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
 import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
+import { targetIsBranchAttribute } from "../../../command-internal/target/target-identity.ts";
 import { configIsRecord } from "../config.paths.ts";
 import {
   loadResolvedConfig,
@@ -83,11 +84,11 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
       makeLoadError,
     );
 
-    const { ref, branch } = yield* resolveProjectTarget(flags, { detail: true });
+    const { ref, branch, isDefault } = yield* resolveProjectTarget(flags, { detail: true });
     yield* Ref.set(resolvedRef, Option.some(ref));
     yield* Effect.annotateCurrentSpan({
       "project.ref": ref,
-      "config.target_is_branch": branch !== undefined,
+      ...targetIsBranchAttribute({ branch, isDefault }),
     });
 
     // The view `config push` sends: the `[remotes.*]` block matched to `ref` and the env overlay.

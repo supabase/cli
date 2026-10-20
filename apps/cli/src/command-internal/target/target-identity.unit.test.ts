@@ -7,6 +7,7 @@ import {
   renderBranchTarget,
   renderDbUrlTarget,
   renderLocalTarget,
+  targetIsBranchAttribute,
 } from "./target-identity.ts";
 
 const REF = "abcdefghijklmnopqrst";
@@ -207,5 +208,27 @@ describe("renderBranchTarget", () => {
     });
     expect(target.text).toBe(`project ${REF} · production`);
     expect(target.json).toEqual({ kind: "linked", project_ref: REF, environment: "production" });
+  });
+});
+
+describe("targetIsBranchAttribute", () => {
+  it("is false for a target with no branch", () => {
+    expect(targetIsBranchAttribute({})).toEqual({ "config.target_is_branch": false });
+  });
+
+  it("is false for the default branch, which is the production project", () => {
+    expect(targetIsBranchAttribute({ branch: "main", isDefault: true })).toEqual({
+      "config.target_is_branch": false,
+    });
+  });
+
+  it("is true for any other branch", () => {
+    expect(targetIsBranchAttribute({ branch: "feature-x", isDefault: false })).toEqual({
+      "config.target_is_branch": true,
+    });
+  });
+
+  it("is omitted for a branch UUID whose default-ness is unknown", () => {
+    expect(targetIsBranchAttribute({ branch: "11111111-2222-4333-8444-555555555555" })).toEqual({});
   });
 });
