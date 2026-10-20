@@ -878,6 +878,15 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("caches the linked project even when SQL resolution fails", () => {
+    const { layer, cache } = setup({ stdinTTY: true });
+    return Effect.gen(function* () {
+      const exit = yield* dbQuery(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
+      expect(failMessage(exit)).toContain("no SQL query provided");
+      expect(cache.cachedRef).toBe(REF);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect(
     "errors when the linked API returns a non-201 but still caches the linked project",
     () => {
