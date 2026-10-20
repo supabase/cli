@@ -66,6 +66,7 @@ import {
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import {
+  NO_TARGET,
   branchLookupsOf,
   describeDbTargetSelection,
 } from "../../../../tests/helpers/db-target-selection.ts";
@@ -160,11 +161,7 @@ class ApiCallFailure extends Data.TaggedError("ApiCallFailure")<{
 
 function defaultFlags(overrides: Partial<GenTypesFlags> = {}): GenTypesFlags {
   return {
-    remote: Option.none(),
-    local: false,
-    linked: false,
-    dbUrl: Option.none(),
-    projectRef: Option.none(),
+    ...NO_TARGET,
     projectId: Option.none(),
     lang: "typescript" as const,
     schema: [],

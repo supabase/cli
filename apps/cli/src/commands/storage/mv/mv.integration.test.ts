@@ -4,6 +4,8 @@ import { Cause, Effect, Exit, FileSystem, Option, Predicate } from "effect";
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
 import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 import {
+  BARE_REMOTE,
+  NO_TARGET,
   branchLookupsOf,
   describeDbTargetSelection,
   storageTargetOf,
@@ -37,10 +39,7 @@ function mvFlags(opts: {
     src: opts.src,
     dst: opts.dst,
     recursive: opts.recursive ?? false,
-    remote: opts.remote === true ? Option.some({ _tag: "Linked" } as const) : Option.none(),
-    linked: false,
-    local: false,
-    projectRef: Option.none(),
+    ...(opts.remote === true ? BARE_REMOTE : NO_TARGET),
   };
 }
 

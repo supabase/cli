@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Cause, Effect, Exit, FileSystem, Option, Path, Predicate } from "effect";
+import { Cause, Effect, Exit, FileSystem, Path, Predicate } from "effect";
 
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
@@ -8,8 +8,11 @@ import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import { StorageRmConfirmationRequiredError } from "../storage.errors.ts";
 import {
+  BARE_REMOTE,
+  NO_TARGET,
   branchLookupsOf,
   describeDbTargetSelection,
+  remoteTarget,
   storageTargetOf,
 } from "../../../../tests/helpers/db-target-selection.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
@@ -40,10 +43,7 @@ const writeAncestorConfig = Effect.fnUntraced(function* (root: string, toml: str
 const RM_ARGS = {
   files: ["ss:///private/a.pdf"],
   recursive: false,
-  remote: Option.none(),
-  linked: false,
-  local: false,
-  projectRef: Option.none(),
+  ...NO_TARGET,
 };
 const BUCKET = "/storage/v1/bucket";
 const DELETE_OBJECT = (bucket: string) => `/storage/v1/object/${bucket}`;
@@ -89,10 +89,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/abstract.pdf", "ss:///private/docs/readme.md"],
         recursive: false,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const del = requests.find(
@@ -113,10 +110,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stderrText).toContain("Confirm deleting files in bucket");
@@ -138,10 +132,7 @@ describe("storage rm", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
-          remote: Option.none(),
-          linked: false,
-          local: false,
-          projectRef: Option.none(),
+          ...NO_TARGET,
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isSuccess(exit)).toBe(true);
         expect(out.stderrText).toContain("[y/N] y");
@@ -162,10 +153,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stderrText).toContain("[y/N] y");
@@ -184,10 +172,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        remote: Option.some({ _tag: "Linked" } as const),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...BARE_REMOTE,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -214,10 +199,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.method === "DELETE")).toBe(false);
@@ -236,10 +218,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.method === "DELETE")).toBe(true);
@@ -259,10 +238,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.method === "DELETE")).toBe(false);
@@ -289,10 +265,7 @@ describe("storage rm", () => {
             const exit = yield* storageRm({
               files: ["ss:///private/a.pdf"],
               recursive: false,
-              remote: Option.none(),
-              linked: false,
-              local: false,
-              projectRef: Option.none(),
+              ...NO_TARGET,
             }).pipe(Effect.provide(layer), Effect.exit);
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
@@ -324,10 +297,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: [],
         recursive: true,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -354,10 +324,7 @@ describe("storage rm", () => {
         const exit = yield* storageRm({
           files: [],
           recursive: false,
-          remote: Option.none(),
-          linked: false,
-          local: false,
-          projectRef: Option.none(),
+          ...NO_TARGET,
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -395,10 +362,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files,
         recursive: false,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const deletes = requests.filter(
@@ -419,10 +383,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///"],
         recursive: false,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -441,10 +402,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/"],
         recursive: false,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -465,10 +423,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: [],
         recursive: false,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -495,10 +450,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: [],
         recursive: true,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stderrText).toContain("Deleting bucket: b1");
@@ -531,10 +483,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///test"],
         recursive: true,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stderrText).toContain("Bucket not found: test");
@@ -590,10 +539,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/dir"],
         recursive: true,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(
@@ -623,10 +569,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///test"],
         recursive: true,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stderrText).toContain("Deleting bucket: test");
@@ -648,10 +591,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/dir"],
         recursive: true,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -672,10 +612,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.method === "DELETE")).toBe(true);
@@ -704,10 +641,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -727,10 +661,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: [],
         recursive: true,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -750,10 +681,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        remote: Option.some({ _tag: "Linked" } as const),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...BARE_REMOTE,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.url.startsWith(`https://${VALID_REF}.supabase.co`))).toBe(true);
@@ -809,10 +737,7 @@ describe("storage rm", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
-          remote: Option.none(),
-          linked: false,
-          local: false,
-          projectRef: Option.none(),
+          ...NO_TARGET,
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -835,10 +760,7 @@ describe("storage rm", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
-          remote: Option.none(),
-          linked: false,
-          local: false,
-          projectRef: Option.none(),
+          ...NO_TARGET,
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isSuccess(exit)).toBe(true);
         expect(requests.some((r) => r.method === "DELETE")).toBe(true);
@@ -860,10 +782,7 @@ describe("storage rm", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
-          remote: Option.none(),
-          linked: false,
-          local: false,
-          projectRef: Option.none(),
+          ...NO_TARGET,
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -887,10 +806,7 @@ describe("storage rm", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const success = out.messages.find((m) => m.type === "success");
@@ -915,10 +831,7 @@ describe("storage rm", () => {
           yield* storageRm({
             files: ["ss:///private/a.pdf"],
             recursive: false,
-            remote: Option.some({ _tag: "Linked" } as const),
-            linked: false,
-            local: false,
-            projectRef: Option.none(),
+            ...BARE_REMOTE,
           });
           expect(
             managementRequests.map(({ method, urlWithParams }) => `${method} ${urlWithParams}`),
@@ -954,10 +867,7 @@ describe("stack backend", () => {
       const exit = yield* storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        remote: Option.none(),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...NO_TARGET,
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const del = requests.find(
@@ -984,10 +894,7 @@ describe("stack backend", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
-          remote: Option.none(),
-          linked: false,
-          local: false,
-          projectRef: Option.none(),
+          ...NO_TARGET,
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isSuccess(exit)).toBe(true);
         expect(requests.some((r) => r.method === "DELETE")).toBe(false);
@@ -1008,10 +915,7 @@ describe("stack backend", () => {
         const exit = yield* storageRm({
           files: ["ss:///private/a.pdf"],
           recursive: false,
-          remote: Option.none(),
-          linked: false,
-          local: false,
-          projectRef: Option.none(),
+          ...NO_TARGET,
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -1042,10 +946,7 @@ describeHostedConsent("storage rm", {
       run: storageRm({
         files: ["ss:///private/a.pdf"],
         recursive: false,
-        remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
-        linked: false,
-        local: false,
-        projectRef: Option.none(),
+        ...remoteTarget(VALID_REF),
       }).pipe(Effect.provide(storage.layer)),
       mutations: storage.writes,
     };

@@ -4,6 +4,8 @@ import { Cause, Effect, Exit, FileSystem, Option, Path, Predicate } from "effect
 
 import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import {
+  BARE_REMOTE,
+  NO_TARGET,
   branchLookupsOf,
   describeDbTargetSelection,
   storageTargetOf,
@@ -50,10 +52,7 @@ function lsFlags(
   return {
     path: opts.path === undefined ? Option.none() : Option.some(opts.path),
     recursive: opts.recursive ?? false,
-    remote: opts.remote === true ? Option.some({ _tag: "Linked" } as const) : Option.none(),
-    linked: false,
-    local: false,
-    projectRef: Option.none(),
+    ...(opts.remote === true ? BARE_REMOTE : NO_TARGET),
   };
 }
 

@@ -50,7 +50,10 @@ import {
   sequentialExecBatch,
   transportFailure,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { describeDbTargetSelection } from "../../../../tests/helpers/db-target-selection.ts";
+import {
+  NO_TARGET,
+  describeDbTargetSelection,
+} from "../../../../tests/helpers/db-target-selection.ts";
 import { branchListApi } from "../../../../tests/helpers/remote-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
@@ -139,11 +142,7 @@ const CONN: PgConnInput = {
 const REMOTE_LINKED: DbResetFlags["remote"] = Option.some({ _tag: "Linked" });
 
 const DEFAULT_FLAGS: DbResetFlags = {
-  dbUrl: Option.none(),
-  remote: Option.none(),
-  linked: false,
-  local: false,
-  projectRef: Option.none(),
+  ...NO_TARGET,
   noSeed: Option.none(),
   sqlPaths: Option.none(),
   version: Option.none(),

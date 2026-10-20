@@ -2,6 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path, Predicate } from "effect";
 
 import {
+  BARE_REMOTE,
+  NO_TARGET,
   branchLookupsOf,
   describeDbTargetSelection,
   storageTargetOf,
@@ -45,10 +47,7 @@ function cpFlags(opts: {
     cacheControl: opts.cacheControl === undefined ? Option.none() : Option.some(opts.cacheControl),
     contentType: opts.contentType === undefined ? Option.none() : Option.some(opts.contentType),
     jobs: opts.jobs === undefined ? Option.none() : Option.some(opts.jobs),
-    remote: opts.remote === true ? Option.some({ _tag: "Linked" } as const) : Option.none(),
-    linked: false,
-    local: false,
-    projectRef: Option.none(),
+    ...(opts.remote === true ? BARE_REMOTE : NO_TARGET),
   };
 }
 

@@ -9,12 +9,13 @@ import {
   mockTelemetryStateTracked,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { NO_TARGET } from "../../../../tests/helpers/db-target-selection.ts";
 import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConnectionInput } from "../../../command-internal/db-config.types.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
-import type { InspectConnectionFlags, InspectQuerySpec } from "./inspect-query.ts";
+import type { InspectQuerySpec } from "./inspect-query.ts";
 import { dbStatsSpec } from "./db-stats/db-stats.query.ts";
 import { indexStatsSpec } from "./index-stats/index-stats.query.ts";
 import { roleStatsSpec } from "./role-stats/role-stats.query.ts";
@@ -80,14 +81,6 @@ function setup() {
     },
   };
 }
-
-const flags: InspectConnectionFlags = {
-  dbUrl: Option.none<string>(),
-  remote: Option.none(),
-  linked: false,
-  local: false,
-  projectRef: Option.none<string>(),
-};
 
 // All deprecated-alias handlers share the same factory-produced type.
 type AliasHandler = typeof inspectDbCacheHit;
@@ -168,7 +161,7 @@ describe("inspect db deprecated aliases", () => {
     it.effect(`${testCase.alias} warns and runs the ${testCase.routedSpec.name} query`, () => {
       const ctx = setup();
       return Effect.gen(function* () {
-        yield* testCase.handler(flags);
+        yield* testCase.handler(NO_TARGET);
         expect(ctx.out.stderrText).toContain(
           `Command "${testCase.alias}" is deprecated, use "${testCase.target}" instead.\n`,
         );

@@ -12,7 +12,10 @@ vi.mock("node:net", (importOriginal) =>
   ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
 );
 
-import { describeDbTargetSelection } from "../../../../tests/helpers/db-target-selection.ts";
+import {
+  NO_TARGET,
+  describeDbTargetSelection,
+} from "../../../../tests/helpers/db-target-selection.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { branchListApi } from "../../../../tests/helpers/remote-selection.ts";
@@ -82,11 +85,7 @@ const DEFAULT_FLAGS: DbPushFlags = {
   includeSeed: Option.none(),
   skipVault: false,
   dryRun: false,
-  dbUrl: Option.none(),
-  remote: Option.none(),
-  linked: false,
-  local: false,
-  projectRef: Option.none(),
+  ...NO_TARGET,
   password: Option.none(),
 };
 

@@ -32,6 +32,7 @@ import {
   sequentialExecBatch,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { NO_TARGET } from "../../../../tests/helpers/db-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
@@ -263,11 +264,7 @@ function setup(opts: SetupOpts = {}) {
 
 const flags = (over: Partial<TestDbFlags> = {}): TestDbFlags => ({
   paths: [],
-  remote: Option.none(),
-  dbUrl: Option.none(),
-  linked: false,
-  local: false,
-  projectRef: Option.none(),
+  ...NO_TARGET,
   ...over,
 });
 

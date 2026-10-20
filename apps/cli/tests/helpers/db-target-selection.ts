@@ -48,6 +48,9 @@ const selecting = (remote: RemoteValue): TargetFlagValuesWithDbUrl => ({
   remote: Option.some(remote),
 });
 
+/** A bare `--remote`: the linked project. */
+export const BARE_REMOTE: TargetFlagValuesWithDbUrl = selecting({ _tag: "Linked" });
+
 /** `--remote=<ref>`. */
 export const remoteTarget = (ref: string): TargetFlagValuesWithDbUrl =>
   selecting({ _tag: "Ref", ref });
@@ -227,7 +230,7 @@ export function describeDbTargetSelection<R>(
 
     rowTest("bare-remote", "targets the linked project for a bare --remote, with no warning", {
       args: ["--remote"],
-      target: selecting({ _tag: "Linked" }),
+      target: BARE_REMOTE,
       check: (ctx) =>
         Effect.gen(function* () {
           yield* ctx.run;
@@ -363,7 +366,7 @@ export function describeDbTargetSelection<R>(
 
     rowTest("remote-with-local", "rejects --remote combined with --local before anything runs", {
       args: ["--remote", "--local"],
-      target: { ...selecting({ _tag: "Linked" }), local: true },
+      target: { ...BARE_REMOTE, local: true },
       check: (ctx) =>
         Effect.gen(function* () {
           const error = yield* Effect.flip(ctx.run);
