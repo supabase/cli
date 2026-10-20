@@ -440,6 +440,28 @@ describe("resolveTarget", () => {
       }),
     );
 
+    it.effect.each([
+      { name: "a project is linked", options: { savedRef: FILE_REF } },
+      { name: "no project is linked", options: { linked: false } },
+    ])(
+      "fails before any lookup when the word is shaped like a project ref and $name",
+      ({ options: linkState }) =>
+        Effect.gen(function* () {
+          const result = yield* run("selectable", bare, {
+            ...linkState,
+            args: ["db", "pull", "--remote", FLAG_REF],
+            command,
+            branches: [branchRow("feature-x")],
+          });
+          expect(failureOf(result.exit)).toMatchObject({
+            _tag: "TargetRemoteAmbiguousError",
+            message: `"${FLAG_REF}" after --remote looks like a project ref. For that project: supabase db pull --remote=${FLAG_REF}. To keep it as an operand, put --remote last: supabase db pull <operands> --remote`,
+          });
+          expect(result.apiRequests).toEqual([]);
+          expect(result.refFlags).toEqual([]);
+        }),
+    );
+
     it.effect("names the branch of a linked, named project", () =>
       Effect.gen(function* () {
         const result = yield* run("selectable", bare, {

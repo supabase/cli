@@ -1,7 +1,6 @@
 import type { Command } from "effect/cli";
 
 import { unwrapToSingleParam } from "../../command-internal/param-introspection.ts";
-import { BRANCH_PROJECT_REF_PATTERN } from "../../command-internal/ref-patterns.ts";
 import {
   couldNameBranch,
   DB_URL_PATTERN,
@@ -59,8 +58,8 @@ const scanRemoteArgv = (args: ReadonlyArray<string>, leaf: RemoteArgvLeaf): Remo
 
 /**
  * Joins a bare `--remote <word>` into `--remote=<word>` when the word cannot be one of the
- * command's operands: the command takes none, the word is a project ref, a database URL or a
- * boolean literal, or the command already has more operands than it takes.
+ * command's operands: the command takes none, the word is a database URL or a boolean literal, or
+ * the command already has more operands than it takes.
  */
 export function joinRemoteOperands(
   args: ReadonlyArray<string>,
@@ -79,7 +78,6 @@ export function joinRemoteOperands(
     if (
       LINKED_LITERAL.test(word) ||
       leaf.operandCapacity === 0 ||
-      BRANCH_PROJECT_REF_PATTERN.test(word) ||
       DB_URL_PATTERN.test(word) ||
       (couldNameBranch(word) && operandCount > leaf.operandCapacity)
     ) {

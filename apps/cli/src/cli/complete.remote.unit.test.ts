@@ -79,11 +79,17 @@ describe("the token after a bare --remote", () => {
     expect(complete("db", "query", "--remote", "sel")).toEqual(positionalCandidates);
   });
 
-  it("is the value when it is a project ref or a database URL, even with a free positional slot", () => {
-    expect(complete("db", "pull", "--remote", PROJECT_REF)).toEqual(noValueCandidates);
+  it("is the value when it is a database URL, even with a free positional slot", () => {
+    expect(complete("db", "pull", "--remote", "postgresql://u:p@host:5432/db")).toEqual(
+      noValueCandidates,
+    );
     expect(complete("db", "query", "--remote", "postgresql://u:p@host:5432/db")).toEqual(
       noValueCandidates,
     );
+  });
+
+  it("is the positional when it is a project ref and the command has a free positional slot", () => {
+    expect(complete("db", "pull", "--remote", PROJECT_REF)).toEqual(positionalCandidates);
   });
 
   it("is the value once the positionals are filled", () => {
@@ -96,8 +102,14 @@ describe("the token after a bare --remote", () => {
     expect(complete("db", "cp", "a", "--remote", "feat")).toEqual(positionalCandidates);
   });
 
-  it("is the value on a variadic command once it is a project ref", () => {
-    expect(complete("db", "cp", "a", "--remote", PROJECT_REF)).toEqual(noValueCandidates);
+  it("is the value on a variadic command once it is a database URL", () => {
+    expect(complete("db", "cp", "a", "--remote", "postgresql://u:p@host:5432/db")).toEqual(
+      noValueCandidates,
+    );
+  });
+
+  it("is a positional on a variadic command when it is a project ref", () => {
+    expect(complete("db", "cp", "a", "--remote", PROJECT_REF)).toEqual(positionalCandidates);
   });
 
   it("does not stop flag completion from running after the bare switch", () => {

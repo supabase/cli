@@ -14,6 +14,7 @@ import {
 import { yellow } from "../colors.ts";
 import { formatNamedRef, sanitizeInlineName } from "../http-errors.ts";
 import { readCachedLinkedProject, resolveLinkedParentRef } from "../parent-project-ref.ts";
+import { BRANCH_PROJECT_REF_PATTERN } from "../ref-patterns.ts";
 import {
   findBranch,
   listBranchesFailureCause,
@@ -154,13 +155,17 @@ const listingFailure = (
   return { reason: "" };
 };
 
+const commandUsage = Effect.fnUntraced(function* () {
+  const runtime = yield* Effect.serviceOption(CommandRuntime);
+  return `supabase ${Option.isSome(runtime) ? getCommandRuntimeCommand(runtime.value) : "<command>"}`;
+});
+
 const checkRemoteOperand = Effect.fn("Target.checkRemoteOperand")(function* (rawOperand: string) {
   const parent = yield* resolveLinkedParentRef();
   if (parent.kind !== "resolved") return;
 
   const operand = stripUserinfo(rawOperand);
-  const runtime = yield* Effect.serviceOption(CommandRuntime);
-  const usage = `supabase ${Option.isSome(runtime) ? getCommandRuntimeCommand(runtime.value) : "<command>"}`;
+  const usage = yield* commandUsage();
   const options = `For the branch: ${usage} ${remoteFlagText({ _tag: "Branch", name: operand })}. For the linked project: ${usage} ${shellQuote(operand)} --remote`;
 
   const listed = yield* listParentBranches(parent.ref, "Checking branches...").pipe(Effect.result);
@@ -196,14 +201,23 @@ const checkRemoteOperand = Effect.fn("Target.checkRemoteOperand")(function* (raw
   }
 });
 
+const rejectRefShapedOperand = Effect.fnUntraced(function* (operand: string) {
+  const usage = yield* commandUsage();
+  return yield* new TargetRemoteAmbiguousError({
+    message: `"${operand}" after --remote looks like a project ref. For that project: ${usage} --remote=${operand}. To keep it as an operand, put --remote last: ${usage} <operands> --remote`,
+  });
+});
+
 /**
- * Fails a bare `--remote` whose next word is, or may be, a branch of the linked project, before
- * the command prompts, connects or writes.
+ * Fails a bare `--remote` whose next word is a project ref, or is, or may be, a branch of the
+ * linked project, before the command prompts, connects or writes.
  */
 const rejectAmbiguousRemote = Effect.fnUntraced(function* () {
   const cliArgs = yield* Effect.serviceOption(CliArgs);
   const operand = Option.getOrUndefined(cliArgs)?.bareRemoteOperand;
-  if (operand !== undefined) yield* checkRemoteOperand(operand);
+  if (operand === undefined) return;
+  if (BRANCH_PROJECT_REF_PATTERN.test(operand)) return yield* rejectRefShapedOperand(operand);
+  yield* checkRemoteOperand(operand);
 });
 
 /** The linked target for a ref the ref chain has already resolved and announced. */

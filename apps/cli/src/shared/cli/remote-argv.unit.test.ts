@@ -29,10 +29,28 @@ describe("joinRemoteOperands", () => {
       expected: ["db", "push", `--remote=feature-x`],
     },
     {
-      name: "joins a project ref",
+      name: "joins a project ref for a command with no operands",
+      leaf: noOperands,
+      args: ["db", "push", "--remote", REF],
+      expected: ["db", "push", `--remote=${REF}`],
+    },
+    {
+      name: "keeps a project ref as the operand when the command takes one",
       leaf: oneOperand,
       args: ["storage", "ls", "--remote", REF],
-      expected: ["storage", "ls", `--remote=${REF}`],
+      expected: ["storage", "ls", "--remote", REF],
+    },
+    {
+      name: "joins a project ref once the command has more operands than it takes",
+      leaf: oneOperand,
+      args: ["storage", "ls", "ss:///bucket", "--remote", REF],
+      expected: ["storage", "ls", "ss:///bucket", `--remote=${REF}`],
+    },
+    {
+      name: "never joins a project ref for a command with a variable number of operands",
+      leaf: variadic,
+      args: ["functions", "deploy", "--remote", REF, "hello"],
+      expected: ["functions", "deploy", "--remote", REF, "hello"],
     },
     {
       name: "joins a database URL",
@@ -145,6 +163,12 @@ describe("bareRemoteOperand", () => {
       expected: "feature-x",
     },
     {
+      name: "returns a project-ref-shaped word the command took as its operand",
+      leaf: oneOperand,
+      args: ["db", "pull", "--remote", REF],
+      expected: REF,
+    },
+    {
       name: "skips a word that is a command-path segment",
       leaf: noOperands,
       args: ["seed", "--remote", "buckets"],
@@ -227,9 +251,19 @@ describe("prepareCliArgs argv", () => {
       expected: ["storage", "ls", "--remote", "ss:///bucket"],
     },
     {
-      name: "joins a branch for functions deploy only when it is a ref or URL",
+      name: "joins a database URL for functions deploy, whose operands are variable",
+      args: ["functions", "deploy", "--remote", URL, "hello"],
+      expected: ["functions", "deploy", `--remote=${URL}`, "hello"],
+    },
+    {
+      name: "leaves a project-ref-shaped word for functions deploy, which may be a function name",
       args: ["functions", "deploy", "--remote", REF, "hello"],
-      expected: ["functions", "deploy", `--remote=${REF}`, "hello"],
+      expected: ["functions", "deploy", "--remote", REF, "hello"],
+    },
+    {
+      name: "leaves a project-ref-shaped word for db pull, which may be a migration name",
+      args: ["db", "pull", "--remote", REF],
+      expected: ["db", "pull", "--remote", REF],
     },
     {
       name: "joins for seed's persistent --remote after the subcommand",
@@ -296,6 +330,10 @@ describe("prepareCliArgs bareRemoteOperand on the real command tree", () => {
 
   it("reads db pull's migration-name operand, which may be a branch", () => {
     expect(operandOf(["db", "pull", "--remote", "feature-x"])).toBe("feature-x");
+  });
+
+  it("reads a project-ref-shaped word as db pull's operand rather than joining it", () => {
+    expect(operandOf(["db", "pull", "--remote", REF])).toBe(REF);
   });
 
   it("reads no operand from gen types, whose legacy language operand is hidden", () => {
