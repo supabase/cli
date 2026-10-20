@@ -1023,7 +1023,7 @@ describe("gen types", () => {
         );
 
         expect(stripAnsi(out.stderrText)).toContain(
-          `Warning: --project-id is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase gen types --remote=${VALID_REF}\n`,
+          `Warning: --project-id is deprecated and will be removed in v4. Use --remote=<ref> instead\n`,
         );
         expect(out.stderrText).toContain(unverifiedTargetBanner());
         expect(api.requests).toContainEqual({
@@ -1057,7 +1057,7 @@ describe("gen types", () => {
           expect(alias.out.stdoutText).toBe("export type Database = {}\n");
           expect(alias.out.stdoutText).toBe(canonical.out.stdoutText);
           expect(warningsOf(alias.out)).toEqual([
-            `--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase gen types --remote=${VALID_REF}`,
+            `--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead`,
           ]);
           expect(warningsOf(canonical.out)).toEqual([]);
         }).pipe(Effect.provide(BunServices.layer)),
@@ -1244,8 +1244,7 @@ describe("gen types", () => {
           alias: "--linked",
           args: ["gen", "types", "--linked"],
           flags: { linked: true },
-          warning:
-            "--linked is deprecated and will be removed in v4. Use --remote instead: supabase gen types --remote",
+          warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
           reached: ({ api }) =>
             expect(api.requests).toContainEqual({
               method: "generateTypescriptTypes",
@@ -1256,7 +1255,7 @@ describe("gen types", () => {
           alias: "--project-ref",
           args: ["gen", "types", "--project-ref", FLAG_REF],
           flags: { projectRef: Option.some(FLAG_REF) },
-          warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase gen types --remote=${FLAG_REF}`,
+          warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
           reached: ({ api }) =>
             expect(api.requests).toContainEqual({
               method: "generateTypescriptTypes",
@@ -1268,7 +1267,7 @@ describe("gen types", () => {
           args: ["gen", "types", "--db-url", dbUrl],
           flags: { dbUrl: Option.some(dbUrl) },
           warning:
-            "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead: supabase gen types --remote=<db-url>",
+            "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead",
           reached: ({ dbConfig }) =>
             expect(dbConfig.resolves.map(({ target }) => target.kind)).toEqual(["db-url"]),
         },
@@ -1276,8 +1275,7 @@ describe("gen types", () => {
           alias: "--local",
           args: ["gen", "types", "--local"],
           flags: { local: true },
-          warning:
-            "--local isn't needed (local is the default) and will be removed in v4: supabase gen types",
+          warning: "--local isn't needed (local is the default) and will be removed in v4",
           reached: ({ generator }) => expect(generator.calls[0]?.isLocal).toBe(true),
         },
       ];
@@ -3777,7 +3775,7 @@ describe("gen types permissions through the real layers", () => {
         `GET /v1/projects/${VALID_REF}/types/typescript`,
       ]);
       expect(warningsOf(ctx.out)).toEqual([
-        `--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase gen types --remote=${VALID_REF}`,
+        `--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead`,
       ]);
       assertPermissionDrift({
         command: "gen types",

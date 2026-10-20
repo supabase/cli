@@ -154,7 +154,7 @@ export function describeTargetSelectionMatrix<R>(
 
         expectActedOn(run, OTHER_REF);
         expect(run.warnings()).toEqual([
-          `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase ${path} --remote=${OTHER_REF}`,
+          `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
         ]);
       }).pipe(Effect.provide(run.layer));
     });

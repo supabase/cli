@@ -73,7 +73,6 @@ import {
   flagAliasesFor,
   isRemoteFlagMisuse,
   isValueTakingFlagTokenFor,
-  operandPlaceholdersAt,
   resolvedCommandPathForArgv,
 } from "./subcommand-flag-suggestions.ts";
 
@@ -229,23 +228,10 @@ export function prepareCliArgs(
   rawArgs: ReadonlyArray<string>,
 ): CliArgsShape {
   const leaf = remoteArgvLeafFor(rootCommand, rawArgs);
-  if (leaf === undefined) {
-    return { args: rawArgs, operandPlaceholders: operandPlaceholdersFor(rootCommand, rawArgs) };
-  }
+  if (leaf === undefined) return { args: rawArgs };
   const args = joinRemoteOperands(rawArgs, leaf);
-  return {
-    args,
-    bareRemoteOperand: bareRemoteOperand(args, leaf),
-    operandPlaceholders: operandPlaceholdersFor(rootCommand, args),
-  };
+  return { args, bareRemoteOperand: bareRemoteOperand(args, leaf) };
 }
-
-const operandPlaceholdersFor =
-  (rootCommand: Command.Command.Any, args: ReadonlyArray<string>) => (): ReadonlyArray<string> =>
-    operandPlaceholdersAt(
-      rootCommand,
-      resolvedCommandPathForArgv(rootCommand, extractCommandPath(args)),
-    );
 
 /** `CliArgs` and a `Stdio` whose `args` is the same argv, so every reader of either sees the rewritten command line. */
 export const cliArgsLayer = (cliArgs: CliArgsShape) =>

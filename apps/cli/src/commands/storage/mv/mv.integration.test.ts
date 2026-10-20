@@ -383,23 +383,21 @@ describe("storage mv", () => {
         cliArgs: ["storage", "mv", "--linked"],
         flags: { linked: true },
         host: `https://${VALID_REF}.supabase.co`,
-        warning:
-          "--linked is deprecated and will be removed in v4. Use --remote instead: supabase storage mv --remote",
+        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
       },
       {
         alias: "--project-ref",
         cliArgs: ["storage", "mv", "--project-ref", FLAG_REF],
         flags: { projectRef: Option.some(FLAG_REF) },
         host: `https://${FLAG_REF}.supabase.co`,
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase storage mv --remote=${FLAG_REF}`,
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
       },
       {
         alias: "--local",
         cliArgs: ["storage", "mv", "--local"],
         flags: { local: true },
         host: "http://127.0.0.1:65432",
-        warning:
-          "--local isn't needed (local is the default) and will be removed in v4: supabase storage mv",
+        warning: "--local isn't needed (local is the default) and will be removed in v4",
       },
     ] as const;
 

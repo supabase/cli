@@ -540,7 +540,7 @@ describe("functions deploy", () => {
           `https://api.supabase.com/v1/projects/${OTHER_REF}/functions/deploy`,
         ]);
         expect(warnings()).toEqual([
-          `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase functions deploy <Function name>... --remote=${OTHER_REF}`,
+          `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
         ]);
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });

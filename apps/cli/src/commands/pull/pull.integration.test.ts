@@ -992,7 +992,7 @@ describe("pull integration", () => {
       yield* writeConfig();
       yield* runPull(pullFlags({ projectRef: Option.some("staging"), dryRun: true }));
       expect(warningsOf(out)).toEqual([
-        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead: supabase pull --remote=staging",
+        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead",
       ]);
     }).pipe(Effect.provide(layer));
   });

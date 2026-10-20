@@ -70,16 +70,6 @@ export function visibleOperandsOf(
   });
 }
 
-/** The operand placeholders the command at `path` lists in its help, e.g. `<NAME=VALUE>...`. */
-export function operandPlaceholdersAt(
-  rootCommand: Command.Command.Any,
-  path: ReadonlyArray<string>,
-): ReadonlyArray<string> {
-  const command = findCommand(rootCommand, path.slice(1));
-  const operands = command === undefined ? [] : visibleOperandsOf(command);
-  return operands.map((operand) => `<${operand.name}>${operand.variadic ? "..." : ""}`);
-}
-
 const flagArityOf = (single: Param.Single<Param.ParamKind, unknown>): FlagArity => {
   if (single.primitiveType._tag !== "Boolean") return "value";
   return isRemoteFlag(single) ? "optional-value" : "switch";

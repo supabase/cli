@@ -20,12 +20,7 @@ import { closestByName } from "./closest-branch.ts";
 import type { RemoteValue } from "./remote-value.ts";
 import { stripUserinfo } from "./remote-vocabulary.ts";
 import type { LinkedTarget } from "./resolve-target.ts";
-import {
-  type DeprecationCommand,
-  deprecationMessages,
-  remoteFlagText,
-  shellQuote,
-} from "./target-deprecation.ts";
+import { deprecationMessages, remoteFlagText, shellQuote } from "./target-deprecation.ts";
 import { describeLinkedTarget, renderBranchTarget } from "./target-identity.ts";
 import {
   parseTargetSelector,
@@ -43,24 +38,13 @@ export const warnTarget = Effect.fnUntraced(function* (message: string) {
   yield* output.raw(`${yellow(`Warning: ${message}`)}\n`, "stderr");
 });
 
-const currentCommand = Effect.fnUntraced(function* () {
-  const runtime = yield* Effect.serviceOption(CommandRuntime);
-  if (Option.isNone(runtime)) return undefined;
-  const cliArgs = Option.getOrUndefined(yield* Effect.serviceOption(CliArgs));
-  return {
-    path: getCommandRuntimeCommand(runtime.value),
-    operands: cliArgs?.operandPlaceholders?.() ?? [],
-  } satisfies DeprecationCommand;
-});
-
-/** Prints one warning per deprecated selector flag the run used, naming the command, its operand placeholders and the `--remote` replacement. */
+/** Prints one warning per deprecated selector flag the run used, naming its `--remote` replacement. */
 export const warnTargetDeprecations = Effect.fnUntraced(function* (
   deprecations: ReadonlyArray<TargetDeprecation>,
 ) {
   if (deprecations.length === 0) return;
   const { projectHost } = yield* CommandSettings;
-  const command = yield* currentCommand();
-  for (const message of deprecationMessages(deprecations, { command, projectHost })) {
+  for (const message of deprecationMessages(deprecations, projectHost)) {
     yield* warnTarget(message);
   }
 });
@@ -147,10 +131,8 @@ const checkRemoteOperand = Effect.fn("Target.checkRemoteOperand")(function* (raw
   const listed = yield* listParentBranches(parent.ref, "Checking branches...").pipe(Effect.result);
   if (Result.isFailure(listed)) {
     const failure = listingFailure(listed.failure);
-    const cliArgs = Option.getOrUndefined(yield* Effect.serviceOption(CliArgs));
-    const operands = cliArgs?.operandPlaceholders?.() ?? [];
     return yield* new TargetRemoteAmbiguousError({
-      message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${parent.ref} failed${failure.reason}). For the branch: ${usage} --remote=<branch>. For the linked project: ${[usage, ...operands, "--remote"].join(" ")}`,
+      message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${parent.ref} failed${failure.reason}). For the branch: ${usage} --remote=<branch>. For the linked project, put --remote last: ${usage} <operands> --remote`,
       ...(failure.suggestion === undefined ? {} : { suggestion: failure.suggestion }),
       ...(failure.status === undefined ? {} : { status: failure.status }),
       ...(failure.authFailure === undefined ? {} : { authFailure: failure.authFailure }),

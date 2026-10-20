@@ -1781,7 +1781,7 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
       expect(warningsOf(out)).toEqual([
-        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead: supabase config pull --remote=staging",
+        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead",
       ]);
       expect(out.stderrText).toContain(`Pulling config from 'staging' (branch ${BRANCH_REF})`);
     }).pipe(Effect.provide(layer));

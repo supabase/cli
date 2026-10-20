@@ -399,7 +399,7 @@ describe("resolveTarget", () => {
     const command = ["db", "pull"];
     const bare = { ...none, ...remote({ _tag: "Linked" }) };
     const options = `For the branch: supabase db pull --remote=feature-x. For the linked project: supabase db pull feature-x --remote`;
-    const placeholderOptions = `For the branch: supabase db pull --remote=<branch>. For the linked project: supabase db pull <migration name> --remote`;
+    const placeholderOptions = `For the branch: supabase db pull --remote=<branch>. For the linked project, put --remote last: supabase db pull <operands> --remote`;
 
     it.effect("fails when the word is a branch of the linked project", () =>
       Effect.gen(function* () {
@@ -557,7 +557,7 @@ describe("resolveTarget", () => {
         const error = failureOf(result.exit);
         expect(error).toMatchObject({
           _tag: "TargetRemoteAmbiguousError",
-          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed with HTTP 403). For the branch: supabase secrets unset --remote=<branch>. For the linked project: supabase secrets unset <NAME>... --remote`,
+          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed with HTTP 403). For the branch: supabase secrets unset --remote=<branch>. For the linked project, put --remote last: supabase secrets unset <operands> --remote`,
         });
         expect(JSON.stringify(error)).not.toContain("sk_live_secret");
       }),
@@ -673,7 +673,7 @@ describe("resolveTarget", () => {
         );
         expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FILE_REF });
         expect(result.warnings).toEqual([
-          "--linked is deprecated and will be removed in v4. Use --remote instead: supabase db push --remote",
+          "--linked is deprecated and will be removed in v4. Use --remote instead",
         ]);
       }),
     );
@@ -689,7 +689,7 @@ describe("resolveTarget", () => {
           );
           expect(succeeded(result.exit)).toMatchObject({ kind: "linked" });
           expect(result.warnings).toEqual([
-            "--linked is deprecated and will be removed in v4. Use --remote instead: supabase db push --remote",
+            "--linked is deprecated and will be removed in v4. Use --remote instead",
           ]);
           expect(result.outputWarnCalls).toEqual([]);
           expect(result.stdout).toBe("");
@@ -708,7 +708,7 @@ describe("resolveTarget", () => {
         );
         expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FLAG_REF });
         expect(result.warnings).toEqual([
-          `--linked and --project-ref are deprecated and will be removed in v4. Use --remote=<ref> instead: supabase db push --remote=${FLAG_REF}`,
+          `--linked and --project-ref are deprecated and will be removed in v4. Use --remote=<ref> instead`,
         ]);
       }),
     );
@@ -725,7 +725,7 @@ describe("resolveTarget", () => {
         );
         expect(succeeded(result.exit)).toMatchObject({ kind: "db-url" });
         expect(result.warnings).toEqual([
-          "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead: supabase db push --remote=<db-url>, or --remote=abcdefghijklmnopqrst with an access token set",
+          "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead, or --remote=abcdefghijklmnopqrst with an access token set",
         ]);
         expect(result.warnings.join("\n")).not.toContain("hunter2");
       }),
@@ -740,7 +740,7 @@ describe("resolveTarget", () => {
         );
         expect(succeeded(result.exit)).toEqual({ kind: "local" });
         expect(result.warnings).toEqual([
-          "--local isn't needed (local is the default) and will be removed in v4: supabase db push",
+          "--local isn't needed (local is the default) and will be removed in v4",
         ]);
         expect(result.refFlags).toEqual([]);
       }),

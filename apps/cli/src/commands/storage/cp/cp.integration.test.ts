@@ -661,23 +661,21 @@ describe("storage cp", () => {
         cliArgs: ["storage", "cp", "--linked"],
         flags: { linked: true },
         host: `https://${VALID_REF}.supabase.co`,
-        warning:
-          "--linked is deprecated and will be removed in v4. Use --remote instead: supabase storage cp --remote",
+        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
       },
       {
         alias: "--project-ref",
         cliArgs: ["storage", "cp", "--project-ref", FLAG_REF],
         flags: { projectRef: Option.some(FLAG_REF) },
         host: `https://${FLAG_REF}.supabase.co`,
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase storage cp --remote=${FLAG_REF}`,
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
       },
       {
         alias: "--local",
         cliArgs: ["storage", "cp", "--local"],
         flags: { local: true },
         host: "http://127.0.0.1:65432",
-        warning:
-          "--local isn't needed (local is the default) and will be removed in v4: supabase storage cp",
+        warning: "--local isn't needed (local is the default) and will be removed in v4",
       },
     ] as const;
 

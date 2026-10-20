@@ -207,7 +207,7 @@ describe("resolveProjectTarget", () => {
       );
       expect(refOf(result.exit)).toBe(FLAG_REF);
       expect(result.warnings).toEqual([
-        `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase functions deploy <Function name>... --remote=${FLAG_REF}`,
+        `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
       ]);
       expect(result.outputWarnCalls).toEqual([]);
       expect(result.stdout).toBe("");

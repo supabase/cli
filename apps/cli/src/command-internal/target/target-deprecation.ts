@@ -56,53 +56,32 @@ export const refFromDbUrl = (url: string, projectHost: string): string | undefin
   }
 };
 
-/** The command the warning's example runs: its path and operand placeholders, never the user's own operands. */
-export interface DeprecationCommand {
-  /** The resolved command path, e.g. `db push`. */
-  readonly path: string;
-  /** The operand placeholders from the command's help, e.g. `<NAME=VALUE>...`. */
-  readonly operands: ReadonlyArray<string>;
-}
-
-const exampleOf = (command: DeprecationCommand | undefined, remote: string | undefined): string =>
-  command === undefined
-    ? ""
-    : `: ${["supabase", command.path, ...command.operands, ...(remote === undefined ? [] : [remote])].join(" ")}`;
-
 const aliasMessage = (
   deprecation: Extract<TargetDeprecation, { readonly kind: "remote-alias" }>,
-  context: { readonly command: DeprecationCommand | undefined; readonly projectHost: string },
+  projectHost: string,
 ): string => {
   const { flags, remote } = deprecation;
   const verb = flags.length > 1 ? "are" : "is";
   const lead = `${joinFlags(flags)} ${verb} deprecated and will be removed in v4.`;
-  const example = exampleOf(context.command, remoteFlagText(remote));
 
   if (remote._tag === "Branch" && isBooleanLiteral(remote.name)) {
-    return `${lead} Reach a branch named "${remote.name}" with ${BRANCH_BY_REF} instead${example}`;
+    return `${lead} Reach a branch named "${remote.name}" with ${BRANCH_BY_REF} instead`;
   }
   if (remote._tag === "DbUrl" && !DB_URL_PATTERN.test(remote.url)) {
-    return `${lead} Convert the connection string to a postgresql:// URL and pass it as --remote=<url> instead${exampleOf(context.command, "--remote=<url>")}`;
+    return `${lead} Convert the connection string to a postgresql:// URL and pass it as --remote=<url> instead`;
   }
-  const ref = remote._tag === "DbUrl" ? refFromDbUrl(remote.url, context.projectHost) : undefined;
+  const ref = remote._tag === "DbUrl" ? refFromDbUrl(remote.url, projectHost) : undefined;
   const alternative = ref === undefined ? "" : `, or --remote=${ref} with an access token set`;
-  return `${lead} Use ${replacementOf(remote)} instead${example}${alternative}`;
+  return `${lead} Use ${replacementOf(remote)} instead${alternative}`;
 };
 
-/**
- * The warning for each deprecated selector the run used. It shows the command path, its operand
- * placeholders and the `--remote` replacement last; the user's own operands, other flags and
- * database URLs are never echoed, because any of them can be a secret.
- */
+/** The warning for each deprecated selector the run used, naming its `--remote` replacement; a database URL is never echoed. */
 export const deprecationMessages = (
   deprecations: ReadonlyArray<TargetDeprecation>,
-  context: {
-    readonly command: DeprecationCommand | undefined;
-    readonly projectHost: string;
-  },
+  projectHost: string,
 ): ReadonlyArray<string> =>
   deprecations.map((deprecation) =>
     deprecation.kind === "local"
-      ? `--local isn't needed (local is the default) and will be removed in v4${exampleOf(context.command, undefined)}`
-      : aliasMessage(deprecation, context),
+      ? "--local isn't needed (local is the default) and will be removed in v4"
+      : aliasMessage(deprecation, projectHost),
   );

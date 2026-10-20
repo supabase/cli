@@ -3545,7 +3545,7 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
     return Effect.gen(function* () {
       yield* configPush({ remote: Option.none(), projectRef: Option.some("staging") });
       expect(warningsOf(out)).toEqual([
-        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead: supabase config push --remote=staging",
+        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead",
       ]);
       expect(out.stderrText).toContain(`Target: project ${REF} · branch staging (${BRANCH_REF})\n`);
     }).pipe(Effect.provide(layer));

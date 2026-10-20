@@ -302,10 +302,6 @@ describe("prepareCliArgs bareRemoteOperand on the real command tree", () => {
     expect(operandOf(["gen", "types", "--remote", "feature-x"])).toBeUndefined();
   });
 
-  it("leaves gen types's hidden legacy language operand out of its placeholders", () => {
-    expect(prepareCliArgs(root, ["gen", "types", "--remote"]).operandPlaceholders?.()).toEqual([]);
-  });
-
   it("finds nothing once every word is joined into --remote=<word>", () => {
     expect(operandOf(["db", "push", "--remote", "feature-x"])).toBeUndefined();
   });

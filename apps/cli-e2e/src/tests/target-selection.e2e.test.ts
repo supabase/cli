@@ -23,7 +23,7 @@ describe("deprecated target aliases", () => {
       const result = await run(["db", "advisors", "--type", "security", "--linked"]);
       expect(result.exitCode).toBe(0);
       expect(`${result.stdout}${result.stderr}`).toContain(
-        "--linked is deprecated and will be removed in v4. Use --remote instead: supabase db advisors --remote",
+        "--linked is deprecated and will be removed in v4. Use --remote instead",
       );
       expect(result.stderr).toContain("No issues found");
     },
@@ -33,7 +33,7 @@ describe("deprecated target aliases", () => {
     const result = await run(["db", "push", "--local"]);
     expect(result.exitCode).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain(
-      "--local isn't needed (local is the default) and will be removed in v4: supabase db push",
+      "--local isn't needed (local is the default) and will be removed in v4",
     );
     expect(result.stderr).toContain("Target: local stack");
     expect(result.stderr).toContain("failed to connect to postgres");
@@ -45,7 +45,7 @@ describe("deprecated target aliases", () => {
       const result = await run(["inspect", "db", "db-stats", "--db-url", DEAD_DB_URL]);
       expect(result.exitCode).not.toBe(0);
       expect(`${result.stdout}${result.stderr}`).toContain(
-        "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead: supabase inspect db db-stats --remote=<db-url>",
+        "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead",
       );
       expect(`${result.stdout}${result.stderr}`).not.toContain(DEAD_DB_URL);
       expect(result.stderr).toContain("Target: custom Postgres (localhost:1)");
@@ -58,7 +58,7 @@ describe("deprecated target aliases", () => {
       const result = await run(["secrets", "list", "--project-ref", projectRef]);
       expect(result.exitCode).toBe(0);
       expect(`${result.stdout}${result.stderr}`).toContain(
-        `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase secrets list --remote=${projectRef}`,
+        `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
       );
     },
   );
@@ -70,7 +70,7 @@ describe("deprecated target aliases", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("export type Database");
       expect(`${result.stdout}${result.stderr}`).toContain(
-        `--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase gen types --remote=${projectRef}`,
+        `--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead`,
       );
     },
   );

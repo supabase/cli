@@ -434,31 +434,28 @@ describe("migration down", () => {
         args: ["migration", "down", "--linked"],
         flags: { linked: true },
         target: { kind: "linked", ref: VALID_REF },
-        warning:
-          "--linked is deprecated and will be removed in v4. Use --remote instead: supabase migration down --remote",
+        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
       },
       {
         alias: "--project-ref",
         args: ["migration", "down", "--project-ref", FLAG_REF],
         flags: { projectRef: Option.some(FLAG_REF) },
         target: { kind: "linked", ref: FLAG_REF },
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase migration down --remote=${FLAG_REF}`,
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
       },
       {
         alias: "--db-url",
         args: ["migration", "down", "--db-url", DB_URL],
         flags: { dbUrl: Option.some(DB_URL) },
         target: { kind: "db-url" },
-        warning:
-          "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead: supabase migration down --remote=<db-url>",
+        warning: "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead",
       },
       {
         alias: "--local",
         args: ["migration", "down", "--local"],
         flags: { local: true },
         target: { kind: "local" },
-        warning:
-          "--local isn't needed (local is the default) and will be removed in v4: supabase migration down",
+        warning: "--local isn't needed (local is the default) and will be removed in v4",
       },
     ] as const satisfies ReadonlyArray<{
       readonly alias: string;

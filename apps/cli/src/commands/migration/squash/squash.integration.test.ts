@@ -1439,15 +1439,14 @@ describe("migration squash", () => {
           args: ["migration", "squash", "--linked"],
           flags: { linked: true },
           target: { kind: "linked", ref: VALID_REF },
-          warning:
-            "--linked is deprecated and will be removed in v4. Use --remote instead: supabase migration squash --remote",
+          warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
         },
         {
           alias: "--project-ref",
           args: ["migration", "squash", "--project-ref", FLAG_REF],
           flags: { projectRef: Option.some(FLAG_REF) },
           target: { kind: "linked", ref: FLAG_REF },
-          warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase migration squash --remote=${FLAG_REF}`,
+          warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
         },
         {
           alias: "--db-url",
@@ -1455,15 +1454,14 @@ describe("migration squash", () => {
           flags: { dbUrl: Option.some(DB_URL) },
           target: { kind: "db-url" },
           warning:
-            "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead: supabase migration squash --remote=<db-url>",
+            "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead",
         },
         {
           alias: "--local",
           args: ["migration", "squash", "--local"],
           flags: { local: true },
           target: { kind: "local" },
-          warning:
-            "--local isn't needed (local is the default) and will be removed in v4: supabase migration squash",
+          warning: "--local isn't needed (local is the default) and will be removed in v4",
         },
       ] as const satisfies ReadonlyArray<{
         readonly alias: string;

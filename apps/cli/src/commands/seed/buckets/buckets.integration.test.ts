@@ -2369,23 +2369,21 @@ describe("seed buckets", () => {
         cliArgs: ["seed", "buckets", "--linked"],
         flags: { linked: true, local: false },
         host: `https://${VALID_REF}.supabase.co`,
-        warning:
-          "--linked is deprecated and will be removed in v4. Use --remote instead: supabase seed buckets --remote",
+        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
       },
       {
         alias: "--project-ref",
         cliArgs: ["seed", "buckets", "--project-ref", FLAG_REF],
         flags: { projectRef: Option.some(FLAG_REF), local: false },
         host: `https://${FLAG_REF}.supabase.co`,
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase seed buckets --remote=${FLAG_REF}`,
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
       },
       {
         alias: "--local",
         cliArgs: ["seed", "buckets", "--local"],
         flags: { local: true },
         host: "http://",
-        warning:
-          "--local isn't needed (local is the default) and will be removed in v4: supabase seed buckets",
+        warning: "--local isn't needed (local is the default) and will be removed in v4",
       },
     ] as const;
 

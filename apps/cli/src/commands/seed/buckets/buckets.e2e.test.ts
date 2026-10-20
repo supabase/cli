@@ -70,7 +70,7 @@ describe("supabase seed buckets", () => {
         );
         expect(`${stdout}${stderr}`).not.toContain("Unrecognized flag");
         expect(`${stdout}${stderr}`).toContain(
-          "--local isn't needed (local is the default) and will be removed in v4: supabase seed buckets",
+          "--local isn't needed (local is the default) and will be removed in v4",
         );
         expect(exitCode).toBe(0);
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),

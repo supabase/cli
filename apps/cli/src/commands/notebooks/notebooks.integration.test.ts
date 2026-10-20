@@ -701,7 +701,7 @@ describe.each(commands)("notebooks %s project selection", (command) => {
       yield* runWith(command, { ...none, projectRef: Option.some(NOTEBOOKS_PROJECT_REF) });
       expect(http.routeKeys).toEqual([`GET ${notebooksRoute()}`]);
       expect(warningsOf(out)).toEqual([
-        `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase notebooks ${command} --remote=${NOTEBOOKS_PROJECT_REF}`,
+        `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
       ]);
     }).pipe(Effect.provide(Layer.mergeAll(layer, Layer.succeed(CliArgs, { args: argv }))));
   });

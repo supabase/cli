@@ -698,7 +698,7 @@ describe("config diff integration", () => {
     return Effect.gen(function* () {
       yield* configDiff({ ...noFlags, projectRef: Option.some("staging") });
       expect(warningsOf(out)).toEqual([
-        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead: supabase config diff --remote=staging",
+        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead",
       ]);
       expect(out.stderrText).toContain(
         `Comparing against 'staging' (branch ${BRANCH_REF}) using base config`,
