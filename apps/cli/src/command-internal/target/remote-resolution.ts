@@ -17,6 +17,7 @@ import { readCachedLinkedProject, resolveLinkedParentRef } from "../parent-proje
 import { BRANCH_PROJECT_REF_PATTERN } from "../ref-patterns.ts";
 import {
   findBranch,
+  isDefaultBranch,
   listBranchesFailureCause,
   listParentBranches,
   previewBranchHint,
@@ -26,7 +27,7 @@ import {
   LinkBranchListNetworkError,
   LinkBranchListStatusError,
 } from "./branch-resolution.errors.ts";
-import { closestByName } from "./closest-branch.ts";
+import { nearMissByName } from "./closest-branch.ts";
 import type { RemoteValue } from "./remote-value.ts";
 import { stripUserinfo } from "./remote-vocabulary.ts";
 import type { LinkedTarget } from "./resolve-target.ts";
@@ -192,7 +193,9 @@ const checkRemoteOperand = Effect.fn("Target.checkRemoteOperand")(function* (raw
       message: `"${operand}" is a branch of ${project}. ${options}`,
     });
   }
-  const closest = closestByName(branches, operand);
+  const closest = nearMissByName(branches, operand, (branch) =>
+    isDefaultBranch(branch, parent.ref),
+  );
   if (closest !== undefined) {
     const closestName = sanitizeInlineName(closest.name);
     return yield* new TargetRemoteAmbiguousError({

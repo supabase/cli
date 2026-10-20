@@ -368,6 +368,20 @@ describe("resolveTarget", () => {
       }),
     );
 
+    it.effect("suggests the branch when two letters of the name are swapped", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "mian" }) },
+          { savedRef: FILE_REF, branches: [branchRow("main", FILE_REF, true)] },
+        );
+        expect(failureOf(result.exit)).toMatchObject({ _tag: "LinkBranchNotFoundError" });
+        expect(String((failureOf(result.exit) as Error).message)).toContain(
+          'Available branches: main. Did you mean "main"?',
+        );
+      }),
+    );
+
     it.effect("tells an expired token to log in instead of showing the response body", () =>
       Effect.gen(function* () {
         const result = yield* run(
@@ -682,6 +696,55 @@ describe("resolveTarget", () => {
           message: `"feature-y" isn't a branch, but "feature-x" is. For the branch: supabase db pull --remote=feature-x. For the linked project: supabase db pull feature-y --remote`,
         });
         expect(result.refFlags).toEqual([]);
+      }),
+    );
+
+    it.effect.each([
+      { name: "two edits from a branch", word: "feature-yz", branches: [branchRow("feature-x")] },
+      { name: "one edit from a short branch", word: "den", branches: [branchRow("dev")] },
+      {
+        name: "one edit from the default branch",
+        word: "mail",
+        branches: [branchRow("main", FILE_REF, true)],
+      },
+    ])("keeps a word that is $name as an operand", ({ word, branches }) =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args: ["db", "pull", "--remote", word],
+          command,
+          savedRef: FILE_REF,
+          branches,
+        });
+        expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FILE_REF });
+      }),
+    );
+
+    it.effect("fails for a word with two letters swapped from a branch", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args: ["db", "pull", "--remote", "stagign"],
+          command,
+          savedRef: FILE_REF,
+          branches: [branchRow("staging")],
+        });
+        expect(failureOf(result.exit)).toMatchObject({
+          _tag: "TargetRemoteAmbiguousError",
+          message: `"stagign" isn't a branch, but "staging" is. For the branch: supabase db pull --remote=staging. For the linked project: supabase db pull stagign --remote`,
+        });
+      }),
+    );
+
+    it.effect("fails for a word that differs from the default branch only by case", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args: ["db", "pull", "--remote", "Main"],
+          command,
+          savedRef: FILE_REF,
+          branches: [branchRow("main", FILE_REF, true)],
+        });
+        expect(failureOf(result.exit)).toMatchObject({
+          message: `"Main" isn't a branch, but "main" is. For the branch: supabase db pull --remote=main. For the linked project: supabase db pull Main --remote`,
+        });
       }),
     );
 

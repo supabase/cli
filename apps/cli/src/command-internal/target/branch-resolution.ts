@@ -95,6 +95,10 @@ function branchNotFoundMessage(value: string, parentRef: string, branches: Branc
   );
 }
 
+/** The production branch is the linked project itself. */
+export const isDefaultBranch = (branch: ParentBranch, parentRef: string): boolean =>
+  branch.is_default || branch.project_ref === parentRef;
+
 /** UUID matching is case-insensitive; name matching is exact, with the not-found hint covering near misses. */
 export const findBranch = (branches: Branches, value: string): ParentBranch | undefined =>
   branches.find(
@@ -198,7 +202,7 @@ const resolveInParent = Effect.fnUntraced(function* (value: string, parentRef: s
     projectRef: found.project_ref,
     branchName: found.name,
     parentRef,
-    isDefault: found.is_default || found.project_ref === parentRef,
+    isDefault: isDefaultBranch(found, parentRef),
   } satisfies BranchResolution;
 });
 
