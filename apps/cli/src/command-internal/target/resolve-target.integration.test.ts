@@ -196,7 +196,6 @@ const run = (
         .split("\n")
         .filter((line) => line.startsWith("Warning: "))
         .map((line) => line.slice("Warning: ".length)),
-      outputWarnCalls: out.messages.filter((m) => m.type === "warn"),
       refFlags: resolver.flags,
       apiRequests: api.requests.map(
         (request) => `${request.method} ${new URL(request.url).pathname}`,
@@ -262,6 +261,7 @@ describe("resolveTarget", () => {
           matchesLinkedRef: false,
         });
         expect(result.refFlags).toEqual([Option.some(FLAG_REF)]);
+        expect(result.apiRequests).toEqual([]);
       }),
     );
 
@@ -996,108 +996,24 @@ describe("resolveTarget", () => {
   });
 
   describe("deprecated selectors", () => {
-    it.effect("warns that --linked is replaced by --remote, with the command as run", () =>
-      Effect.gen(function* () {
-        const result = yield* run(
-          "selectable",
-          { ...none, linked: true },
-          { args: ["db", "push", "--dry-run", "--linked"], command: ["db", "push"] },
-        );
-        expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FILE_REF });
-        expect(result.warnings).toEqual([
-          "--linked is deprecated and will be removed in v4. Use --remote instead",
-        ]);
-      }),
-    );
-
-    it.effect.each(["text", "json", "stream-json"] satisfies Array<OutputFormat>)(
-      "writes the warning to stderr and nothing to stdout in %s mode",
-      (format) =>
+    it.effect(
+      "warns that --db-url is deprecated and offers its project ref, without echoing secrets",
+      () =>
         Effect.gen(function* () {
           const result = yield* run(
             "selectable",
-            { ...none, linked: true },
-            { args: ["db", "push", "--linked"], command: ["db", "push"], format },
+            { ...none, dbUrl: Option.some(SECRET_URL) },
+            {
+              args: ["db", "push", "--db-url", SECRET_URL, "--password", "hunter2"],
+              command: ["db", "push"],
+            },
           );
-          expect(succeeded(result.exit)).toMatchObject({ kind: "linked" });
+          expect(succeeded(result.exit)).toMatchObject({ kind: "db-url" });
           expect(result.warnings).toEqual([
-            "--linked is deprecated and will be removed in v4. Use --remote instead",
+            "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead, or --remote=abcdefghijklmnopqrst with an access token set",
           ]);
-          expect(result.outputWarnCalls).toEqual([]);
-          expect(result.stdout).toBe("");
+          expect(result.warnings.join("\n")).not.toContain("hunter2");
         }),
-    );
-
-    it.effect("folds --linked and --project-ref into one warning that ends in --remote=<ref>", () =>
-      Effect.gen(function* () {
-        const result = yield* run(
-          "selectable",
-          { ...none, linked: true, projectRef: Option.some(FLAG_REF) },
-          {
-            args: ["db", "push", "--linked", "--project-ref", FLAG_REF, "--dry-run"],
-            command: ["db", "push"],
-          },
-        );
-        expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FLAG_REF });
-        expect(result.warnings).toEqual([
-          `--linked and --project-ref are deprecated and will be removed in v4. Use --remote=<ref> instead`,
-        ]);
-      }),
-    );
-
-    it.effect("never echoes the --db-url connection string or --password", () =>
-      Effect.gen(function* () {
-        const result = yield* run(
-          "selectable",
-          { ...none, dbUrl: Option.some(SECRET_URL) },
-          {
-            args: ["db", "push", "--db-url", SECRET_URL, "--password", "hunter2"],
-            command: ["db", "push"],
-          },
-        );
-        expect(succeeded(result.exit)).toMatchObject({ kind: "db-url" });
-        expect(result.warnings).toEqual([
-          "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead, or --remote=abcdefghijklmnopqrst with an access token set",
-        ]);
-        expect(result.warnings.join("\n")).not.toContain("hunter2");
-      }),
-    );
-
-    it.effect("says --local is not needed", () =>
-      Effect.gen(function* () {
-        const result = yield* run(
-          "selectable",
-          { ...none, local: true },
-          { args: ["db", "push", "--local"], command: ["db", "push"] },
-        );
-        expect(succeeded(result.exit)).toEqual({ kind: "local" });
-        expect(result.warnings).toEqual([
-          "--local isn't needed (local is the default) and will be removed in v4",
-        ]);
-        expect(result.refFlags).toEqual([]);
-      }),
-    );
-
-    it.effect("warns without a command line when the real argv is unknown", () =>
-      Effect.gen(function* () {
-        const result = yield* run("selectable", { ...none, linked: true });
-        expect(result.warnings).toEqual([
-          "--linked is deprecated and will be removed in v4. Use --remote instead",
-        ]);
-      }),
-    );
-
-    it.effect("treats --project-ref as --remote=<ref> and keeps the flag source", () =>
-      Effect.gen(function* () {
-        const result = yield* run("selectable", { ...none, projectRef: Option.some(FLAG_REF) });
-        expect(succeeded(result.exit)).toEqual({
-          kind: "linked",
-          ref: FLAG_REF,
-          source: "flag",
-          matchesLinkedRef: false,
-        });
-        expect(result.refFlags).toEqual([Option.some(FLAG_REF)]);
-      }),
     );
 
     it.effect("does not warn for --remote itself", () =>
@@ -1201,9 +1117,11 @@ describe("resolveTarget", () => {
       }),
     );
 
-    it.effect("adds no hint when --local chose local", () =>
+    it.effect("warns that --local is not needed and adds no hint, even in a linked checkout", () =>
       Effect.gen(function* () {
         const result = yield* run("selectable", { ...none, local: true }, { savedRef: FILE_REF });
+        expect(succeeded(result.exit)).toEqual({ kind: "local" });
+        expect(result.refFlags).toEqual([]);
         expect(stripAnsi(result.stderr)).toBe(
           "Warning: --local isn't needed (local is the default) and will be removed in v4\nTarget: local stack (127.0.0.1:54322)\n",
         );

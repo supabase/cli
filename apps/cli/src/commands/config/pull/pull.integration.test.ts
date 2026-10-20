@@ -26,6 +26,7 @@ import {
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import {
   buildTestRuntime,
   DEFAULT_API_URL,
@@ -55,7 +56,6 @@ import {
   type ConfigPullSource,
 } from "./pull.handler.ts";
 import type { ConfigPullFlags } from "./pull.command.ts";
-import { warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
 // Setup mirrors ../diff/diff.integration.test.ts: same temp workdir helper, mocked
 // services, and v2Response() fixture.
@@ -379,8 +379,6 @@ interface SetupOpts {
   /** Serves the project list and project lookup, answers the project picker with `VALID_REF`, and
    *  writes the linked-project cache through the real cache layer. */
   readonly pickerAndRealCache?: boolean;
-  /** The command path the deprecation warnings name in their example. */
-  readonly commandPath?: ReadonlyArray<string>;
   readonly yes?: boolean;
   readonly stdinIsTty?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
@@ -483,7 +481,6 @@ function setup(opts: SetupOpts = {}) {
       processControl,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
       outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
-      ...(opts.commandPath === undefined ? {} : { commandPath: opts.commandPath }),
     }),
     mockStdin(opts.stdinIsTty ?? false),
     Layer.succeed(YesFlag, opts.yes ?? false),
@@ -619,7 +616,7 @@ describe("config pull integration", () => {
 
   it.effect("a branch-named target creates a new [remotes.<name>] block at EOF", () => {
     const before = 'project_id = "test"\n';
-    const { layer } = setup({
+    const { layer, out } = setup({
       toml: before,
       yes: true,
       v2: {
@@ -635,6 +632,7 @@ describe("config pull integration", () => {
     });
     return Effect.gen(function* () {
       yield* configPull({ ...noFlags, remote: branchRemote("staging") });
+      expect(out.stderrText).toContain(`Pulling config from 'staging' (branch ${BRANCH_REF})`);
       const after = yield* readConfig;
       expect(after.startsWith(before)).toBe(true);
       const remotesIndex = after.indexOf("[remotes.staging]");
@@ -1756,56 +1754,6 @@ describe("config pull integration", () => {
     });
   });
 
-  it.effect("--remote=<ref> pulls from that project without a branch lookup", () => {
-    const { layer, api, out } = setup({
-      toml: 'project_id = "test"\n',
-      yes: true,
-      projectId: Option.none(),
-      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
-    });
-    return Effect.gen(function* () {
-      yield* configPull({ ...noFlags, remote: refRemote(BRANCH_REF) });
-      expect(out.stderrText).toContain(`Pulling config from project ${BRANCH_REF}`);
-      expect(api.requests.some((request) => request.url.includes("/branches"))).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--project-ref still resolves a branch name and warns to use --remote", () => {
-    const { layer, out } = setup({
-      toml: 'project_id = "test"\n',
-      yes: true,
-      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
-      commandPath: ["config", "pull"],
-    });
-    return Effect.gen(function* () {
-      yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
-      expect(warningsOf(out)).toEqual([
-        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead",
-      ]);
-      expect(out.stderrText).toContain(`Pulling config from 'staging' (branch ${BRANCH_REF})`);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("a branch-named target resolves via the linked parent project", () => {
-    const { layer, api, out } = setup({
-      toml: 'project_id = "test"\n',
-      yes: true,
-      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
-    });
-    return Effect.gen(function* () {
-      yield* configPull({ ...noFlags, remote: branchRemote("staging") });
-      expect(out.stderrText).toContain(`Pulling config from 'staging' (branch ${BRANCH_REF})`);
-      const urls = api.requests.map((request) => request.url);
-      expect(urls.some((url) => url.endsWith(`/v1/projects/${VALID_REF}/branches`))).toBe(true);
-      expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
-      assertPermissionDrift({
-        command: "config pull",
-        activeFlags: { remote: "staging" },
-        requests: api.requests,
-      });
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("a branch UUID target resolves directly, even in an unlinked directory", () => {
     const { layer, api, out } = setup({
       toml: 'project_id = "test"\n',
@@ -2312,23 +2260,6 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("an unknown branch in json mode fails without a spinner", () => {
-    const { layer } = setup({
-      toml: 'project_id = "test"\n',
-      format: "json",
-      branchList: { status: 200, body: [BRANCH_BY_NAME] },
-    });
-    return Effect.gen(function* () {
-      const exit = yield* configPull({ ...noFlags, remote: branchRemote("ghost") }).pipe(
-        Effect.exit,
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("LinkBranchNotFoundError");
-      }
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("a single declared-but-unpushable property surfaces in the unmanaged note", () => {
     // enabled matches the remote and produces no change; its sibling allow_dynamic_registration
     // is what demonstrates declared-but-unpushable, since DISABLED_SENTINEL_PRUNES drops it from
@@ -2831,4 +2762,16 @@ describe("config pull integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describeHostedTargetSelection("config pull", {
+  files: { "supabase/config.toml": 'project_id = "test"\n' },
+  respond: (request, ref) =>
+    Effect.succeed(
+      jsonResponse(request, 200, request.url.includes("/v2/projects/") ? v2Response({ ref }) : {}),
+    ),
+  run: (flags) =>
+    configPull({ ...noFlags, ...flags }).pipe(
+      Effect.provide(Layer.mergeAll(configValuesLayer(), mockGitStatusSpawner().layer)),
+    ),
 });

@@ -39,7 +39,6 @@ import {
   withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
@@ -51,6 +50,7 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import {
   deployFunctions,
   shouldChmodBundleOutputDirectory,
@@ -68,7 +68,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { functionsDeploy } from "./deploy.handler.ts";
 import type { FunctionsDeployFlags } from "./deploy.command.ts";
-import { BRANCH_PROJECT_REF, branchRow } from "../../../../tests/helpers/remote-selection.ts";
+import { branchRow } from "../../../../tests/helpers/remote-selection.ts";
 
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -451,8 +451,6 @@ describe("functions deploy", () => {
   });
 
   describe("project selection", () => {
-    const OTHER_REF = "qrstuvwxyzabcdefghij";
-
     const selectionHarness = (args: ReadonlyArray<string>) => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi({
@@ -485,12 +483,7 @@ describe("functions deploy", () => {
             (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
           )
           .map((request) => request.url);
-      const warnings = () =>
-        stripAnsi(out.stderrText)
-          .split("\n")
-          .filter((line) => line.startsWith("Warning: "))
-          .map((line) => line.slice("Warning: ".length));
-      return { api, layer, deployedTo, warnings };
+      return { layer, deployedTo };
     };
 
     const linkParent = Effect.gen(function* () {
@@ -498,83 +491,6 @@ describe("functions deploy", () => {
       yield* fs.makeDirectory(`${tempRoot.current}/supabase/.temp`, { recursive: true });
       yield* fs.writeFileString(`${tempRoot.current}/supabase/.temp/project-ref`, VALID_REF);
     }).pipe(Effect.provide(BunServices.layer));
-
-    it.effect("deploys to the project --remote=<ref> names, with no deprecation warning", () => {
-      const { layer, deployedTo, warnings } = selectionHarness([
-        "functions",
-        "deploy",
-        "hello-world",
-        `--remote=${OTHER_REF}`,
-      ]);
-      return Effect.gen(function* () {
-        yield* writeCliConfig(tempRoot.current);
-        yield* writeLocalFunction(tempRoot.current, "hello-world");
-
-        yield* functionsDeploy({
-          ...baseFlags,
-          remote: Option.some({ _tag: "Ref", ref: OTHER_REF }),
-        });
-
-        expect(deployedTo()).toEqual([
-          `https://api.supabase.com/v1/projects/${OTHER_REF}/functions/deploy`,
-        ]);
-        expect(warnings()).toEqual([]);
-      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
-    });
-
-    it.effect("keeps --project-ref working and points at --remote=<ref>", () => {
-      const { layer, deployedTo, warnings } = selectionHarness([
-        "functions",
-        "deploy",
-        "hello-world",
-        "--project-ref",
-        OTHER_REF,
-      ]);
-      return Effect.gen(function* () {
-        yield* writeCliConfig(tempRoot.current);
-        yield* writeLocalFunction(tempRoot.current, "hello-world");
-
-        yield* functionsDeploy({ ...baseFlags, projectRef: Option.some(OTHER_REF) });
-
-        expect(deployedTo()).toEqual([
-          `https://api.supabase.com/v1/projects/${OTHER_REF}/functions/deploy`,
-        ]);
-        expect(warnings()).toEqual([
-          `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
-        ]);
-      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
-    });
-
-    it.effect("deploys to the project of the branch --remote=<branch> names", () => {
-      const { api, layer, deployedTo } = selectionHarness([
-        "functions",
-        "deploy",
-        "hello-world",
-        "--remote=feature-x",
-      ]);
-      return Effect.gen(function* () {
-        yield* writeCliConfig(tempRoot.current);
-        yield* writeLocalFunction(tempRoot.current, "hello-world");
-        yield* linkParent;
-
-        yield* functionsDeploy({
-          ...baseFlags,
-          remote: Option.some({ _tag: "Branch", name: "feature-x" }),
-        });
-
-        expect(requestLines(api.requests)[0]).toBe(
-          `GET https://api.supabase.com/v1/projects/${VALID_REF}/branches`,
-        );
-        expect(deployedTo()).toEqual([
-          `https://api.supabase.com/v1/projects/${BRANCH_PROJECT_REF}/functions/deploy`,
-        ]);
-        assertPermissionDrift({
-          command: "functions deploy",
-          activeFlags: { ...apiPathFlags, remote: true },
-          requests: api.requests,
-        });
-      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
-    });
 
     it.effect("fails with the branches that exist when no branch has that name", () => {
       const { layer, deployedTo } = selectionHarness([
@@ -3045,6 +2961,24 @@ describe("functions deploy", () => {
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
   });
+});
+
+describeHostedTargetSelection("functions deploy", {
+  operands: ["hello-world"],
+  activeFlags: apiPathFlags,
+  files: {
+    "supabase/config.toml": 'project_id = "test-project"\n',
+    "supabase/functions/hello-world/index.ts": "Deno.serve(() => new Response())\n",
+    "supabase/functions/hello-world/deno.json": '{"imports":{}}\n',
+  },
+  respond: (request) =>
+    Effect.succeed(
+      request.method === "GET"
+        ? jsonResponse(request, 200, [])
+        : jsonResponse(request, 201, deployedFunction("hello-world")),
+    ),
+  run: (flags) =>
+    functionsDeploy({ ...baseFlags, ...flags }).pipe(Effect.provide(cliConfigValuesTestLayer)),
 });
 
 describeHostedConsent("functions deploy", {

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { commandTreeFor } from "../../../tests/helpers/command-flags.ts";
+import type { PermissionVariant } from "../../../tests/helpers/permission-registry.ts";
 import { rootCommandForFeatures } from "../../cli/root.ts";
 import {
   bareRemoteOperand,
@@ -7,7 +9,7 @@ import {
   joinRemoteOperands,
   type RemoteArgvLeaf,
 } from "./remote-argv.ts";
-import { prepareCliArgs } from "./run.ts";
+import { prepareCliArgs, remoteArgvLeafFor } from "./run.ts";
 
 const REF = "abcdefghijklmnopqrst";
 const URL = "postgresql://postgres:secret@db.example.com:5432/postgres";
@@ -460,5 +462,137 @@ describe("prepareCliArgs remoteConflict on the real command tree", () => {
 
   it("is not set when db pull's operand follows a bare --remote that is repeated bare", () => {
     expect(conflictOf(["db", "pull", "--remote", "feature-x", "--remote"])).toBe(false);
+  });
+});
+
+describe("remote operand capacity of the real command tree", () => {
+  const variants: ReadonlyArray<PermissionVariant> = [
+    undefined,
+    { stackBackend: "stack", computeEnabled: true },
+  ];
+
+  it("pins the operand capacity of every leaf that accepts --remote", () => {
+    const capacityByLeaf = new Map(
+      variants.flatMap((variant) => {
+        const root = rootCommandForFeatures(variant);
+        return [...commandTreeFor(variant)]
+          .filter(([, node]) => node.isLeaf && node.flags.has("remote"))
+          .map(([path]) => {
+            const leaf = remoteArgvLeafFor(root, [...path.split(" "), "--remote"]);
+            return [path, leaf?.operandCapacity] as const;
+          });
+      }),
+    );
+    expect(Object.fromEntries(capacityByLeaf)).toMatchInlineSnapshot(`
+      {
+        "backups list": 0,
+        "backups restore": 0,
+        "branches create": 1,
+        "branches delete": 1,
+        "branches disable": 0,
+        "branches get": 1,
+        "branches list": 0,
+        "branches pause": 1,
+        "branches unpause": 1,
+        "branches update": 1,
+        "compute delete": 1,
+        "compute list": 0,
+        "compute logs": 1,
+        "compute push": Infinity,
+        "compute status": 1,
+        "config diff": 0,
+        "config pull": 0,
+        "config push": 0,
+        "db advisors": 0,
+        "db diff": 0,
+        "db dump": 0,
+        "db lint": 0,
+        "db pull": 1,
+        "db push": 0,
+        "db query": 1,
+        "db reset": 0,
+        "db schema declarative generate": 0,
+        "db test": Infinity,
+        "domains activate": 0,
+        "domains create": 0,
+        "domains delete": 0,
+        "domains get": 0,
+        "domains reverify": 0,
+        "encryption get-root-key": 0,
+        "encryption update-root-key": 0,
+        "functions delete": 1,
+        "functions deploy": Infinity,
+        "functions download": 1,
+        "functions list": 0,
+        "gen keys": 0,
+        "gen types": 0,
+        "inspect db bloat": 0,
+        "inspect db blocking": 0,
+        "inspect db cache-hit": 0,
+        "inspect db calls": 0,
+        "inspect db db-stats": 0,
+        "inspect db index-sizes": 0,
+        "inspect db index-stats": 0,
+        "inspect db index-usage": 0,
+        "inspect db locks": 0,
+        "inspect db long-running-queries": 0,
+        "inspect db outliers": 0,
+        "inspect db replication-slots": 0,
+        "inspect db role-configs": 0,
+        "inspect db role-connections": 0,
+        "inspect db role-stats": 0,
+        "inspect db seq-scans": 0,
+        "inspect db table-index-sizes": 0,
+        "inspect db table-record-counts": 0,
+        "inspect db table-sizes": 0,
+        "inspect db table-stats": 0,
+        "inspect db total-index-size": 0,
+        "inspect db total-table-sizes": 0,
+        "inspect db traffic-profile": 0,
+        "inspect db unused-indexes": 0,
+        "inspect db vacuum-stats": 0,
+        "inspect report": 0,
+        "migration down": 0,
+        "migration fetch": 0,
+        "migration list": 0,
+        "migration repair": Infinity,
+        "migration squash": 0,
+        "migration up": 0,
+        "network-bans get": 0,
+        "network-bans remove": 0,
+        "network-restrictions get": 0,
+        "network-restrictions update": 0,
+        "notebooks pull": 1,
+        "notebooks push": 1,
+        "postgres-config delete": 0,
+        "postgres-config get": 0,
+        "postgres-config update": 0,
+        "projects api-keys": 0,
+        "pull": 0,
+        "secrets list": 0,
+        "secrets set": Infinity,
+        "secrets unset": Infinity,
+        "seed buckets": 0,
+        "snippets download": 1,
+        "snippets list": 0,
+        "ssl-enforcement get": 0,
+        "ssl-enforcement update": 0,
+        "sso add": 0,
+        "sso info": 0,
+        "sso list": 0,
+        "sso remove": 1,
+        "sso show": 1,
+        "sso update": 1,
+        "storage cp": 2,
+        "storage ls": 1,
+        "storage mv": 2,
+        "storage rm": Infinity,
+        "test db": Infinity,
+        "vanity-subdomains activate": 0,
+        "vanity-subdomains check-availability": 0,
+        "vanity-subdomains delete": 0,
+        "vanity-subdomains get": 0,
+      }
+    `);
   });
 });

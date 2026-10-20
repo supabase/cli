@@ -217,6 +217,7 @@ describe("resolveProjectTarget", () => {
       expect(refOf(result.exit)).toBe(FLAG_REF);
       expect(result.refFlags).toEqual([Option.some(FLAG_REF)]);
       expect(result.warnings).toEqual([]);
+      expect(result.branchRequests).toBe(0);
     }),
   );
 

@@ -4,8 +4,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
 
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import {
-  mockContextualAnalytics,
   mockOutput,
   mockProcessControl,
   mockRuntimeInfo,
@@ -34,7 +34,6 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { configDiffHandler } from "./diff.command.ts";
 import { CONFIG_DIFF_PAYLOAD_VERSION } from "./diff.format.ts";
 import { configDiff } from "./diff.handler.ts";
-import { warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
 const tempRoot = useTempWorkdir("supabase-config-diff-int-");
 
@@ -129,9 +128,6 @@ interface SetupOpts {
   readonly workdir?: string;
   /** cliSettings.explicitWorkdir override — true iff --workdir/SUPABASE_WORKDIR was set verbatim. */
   readonly explicitWorkdir?: boolean;
-  readonly analytics?: ReturnType<typeof mockContextualAnalytics>;
-  /** The command path the deprecation warnings name in their example. */
-  readonly commandPath?: ReadonlyArray<string>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -184,8 +180,6 @@ function setup(opts: SetupOpts = {}) {
       linkedProjectCache: linkedProjectCache.layer,
       processControl,
       outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
-      ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
-      ...(opts.commandPath === undefined ? {} : { commandPath: opts.commandPath }),
     }),
     projectFiles,
     cliConfigValuesTestLayer,
@@ -577,33 +571,12 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("a branch-named --remote resolves via the parent project", () => {
-    const { layer, out, api } = setup({
-      toml: 'project_id = "test"\n',
-      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
-    });
-    return Effect.gen(function* () {
-      yield* configDiff(remoteBranch("staging"));
-      expect(out.stderrText).toContain(
-        `Comparing against 'staging' (branch ${BRANCH_REF}) using base config`,
-      );
-      const urls = api.requests.map((request) => request.url);
-      expect(urls.some((url) => url.endsWith(`/v1/projects/${VALID_REF}/branches`))).toBe(true);
-      expect(urls.some((url) => url.includes(`/v2/projects/${BRANCH_REF}/config`))).toBe(true);
-      assertPermissionDrift({
-        command: "config diff",
-        activeFlags: { remote: "staging" },
-        requests: api.requests,
-      });
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect(
     "branch-name resolution uses the linked PARENT, not a branch ref in project-ref",
     () => {
       // project-ref holds the branch's own ref; linked-project.json recovers the parent, which the
       // parent-scoped branches endpoint requires.
-      const { layer, api } = setup({
+      const { layer, out, api } = setup({
         toml: 'project_id = "test"\n',
         linked: false,
         v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
@@ -619,6 +592,9 @@ describe("config diff integration", () => {
           yield* jsonText({ ref: VALID_REF }),
         );
         yield* configDiff(remoteBranch("staging"));
+        expect(out.stderrText).toContain(
+          `Comparing against 'staging' (branch ${BRANCH_REF}) using base config`,
+        );
         const urls = api.requests.map((request) => request.url);
         expect(urls.some((url) => url.endsWith(`/v1/projects/${VALID_REF}/branches`))).toBe(true);
         expect(urls.some((url) => url.includes(`/v1/projects/${BRANCH_REF}/`))).toBe(false);
@@ -685,26 +661,6 @@ describe("config diff integration", () => {
         requests: api.requests,
         exact: true,
       });
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--project-ref still resolves a branch name and warns to use --remote", () => {
-    const { layer, out, api } = setup({
-      toml: 'project_id = "test"\n',
-      v2: { status: 200, body: v2Response({ ref: BRANCH_REF }) },
-      commandPath: ["config", "diff"],
-    });
-    return Effect.gen(function* () {
-      yield* configDiff({ ...noFlags, projectRef: Option.some("staging") });
-      expect(warningsOf(out)).toEqual([
-        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead",
-      ]);
-      expect(out.stderrText).toContain(
-        `Comparing against 'staging' (branch ${BRANCH_REF}) using base config`,
-      );
-      expect(
-        api.requests.some((request) => request.url.endsWith(`/v1/projects/${VALID_REF}/branches`)),
-      ).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
@@ -1485,4 +1441,14 @@ describe("config diff -o/--output wrapper wiring", () => {
       ),
     );
   });
+});
+
+describeHostedTargetSelection("config diff", {
+  files: { "supabase/config.toml": 'project_id = "test"\n' },
+  respond: (request, ref) =>
+    Effect.succeed(
+      jsonResponse(request, 200, request.url.includes("/v2/projects/") ? v2Response({ ref }) : {}),
+    ),
+  run: (flags) =>
+    configDiff({ ...noFlags, ...flags }).pipe(Effect.provide(cliConfigValuesTestLayer)),
 });

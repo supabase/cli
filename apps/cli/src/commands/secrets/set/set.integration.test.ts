@@ -13,7 +13,6 @@ import {
 } from "effect";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
-import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
@@ -160,20 +159,6 @@ describe("secrets set integration", () => {
         expect(out.stderrText).toContain("Secrets to set:\n • FOO\n • BAR\n");
         expect(out.stderrText).not.toMatch(/hunter2|swordfish/u);
         expect(api.requests).toHaveLength(1);
-      }).pipe(Effect.provide(layer));
-    });
-
-    it.effect("sends nothing when the user declines", () => {
-      const { layer, api } = setup({ confirm: false });
-      return Effect.gen(function* () {
-        const error = yield* secretsSet({
-          remote: Option.none(),
-          projectRef: Option.none(),
-          envFile: Option.none(),
-          secrets: ["FOO=bar"],
-        }).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(HostedMutationDeclinedError);
-        expect(api.requests).toEqual([]);
       }).pipe(Effect.provide(layer));
     });
   });

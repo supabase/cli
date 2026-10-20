@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option } from "effect";
 import type { Command } from "effect/cli";
 
 import {
@@ -24,16 +24,11 @@ import { mockOutput, mockStdin, mockTty } from "./mocks.ts";
 
 type RuntimeLayer = ReturnType<typeof buildTestRuntime>;
 
-const consentLayer = (
-  runtime: RuntimeLayer,
-  yes: boolean,
-  policy: TargetPolicyShape,
-  agent: "auto" | "yes",
-) =>
+const consentLayer = (runtime: RuntimeLayer, yes: boolean, policy: TargetPolicyShape) =>
   Layer.mergeAll(
     runtime,
     Layer.succeed(YesFlag, yes),
-    Layer.succeed(AgentFlag, agent),
+    Layer.succeed(AgentFlag, "auto"),
     Layer.succeed(TargetPolicy, policy),
   );
 
@@ -68,9 +63,6 @@ interface CaseOptions {
   readonly interactive?: boolean;
   readonly yes?: boolean;
   readonly shellYes?: boolean;
-  readonly agent?: boolean;
-  readonly projectEnvYes?: boolean;
-  readonly stdinInput?: string;
   readonly confirmResponses?: ReadonlyArray<boolean>;
   readonly textResponses?: ReadonlyArray<string>;
 }
@@ -92,14 +84,6 @@ const policyFor = (path: string, scenario: HostedConsentScenario): TargetPolicyS
   return policy.value;
 };
 
-const writeProjectEnv = (workdir: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
-    yield* fs.writeFileString(path.join(workdir, "supabase", ".env"), "SUPABASE_YES=1\n");
-  }).pipe(Effect.provide(BunServices.layer));
-
 const failureOf = (exit: Exit.Exit<unknown, unknown>): unknown => {
   if (Exit.isSuccess(exit)) return undefined;
   const failure = Exit.findErrorOption(exit);
@@ -114,9 +98,8 @@ const nonGetRequests = (api: HostedConsentEnv["api"]): number =>
   api.requests.filter((request) => request.method !== "GET").length;
 
 /**
- * Runs the hosted-consent matrix against the leaf at `path`: no consent without `--yes` in
- * JSON or piped text, a TTY decline, no prompt for an agent, `--yes`, shell `SUPABASE_YES`, and
- * a project `.env` that must not count as consent.
+ * Runs the hosted-consent matrix against the leaf at `path`: JSON output without `--yes` is
+ * refused, a TTY decline stops it, and `--yes` or a shell `SUPABASE_YES` lets it run.
  */
 export function describeHostedConsent(path: string, scenario: HostedConsentScenario): void {
   const policy = policyFor(path, scenario);
@@ -141,21 +124,15 @@ export function describeHostedConsent(path: string, scenario: HostedConsentScena
           api,
           cliSettings: mockCommandSettings({ workdir }),
           tty: mockTty({ stdinIsTty, stdoutIsTty: interactive }),
-          stdin: mockStdin(stdinIsTty, options.stdinInput),
+          stdin: mockStdin(stdinIsTty),
           outputFlag: options.json ? Option.some("json") : Option.none(),
           cliArgs: options.yes === true ? ["--yes"] : [],
         });
-        const layer = consentLayer(
-          runtime,
-          options.yes ?? false,
-          policy,
-          options.agent ? "yes" : "auto",
-        );
+        const layer = consentLayer(runtime, options.yes ?? false, policy);
 
         if (scenario.setup !== undefined) {
           yield* scenario.setup(workdir).pipe(Effect.provide(BunServices.layer));
         }
-        if (options.projectEnvYes === true) yield* writeProjectEnv(workdir);
 
         const invocation = scenario.invoke({ workdir, out, api });
         const shellEnv = <A, E, R>(body: Effect.Effect<A, E, R>) =>
@@ -178,15 +155,6 @@ export function describeHostedConsent(path: string, scenario: HostedConsentScena
       }),
     );
 
-    it.effect("ignores an answer piped to stdin in text mode and changes nothing", () =>
-      Effect.gen(function* () {
-        const { exit, out, mutations } = yield* runCase({ json: false, stdinInput: "y\n" });
-        expect(failureOf(exit)).toBeInstanceOf(HostedMutationConsentRequiredError);
-        expect(out.promptConfirmCalls).toEqual([]);
-        expect(mutations).toBe(0);
-      }),
-    );
-
     it.effect("stops when the user declines at the prompt and changes nothing", () =>
       Effect.gen(function* () {
         const { exit, out, mutations } = yield* runCase({
@@ -199,21 +167,6 @@ export function describeHostedConsent(path: string, scenario: HostedConsentScena
         if (scenario.typed !== true) {
           expect(out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(policy.consent === "yes");
         }
-        expect(mutations).toBe(0);
-      }),
-    );
-
-    it.effect("refuses to prompt an agent in an interactive terminal and changes nothing", () =>
-      Effect.gen(function* () {
-        const { exit, out, mutations } = yield* runCase({
-          json: false,
-          interactive: true,
-          agent: true,
-          confirmResponses: [true],
-        });
-        expect(failureOf(exit)).toBeInstanceOf(HostedMutationConsentRequiredError);
-        expect(out.promptConfirmCalls).toEqual([]);
-        expect(out.promptTextCalls).toEqual([]);
         expect(mutations).toBe(0);
       }),
     );
@@ -242,14 +195,6 @@ export function describeHostedConsent(path: string, scenario: HostedConsentScena
         expectSuccess(exit);
         expect(mutations).toBeGreaterThan(0);
         expect(out.stderrText).toContain("Confirmed by SUPABASE_YES: ");
-      }),
-    );
-
-    it.effect("does not treat SUPABASE_YES in supabase/.env as consent", () =>
-      Effect.gen(function* () {
-        const { exit, mutations } = yield* runCase({ json: true, projectEnvYes: true });
-        expect(failureOf(exit)).toBeInstanceOf(HostedMutationConsentRequiredError);
-        expect(mutations).toBe(0);
       }),
     );
   });

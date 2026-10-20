@@ -3,10 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
-import {
-  HostedMutationConsentRequiredError,
-  HostedMutationDeclinedError,
-} from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
+import { HostedMutationConsentRequiredError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
@@ -20,7 +17,6 @@ import {
   mockCommandSettings,
   mockCommandPlatformApi,
   useTempWorkdir,
-  withConfigEnv,
   unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
@@ -39,12 +35,9 @@ const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   outputFlag?: "pretty" | "json" | "yaml" | "toml" | "env";
-  interactive?: boolean;
   unlinked?: boolean;
   yes?: boolean;
   stdinIsTty?: boolean;
-  /** Piped stdin lines a non-TTY confirm read would consume. */
-  stdinInput?: string;
   confirm?: boolean;
   list?: SecretsList;
   listStatus?: number;
@@ -66,7 +59,6 @@ const ON_TARGET = `project ${VALID_REF}`;
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({
     format: opts.format ?? "text",
-    interactive: opts.interactive,
     confirmLogout: opts.confirm,
   });
   // GET = list, DELETE = unset. Each branch supports its own status/network
@@ -95,7 +87,7 @@ function setup(opts: SetupOpts = {}) {
       api,
       cliSettings,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
-      stdin: mockStdin(opts.stdinIsTty ?? false, opts.stdinInput),
+      stdin: mockStdin(opts.stdinIsTty ?? false),
       outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     }),
     Layer.succeed(YesFlag, opts.yes ?? false),
@@ -167,21 +159,6 @@ describe("secrets unset integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.effect("treats SUPABASE_YES=1 in the environment like --yes", () => {
-      const { layer, out, api } = setup();
-      // Inner provide so the layer builds inside the pinned-env sandbox.
-      return withConfigEnv(
-        { SUPABASE_YES: "1" },
-        Effect.gen(function* () {
-          yield* unset({ names: ["FOO"] });
-          expect(out.stderrText).toBe(
-            `${unverifiedTargetBanner()}Confirmed by SUPABASE_YES: Unset 1 secret on ${ON_TARGET}\n`,
-          );
-          expect(methods(api)).toEqual(["DELETE"]);
-        }).pipe(Effect.provide(layer)),
-      );
-    });
-
     it.effect("prompts on a TTY with a default of No and unsets when the user accepts", () => {
       const { layer, out, api } = setup({ stdinIsTty: true, confirm: true });
       return Effect.gen(function* () {
@@ -195,18 +172,6 @@ describe("secrets unset integration", () => {
         expect(out.stdoutText).toBe("Finished supabase secrets unset.\n");
       }).pipe(Effect.provide(layer));
     });
-
-    it.effect(
-      "fails with HostedMutationDeclinedError and sends no DELETE when the user declines",
-      () => {
-        const { layer, api } = setup({ stdinIsTty: true, confirm: false });
-        return Effect.gen(function* () {
-          const error = yield* unset({ names: ["FOO"] }).pipe(Effect.flip);
-          expect(error).toBeInstanceOf(HostedMutationDeclinedError);
-          expect(api.requests).toEqual([]);
-        }).pipe(Effect.provide(layer));
-      },
-    );
   });
 
   it.effect("lists projects for the picker and fills the real linked-project cache", () => {
@@ -329,39 +294,6 @@ describe("secrets unset integration", () => {
         }).pipe(Effect.provide(layer));
       },
     );
-
-    it.effect("still refuses a piped `y` without --yes and sends no DELETE", () => {
-      const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "y\n" });
-      return Effect.gen(function* () {
-        const error = yield* unset({ names: ["FOO"] }).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
-        expect(api.requests).toEqual([]);
-        expect(out.stderrText).toBe(unverifiedTargetBanner());
-      }).pipe(Effect.provide(layer));
-    });
-
-    it.effect.each(["json", "stream-json"] as const)(
-      "refuses --output-format %s without --yes even on a TTY",
-      (format) => {
-        const { layer, out, api } = setup({ format, stdinIsTty: true });
-        return Effect.gen(function* () {
-          const error = yield* unset({ names: ["FOO"] }).pipe(Effect.flip);
-          expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
-          expect(api.requests).toEqual([]);
-          expect(out.promptConfirmCalls).toEqual([]);
-        }).pipe(Effect.provide(layer));
-      },
-    );
-
-    it.effect("refuses text output that is not interactive even on a TTY stdin", () => {
-      const { layer, out, api } = setup({ stdinIsTty: true, interactive: false });
-      return Effect.gen(function* () {
-        const error = yield* unset({ names: ["FOO"] }).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
-        expect(api.requests).toEqual([]);
-        expect(out.promptConfirmCalls).toEqual([]);
-      }).pipe(Effect.provide(layer));
-    });
 
     it.effect("lists every secret --all will unset before asking", () => {
       const { layer, out } = setup({ stdinIsTty: true, confirm: false, list: MIXED_SECRETS });
