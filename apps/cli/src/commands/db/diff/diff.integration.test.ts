@@ -31,6 +31,7 @@ vi.mock("node:net", (importOriginal) =>
 );
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
+import { describeDbTargetSelection } from "../../../../tests/helpers/db-target-selection.ts";
 import {
   BRANCH_PROJECT_REF,
   branchListApi,
@@ -92,10 +93,6 @@ import type {
 } from "../../../command-internal/db-config.types.ts";
 import { describeLinkedTarget } from "../../../command-internal/target/target-identity.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
-import {
-  TargetProjectRefConflictError,
-  TargetSelectorConflictError,
-} from "../../../command-internal/target/target.errors.ts";
 import {
   DbConnection,
   type DbSession,
@@ -1366,131 +1363,21 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("diffs the linked project and writes the linked-project cache", () => {
-    const s = setup(tmp.current, {
-      isLocal: false,
-      linkedRef: "abcdefghijklmnopqrst",
-      diffSql: "alter table x;\n",
-    });
-    return Effect.gen(function* () {
-      yield* dbDiff(flags({ remote: REMOTE_LINKED }));
-      expect(s.cache.cached).toBe(true);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  describe("target selection", () => {
-    const FLAG_PROJECT_REF = "flagflagflagflagflag";
-
-    const resolvedTarget = (
-      selector: Partial<DbDiffFlags>,
-      options: { readonly branchApi?: ReturnType<typeof branchListApi> } = {},
-    ) => {
-      const s = setup(tmp.current, {
-        projectId: Option.some(VALID_REF),
-        diffSql: "alter table x;\n",
-      });
-      const provided =
-        options.branchApi === undefined ? s.layer : Layer.merge(s.layer, options.branchApi.layer);
-      return Effect.gen(function* () {
-        yield* dbDiff(flags(selector)).pipe(Effect.provide(provided));
-        return { target: s.resolverCalls[0]?.target, warnings: warningsOf(s.out) };
-      });
-    };
-
-    it.effect("targets the local database, with no warning, when nothing selects one", () =>
-      Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget({});
-        expect(target).toEqual({ kind: "local" });
-        expect(warnings).toEqual([]);
-      }),
-    );
-
-    it.effect("targets the linked project for a bare --remote, with no warning", () =>
-      Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget({ remote: REMOTE_LINKED });
-        expect(target).toMatchObject({ kind: "linked", source: "file" });
-        expect(warnings).toEqual([]);
-      }),
-    );
-
-    it.effect("targets the project --remote=<ref> names, with no warning", () =>
-      Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget({
-          remote: Option.some({ _tag: "Ref", ref: FLAG_PROJECT_REF } as const),
-        });
-        expect(target).toMatchObject({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" });
-        expect(warnings).toEqual([]);
-      }),
-    );
-
-    it.effect("targets the database --remote=<db-url> names, with no warning", () =>
-      Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget({
-          remote: Option.some({
-            _tag: "DbUrl",
-            url: "postgresql://postgres:pw@db.example.com/db",
-          } as const),
-        });
-        expect(target?.kind).toBe("db-url");
-        expect(warnings).toEqual([]);
-      }),
-    );
-
-    it.effect("targets the project of the branch --remote=<branch> names", () => {
+  describeDbTargetSelection("db diff", {
+    dbUrl: true,
+    workdir: () => tmp.current,
+    attempt: ({ workdir, target }) => {
+      const s = setup(workdir, { projectId: Option.some(VALID_REF), diffSql: "alter table x;\n" });
       const branchApi = branchListApi();
-      return Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget(
-          { remote: Option.some({ _tag: "Branch", name: "feature-x" }) },
-          { branchApi },
-        );
-        expect(target).toMatchObject({ kind: "linked", ref: BRANCH_PROJECT_REF, source: "flag" });
-        expect(warnings).toEqual([]);
-        assertPermissionDrift({
-          command: "db diff",
-          activeFlags: { remote: "feature-x" },
-          requests: branchApi.requests,
-        });
-      });
-    });
-
-    it.effect.each([
-      {
-        alias: "--linked",
-        flags: { linked: true },
-        kind: "linked",
-        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
-      },
-      {
-        alias: "--project-ref",
-        flags: { projectRef: Option.some(FLAG_PROJECT_REF) },
-        kind: "linked",
-        warning:
-          "--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead",
-      },
-      {
-        alias: "--db-url",
-        flags: { dbUrl: Option.some("postgresql://postgres:pw@db.example.com/db") },
-        kind: "db-url",
-        warning: "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead",
-      },
-      {
-        alias: "--local",
-        flags: { local: true },
-        kind: "local",
-        warning: "--local isn't needed (local is the default) and will be removed in v4",
-      },
-    ] satisfies ReadonlyArray<{
-      alias: string;
-      flags: Partial<DbDiffFlags>;
-      kind: string;
-      warning: string;
-    }>)("keeps $alias working and warns that it is deprecated", ({ flags, kind, warning }) =>
-      Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget(flags);
-        expect(target?.kind).toBe(kind);
-        expect(warnings).toEqual([expect.stringContaining(warning)]);
-      }),
-    );
+      return {
+        layer: Layer.merge(s.layer, branchApi.layer),
+        out: s.out,
+        run: dbDiff(flags({ ...target })),
+        target: () => s.resolverCalls[0]?.target,
+        cachedRef: () => s.cache.cachedRef,
+        branchLookups: () => branchApi.requests,
+      };
+    },
   });
 
   describe("explicit --from and --to values", () => {
@@ -1781,53 +1668,6 @@ describe("db diff", () => {
         });
       });
     });
-  });
-
-  it.effect("diffs the project given via --remote=<ref> without a linked workdir", () => {
-    // `linkedFails: true` simulates an unlinked workdir; only the flag can resolve a ref.
-    const FLAG_REF = "flagflagflagflagflag";
-    const s = setup(tmp.current, {
-      isLocal: false,
-      diffSql: "alter table x;\n",
-      linkedFails: true,
-    });
-    return Effect.gen(function* () {
-      yield* dbDiff(flags({ remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const) }));
-      expect(s.cache.cached).toBe(true);
-      expect(s.cache.cachedRef).toBe(FLAG_REF);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("--remote=<ref> overrides an already-linked workdir's project ref", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    // A distinct `linkedRef` proves the flag, not the workdir's own linked ref, wins.
-    const s = setup(tmp.current, {
-      isLocal: false,
-      linkedRef: "abcdefghijklmnopqrst",
-      diffSql: "alter table x;\n",
-    });
-    return Effect.gen(function* () {
-      yield* dbDiff(flags({ remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const) }));
-      expect(s.cache.cached).toBe(true);
-      expect(s.cache.cachedRef).toBe(FLAG_REF);
-      expect(s.cache.cachedRef).not.toBe("abcdefghijklmnopqrst");
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("rejects the deprecated --project-ref combined with --local", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const s = setup(tmp.current);
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        dbDiff(flags({ local: true, projectRef: Option.some(FLAG_REF) })),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.squash(exit.cause)).toBeInstanceOf(TargetProjectRefConflictError);
-      }
-      expect(s.resolverCalls).toEqual([]);
-      expect(s.cache.cached).toBe(false);
-    }).pipe(Effect.provide(s.layer));
   });
 
   it.effect(
@@ -2655,17 +2495,6 @@ describe("db diff", () => {
     }).pipe(Effect.provide(Layer.mergeAll(s.layer, stackBackendLayer("stack"))));
   });
 
-  it.effect("fails on target mutex (--linked with --local)", () => {
-    const s = setup(tmp.current);
-    return Effect.gen(function* () {
-      const exit = yield* dbDiff(flags({ linked: true, local: true })).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.squash(exit.cause)).toBeInstanceOf(TargetSelectorConflictError);
-      }
-    }).pipe(Effect.provide(s.layer));
-  });
-
   it.effect("warns on drop statements in the diff", () => {
     const s = setup(tmp.current, { diffSql: "drop table gone;\n" });
     return Effect.gen(function* () {
@@ -3266,23 +3095,6 @@ describe("db diff", () => {
           expect(error.message).toBe(
             "if any flags in the group [use-migra use-pgadmin use-pg-delta] are set none of the others can be; [use-pg-delta use-pgadmin] were all set",
           );
-        }).pipe(Effect.provide(s.layer));
-      },
-    );
-
-    it.effect(
-      "fails on target mutex when --use-pgadmin is combined with --linked and --local",
-      () => {
-        const s = setup(tmp.current);
-        return Effect.gen(function* () {
-          const exit = yield* dbDiff(
-            flags({
-              usePgAdmin: Option.some(true),
-              linked: true,
-              local: true,
-            }),
-          ).pipe(Effect.exit);
-          expect(Exit.isFailure(exit)).toBe(true);
         }).pipe(Effect.provide(s.layer));
       },
     );
