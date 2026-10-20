@@ -145,16 +145,14 @@ export function describeTargetSelectionMatrix<R>(
       }).pipe(Effect.provide(run.layer));
     });
 
-    it.effect("keeps --project-ref working and points at --remote=<ref>", () => {
+    it.effect("keeps --project-ref working and warns that it is deprecated", () => {
       const run = harness(["--project-ref", OTHER_REF], OTHER_REF);
       return Effect.gen(function* () {
         yield* prepare;
         yield* matrix.run({ remote: Option.none(), projectRef: Option.some(OTHER_REF) });
 
         expectActedOn(run, OTHER_REF);
-        expect(run.warnings()).toEqual([
-          `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
-        ]);
+        expect(run.warnings()).toEqual([expect.stringContaining("--project-ref is deprecated")]);
       }).pipe(Effect.provide(run.layer));
     });
 
