@@ -1,10 +1,11 @@
+import { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import {
   INVALID_PROJECT_REF_MESSAGE,
   PROJECT_REF_PATTERN,
-} from "../../config/project-ref.service.ts";
+} from "../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
 import {
@@ -14,6 +15,8 @@ import {
 import { resolveDbImage } from "../../command-internal/db-image.ts";
 import { resolveEdgeRuntimeImage } from "../../command-internal/edge-runtime-image.ts";
 import { readServiceVersionOverrides } from "../../command-internal/service-version-overrides.ts";
+import { currentProjectStateMode } from "../../command-internal/project-state-mode.ts";
+import { readLinkSnapshot } from "../../command-internal/link-snapshot.ts";
 import { currentStackBackend } from "../../command-internal/stack-backend.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
@@ -64,14 +67,27 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
   const telemetryState = yield* TelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const legacyState = yield* LegacyProjectState;
 
-  const projectRefPath = path.join(cliSettings.workdir, "supabase", ".temp", "project-ref");
   const linkedProjectRef = yield* Effect.gen(function* () {
     if (Option.isSome(cliSettings.projectId)) {
       return cliSettings.projectId;
     }
 
-    const exists = yield* fs.exists(projectRefPath).pipe(Effect.orElseSucceed(() => false));
+    if ((yield* currentProjectStateMode) === "stack") {
+      return yield* readLinkSnapshot(fs, path, cliSettings.workdir).pipe(
+        Effect.map((snapshot) => snapshot.ref),
+        Effect.catch((cause) =>
+          output
+            .raw(`failed to load project ref: ${cause.message}\n`, "stderr")
+            .pipe(Effect.as(Option.none<string>())),
+        ),
+      );
+    }
+
+    const exists = yield* legacyState
+      .exists(cliSettings.workdir, "projectRef")
+      .pipe(Effect.orElseSucceed(() => false));
     if (!exists) {
       return Option.none<string>();
     }
@@ -79,7 +95,7 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
     // Warns on a ref-file read error, but treats a NotFound race between the
     // exists() check and this read as simply unlinked (silent, no warning).
     // Only the "failed to load project ref: " prefix is compatibility-bearing.
-    const content = yield* fs.readFileString(projectRefPath).pipe(
+    const content = yield* legacyState.read(cliSettings.workdir, "projectRef").pipe(
       Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed("")),
       Effect.catch((cause) =>
         output.raw(`failed to load project ref: ${String(cause)}\n`, "stderr").pipe(Effect.as("")),
@@ -207,9 +223,9 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
       rows,
       backend.kind === "stack"
         ? {
-            heading: "The CLI stack catalog versions differ from your linked project:",
+            heading: "The stack service versions differ from your linked project:",
             recommendation:
-              "These versions come from the CLI stack catalog and cannot be changed with supabase link.",
+              "Run supabase link to update services set to linked (the default) in supabase/supabase.lock; services pinned in [local.services] keep their version.",
           }
         : {},
     );

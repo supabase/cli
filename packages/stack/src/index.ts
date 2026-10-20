@@ -15,6 +15,7 @@ export type {
 export type { StackCredentials, StackKeysInput } from "./StackNamespace.ts";
 export { initialization, postgres } from "./Commands.ts";
 export { StackError } from "./Rpc.ts";
+export { LockInvalidError, LockIoError, LockUnsupportedVersionError } from "./Lock.ts";
 export type { CompositionConfig } from "./Orchestrator.ts";
 export type { Observation } from "./Rpc.ts";
 export type {

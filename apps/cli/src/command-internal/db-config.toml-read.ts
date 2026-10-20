@@ -38,9 +38,9 @@ import { Output } from "../shared/output/output.service.ts";
 type EnvLookup = (name: string) => string | undefined;
 
 /**
- * Subset of `supabase/config.toml` (plus the linked pooler URL) the db-config
- * resolver needs. A missing config file yields defaults; a malformed one aborts
- * the command instead of running against the default local database.
+ * Subset of `supabase/config.toml` the db-config resolver needs. A missing config file yields
+ * defaults; a malformed one aborts the command instead of running against the default local
+ * database.
  */
 export interface DbTomlValues {
   readonly projectEnv: Readonly<Record<string, string>>;
@@ -57,12 +57,6 @@ export interface DbTomlValues {
   readonly shadowPort: number;
   /** `[db] password`, runtime default `"postgres"` (not in the config schema). */
   readonly password: string;
-  /**
-   * Linked pooler connection string, used by the `--linked` pooler fallback.
-   * Read from `supabase/.temp/pooler-url` (written by `supabase link`); not
-   * part of the config schema.
-   */
-  readonly poolerConnectionString: Option.Option<string>;
   /** top-level `project_id`, used to name the local docker network. */
   readonly projectId: Option.Option<string>;
   /** `[db] major_version`, default 17. */
@@ -1103,12 +1097,11 @@ export const warnDeprecatedOrioleDBVersionEnv = Effect.fnUntraced(function* (
 });
 
 /**
- * Reads `<workdir>/supabase/config.toml` (db subtree + project id) and the linked
- * `<workdir>/supabase/.temp/pooler-url`. `fs`/`path` are passed in so the resolver
- * can capture them once and keep its own `R` at `never`.
+ * Reads `<workdir>/supabase/config.toml` (db subtree + project id). `fs`/`path` are passed in so
+ * the resolver can capture them once and keep its own `R` at `never`.
  *
- * Fails with `DbConfigLoadError` only when the config file is present but
- * unparseable; an absent file (and an absent/empty pooler-url file) is not an error.
+ * Fails with `DbConfigLoadError` only when the config file is present but unparseable; an absent
+ * file is not an error.
  */
 const readDbTomlCore = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -1257,13 +1250,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // `remoteOverrideKeys` has its final value from here on — see `makeRemoteWins`'s own doc
   // comment for why this is typed narrower than the `ReadonlySet<string>` it wraps.
   const remoteWins = makeRemoteWins(remoteOverrideKeys);
-
-  // Read the linked pooler URL from `.temp/pooler-url` and treat it as configured only
-  // when the file exists and is non-empty.
-  const poolerUrlPath = path.join(supabaseDir, ".temp", "pooler-url");
-  const poolerConnectionString = yield* fs
-    .readFileString(poolerUrlPath)
-    .pipe(Effect.map(nonEmptyString), Effect.orElseSucceed(Option.none<string>));
 
   // `SUPABASE_PROJECT_ID` overrides the top-level `project_id` used to name the local
   // stack's Docker resources, unless a matched `[remotes.<ref>]` block already set
@@ -2197,7 +2183,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     port,
     shadowPort,
     password: passwordRaw !== undefined ? expandEnv(passwordRaw, lookup) : DEFAULT_PASSWORD,
-    poolerConnectionString,
     projectId,
     majorVersion,
     orioledbVersion,

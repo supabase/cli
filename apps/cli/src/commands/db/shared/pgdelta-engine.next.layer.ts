@@ -1,6 +1,7 @@
-import { Clock, Effect, FileSystem, Layer, Path, Ref } from "effect";
+import { Clock, Crypto, Effect, FileSystem, Layer, Path, Ref } from "effect";
 import type { Pool } from "pg";
 
+import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   layeredParseEnv,
@@ -31,6 +32,7 @@ import {
   savePgDeltaNextDebugArtifacts,
   type PgDeltaNextDebugArtifacts,
 } from "./pgdelta-next-artifacts.ts";
+import { pgdeltaScratchDir } from "../../../command-internal/scratch-paths.ts";
 import {
   pgDeltaNextDiagnosticReport,
   reportPgDeltaNextDiagnostics,
@@ -132,7 +134,9 @@ export const pgDeltaNextEngineLayer = Layer.effect(
     const shadowService = yield* PgDeltaNextShadow;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
     const debugLogger = yield* DebugLogger;
+    const settings = yield* CommandSettings;
     const output = yield* Output;
     const feedbackInvitationShown = yield* Ref.make(false);
 
@@ -146,7 +150,10 @@ export const pgDeltaNextEngineLayer = Layer.effect(
         const debugDir = yield* savePgDeltaNextDebugArtifacts(
           fs,
           path,
-          workdir,
+          yield* pgdeltaScratchDir(workdir).pipe(
+            Effect.provideService(CommandSettings, settings),
+            Effect.provideService(Crypto.Crypto, crypto),
+          ),
           id,
           operation,
           artifacts,

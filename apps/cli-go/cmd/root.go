@@ -22,6 +22,7 @@ import (
 	"github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	"github.com/supabase/cli/pkg/config"
 	"golang.org/x/mod/semver"
 )
 
@@ -207,7 +208,7 @@ func Execute() {
 // Checks auth before calling the API to avoid the log.Fatalln in GetSupabase().
 func ensureProjectGroupsCached(ctx context.Context, service *telemetry.Service) {
 	ref := flags.ProjectRef
-	if ref == "" {
+	if ref == "" || config.UsesStackState() {
 		return
 	}
 	fsys := afero.NewOsFs()
@@ -239,7 +240,7 @@ func updateNotifierEnabled() bool {
 	// Read the env directly instead of viper: the upgrade check also runs for
 	// --help and --version, which skip the cobra initializer that binds env vars.
 	disabled, _ := strconv.ParseBool(os.Getenv("SUPABASE_NO_UPDATE_NOTIFIER"))
-	return !disabled
+	return !disabled && !config.UsesStackState()
 }
 
 func checkUpgrade(ctx context.Context, fsys afero.Fs) (string, error) {

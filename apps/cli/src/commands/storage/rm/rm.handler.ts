@@ -1,7 +1,7 @@
 import { Effect, FileSystem, Option, Path, Ref } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags.ts";
@@ -55,7 +55,7 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
   const cliSettings = yield* CommandSettings;
   const telemetryState = yield* TelemetryState;
   const linkedProjectCache = yield* LinkedProjectCache;
-  const resolver = yield* ProjectRefResolver;
+  const resolver = yield* RemoteTarget;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -73,7 +73,7 @@ export const storageRm = Effect.fn("storage.rm")(function* (flags: StorageRmFlag
       });
     }
 
-    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
+    const projectRef = flags.local ? "" : (yield* resolver.load(flags.projectRef)).ref;
     if (projectRef !== "") {
       yield* Ref.set(linkedRef, Option.some(projectRef));
     }

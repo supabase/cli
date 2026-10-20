@@ -51,3 +51,4 @@ Not applicable.
 - Deprecated: use `db diff --use-migra --linked` instead.
 - `--schema` / `-s` restricts the diff to specific schemas.
 - `--db-url` and `--linked` (default true) are mutually exclusive.
+- In stack mode the linked ref is resolved in TypeScript and passed to the Go command as `--project-ref`; no `supabase/.temp` file is read.

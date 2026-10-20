@@ -1,6 +1,14 @@
-import { Effect, FileSystem, Path } from "effect";
+import { legacyProjectStatePaths } from "../../command-internal/legacy-project-state.paths.ts";
+import { Effect, FileSystem, Option, Path } from "effect";
+import { usesStackState } from "../../command-internal/stack-backend.ts";
+import { readLockedPins } from "../../command-internal/stack-lock.ts";
 import { dockerfileServiceImageRaw } from "../services/dockerfile-images.ts";
-import { imageTag, slimImageForCurrentPin } from "../services/slim-images.ts";
+import {
+  imageTag,
+  isSlimImageRef,
+  slimImageForCurrentPin,
+  slimImagesEnabled,
+} from "../services/slim-images.ts";
 
 const functionSlugPattern = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
@@ -28,26 +36,43 @@ export const DENO1_EDGE_RUNTIME_VERSION = "v1.68.4";
  * Resolves the edge-runtime image for `tag`. The deno-1 pin always resolves
  * to the full docker.io image (no slim build exists for it); every other tag
  * is substituted verbatim into the (possibly slim-rewritten) default image,
- * with no `v` prefix synthesized.
+ * with no `v` prefix synthesized. A slim image ref (the locked pin's own image) is used as is.
  */
 export function edgeRuntimeImage(tag: string, slim: boolean): string {
   if (tag === DENO1_EDGE_RUNTIME_VERSION) {
     return `supabase/edge-runtime:${DENO1_EDGE_RUNTIME_VERSION}`;
   }
+  if (slim && isSlimImageRef(tag)) {
+    return tag;
+  }
   return slimImageForCurrentPin("edgeruntime", dockerfileServiceImageRaw("edgeruntime"), tag, slim);
 }
 
 /**
- * Reads the `.temp/edge-runtime-version` pin file if present, falling back to
- * the Dockerfile-embedded tag. Shared by every `functions` command that
- * resolves a Docker edge-runtime image.
+ * The edge-runtime tag every `functions` command that resolves a Docker edge-runtime image uses.
+ * Stack state mode takes the tag from the locked Functions pin without loading config or checking
+ * the lock for staleness, since these commands never run the local stack, or the pin's own slim
+ * image ref when slim images are enabled; legacy mode reads `.temp/edge-runtime-version`. Either
+ * falls back to the Dockerfile-embedded tag.
  */
-export const resolveEdgeRuntimeVersionPin = Effect.fnUntraced(function* (supabaseDir: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  return yield* fs.readFileString(path.join(supabaseDir, ".temp", "edge-runtime-version")).pipe(
-    Effect.map((version) => version.trim()),
-    Effect.orElseSucceed(() => ""),
-    Effect.map((version) => version || (imageTag(dockerfileServiceImageRaw("edgeruntime")) ?? "")),
-  );
-});
+export const resolveEdgeRuntimeVersionPin = Effect.fn("Functions.resolveEdgeRuntimeVersionPin")(
+  function* (workdir: string) {
+    const bundledTag = imageTag(dockerfileServiceImageRaw("edgeruntime")) ?? "";
+    if (yield* usesStackState) {
+      const locked = yield* readLockedPins(workdir);
+      const slim = yield* slimImagesEnabled;
+      return Option.match(locked, {
+        onNone: () => bundledTag,
+        onSome: ({ functions }) =>
+          slim ? functions.image : (imageTag(functions.upstreamImage) ?? bundledTag),
+      });
+    }
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* fs.readFileString(legacyProjectStatePaths(path, workdir).edgeRuntimeVersion).pipe(
+      Effect.map((version) => version.trim()),
+      Effect.orElseSucceed(() => ""),
+      Effect.map((version) => version || bundledTag),
+    );
+  },
+);

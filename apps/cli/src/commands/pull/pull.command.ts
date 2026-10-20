@@ -10,7 +10,7 @@ import {
   dbConfigPoolerFallbackLinked,
 } from "../../command-internal/db-config.layer.ts";
 import { configTarget } from "../../command-internal/project-target.ts";
-import { PROJECT_REF_PATTERN } from "../../config/project-ref.service.ts";
+import { PROJECT_REF_PATTERN } from "../../config/remote-target.service.ts";
 import { functionsDownload } from "../../shared/functions/download.ts";
 import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";

@@ -19,7 +19,6 @@ import { CommandPlatformApi } from "../../src/auth/command-platform-api.service.
 import { CommandPlatformApiFactory } from "../../src/auth/command-platform-api-factory.service.ts";
 import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts";
 import { unusedGateway } from "./unused-stack.ts";
-import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
 import { generateGoJwt } from "../../src/command-internal/go-jwt.ts";
 import { YesFlag } from "../../src/command-internal/global-flags.ts";
 import { StackApi } from "../../src/command-internal/stack-api.ts";
@@ -38,6 +37,8 @@ import {
   mockTelemetryStateTracked,
 } from "./command-mocks.ts";
 import { projectResponse, realLinkedProjectCache } from "./permission-real-layers.ts";
+import { selection } from "./pins.ts";
+import { stubRemoteTarget } from "./remote-target.ts";
 
 interface StorageRoute {
   readonly method: string;
@@ -122,8 +123,8 @@ const stackCredentials = {
 } satisfies StackCredentials;
 const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
   service: "database",
+  pin: selection.database,
   config: {
-    version: "17",
     databasePassword: Redacted.make("postgres"),
     jwtSecret: Redacted.make(STORAGE_TEST_JWT_SECRET),
     jwtExpiry: 3600,
@@ -132,6 +133,7 @@ const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
 };
 const storageCreation: Extract<ServiceCreation, { service: "storage" }> = {
   service: "storage",
+  pin: selection.storage,
   config: {
     jwtSecret: STORAGE_TEST_JWT_SECRET,
     serviceRoleKey: stackCredentials.serviceRoleKey,
@@ -390,7 +392,7 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     new ProjectRefNotLinkedError({
       message: "Cannot find project ref. Have you run supabase link?",
     });
-  const projectRefLayer = Layer.succeed(ProjectRefResolver, {
+  const remoteTargetLayer = stubRemoteTarget({
     resolve: () =>
       opts.linkedFails === true ? Effect.fail(notLinked()) : Effect.succeed(projectRefRef),
     resolveForLink: () =>
@@ -398,13 +400,13 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
     resolveOptional: () => Effect.succeed(Option.some(projectRefRef)),
     // An explicit `--project-ref` flag takes precedence and short-circuits before
     // `linkedFails`, so a test can resolve a ref even for an "unlinked" workdir.
-    loadProjectRef: (flagValue: Option.Option<string>) =>
+    load: (flagValue: Option.Option<string>) =>
       Option.isSome(flagValue) && flagValue.value.length > 0
         ? Effect.succeed(flagValue.value)
         : opts.linkedFails === true
           ? Effect.fail(notLinked())
           : Effect.succeed(projectRefRef),
-    promptProjectRef: () => Effect.succeed(projectRefRef),
+    prompt: () => Effect.succeed(projectRefRef),
   });
 
   const defaultApiKeys = [
@@ -451,7 +453,7 @@ export function setupStorage(workdir: string, opts: SetupStorageOptions) {
       : realLinkedProjectCache({ httpClient: recorded.httpClientLayer, cliSettings }),
     cliSettings,
     BunServices.layer,
-    projectRefLayer,
+    remoteTargetLayer,
     recorded === undefined
       ? Layer.succeed(CommandPlatformApiFactory, {
           make: CommandPlatformApi.pipe(Effect.provide(managementApi.layer)),

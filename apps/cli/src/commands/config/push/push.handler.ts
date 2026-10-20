@@ -5,6 +5,7 @@ import { DateTime, Effect, FileSystem, Option, Path, Ref } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags.ts";
@@ -18,7 +19,6 @@ import {
   loadProjectEnv,
   resolveShellEnv,
 } from "../../../command-internal/db-config.toml-read.ts";
-import { resolveLinkedParentRef } from "../../../command-internal/parent-project-ref.ts";
 import { BRANCH_UUID_PATTERN } from "../../../command-internal/ref-patterns.ts";
 import {
   sanitizeInlineName,
@@ -158,6 +158,7 @@ const configTargetErrors = configTargetErrorsFor({
 
 export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushFlags) {
   const output = yield* Output;
+  const remoteTarget = yield* RemoteTarget;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
   const linkedProjectCache = yield* LinkedProjectCache;
@@ -290,7 +291,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       if (BRANCH_UUID_PATTERN.test(branch)) {
         knownBranch = { kind: "uuid" };
       } else {
-        const parent = yield* resolveLinkedParentRef();
+        const parent = yield* remoteTarget.parent;
         knownBranch =
           parent.kind === "resolved"
             ? { kind: "name", branchName: branch, parentRef: parent.ref }

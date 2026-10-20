@@ -5,7 +5,7 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { TelemetryOutputFormat } from "../../../telemetry/telemetry-output-format.service.ts";
@@ -250,11 +250,12 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     let linkedRef: string | undefined;
     if (Option.isSome(flags.linked)) {
       const credentials = yield* CommandCredentials;
-      const projectRef = yield* ProjectRefResolver;
+      const projectRef = yield* RemoteTarget;
       // Config is resolved before the token check, so an unlinked-project/invalid-config/pooler
-      // failure isn't masked behind a generic "supabase login" error. `loadProjectRef` is the
+      // failure isn't masked behind a generic "supabase login" error. `RemoteTarget.load` is the
       // strict loader: a real ref-file read error surfaces instead of being treated as not-linked.
-      const ref = yield* projectRef.loadProjectRef(flags.projectRef);
+      const linkedTarget = yield* projectRef.load(flags.projectRef);
+      const { ref } = linkedTarget;
       // Recorded now so the cache finalizer still fires if a later step fails.
       yield* Ref.set(linkedRefForCache, ref);
       // Loads and validates the remote-merged config and resolves the live DB connection (TCP
@@ -265,6 +266,7 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
         connType: "linked",
         dnsResolver,
         linkedProjectRef: flags.projectRef,
+        target: linkedTarget,
       });
       // The Management API still needs a token even when config resolved without minting a login
       // role. Route through `credentials.getAccessToken`, which validates it against `sbp_...`,

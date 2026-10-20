@@ -8,6 +8,7 @@ import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-rela
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
+import { selection } from "../../tests/pins.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-realtime",
@@ -36,8 +37,8 @@ describe("service catalog", () => {
           const databaseRecipe = yield* makeServiceRecipe(
             {
               service: "database",
+              pin: selection.database,
               config: {
-                version: "17",
                 databasePassword: Redacted.make("postgres"),
                 jwtSecret: Redacted.make(secret),
                 jwtExpiry: 3600,
@@ -55,7 +56,11 @@ describe("service catalog", () => {
           const databaseUrl = `postgresql://supabase_admin:postgres@${databaseRelay.host}:${databaseRelay.port}/postgres`;
 
           const realtimeRecipe = yield* makeServiceRecipe(
-            { service: "realtime", config: { databaseUrl, jwtSecret: secret } },
+            {
+              service: "realtime",
+              pin: selection.realtime,
+              config: { databaseUrl, jwtSecret: secret },
+            },
             dockerOptions(root),
           );
           const realtime = yield* makeStandaloneService(realtimeRecipe.definition, {
@@ -73,7 +78,7 @@ describe("service catalog", () => {
           expect(realtimeResponse.status).toBe(200);
 
           const pgmetaRecipe = yield* makeServiceRecipe(
-            { service: "pgmeta", config: { databaseUrl } },
+            { service: "pgmeta", pin: selection.pgmeta, config: { databaseUrl } },
             dockerOptions(root),
           );
           const pgmeta = yield* makeStandaloneService(pgmetaRecipe.definition, {
@@ -95,6 +100,7 @@ describe("service catalog", () => {
           const studioRecipe = yield* makeServiceRecipe(
             {
               service: "studio",
+              pin: selection.studio,
               config: {
                 databaseUrl,
                 pgmetaUrl: `http://${pgmetaRelay.host}:${pgmetaRelay.port}`,

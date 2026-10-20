@@ -51,7 +51,7 @@ const config = {
     Flag.withDescription("Pushes to the local database."),
     Flag.withDefault(false),
   ),
-  // Feeds `ProjectRefResolver.loadProjectRef`: flag > `SUPABASE_PROJECT_ID` >
+  // Feeds `RemoteTarget.load`: flag > `SUPABASE_PROJECT_ID` >
   // `supabase/.temp/project-ref`. Only feeds ref resolution — it does not affect local
   // container ids or the pg-delta project id (see `db-config.types.ts`'s
   // `linkedProjectRef` doc) — and is rejected outright on a non-linked target rather

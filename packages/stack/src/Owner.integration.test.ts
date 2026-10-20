@@ -17,6 +17,7 @@ import { ownerFor } from "../tests/owner-rpc.ts";
 import { engineTarget, testEngine } from "../tests/engine-target.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
+import { selection } from "../tests/pins.ts";
 
 const stateFor = (root: string) =>
   Effect.gen(function* () {
@@ -130,8 +131,8 @@ it.effect("credential lookup leaves a fresh stack untouched for custom database 
       const jwtSecret = "custom-owner-credentials-jwt-secret-long-enough";
       yield* owner.rpc.createService({
         service: "database",
+        pin: selection.database,
         config: {
-          version: "17",
           databasePassword: Redacted.make("owner-credentials-database-password"),
           jwtSecret: Redacted.make(jwtSecret),
           jwtExpiry: 3600,
@@ -162,8 +163,8 @@ it.live("forwards and rotates saved identity across composed services in one own
       const servicesFor = (jwtSecret?: string): ReadonlyArray<ServiceCreationInput> => [
         {
           service: "database" as const,
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("identity-rotation-password"),
             jwtExpiry: 3600,
             ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.make(jwtSecret) }),
@@ -172,31 +173,37 @@ it.live("forwards and rotates saved identity across composed services in one own
         },
         {
           service: "rest" as const,
+          pin: selection.rest,
           config: {},
           endpoints: { http: { port: "auto" as const } },
         },
         {
           service: "auth" as const,
+          pin: selection.auth,
           config: {},
           endpoints: { http: { port: "auto" as const } },
         },
         {
           service: "storage" as const,
+          pin: selection.storage,
           config: { filePath: `${root}/uploads` },
           endpoints: { http: { port: "auto" as const } },
         },
         {
           service: "realtime" as const,
+          pin: selection.realtime,
           config: {},
           endpoints: { http: { port: "auto" as const } },
         },
         {
           service: "functions" as const,
+          pin: selection.functions,
           config: { functionsRoot: `${root}/functions`, bootstrap: "export {};" },
           endpoints: { http: { port: "auto" as const } },
         },
         {
           service: "studio" as const,
+          pin: selection.studio,
           config: {},
           endpoints: { http: { port: "auto" as const } },
         },
@@ -265,6 +272,7 @@ it.live("forwards and rotates saved identity across composed services in one own
 
       const standaloneRest = yield* owner.rpc.createService({
         service: "rest",
+        pin: selection.rest,
         config: {},
         endpoints: {},
       });
@@ -274,6 +282,7 @@ it.live("forwards and rotates saved identity across composed services in one own
       });
       const standaloneAuth = yield* owner.rpc.createService({
         service: "auth",
+        pin: selection.auth,
         config: {},
         endpoints: {},
       });
@@ -283,6 +292,7 @@ it.live("forwards and rotates saved identity across composed services in one own
       });
       const standaloneStorage = yield* owner.rpc.createService({
         service: "storage",
+        pin: selection.storage,
         config: { filePath: `${root}/standalone-uploads` },
         endpoints: {},
       });
@@ -294,6 +304,7 @@ it.live("forwards and rotates saved identity across composed services in one own
       });
       const standaloneFunctions = yield* owner.rpc.createService({
         service: "functions",
+        pin: selection.functions,
         config: {
           functionsRoot: `${root}/standalone-functions`,
           bootstrap: "export {};",
@@ -419,6 +430,7 @@ it.effect("publishes service removal and composition pruning together", () =>
       yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
       const service = yield* owner.rpc.createService({
         service: "mail",
+        pin: selection.mail,
         config: {},
         endpoints: { http: { port: "auto" }, smtp: { port: "auto" }, pop3: { port: "auto" } },
       });
@@ -457,8 +469,8 @@ it.live(
         yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
         const database = yield* owner.rpc.createService({
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("owner-password"),
             jwtSecret: Redacted.make("owner-integration-jwt-secret-long-enough"),
             jwtExpiry: 3600,
@@ -467,13 +479,14 @@ it.live(
         });
         const rest = yield* owner.rpc.createService({
           service: "rest",
+          pin: selection.rest,
           config: {},
           endpoints: { http: { port: "auto" } },
         });
         const shadow = yield* owner.rpc.createService({
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("owner-password"),
             jwtSecret: Redacted.make("owner-integration-jwt-secret-long-enough"),
             jwtExpiry: 3600,
@@ -575,6 +588,7 @@ it.effect("isolates owner graphs built in one scope", () =>
       yield* Effect.addFinalizer(() => secondOwner.namespace.destroy.pipe(Effect.ignore));
       const created = yield* firstOwner.rpc.createService({
         service: "mail",
+        pin: selection.mail,
         config: {},
         endpoints: { http: { port: "auto" }, smtp: { port: "auto" }, pop3: { port: "auto" } },
       });
@@ -610,8 +624,8 @@ it.live(
           services: [
             {
               service: "database",
+              pin: selection.database,
               config: {
-                version: "17",
                 databasePassword: Redacted.make("owner-factory-password"),
                 jwtSecret: Redacted.make("owner-factory-jwt-secret-long-enough"),
                 jwtExpiry: 3600,
@@ -620,11 +634,13 @@ it.live(
             },
             {
               service: "rest",
+              pin: selection.rest,
               config: {},
               endpoints: { http: { port: "auto" } },
             },
             {
               service: "mail",
+              pin: selection.mail,
               config: {},
               endpoints: { http: { port: "auto" }, smtp: { port: "auto" } },
             },
@@ -674,8 +690,8 @@ it.effect("validates Supabase composition recipes before creating instances", ()
       yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
       const database = {
         service: "database" as const,
+        pin: selection.database,
         config: {
-          version: "17",
           databasePassword: Redacted.make("owner-errors-password"),
           jwtSecret: Redacted.make("owner-errors-jwt"),
           jwtExpiry: 3600,
@@ -692,11 +708,13 @@ it.effect("validates Supabase composition recipes before creating instances", ()
           services: [
             {
               service: "rest",
+              pin: selection.rest,
               config: {},
               endpoints: { http: { port: 41_001 } },
             },
             {
               service: "auth",
+              pin: selection.auth,
               config: {},
               endpoints: { http: { port: 41_002 } },
             },
@@ -723,6 +741,7 @@ it.effect("validates Supabase composition recipes before creating instances", ()
 
       const databaseWithoutSql = yield* owner.rpc.createService({
         service: "database",
+        pin: selection.database,
         config: database.config,
         endpoints: {},
       });
@@ -734,6 +753,7 @@ it.effect("validates Supabase composition recipes before creating instances", ()
             { ...database, endpoints: {} },
             {
               service: "rest",
+              pin: selection.rest,
               config: {},
               endpoints: { http: { port: "auto" } },
             },
@@ -757,7 +777,8 @@ it.effect("lets a retry choose other credentials after the first database creati
       yield* state.save(stack);
       const database = (password: string) => ({
         service: "database" as const,
-        config: { version: "17", databasePassword: Redacted.make(password), jwtExpiry: 3600 },
+        pin: selection.database,
+        config: { databasePassword: Redacted.make(password), jwtExpiry: 3600 },
         endpoints: {},
       });
       const badDataRoot = `${root}/data-file`;
@@ -789,7 +810,14 @@ it.effect(
         const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
         yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
         const definitions = yield* owner.rpc.supabaseComposition({
-          services: [{ service: "mail", config: {}, endpoints: { http: { port: "auto" } } }],
+          services: [
+            {
+              service: "mail",
+              pin: selection.mail,
+              config: {},
+              endpoints: { http: { port: "auto" } },
+            },
+          ],
         });
         const mail = definitions.find((entry) => entry.creation.service === "mail");
         if (mail === undefined) return yield* Effect.die("mail missing from the composition");
@@ -836,7 +864,14 @@ it.live("destroying one service deletes its port reservation", () =>
       yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
       // Composing reserves every member's public port up front without starting any of them.
       const definitions = yield* owner.rpc.supabaseComposition({
-        services: [{ service: "mail", config: {}, endpoints: { http: { port: "auto" } } }],
+        services: [
+          {
+            service: "mail",
+            pin: selection.mail,
+            config: {},
+            endpoints: { http: { port: "auto" } },
+          },
+        ],
       });
       const mail = definitions.find((entry) => entry.creation.service === "mail");
       if (mail === undefined) return yield* Effect.die("mail missing from the composition");
@@ -907,6 +942,7 @@ it.live("refuses to destroy one service after its data directory became a symlin
       yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
       const service = yield* owner.rpc.createService({
         service: "mail",
+        pin: selection.mail,
         config: {},
         endpoints: { http: { port: "auto" }, smtp: { port: "auto" }, pop3: { port: "auto" } },
       });
@@ -976,7 +1012,8 @@ it.effect("refuses to generate credentials for a stack whose saved instances con
       yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
       yield* owner.rpc.createService({
         service: "database",
-        config: { version: "17", jwtExpiry: 3600 },
+        pin: selection.database,
+        config: { jwtExpiry: 3600 },
         endpoints: {},
       });
       const withCredentials = yield* state.read(stack.id);
@@ -986,7 +1023,7 @@ it.effect("refuses to generate credentials for a stack whose saved instances con
       yield* state.save(withoutCredentials);
 
       const refused = yield* owner.rpc
-        .createService({ service: "auth", config: {} })
+        .createService({ service: "auth", pin: selection.auth, config: {} })
         .pipe(Effect.flip);
 
       expect(refused.message).toBe(
@@ -1013,6 +1050,7 @@ it.live("blocks a credential change while a standalone credential consumer runs"
       yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
       const standalone = yield* owner.rpc.createService({
         service: "rest",
+        pin: selection.rest,
         config: { databaseUrl: "postgresql://authenticator@127.0.0.1:1/postgres" },
         endpoints: {},
       });
@@ -1021,7 +1059,7 @@ it.live("blocks a credential change while a standalone credential consumer runs"
 
       const refused = yield* owner.rpc
         .supabaseComposition({
-          services: [{ service: "mail", config: {}, endpoints: {} }],
+          services: [{ service: "mail", pin: selection.mail, config: {}, endpoints: {} }],
           keys: {
             publishableKey: "publishable-rotated",
             secretKey: "secret-rotated",
@@ -1060,19 +1098,21 @@ it.live(
         yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
         const rest = yield* owner.rpc.createService({
           service: "rest",
+          pin: selection.rest,
           config: { databaseUrl: "postgresql://authenticator@127.0.0.1:1/postgres" },
           endpoints: {},
         });
         const explicitKeys = '[{"kty":"oct","k":"explicit"}]';
         const auth = yield* owner.rpc.createService({
           service: "auth",
+          pin: selection.auth,
           config: { gotrueJwtKeys: explicitKeys },
           endpoints: {},
         });
         const before = yield* owner.getStackCredentials;
 
         yield* owner.rpc.supabaseComposition({
-          services: [{ service: "mail", config: {}, endpoints: {} }],
+          services: [{ service: "mail", pin: selection.mail, config: {}, endpoints: {} }],
           keys: {
             gotrueJwtKeys: "[]",
             publicSigningKeys: '[{"kty":"EC","kid":"rotated"}]',
@@ -1109,6 +1149,7 @@ it.live("rejects a missing required input before starting or stopping the servic
       yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
       const unbound = yield* owner.rpc.createService({
         service: "rest",
+        pin: selection.rest,
         config: {},
         endpoints: {},
       });
@@ -1120,12 +1161,16 @@ it.live("rejects a missing required input before starting or stopping the servic
 
       const provided = yield* owner.rpc.createService({
         service: "rest",
+        pin: selection.rest,
         config: { databaseUrl: "postgresql://authenticator@127.0.0.1:1/postgres" },
         endpoints: {},
       });
       yield* owner.rpc.startService({ id: provided.id });
       const restartFailure = yield* owner.rpc
-        .restartService({ id: provided.id, config: { service: "rest", config: { maxRows: 5 } } })
+        .restartService({
+          id: provided.id,
+          config: { service: "rest", config: { maxRows: 5 } },
+        })
         .pipe(Effect.flip);
 
       expect(restartFailure.message).toContain("rest requires input databaseUrl");
@@ -1164,8 +1209,8 @@ it.live(
 
         const created = yield* owner.rpc.createService({
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("owner-no-registration-password"),
             jwtSecret: Redacted.make("owner-no-registration-jwt-secret-at-least-32-characters"),
             jwtExpiry: 3600,
@@ -1236,8 +1281,8 @@ describe.runIf(testEngine === "docker")("Docker volume storage", () => {
 
           const created = yield* owner.rpc.createService({
             service: "database",
+            pin: selection.database,
             config: {
-              version: "17",
               databasePassword: Redacted.make("owner-no-data-root-password"),
               jwtSecret: Redacted.make("owner-no-data-root-jwt-secret-at-least-32-characters"),
               jwtExpiry: 3600,

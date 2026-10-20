@@ -3,14 +3,18 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { Effect, Layer, Option, Stream } from "effect";
+import { Config, Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import * as ChildProcess from "effect/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
+import { resolveWorkdir } from "../config/command-settings.layer.ts";
 import { CLI_VERSION } from "../shared/cli/version.ts";
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
+import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { GoChildExitError } from "./go-child-exit.error.ts";
 import { GoProxyInvocation } from "./go-proxy-invocation.ts";
 import { GoProxy } from "./go-proxy.service.ts";
+import { readProjectLinkFile } from "./project-link.ts";
+import { usesStackState } from "./stack-backend.ts";
 import { withProcessSpan } from "../shared/telemetry/spans.ts";
 
 const markDelegated = Effect.serviceOption(GoProxyInvocation).pipe(
@@ -18,6 +22,35 @@ const markDelegated = Effect.serviceOption(GoProxyInvocation).pipe(
     Option.isSome(invocation) ? invocation.value.markDelegated : Effect.void,
   ),
 );
+
+/**
+ * Tells the Go child to leave `supabase/.temp` alone when the project keeps its state in
+ * `$SUPABASE_HOME`, and hands it the linked project's identity as the JSON of its
+ * `linked-project.json` record so it can still attribute telemetry. Read from the calling fiber,
+ * like `markDelegated`.
+ */
+const makeStackStateEnv = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: Effect.Effect<string>,
+): Effect.Effect<Record<string, string>> =>
+  Effect.gen(function* (): Effect.fn.Return<Record<string, string>> {
+    if (!(yield* usesStackState)) return {};
+    const link = yield* readProjectLinkFile(fs, path, yield* workdir).pipe(
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    if (Option.isNone(link)) return { SUPABASE_INTERNAL_STACK_STATE: "1" };
+    const { project } = link.value;
+    return {
+      SUPABASE_INTERNAL_STACK_STATE: "1",
+      SUPABASE_INTERNAL_LINKED_PROJECT: JSON.stringify({
+        ref: project.ref,
+        name: project.name ?? "",
+        organization_id: project.organization_id ?? "",
+        organization_slug: project.organization_slug ?? "",
+      }),
+    };
+  });
 
 const PLATFORM_CANDIDATES: Partial<Record<string, Partial<Record<string, ReadonlyArray<string>>>>> =
   {
@@ -135,6 +168,10 @@ export function makeGoProxyLayer(opts?: {
   env?: Record<string, string>;
   globalArgs?: ReadonlyArray<string>;
   /**
+   * The `--workdir` the user passed, which locates the project link handed to stack-mode children.
+   */
+  workdir?: Option.Option<string>;
+  /**
    * Let the parent emit its success tail after re-emitting captured stdout.
    */
   parentOwnsCapturedSuccessTail?: boolean;
@@ -149,17 +186,38 @@ export function makeGoProxyLayer(opts?: {
    * artifact for the host platform.
    */
   binary?: string | BinaryResolution;
-}): Layer.Layer<GoProxy, never, ProcessControl | ChildProcessSpawner> {
+}): Layer.Layer<
+  GoProxy,
+  never,
+  ProcessControl | ChildProcessSpawner | FileSystem.FileSystem | Path.Path | RuntimeInfo
+> {
   return Layer.effect(
     GoProxy,
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
       const spawner = yield* ChildProcessSpawner;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const runtimeInfo = yield* RuntimeInfo;
       const resolved: BinaryResolution =
         typeof opts?.binary === "string"
           ? { found: opts.binary }
           : (opts?.binary ?? resolveBinary());
       const globalArgs = opts?.globalArgs ?? [];
+      const projectWorkdir = Effect.gen(function* () {
+        const envValue = yield* Config.option(Config.String("SUPABASE_WORKDIR")).pipe(
+          Effect.orElseSucceed(() => Option.none<string>()),
+        );
+        const { workdir } = yield* resolveWorkdir(
+          opts?.workdir ?? Option.none(),
+          envValue,
+          opts?.cwd ?? runtimeInfo.cwd,
+          (candidate) => fs.exists(candidate).pipe(Effect.orElseSucceed(() => false)),
+          path,
+        );
+        return workdir;
+      });
+      const stackStateEnv = makeStackStateEnv(fs, path, projectWorkdir);
 
       return GoProxy.of({
         exec: (args, execOpts) =>
@@ -193,6 +251,7 @@ export function makeGoProxyLayer(opts?: {
                 ...(execOpts?.suppressChildTelemetry === true
                   ? { SUPABASE_TELEMETRY_DISABLED: "1" }
                   : {}),
+                ...(yield* stackStateEnv),
               };
               const argv = [...globalArgs, ...args];
               const exitCode = yield* withProcessSpan(
@@ -251,6 +310,7 @@ export function makeGoProxyLayer(opts?: {
                 ...(opts?.parentOwnsCapturedSuccessTail === true
                   ? { SUPABASE_NO_UPDATE_NOTIFIER: "1" }
                   : {}),
+                ...(yield* stackStateEnv),
               };
               // Capture stdout while keeping stderr inherited, so progress still reaches the user
               // while stdout is collected for wrapping. Callers pass stdin: "ignore" to give the

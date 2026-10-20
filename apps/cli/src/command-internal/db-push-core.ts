@@ -43,7 +43,7 @@ const applyError = (message: string) => new DbPushApplyError({ message });
 /**
  * Everything `db push` does once its target connection and config are already resolved. Callers
  * (`db push`, `bootstrap`) resolve the project ref, connection, and `config.toml` themselves and
- * pass the results in; this core never touches `ProjectRefResolver`/`DbConfigResolver` itself.
+ * pass the results in; this core never touches `RemoteTarget`/`DbConfigResolver` itself.
  *
  * The "DRY RUN: …" heads-up line prints first here, after the caller's own connection-resolution
  * output (e.g. "Initialising login role..."), so it lives here rather than at either call site.

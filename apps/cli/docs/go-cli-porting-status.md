@@ -45,6 +45,13 @@ All delegation goes through the shared `GoProxy` service
 - **Child telemetry suppression**: a proxy handler that itself owns the parent
   `cli_command_executed` event (wrapped in TS command instrumentation) suppresses the child's own
   telemetry; a bare pass-through proxy leaves it enabled so the Go child stays the sole emitter.
+- **Stack-mode state**: when the project keeps its state outside `supabase/.temp`, `GoProxy` sets
+  `SUPABASE_INTERNAL_STACK_STATE=1` so the child skips `supabase/.temp`, and passes the linked
+  project from `supabase/.link.json` as the JSON of `linked-project.json` in
+  `SUPABASE_INTERNAL_LINKED_PROJECT` so the child keeps its telemetry groups. A command that
+  passes `--project-ref` also passes the resolved target's `pooler_url` in
+  `SUPABASE_INTERNAL_POOLER_URL` when that ref is the linked one; the child reads it in place of
+  `supabase/.temp/pooler-url` for its IPv4 pooler fallback.
 
 The spawn surface is guarded by
 [`apps/cli-e2e/src/tests/go-binary-surface.e2e.test.ts`](../../cli-e2e/src/tests/go-binary-surface.e2e.test.ts) —

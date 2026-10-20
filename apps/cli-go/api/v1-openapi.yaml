@@ -6965,11 +6965,10 @@ paths:
         content:
           application/vnd.denoland.eszip:
             schema:
-              type: string
-              format: binary
+              $ref: '#/components/schemas/V1UpdateFunctionBodyEszip'
           application/json:
             schema:
-              $ref: '#/components/schemas/V1UpdateFunctionBody'
+              $ref: '#/components/schemas/V1UpdateFunctionBodyJson'
       responses:
         '200':
           description: ''
@@ -14826,7 +14825,7 @@ components:
     StreamableFile:
       type: object
       properties: {}
-    V1UpdateFunctionBody:
+    V1UpdateFunctionBodyJson:
       type: object
       properties:
         name:
@@ -14839,6 +14838,57 @@ components:
         name: Hello World
         body: Deno.serve(() => new Response('Hello again!'))
         verify_jwt: true
+    V1UpdateFunctionBodyEszip:
+      type: string
+      format: binary
+      contentEncoding: binary
+      description: >+
+        Raw Brotli-compressed ESZIP binary file.
+
+
+        **Validation requirements** - The file must start with the four magic
+        bytes `EZBR` (hex: `45 5A 42 52`).
+
+        - The `ezbr_sha256` query parameter must contain the SHA-256 hash of the
+        uploaded ESZIP payload.
+
+
+        **Example**
+
+        ```javascript
+
+        import { readFile } from 'node:fs/promises';
+
+        import { brotliCompress } from 'node:zlib';
+
+        import { promisify } from 'node:util';
+
+        import { createHash } from 'node:crypto';
+
+
+        const compress = promisify(brotliCompress);
+
+        const marker = Buffer.from('EZBR', 'ascii');
+
+
+        const file = await readFile('./function.eszip');
+
+        const compressed = await compress(file);
+
+
+        const payload = Buffer.concat([marker, compressed]);
+
+
+        const ezbr_sha256 = createHash('sha256')
+          .update(payload)
+          .digest('hex');
+
+        console.log(ezbr_sha256);
+
+        ```
+
+      examples:
+        - Binary Brotli-compressed ESZIP file
     V1StorageBucketResponse_Output:
       type: object
       properties:

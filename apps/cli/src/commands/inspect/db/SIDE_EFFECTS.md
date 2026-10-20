@@ -30,7 +30,7 @@ no new config reads.
 | Method   | Path                                        | Auth         | When                                                                                 |
 | -------- | ------------------------------------------- | ------------ | ------------------------------------------------------------------------------------ |
 | `POST`   | `/v1/projects/{ref}/cli/login-role`         | Bearer token | `--linked` with no database password, to create a temp login role                    |
-| `GET`    | `/v1/projects/{ref}/config/database/pooler` | Bearer token | `--linked` with `--project-ref`, direct host unreachable, no usable saved pooler URL |
+| `GET`    | `/v1/projects/{ref}/config/database/pooler` | Bearer token | `--linked`, direct host unreachable, no saved pooler URL recorded for the target ref |
 | `POST`   | `/v1/projects/{ref}/network-bans/retrieve`  | Bearer token | `--linked`, from the 3rd failed temp-role connect (list bans)                        |
 | `DELETE` | `/v1/projects/{ref}/network-bans`           | Bearer token | `--linked`, only when bans are listed (clear a self-ban)                             |
 
@@ -131,4 +131,6 @@ emit `Command "<name>" is deprecated and will be removed in v3, use "<target>" i
   error rather than a silently discarded flag (deliberately stricter than
   `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
   a non-linked target). Shared verbatim by every `inspect db` subcommand via
-  `INSPECT_DB_FLAGS`.
+  `INSPECT_DB_FLAGS`. The saved `.temp/pooler-url` applies only when the target ref is the
+  linked ref; a `--project-ref` or `SUPABASE_PROJECT_ID` naming another project fetches that
+  project's pooler config from the Management API.

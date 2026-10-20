@@ -23,6 +23,7 @@ import { StackError, streamStackLogs } from "./effect.ts";
 import * as LogStore from "./host/LogStore.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import type { SavedStack } from "./StackNamespace.ts";
+import { selection } from "../tests/pins.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 const services = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
@@ -113,6 +114,7 @@ describe("owner persisted logs", () => {
         const owner = yield* openOwner("owner-logs-native-", "native");
         const mail = yield* owner.rpc.createService({
           service: "mail",
+          pin: selection.mail,
           config: {},
           endpoints: { http: { port: "auto" } },
         });
@@ -153,6 +155,7 @@ describe("owner persisted logs", () => {
         );
         const mail = yield* owner.rpc.createService({
           service: "mail",
+          pin: selection.mail,
           config: {},
           endpoints: { http: { port: "auto" } },
         });
@@ -162,12 +165,12 @@ describe("owner persisted logs", () => {
         yield* owner.rpc.stopService({ id: mail.id });
         yield* Scope.close(ownerScope, Exit.void);
 
-        const selection = { stateRoot: owner.stateRoot, stackId: owner.stack.id };
-        const records = yield* streamStackLogs(selection).pipe(
+        const logSelection = { stateRoot: owner.stateRoot, stackId: owner.stack.id };
+        const records = yield* streamStackLogs(logSelection).pipe(
           Stream.filter(({ instanceId }) => instanceId === mail.id),
           Stream.runCollect,
         );
-        const invalid = yield* streamStackLogs({ ...selection, since: "soon" }).pipe(
+        const invalid = yield* streamStackLogs({ ...logSelection, since: "soon" }).pipe(
           Stream.runDrain,
           Effect.flip,
         );
@@ -190,6 +193,7 @@ describe("owner persisted logs", () => {
         );
         const mail = yield* owner.rpc.createService({
           service: "mail",
+          pin: selection.mail,
           config: {},
           endpoints: { http: { port: "auto" } },
         });
@@ -239,6 +243,7 @@ describe("owner persisted logs", () => {
         );
         const rest = yield* first.rpc.createService({
           service: "rest",
+          pin: selection.rest,
           config: {},
           endpoints: { http: { port: "auto" } },
         });
@@ -301,6 +306,7 @@ describe("owner persisted logs", () => {
         const owner = yield* openOwner("owner-logs-resume-", "native");
         const mail = yield* owner.rpc.createService({
           service: "mail",
+          pin: selection.mail,
           config: {},
           endpoints: { http: { port: "auto" } },
         });
@@ -339,8 +345,8 @@ describe("owner persisted logs", () => {
           const owner = yield* openOwner("owner-logs-reset-", "native");
           const database = yield* owner.rpc.createService({
             service: "database",
+            pin: selection.database,
             config: {
-              version: "17",
               databasePassword: Redacted.make("owner-logs-reset-password"),
               jwtExpiry: 3600,
             },
@@ -375,6 +381,7 @@ describe("owner persisted logs", () => {
           const owner = yield* openOwner("owner-logs-docker-", testEngine);
           const mail = yield* owner.rpc.createService({
             service: "mail",
+            pin: selection.mail,
             config: {},
             endpoints: { http: { port: "auto" } },
           });

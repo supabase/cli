@@ -59,7 +59,6 @@ import {
 } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { INTERNAL_SCHEMAS } from "../../../command-internal/pg-dump.env.ts";
 import { dumpSchemaScript } from "../../../command-internal/pg-dump.scripts.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
@@ -91,6 +90,7 @@ import {
   MigrationSquashWriteError,
 } from "./squash.errors.ts";
 import { migrationSquash } from "./squash.handler.ts";
+import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 // Distinguishes squash's three pg_dump containers from the shadow's setup jobs by env:
 // only a pg_dump invocation carries PGDATABASE. Among dump calls, the first two sharing
@@ -345,17 +345,17 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   // Gives an explicit --project-ref flag precedence over the opts.linkedRef/VALID_REF
   // fallback, so a test can prove the flag drives the linked ref.
-  const projectRef = Layer.succeed(ProjectRefResolver, {
+  const projectRef = stubRemoteTarget({
     resolve: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
     resolveForLink: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(opts.linkedRef ?? VALID_REF)),
-    loadProjectRef: (flagValue: Option.Option<string>) =>
+    load: (flagValue: Option.Option<string>) =>
       Effect.succeed(
         Option.isSome(flagValue) && flagValue.value.length > 0
           ? flagValue.value
           : (opts.linkedRef ?? VALID_REF),
       ),
-    promptProjectRef: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
+    prompt: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
   });
 
   const debugLogs: Array<string> = [];

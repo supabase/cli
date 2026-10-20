@@ -23,7 +23,7 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import type { FeedbackDeleteArgs } from "./delete.command.ts";
 import { feedbackDeleteHandler } from "./delete.command.ts";
-import { INVALID_PROJECT_REF_MESSAGE } from "../../../config/project-ref.service.ts";
+import { INVALID_PROJECT_REF_MESSAGE } from "../../../config/remote-target.service.ts";
 import { FEEDBACK_INVALID_TOKEN_MESSAGE, FEEDBACK_NOT_FOUND_MESSAGE } from "./delete.errors.ts";
 import { feedbackDelete } from "./delete.handler.ts";
 
@@ -336,7 +336,7 @@ describe("feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("treats an empty --project-ref as unset, like ProjectRefResolver", () => {
+  it.effect("treats an empty --project-ref as unset, like RemoteTarget", () => {
     const { layer, client } = setupFeedbackDelete({
       yes: true,
       projectIdEnv: "envenvenvenvenvenvre",

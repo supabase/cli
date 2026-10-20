@@ -1,7 +1,7 @@
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -37,12 +37,12 @@ export const vanitySubdomainsCheckAvailability = Effect.fn("vanity-subdomains.ch
     const output = yield* Output;
     const outputFlag = yield* OutputFlag;
     const api = yield* CommandPlatformApi;
-    const resolver = yield* ProjectRefResolver;
+    const resolver = yield* RemoteTarget;
     const linkedProjectCache = yield* LinkedProjectCache;
     const telemetryState = yield* TelemetryState;
 
     yield* Effect.gen(function* () {
-      const ref = yield* resolver.resolve(flags.projectRef);
+      const { ref } = yield* resolver.resolve(flags.projectRef);
 
       yield* Effect.gen(function* () {
         // This check sits inside both `Effect.ensuring` wrappers so telemetry and the

@@ -2,10 +2,12 @@ import { PgClient } from "@effect/sql-pg";
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  Clock,
   ConfigProvider,
   Context,
   Deferred,
   Effect,
+  Exit,
   Fiber,
   FileSystem,
   Layer,
@@ -15,20 +17,26 @@ import {
   Redacted,
   Ref,
   Schema,
+  Scope,
   Stream,
 } from "effect";
-import { postgresVersion } from "../Artifacts.ts";
+import { HttpClient } from "effect/http";
 import { createHash } from "node:crypto";
+import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw release fixture server.
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
-import { makeDatabase, type BackendEndpoint, type DatabaseConfig } from "./Database.ts";
+import { databaseIdentity, recordDatabaseIdentity } from "../internal/database-reuse.ts";
+import { holdSchemaWriter, readSchemaWriters } from "../internal/schema-writers.ts";
+import { makeDatabase, type BackendEndpoint, type PinnedDatabaseConfig } from "./Database.ts";
 import { makeDockerDatabaseRoot, runEngine } from "../../tests/docker-fixture.ts";
 import { observeContainerStop, cleanStopEvents } from "../../tests/engine-events.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
+import { database15, orioledb, selection } from "../../tests/pins.ts";
+import { makeManualClock } from "../../tests/manual-clock.ts";
 
-const config: DatabaseConfig = {
-  version: "17",
+const config: PinnedDatabaseConfig = {
+  pin: selection.database,
   databasePassword: Redacted.make("supabase-test-password"),
   jwtSecret: Redacted.make("supabase-test-jwt-secret"),
   jwtExpiry: 3600,
@@ -62,9 +70,9 @@ const query = <Row extends object = object>(
 
 describe("database component", { timeout: 180_000 }, () => {
   for (const target of [
-    { runtime: "native", version: "17" },
-    { runtime: testEngine, version: "15" },
-    { runtime: testEngine, version: "17" },
+    { runtime: "native", version: "17", pin: selection.database },
+    { runtime: testEngine, version: "15", pin: database15 },
+    { runtime: testEngine, version: "17", pin: selection.database },
   ] as const)
     it.live(
       `preserves default encryption keys and Vault secrets after ${target.runtime} PostgreSQL ${target.version} recreation`,
@@ -85,9 +93,9 @@ describe("database component", { timeout: 180_000 }, () => {
               runtime: target.runtime,
               ...(target.runtime !== "native" ? { engineTarget } : {}),
             });
-            const defaults: DatabaseConfig = {
+            const defaults: PinnedDatabaseConfig = {
               healthTimeoutMs: 120_000,
-              version: target.version,
+              pin: target.pin,
               databasePassword: config.databasePassword,
               jwtSecret: config.jwtSecret,
               jwtExpiry: config.jwtExpiry,
@@ -170,7 +178,7 @@ describe("database component", { timeout: 180_000 }, () => {
         ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     );
 
-  it.live("refuses unmarked or stock data for OrioleDB before preparing an artifact", () =>
+  it.live("refuses initialized data with no or another identity before preparing an artifact", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -186,24 +194,98 @@ describe("database component", { timeout: 180_000 }, () => {
         const prepare = recipe.definition.prepare;
         if (prepare === undefined) return yield* Effect.die("database recipe has no prepare");
         const instanceRoot = path.join(root, "database");
-        const orioledb: DatabaseConfig = { ...config, version: "17.11.0.002-orioledb" };
+        const orioledbConfig: PinnedDatabaseConfig = { ...config, pin: orioledb };
         const recreate =
           "run `supabase stack destroy --stack-id database-line-test` to recreate the stack — this permanently deletes its local database data";
         yield* fs.makeDirectory(path.join(instanceRoot, "data"), { recursive: true });
         yield* fs.writeFileString(path.join(instanceRoot, "data", "PG_VERSION"), "17\n");
-        expect((yield* Effect.flip(prepare(orioledb))).message).toContain(
-          `Unmarked PostgreSQL data cannot be verified as OrioleDB data; ${recreate}`,
+        expect((yield* Effect.flip(prepare(orioledbConfig))).message).toContain(
+          `PostgreSQL data has no recorded identity, but OrioleDB build ${orioledb.upstreamVersion} was requested; ${recreate}`,
+        );
+
+        yield* recordDatabaseIdentity(
+          fs,
+          path,
+          instanceRoot,
+          databaseIdentity(selection.database.upstreamVersion),
+        );
+        yield* fs.writeFileString(
+          path.join(instanceRoot, ".supabase-database-ready.json"),
+          '{"runtime":"native","profile":"supabase"}',
+        );
+        expect((yield* Effect.flip(prepare(orioledbConfig))).message).toContain(
+          `PostgreSQL data was initialized by stock PostgreSQL build ${selection.database.upstreamVersion}, but OrioleDB build ${orioledb.upstreamVersion} was requested; keep this data by pinning \`[local.services.database] version = "${selection.database.upstreamVersion}"\` and removing any \`[db] orioledb_version\` in supabase/config.toml, or ${recreate}`,
+        );
+        expect(
+          (yield* Effect.flip(
+            prepare({
+              ...config,
+              pin: { ...selection.database, upstreamVersion: "17.99.0.001" },
+            }),
+          )).message,
+        ).toContain(
+          `stock PostgreSQL build 17.99.0.001 was requested; keep this data by pinning \`[local.services.database] version = "${selection.database.upstreamVersion}"\``,
         );
 
         yield* fs.writeFileString(
           path.join(instanceRoot, ".supabase-database-ready.json"),
-          '{"version":"17.11.0.002","runtime":"native","profile":"supabase"}',
+          '{"runtime":"docker","profile":"supabase"}',
         );
-        expect((yield* Effect.flip(prepare(orioledb))).message).toContain(
-          `Initialized database data is 17.11.0.002 on the native runtime, but 17.11.0.002-orioledb on the native runtime was requested; ${recreate}`,
+        expect((yield* Effect.flip(prepare(config))).message).toContain(
+          `Initialized database data is for the docker runtime, but the native runtime was requested; ${recreate}`,
         );
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
+  it.live("keeps a reset from forgetting the record of a writer that is still migrating", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-reset-" });
+      const recipe = yield* makeDatabase({
+        stackId: "database-reset-test",
+        instanceId: "database",
+        root,
+        cacheRoot: artifactCacheRoot,
+        runtime: "native",
+      });
+      const instanceRoot = path.join(root, "database");
+      const scope = yield* Scope.make();
+      const reset = recipe.resetData({ id: "database", config, scope });
+      yield* fs.makeDirectory(path.join(instanceRoot, "data"), { recursive: true });
+      yield* fs.writeFileString(path.join(instanceRoot, "data", "PG_VERSION"), "17\n");
+
+      const migrating = yield* Scope.make();
+      yield* holdSchemaWriter(fs, path, {
+        stackId: "database-reset-test",
+        instanceRoot,
+        service: "auth",
+        version: "v2.198.0",
+      }).pipe(Scope.provide(migrating));
+
+      const manual = yield* makeManualClock;
+      const blocked = yield* reset.pipe(
+        Effect.provideService(Clock.Clock, manual.clock),
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* manual.sleeping(50);
+      yield* manual.advance(61_000);
+      expect((yield* Fiber.join(blocked)).message).toContain("locked by another operation");
+      expect(yield* readSchemaWriters(fs, path, instanceRoot)).toEqual({ auth: "v2.198.0" });
+      expect(yield* fs.exists(path.join(instanceRoot, "data", "PG_VERSION"))).toBe(true);
+
+      yield* Scope.close(migrating, Exit.void);
+      yield* reset;
+      expect(yield* readSchemaWriters(fs, path, instanceRoot)).toEqual({});
+      expect(yield* fs.exists(path.join(instanceRoot, "data"))).toBe(false);
+      for (const name of ["schema-writers.lock", "schema-writer-auth.lock"])
+        expect(yield* fs.exists(path.join(instanceRoot, name)), name).toBe(true);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+    ),
   );
 
   it.live("resumes an interrupted stock native first start and refuses it for OrioleDB", () =>
@@ -231,17 +313,17 @@ describe("database component", { timeout: 180_000 }, () => {
         // A restart can pass prepare before the first start writes readiness; launch checks again.
         const prepared = yield* makeStandaloneService(
           { ...recipe.definition, prepare: () => Effect.void },
-          { id: "database", config: { ...config, version: "17.11.0.002-orioledb" } },
+          { id: "database", config: { ...config, pin: orioledb } },
         );
         expect(
           (yield* Effect.flip(prepared.start.pipe(Effect.andThen(prepared.ready)))).message,
-        ).toContain("17.11.0.002-orioledb on the native runtime was requested");
+        ).toContain(`OrioleDB build ${orioledb.upstreamVersion} was requested`);
         expect(yield* fs.readFileString(path.join(root, "database", "data", "PG_VERSION"))).toBe(
           "17\n",
         );
-        // The line is recorded before initdb writes any data, so an interrupted first start has it.
+        // The identity is recorded before initdb writes any data, so an interrupted first start has it.
         const recorded = yield* fs.stat(
-          path.join(root, "database", ".supabase-database-line.json"),
+          path.join(root, "database", ".supabase-database-identity.json"),
         );
         const initialized = yield* fs.stat(path.join(root, "database", "data", "PG_VERSION"));
         expect(Option.getOrThrow(recorded.mtime).getTime()).toBeLessThanOrEqual(
@@ -250,9 +332,9 @@ describe("database component", { timeout: 180_000 }, () => {
         // Initialized data without its readiness marker is what an interrupted first start leaves.
         yield* fs.remove(path.join(root, "database", ".supabase-database-ready.json"));
 
-        expect(
-          (yield* Effect.flip(prepare({ ...config, version: "17.11.0.002-orioledb" }))).message,
-        ).toContain("belongs to release line 17, but 17.11.0.002-orioledb was requested");
+        expect((yield* Effect.flip(prepare({ ...config, pin: orioledb }))).message).toContain(
+          `initialized by stock PostgreSQL build ${selection.database.upstreamVersion}, but OrioleDB build ${orioledb.upstreamVersion} was requested`,
+        );
         yield* service.start;
         yield* service.ready;
         expect(yield* fs.exists(path.join(root, "database", ".supabase-database-ready.json"))).toBe(
@@ -261,6 +343,128 @@ describe("database component", { timeout: 180_000 }, () => {
         yield* service.destroy;
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
+  it.live(
+    "restarts initialized data on a new release revision of its build and refuses another build",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const published = selection.database;
+          const releaseVersion = (revision: number) => `${published.upstreamVersion}-r${revision}`;
+          const nextRevision = published.revision + 1;
+          const upstreamReleases = "https://github.com/supabase/slim-services/releases/download";
+          const assetPath = (revision: number, target: string, extension: string) =>
+            `/postgres-${releaseVersion(revision)}/postgres-${releaseVersion(revision)}-${target}.${extension}`;
+          // The next revision is the published archive under a manifest that names the new revision.
+          const targets = ["darwin-arm64", "linux-amd64", "linux-arm64"] as const;
+          const manifestJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+          const client = HttpClient.followRedirects(yield* HttpClient.HttpClient);
+          const manifests = new Map<string, string>();
+          const manifestPins = new Map<string, string>();
+          for (const target of targets) {
+            const upstream = yield* client.get(
+              `${upstreamReleases}${assetPath(published.revision, target, "manifest.json")}`,
+            );
+            const manifest = yield* Schema.decodeEffect(manifestJson)(yield* upstream.text);
+            const text = yield* Schema.encodeEffect(manifestJson)({
+              ...manifest,
+              version: releaseVersion(nextRevision),
+            });
+            manifests.set(assetPath(nextRevision, target, "manifest.json"), text);
+            manifestPins.set(target, createHash("sha256").update(text).digest("hex"));
+          }
+          const releaseServer = createServer((request, response) => {
+            const pathname = request.url ?? "";
+            const manifest = manifests.get(pathname);
+            if (manifest !== undefined) return response.end(manifest);
+            response.writeHead(302, {
+              location: `${upstreamReleases}${pathname.replaceAll(releaseVersion(nextRevision), releaseVersion(published.revision))}`,
+            });
+            return response.end();
+          });
+          const releasesPort = yield* Effect.acquireRelease(
+            Effect.callback<number>((resume) => {
+              releaseServer.listen(0, "127.0.0.1", () => {
+                const address = releaseServer.address();
+                resume(
+                  Effect.succeed(
+                    typeof address === "object" && address !== null ? address.port : 0,
+                  ),
+                );
+              });
+            }),
+            () =>
+              Effect.callback<void>((resume) => {
+                releaseServer.close(() => resume(Effect.void));
+              }),
+          );
+          const pinFor = (target: (typeof targets)[number]) => ({
+            ...published.natives[target],
+            manifest: manifestPins.get(target) ?? "",
+          });
+          const nextPin = {
+            ...published,
+            revision: nextRevision,
+            natives: {
+              "darwin-arm64": pinFor("darwin-arm64"),
+              "linux-amd64": pinFor("linux-amd64"),
+              "linux-arm64": pinFor("linux-arm64"),
+            },
+          };
+
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-revision-" });
+          const recipe = yield* makeDatabase({
+            stackId: "database-revision-test",
+            instanceId: "database",
+            root,
+            cacheRoot: artifactCacheRoot,
+            runtime: "native",
+          });
+          const withReleases = Effect.provide(
+            ConfigProvider.layerAdd(
+              ConfigProvider.fromEnvRecord({
+                SUPABASE_INTERNAL_SLIM_RELEASES_URL: `http://127.0.0.1:${releasesPort}`,
+              }),
+              { asPrimary: true },
+            ),
+          );
+          yield* Effect.gen(function* () {
+            const service = yield* makeStandaloneService(recipe.definition, {
+              id: "database",
+              config: { ...config, healthTimeoutMs: 120_000 },
+            });
+            yield* service.start;
+            yield* service.ready;
+            yield* query(
+              yield* recipe.endpoint,
+              config.databasePassword,
+              "CREATE TABLE revision_rows AS SELECT 'kept' AS value",
+            );
+            yield* service.stop;
+
+            const restartConfig = { ...config, healthTimeoutMs: 120_000 };
+            const otherBuild = { ...published, upstreamVersion: "17.99.0.001" };
+            expect(
+              (yield* service.restart({ ...restartConfig, pin: otherBuild }).pipe(Effect.flip))
+                .message,
+            ).toContain("stock PostgreSQL build 17.99.0.001 was requested");
+
+            yield* service.restart({ ...restartConfig, pin: nextPin });
+            yield* service.ready;
+            expect(
+              yield* query(
+                yield* recipe.endpoint,
+                config.databasePassword,
+                "SELECT value FROM revision_rows",
+              ),
+            ).toEqual([{ value: "kept" }]);
+            yield* service.destroy;
+          }).pipe(withReleases);
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    { timeout: 300_000 },
   );
 
   it.live("requires passwords from non-superusers on the native socket", () =>
@@ -468,7 +672,10 @@ describe("database component", { timeout: 180_000 }, () => {
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );
 
-  for (const version of ["15", "17"])
+  for (const [version, pin] of [
+    ["15", database15],
+    ["17", selection.database],
+  ] as const)
     it.live(`runs native PostgreSQL ${version} cron jobs in supautils-guarded workers`, () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -481,7 +688,7 @@ describe("database component", { timeout: 180_000 }, () => {
             cacheRoot: artifactCacheRoot,
             runtime: "native",
           });
-          const databaseConfig = { ...config, version };
+          const databaseConfig = { ...config, pin };
           const service = yield* makeStandaloneService(database.definition, {
             id: "database:cron",
             config: databaseConfig,
@@ -654,7 +861,10 @@ describe("database component", { timeout: 180_000 }, () => {
             cacheRoot,
             runtime: "native",
           });
-          const loggedConfig: DatabaseConfig = { ...config, settings: { log_statement: "all" } };
+          const loggedConfig: PinnedDatabaseConfig = {
+            ...config,
+            settings: { log_statement: "all" },
+          };
           const service = yield* makeStandaloneService(first.definition, {
             id: "database:first",
             config: loggedConfig,
@@ -718,18 +928,18 @@ describe("database component", { timeout: 180_000 }, () => {
             .restart({ ...config, settings: { listen_addresses: "*" } })
             .pipe(Effect.flip);
           expect((yield* service.get).lifecycle).toBe("running");
-          yield* service.restart({ ...config, version: "unsupported" }).pipe(Effect.flip);
-          expect((yield* service.get).lifecycle).toBe("running");
-          const mismatch = yield* service.restart({ ...config, version: "15" }).pipe(Effect.flip);
+          const mismatch = yield* service.restart({ ...config, pin: database15 }).pipe(Effect.flip);
           expect(mismatch.message).toContain(
-            `Initialized database data is ${postgresVersion("17")} on the native runtime, but ${postgresVersion("15")} on the native runtime was requested`,
+            `initialized by stock PostgreSQL build ${selection.database.upstreamVersion}, but stock PostgreSQL build ${database15.upstreamVersion} was requested`,
           );
           expect((yield* service.get).lifecycle).toBe("running");
           yield* service.stop;
           yield* fs.remove(path.join(root, "first", ".supabase-database-ready.json"));
-          const incomplete = yield* service.restart({ ...config, version: "15" }).pipe(Effect.flip);
+          const incomplete = yield* service
+            .restart({ ...config, pin: database15 })
+            .pipe(Effect.flip);
           expect(incomplete.message).toContain(
-            "PostgreSQL data from an unfinished first start is major 17, but major 15 was requested",
+            `initialized by stock PostgreSQL build ${selection.database.upstreamVersion}, but stock PostgreSQL build ${database15.upstreamVersion} was requested`,
           );
 
           const reopened = yield* makeDatabase({
@@ -802,11 +1012,14 @@ describe("database component", { timeout: 180_000 }, () => {
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );
 
-  for (const version of ["15", "17"])
+  for (const [version, pin] of [
+    ["15", database15],
+    ["17", selection.database],
+  ] as const)
     it.live(`PostgreSQL ${version} persists container data and reconciles credentials`, () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const databaseConfig: DatabaseConfig = { ...config, version };
+          const databaseConfig: PinnedDatabaseConfig = { ...config, pin };
           const root = yield* makeDockerDatabaseRoot(
             "stack-database-container-",
             "stack-integration-container",

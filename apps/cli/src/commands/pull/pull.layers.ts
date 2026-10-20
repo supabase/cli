@@ -4,7 +4,7 @@ import type * as HttpClient from "effect/http/HttpClient";
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../config/remote-target.service.ts";
 import { DbConfigResolver } from "../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../command-internal/db-connection.service.ts";
 import { DebugLogger } from "../../command-internal/debug-logger.service.ts";
@@ -52,7 +52,7 @@ type PullServices =
   | HttpClient.HttpClient
   | CommandCredentials
   | CommandSettings
-  | ProjectRefResolver
+  | RemoteTarget
   | LinkedProjectCache
   | TelemetryState
   | CommandRuntime

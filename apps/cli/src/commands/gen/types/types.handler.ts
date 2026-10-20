@@ -13,9 +13,10 @@ import {
 } from "../../../shared/cli/cobra-flag-groups.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import {
-  ProjectRefResolver,
+  RemoteTarget,
   PROJECT_NOT_LINKED_MESSAGE,
-} from "../../../config/project-ref.service.ts";
+  type ResolvedRemoteTarget,
+} from "../../../config/remote-target.service.ts";
 import { spawnContainerCli } from "../../../command-internal/container-cli.ts";
 import { isIPv6ConnectivityErrorCause } from "../../../command-internal/connect-errors.ts";
 import { isDockerDaemonUnreachable } from "../../../command-internal/docker-suggest.ts";
@@ -33,7 +34,7 @@ import {
 import { getHostname } from "../../../command-internal/hostname.ts";
 import type { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
-import { tempPaths } from "../../../command-internal/temp-paths.ts";
+import { LegacyProjectState } from "../../../command-internal/legacy-project-state.service.ts";
 import {
   missingProjectConfigMessageEffect,
   relativeConfigPath,
@@ -229,12 +230,13 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   const telemetryState = yield* TelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const legacyState = yield* LegacyProjectState;
   const stdio = yield* Stdio.Stdio;
   const dnsResolver = yield* DnsResolverFlag;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const rawArgs = yield* stdio.args;
   const platformApi = yield* CommandPlatformApiFactory;
-  const projectRef = yield* ProjectRefResolver;
+  const remoteTarget = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const dbConfig = yield* DbConfigResolver;
   const generator = yield* GenTypesGenerator;
@@ -384,13 +386,14 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   });
 
   const runProjectTypes = (
-    projectRef: string,
+    target: ResolvedRemoteTarget,
     includedSchemas: ReadonlyArray<string>,
     // True for an explicit `--project-id <ref>` (an ad-hoc remote project that may
     // differ from the current workdir); false for `--linked` / the linked fallback.
     adHocProjectRef: boolean,
   ) =>
     Effect.gen(function* () {
+      const projectRef = target.ref;
       yield* Effect.annotateCurrentSpan("project.ref", projectRef);
       const api = yield* platformApi.make;
 
@@ -409,6 +412,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
           connType: "linked",
           dnsResolver,
           linkedProjectRef: Option.some(projectRef),
+          target,
           adHocProjectRef,
         };
         const resolved = yield* dbConfig.resolve(resolveFlags);
@@ -437,7 +441,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         .pipe(Effect.catch(mapProjectTypesError));
 
       yield* output.raw(response.types);
-    }).pipe(Effect.ensuring(linkedProjectCache.cache(projectRef)));
+    }).pipe(Effect.ensuring(linkedProjectCache.cache(target.ref)));
 
   const runPreviewBranchTypes = (branchRef: string, includedSchemas: ReadonlyArray<string>) =>
     Effect.gen(function* () {
@@ -617,13 +621,13 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         path.basename(cliSettings.workdir),
       );
 
-      const paths = tempPaths(path, cliSettings.workdir);
       // Only forces v9 compat from the rest-version file's image tag when the database's
-      // major version is > 14, so older databases aren't forced into v9 mode.
+      // major version is > 14, so older databases aren't forced into v9 mode. A stack runs
+      // the PostgREST release it locked, so it has no pin file to consult.
       const restVersion =
-        config.majorVersion > 14
-          ? (yield* fs
-              .readFileString(paths.restVersion)
+        backend.kind === "legacy" && config.majorVersion > 14
+          ? (yield* legacyState
+              .read(cliSettings.workdir, "restVersion")
               .pipe(Effect.orElseSucceed(() => ""))).trim()
           : "";
       const forcedV9 = restVersion.length > 0 && restVersion.includes("v9");
@@ -696,10 +700,10 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
     if (flags.linked) {
       yield* Effect.annotateCurrentSpan("typegen.source", "linked");
-      const ref = yield* projectRef.resolve(Option.none());
-      const loaded = schemas.length > 0 ? null : yield* loadConfig(ref);
+      const target = yield* remoteTarget.resolve(Option.none());
+      const loaded = schemas.length > 0 ? null : yield* loadConfig(target.ref);
       yield* runProjectTypes(
-        ref,
+        target,
         schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),
         false,
       );
@@ -708,10 +712,10 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
     if (Option.isSome(flags.projectId)) {
       yield* Effect.annotateCurrentSpan("typegen.source", "project_id");
-      const ref = yield* projectRef.resolve(flags.projectId);
-      const loaded = schemas.length > 0 ? null : yield* loadConfig(ref);
+      const target = yield* remoteTarget.resolve(flags.projectId);
+      const loaded = schemas.length > 0 ? null : yield* loadConfig(target.ref);
       yield* runProjectTypes(
-        ref,
+        target,
         schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),
         true,
       );
@@ -719,7 +723,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     }
 
     yield* Effect.annotateCurrentSpan("typegen.source", "linked");
-    const resolvedRef = yield* projectRef.resolve(Option.none()).pipe(
+    const resolvedTarget = yield* remoteTarget.resolve(Option.none()).pipe(
       Effect.catchTag("ProjectRefNotLinkedError", (cause) =>
         Effect.fail(
           cause.message === PROJECT_NOT_LINKED_MESSAGE
@@ -730,9 +734,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         ),
       ),
     );
-    const loaded = schemas.length > 0 ? null : yield* loadConfig(resolvedRef);
+    const loaded = schemas.length > 0 ? null : yield* loadConfig(resolvedTarget.ref);
     yield* runProjectTypes(
-      resolvedRef,
+      resolvedTarget,
       schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),
       false,
     );

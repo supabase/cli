@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted } from "effect";
 import { create, open } from "./effect.ts";
 import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
+import { selection } from "../tests/pins.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 
@@ -21,8 +22,8 @@ it.live("persists effective credentials across service creation, reopen, and res
       yield* Effect.addFinalizer(() => stack.destroy.pipe(Effect.orDie));
       const database = yield* stack.services.create({
         service: "database",
+        pin: selection.database,
         config: {
-          version: "17",
           jwtSecret: Redacted.make("credentials-jwt-override"),
           rootKey: Redacted.make("b".repeat(64)),
           jwtExpiry: 3600,
@@ -61,13 +62,14 @@ it.live("resolves composition credentials before creating services", () =>
       const created = yield* stack.composition.supabase([
         {
           service: "auth",
+          pin: selection.auth,
           config: {},
           endpoints: { http: { port: "auto" } },
         },
         {
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17",
             jwtSecret: Redacted.make("composition-jwt-override"),
             rootKey: Redacted.make("c".repeat(64)),
             jwtExpiry: 3600,

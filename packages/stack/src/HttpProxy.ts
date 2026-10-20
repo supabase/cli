@@ -613,7 +613,9 @@ export const makeHttpProxy = (options: {
     const runRequest = yield* FiberSet.makeRuntime();
     const sockets = new Set<Socket>();
     const onAccess = options.onAccess;
-    const server = createServer((request, response) => {
+    /* Advertising 5 s lets clients close idle sockets first; holding them 75 s, like Kong, keeps
+       a client that stalls past its own timer from reusing a closed one. */
+    const server = createServer({ keepAliveTimeoutBuffer: 70_000 }, (request, response) => {
       runRequest(
         Effect.gen(function* () {
           const sent: Sent = { bytes: 0, clientLeft: false };

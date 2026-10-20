@@ -7,7 +7,8 @@ import { CommandSettings } from "../config/command-settings.service.ts";
 import { readDbToml } from "./db-config.toml-read.ts";
 import { getRegistryImageUrl } from "./docker-registry.ts";
 import { DockerRun } from "./docker-run.service.ts";
-import { resolveEdgeRuntimeImage } from "./edge-runtime-image.ts";
+import { resolveEdgeRuntimeImage, resolveLockedEdgeRuntimeImage } from "./edge-runtime-image.ts";
+import { usesStackState } from "./stack-backend.ts";
 import { EdgeRuntimeScriptError } from "./edge-runtime-script.errors.ts";
 import {
   EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL,
@@ -82,7 +83,15 @@ export const edgeRuntimeScriptLayer = Layer.effect(
               Effect.mapError((error) => new EdgeRuntimeScriptError({ message: error.message })),
             )).denoVersion;
           const registryImage = yield* getRegistryImageUrl(
-            yield* resolveEdgeRuntimeImage(fs, path, workdir, denoVersion),
+            (yield* usesStackState)
+              ? yield* resolveLockedEdgeRuntimeImage(workdir, denoVersion).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fs),
+                  Effect.provideService(Path.Path, path),
+                  Effect.mapError(
+                    (error) => new EdgeRuntimeScriptError({ message: error.message }),
+                  ),
+                )
+              : yield* resolveEdgeRuntimeImage(fs, path, workdir, denoVersion),
             opts.projectEnvValues,
           ).pipe(
             Effect.mapError(

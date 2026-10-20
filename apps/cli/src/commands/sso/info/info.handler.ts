@@ -1,6 +1,6 @@
 import { Effect, Option } from "effect";
 
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
@@ -17,12 +17,12 @@ import type { SsoInfoFlags } from "./info.command.ts";
 export const ssoInfo = Effect.fn("sso.info")(function* (flags: SsoInfoFlags) {
   const output = yield* Output;
   const goOutputFlag = yield* OutputFlag;
-  const resolver = yield* ProjectRefResolver;
+  const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const { ref } = yield* resolver.resolve(flags.projectRef);
 
     yield* Effect.gen(function* () {
       const payload = buildInfoPayload(ref);

@@ -26,6 +26,7 @@ import type { ServiceCreationInput } from "./services/Catalog.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { ownerFor } from "../tests/owner-rpc.ts";
 import { engineTarget, testEngine } from "../tests/engine-target.ts";
+import { selection } from "../tests/pins.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 
@@ -69,8 +70,8 @@ const eventsTable = (internalDatabaseUrl: string, source: string) =>
 
 const database: ServiceCreationInput = {
   service: "database",
+  pin: selection.database,
   config: {
-    version: "17",
     databasePassword: Redacted.make("owner-logs-password"),
     jwtSecret: Redacted.make("owner-logs-jwt-secret-with-at-least-32-chars"),
     jwtExpiry: 3600,
@@ -79,6 +80,7 @@ const database: ServiceCreationInput = {
 };
 const analytics: ServiceCreationInput = {
   service: "analytics",
+  pin: selection.analytics,
   config: { backend: "postgres", apiKey: "owner-logs-key" },
   endpoints: { http: { port: "auto" } },
 };
@@ -181,7 +183,12 @@ it.live(
             "owner-logs",
             [
               database,
-              { service: "rest", config: {}, endpoints: { http: { port: "auto" } } },
+              {
+                service: "rest",
+                pin: selection.rest,
+                config: {},
+                endpoints: { http: { port: "auto" } },
+              },
               analytics,
             ],
             3_000,

@@ -21,6 +21,7 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import { projectStateModeLayer } from "../../../command-internal/project-state-mode.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import {
   type ApiHandler,
@@ -1487,6 +1488,59 @@ describe("functions download", () => {
             path.join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
           ),
         ).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "unbundles from a per-run directory under SUPABASE_HOME/tmp in stack state mode and removes it afterwards",
+    () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi();
+      const proxy = mockProxy();
+      const child = mockChildProcessSpawner({ exitCode: 0 });
+      const supabaseHome = `${tempRoot.current}/home`;
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current, supabaseHome }),
+        }),
+        projectStateModeLayer("stack"),
+        proxy.layer,
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "functions",
+            "download",
+            "hello-world",
+            "--use-docker",
+            "--project-ref",
+            PROJECT_ID,
+          ]),
+        }),
+      );
+      const eszipBinds = (args: ReadonlyArray<string> | undefined) =>
+        (args ?? []).filter((arg) => arg.endsWith(":/root/eszips/output_hello-world.eszip:ro"));
+
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* functionsDownload({ ...baseFlags, useDocker: true });
+        yield* functionsDownload({ ...baseFlags, useDocker: true });
+
+        const hostEszipDirs = child.spawned
+          .filter((spawned) => spawned.args[0] === "run")
+          .flatMap((spawned) => eszipBinds(spawned.args))
+          .map((bind) => path.dirname(bind.slice(0, bind.indexOf(":/root/eszips/"))));
+        expect(hostEszipDirs).toHaveLength(2);
+        expect(hostEszipDirs[0]).not.toBe(hostEszipDirs[1]);
+        for (const dir of hostEszipDirs) {
+          expect(path.dirname(dir)).toBe(path.join(supabaseHome, "tmp"));
+          expect(path.basename(dir)).toMatch(/^\.supabase-eszip-hello-world-/);
+          expect(yield* fs.exists(dir)).toBe(false);
+        }
+        expect(yield* fs.exists(path.join(tempRoot.current, "supabase", ".temp"))).toBe(false);
       }).pipe(Effect.provide(layer));
     },
   );

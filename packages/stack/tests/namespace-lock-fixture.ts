@@ -3,6 +3,7 @@ import { Console, Effect } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { fileURLToPath } from "node:url";
 import * as StackNamespace from "../src/StackNamespace.ts";
+import { selection } from "./pins.ts";
 
 const [mode, root, id] = process.argv.slice(2);
 if (root === undefined) throw new Error("Registry root missing");
@@ -27,7 +28,10 @@ const program = Effect.scoped(
               return yield* Effect.die("Missing writer state");
             yield* state.save({
               ...saved,
-              instances: [...saved.instances, { id, creation: { service: "mail", config: {} } }],
+              instances: [
+                ...saved.instances,
+                { id, creation: { service: "mail", pin: selection.mail, config: {} } },
+              ],
             });
             return;
           }

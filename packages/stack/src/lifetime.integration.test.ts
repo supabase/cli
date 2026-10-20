@@ -14,6 +14,7 @@ import {
 } from "../tests/owner.ts";
 import { watchEntry } from "../tests/watch-entry.ts";
 import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
+import { selection } from "../tests/pins.ts";
 
 class LifetimeTestError extends Data.TaggedError("LifetimeTestError")<{
   readonly message: string;
@@ -231,6 +232,7 @@ it.live.skipIf(process.platform === "win32")(
       const client = yield* ownerClient(access);
       const mail = yield* client.createService({
         service: "mail",
+        pin: selection.mail,
         config: {},
         endpoints: { http: { port: "auto" } },
       });
@@ -282,6 +284,7 @@ it.live.skipIf(process.platform === "win32")(
       const reclaimedClient = yield* ownerClient(reclaimedAccess);
       const reclaimedMail = yield* reclaimedClient.createService({
         service: "mail",
+        pin: selection.mail,
         config: {},
         endpoints: { http: { port } },
       });

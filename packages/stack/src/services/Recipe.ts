@@ -1,6 +1,6 @@
 import { Data, Schema } from "effect";
 import type { Effect, PubSub, Ref, Scope } from "effect";
-import type { ServiceKind } from "../Artifacts.ts";
+import { ArtifactPin, type ServiceKind } from "../Artifacts.ts";
 import type { PortError } from "../Ports.ts";
 import type { LaunchOutput } from "../runtime/Session.ts";
 import type { ServiceDefinition } from "../Service.ts";
@@ -37,7 +37,7 @@ export const serviceCreation = <
 ) =>
   Schema.Struct({
     service: Schema.Literal(service),
-    version: Schema.optionalKey(Schema.String),
+    pin: ArtifactPin,
     config,
     endpoints: Schema.optionalKey(endpoints),
   });
@@ -76,7 +76,7 @@ export interface CatalogRecipe<C> {
 
 export interface RecipeCreation<K extends ServiceKind, C> {
   readonly service: K;
-  readonly version?: string;
+  readonly pin: ArtifactPin;
   readonly config: C;
   readonly endpoints?: unknown;
 }
