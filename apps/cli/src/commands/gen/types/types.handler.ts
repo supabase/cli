@@ -672,15 +672,11 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
           user: "postgres",
           password: config.password,
           database: "postgres",
-          ...(linkedCheckout
-            ? {
-                suggestionContext: {
-                  dashboardUrl: cliSettings.dashboardUrl,
-                  profileName: cliSettings.profile,
-                  linkedCheckout,
-                },
-              }
-            : {}),
+          suggestionContext: {
+            dashboardUrl: cliSettings.dashboardUrl,
+            profileName: cliSettings.profile,
+            linkedCheckout,
+          },
         },
         isLocal: true,
         includedSchemas,

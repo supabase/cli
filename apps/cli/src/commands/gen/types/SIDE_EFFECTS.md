@@ -162,8 +162,9 @@ Not applicable.
   reports it as `suggestion`:
   `{"code":"GenTypesLocalDbNotRunningError","message":"supabase start is not running.","suggestion":"To use the linked project instead, pass --remote."}`.
   A container that exists but refuses the connection (`DbConnectError`) carries
-  `Make sure Docker is running, then run: supabase start` and, on a second line, the same pointer.
-  An unlinked checkout keeps the error without one.
+  `Make sure Docker is running, then run: supabase start` in any checkout and, in a linked one, the
+  same pointer on a second line. An unlinked checkout keeps the other two errors without a
+  suggestion.
 - **`--project-id`.** A hidden alias of the deprecated `--project-ref`; passing both fails with
   `--project-id is a deprecated alias of --project-ref; pass only one of them.`
 - **Remote project flag groups.** `--remote` (bare, or with a ref or branch), `--linked`,
