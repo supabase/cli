@@ -172,8 +172,9 @@ hosted.
   compiled binary also loads `.env`, `.env.local` and `.env.$NODE_ENV[.local]` from the working
   directory into the environment, so a `SUPABASE_YES` that any of those files also defines with the
   same value is treated as the file's; a shell export of that value then needs `--yes` as well. The
-  last `--yes` on the command line wins and beats the environment: `--yes=false --yes` confirms and
-  `--yes --yes=false` declines.
+  last `--yes` on the command line wins, and `SUPABASE_YES` is read only when `--yes` never appears:
+  `--yes=false --yes` confirms and `--yes --yes=false` declines. A bare `--yes` followed by `false`,
+  `no`, `off`, `0` or `n` reads as false, as the flag parser does.
 - **No stdin.** The CLI never reads stdin for consent. A piped `y` does nothing.
 - **Interactive only.** A prompt appears only for text output on an interactive stdout with a TTY
   stdin. JSON, stream-json, `-o json|yaml|toml|env`, agents (`--agent`, or an AI tool detected from
@@ -192,8 +193,9 @@ hosted.
   declining the `db pull` or `pull` history update aborts before any file is written. A temporary
   login role may be created before consent. Removing a network ban may not: it needs `--yes` and the
   `HostedMutationConsent` token only the consent module constructs, and without `--yes` the command
-  fails with `LinkedDbNetworkBannedError` pointing at `supabase network-bans remove`. This applies
-  to reads too.
+  fails with `LinkedDbNetworkBannedError`. Its suggestion is to re-run with `--yes` or to run
+  `supabase network-bans remove --remote=<ref>` with the ref of the project that failed, which need
+  not be the linked one. This applies to reads too.
 - **Reads never prompt.** `db query --read-only` is a read: it sends `read_only: true` to the
   Management API for a linked target, and runs the statement in a read-only transaction for a local
   or database URL target. It skips consent.

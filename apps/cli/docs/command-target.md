@@ -95,12 +95,12 @@ A warning never repeats an operand, a flag value or a database URL, because a CI
 
 Every persistent mutation of a hosted resource asks for consent first, including a write through a non-local `--remote=<url>`. A loopback host on the local or shadow database ports, or the local stack's endpoint, counts as local.
 
-- **Approval.** `--yes`, or a `SUPABASE_YES` in the shell environment. A `SUPABASE_YES` in a project `.env*` file does not count. The last `--yes` on the command line wins and beats the environment, so `--yes=false --yes` confirms and `--yes --yes=false` declines. Stdin is never read, so a piped `y` does nothing. The confirmation line names which one approved: `Confirmed by --yes: <action> on <target>`.
+- **Approval.** `--yes`, or a `SUPABASE_YES` in the shell environment. A `SUPABASE_YES` in a project `.env*` file does not count. The last `--yes` on the command line wins, and `SUPABASE_YES` is read only when `--yes` never appears, so `--yes=false --yes` confirms and `--yes --yes=false` declines. A bare `--yes` followed by `false`, `no`, `off`, `0` or `n` reads as false, as the flag parser does. Stdin is never read, so a piped `y` does nothing. The confirmation line names which one approved: `Confirmed by --yes: <action> on <target>`.
 - **Prompt.** Only text output on an interactive stdout with a TTY stdin, with no agent driving, is asked. The question starts on the command's consent default.
 - **Refusal.** JSON, stream-json, `-o json|yaml|toml|env`, agent and non-TTY runs fail with `HostedMutationConsentRequiredError` unless `--yes` is set. The error names the action and target, says why the run can't ask and tells an agent to ask the user before passing `--yes`. Nothing is changed.
 - **Decline.** A declined prompt fails with `HostedMutationDeclinedError` (`context canceled`), exit 1, and nothing is changed.
 - **One question.** A command asks once, after the plan is known and before the first persistent effect, and lists everything it will do.
-- **Network bans.** Removing a network ban to connect needs `--yes` or a shell `SUPABASE_YES`; without one, the command fails with `LinkedDbNetworkBannedError` and points at `supabase network-bans remove`. This applies to reads too.
+- **Network bans.** Removing a network ban to connect needs `--yes` or a shell `SUPABASE_YES`; without one, the command fails with `LinkedDbNetworkBannedError`. Its suggestion is `Re-run with --yes to remove them, or run supabase network-bans remove --remote=<ref> --db-unban-ip <addrs> --experimental --yes.`, and `<ref>` is always the project whose bans blocked the connection, which after `db pull --remote=<other-ref>` is not the linked project. This applies to reads too.
 - **Reads never prompt.** A command marked `no consent` never asks for hosted-mutation consent, on any target, and `--yes` and `SUPABASE_YES` have no effect on it. `db query --read-only` is a read and skips consent too.
 
 ## Banner

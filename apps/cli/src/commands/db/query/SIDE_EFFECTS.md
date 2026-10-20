@@ -107,8 +107,9 @@ from the environment. Agent mode defaults the format to JSON (table for humans).
   `BEGIN ATOMIC` function body (the splitter reads such a body as one statement) fails with
   `DbQueryReadOnlyStatementError`, naming only the leading keyword or a fixed label. Keywords
   inside strings, dollar quotes and comments, `BEGIN ATOMIC` inside a string literal, quoted
-  identifier, dollar quote or comment (`select 'begin atomic'`), and reads such as
-  `SELECT set_config(...)`, pass the checks. A remote project or branch sends `"read_only": true` in the Management API request, and the
+  identifier, dollar quote or comment (`select 'begin atomic' as s`, `select 1 /* begin atomic */`,
+  `select 1 as "begin atomic"`), and reads such as `SELECT set_config(...)`, pass the checks. A
+  remote project or branch sends `"read_only": true` in the Management API request, and the
   API enforces it. The local stack and a `--remote=<url>` database run the statement inside
   `BEGIN READ ONLY`, `SET LOCAL lock_timeout = '5s'`, the statement, then `ROLLBACK`, so Postgres
   rejects writes and the read cannot queue behind heavy locks (there is no `statement_timeout`).

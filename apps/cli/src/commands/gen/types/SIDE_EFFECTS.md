@@ -155,10 +155,13 @@ Not applicable.
   (`gen types typescript --remote`).
 - **Stopped local stack in a linked checkout.** A checkout is linked when `SUPABASE_PROJECT_ID` is
   set or `supabase/.temp/project-ref` names a project. On the legacy Docker Compose stack, a missing
-  database container (`GenTypesLocalDbNotRunningError`) or a failed `container inspect`
-  (`GenTypesLocalDbInspectError`) then carries the suggestion
-  `To use the linked project instead, pass --remote.`, which the JSON error envelope reports as
-  `suggestion`. An unlinked checkout keeps the error without one.
+  database container (`GenTypesLocalDbNotRunningError`, `supabase start is not running.`) or a
+  failed `container inspect` (`GenTypesLocalDbInspectError`) then carries the suggestion
+  `To use the linked project instead, pass --remote.`. Text mode prints it in place of
+  `Try rerunning the command with --debug to troubleshoot the error.`, and the JSON error envelope
+  reports it as `suggestion`:
+  `{"code":"GenTypesLocalDbNotRunningError","message":"supabase start is not running.","suggestion":"To use the linked project instead, pass --remote."}`.
+  An unlinked checkout keeps the error without one.
 - **`--project-id`.** A hidden alias of the deprecated `--project-ref`; passing both fails with
   `--project-id is a deprecated alias of --project-ref; pass only one of them.`
 - **Remote project flag groups.** `--remote` (bare, or with a ref or branch), `--linked`,
