@@ -97,6 +97,16 @@ describe("targetFlags", () => {
     }),
   );
 
+  it.effect.each([{ args: ["--remote", "y"] }, { args: ["--remote=y"] }, { args: ["--remote=Y"] }])(
+    "reads $args as the linked project, not a branch named y",
+    ({ args }) =>
+      Effect.gen(function* () {
+        expect(yield* parseWith(withDbUrl, args)).toMatchObject({
+          remote: Option.some({ _tag: "Linked" }),
+        });
+      }),
+  );
+
   it.effect("keeps the deprecated aliases parseable", () =>
     Effect.gen(function* () {
       expect(yield* parseWith(withDbUrl, ["--local"])).toMatchObject({ local: true });
@@ -122,6 +132,16 @@ describe("targetFlags", () => {
         "--remote doesn't take false. Leave it out to target the local database.",
       );
     }),
+  );
+
+  it.effect.each([{ args: ["--remote", "n"] }, { args: ["--remote=n"] }])(
+    "rejects $args as the off switch, not a branch named n",
+    ({ args }) =>
+      Effect.gen(function* () {
+        expect(yield* rejectedMessage(withDbUrl, args)).toBe(
+          "--remote doesn't take false. Leave it out to target the local database.",
+        );
+      }),
   );
 
   it.effect("rejects an empty value and offers every form the command takes", () =>

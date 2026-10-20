@@ -108,7 +108,7 @@ describe("deprecationMessages", () => {
     expect(message).not.toContain("hunter2");
   });
 
-  it.each(["true", "No", "OFF", "1"])(
+  it.each(["true", "No", "OFF", "1", "y", "N"])(
     "says a branch named %s is reached by its ref or UUID",
     (name) => {
       expect(

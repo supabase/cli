@@ -124,7 +124,7 @@ onto `--remote`:
 - `db diff` with `--remote` or an alias together with `--from` or `--to` is an error. In `--from`
   and `--to`, `remote` always means the linked project.
 - `--no-remote` and `--remote=false` fail and tell the user to leave `--remote` out.
-  `--remote yes`, `--remote 1`, `--remote true` and `--remote on` mean bare `--remote`. An empty
+  `--remote yes`, `--remote y`, `--remote 1`, `--remote true` and `--remote on` mean bare `--remote`. An empty
   `--remote=` value is rejected, and the message names the values that command accepts. Neither
   error prints the command's help.
 - A conflict error lists only the selector flags the command has and suggests the `--remote` form.

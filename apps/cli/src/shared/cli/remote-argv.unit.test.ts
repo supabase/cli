@@ -82,6 +82,12 @@ describe("joinRemoteOperands", () => {
       expected: ["db", "push", "--remote", "false"],
     },
     {
+      name: "joins y as a linked boolean literal even where the command takes an operand",
+      leaf: oneOperand,
+      args: ["storage", "ls", "--remote", "y"],
+      expected: ["storage", "ls", "--remote=y"],
+    },
+    {
       name: "keeps a branch-shaped word as the operand when the command takes one",
       leaf: oneOperand,
       args: ["storage", "ls", "--remote", "feature-x"],
@@ -278,6 +284,18 @@ describe("hasConflictingRemotes", () => {
       expected: false,
     },
     {
+      name: "reads y as the bare --remote",
+      leaf: variadic,
+      args: ["functions", "deploy", "--remote=y", "--remote"],
+      expected: false,
+    },
+    {
+      name: "ignores n, an off switch its parser reports",
+      leaf: noOperands,
+      args: ["db", "push", "--remote=n", "--remote=feature-x"],
+      expected: false,
+    },
+    {
       name: "reads a space-form word joined to --remote against a bare --remote",
       leaf: noOperands,
       args: ["db", "push", "--remote", "feature-x", "--remote"],
@@ -325,6 +343,11 @@ describe("prepareCliArgs argv", () => {
       name: "joins a branch for db push",
       args: ["db", "push", "--remote", "feature-x"],
       expected: ["db", "push", "--remote=feature-x"],
+    },
+    {
+      name: "joins y after --remote for db push as the linked project",
+      args: ["db", "push", "--remote", "y"],
+      expected: ["db", "push", "--remote=y"],
     },
     {
       name: "joins a branch after global flags and their values",

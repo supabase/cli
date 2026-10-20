@@ -34,6 +34,14 @@ describe("parseRemoteValue", () => {
   ])("rejects $raw as $expected", ({ raw, expected }) => {
     expect(parseRemoteValue(raw)).toEqual(Result.fail(expected));
   });
+
+  it.each(["y", "Y"])("reads %s as the linked project, not a branch", (raw) => {
+    expect(parseRemoteValue(raw)).toEqual(Result.succeed({ _tag: "Linked" }));
+  });
+
+  it.each(["n", "N"])("rejects %s as an off switch, not a branch", (raw) => {
+    expect(parseRemoteValue(raw)).toEqual(Result.fail({ _tag: "Off" }));
+  });
 });
 
 describe("parseNamedRemote", () => {
