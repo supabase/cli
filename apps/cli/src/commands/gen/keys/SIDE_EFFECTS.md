@@ -1,56 +1,63 @@
 # `supabase gen keys`
 
+Removed and unlisted. The command is a tombstone: it fails with a removal error
+and a replacement suggestion instead of contacting the Management API.
+
 ## Files Read
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                                            | Format | When                                     |
+| ----------------------------------------------- | ------ | ---------------------------------------- |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | always (post-run `TelemetryState.flush`) |
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                                            | Format | When                                                                                       |
+| ----------------------------------------------- | ------ | ------------------------------------------------------------------------------------------ |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | always (post-run `TelemetryState.flush`), created if missing, even with telemetry disabled |
 
 ## API Routes
 
-| Method | Path                          | Auth         | Request body | Response (used fields) |
-| ------ | ----------------------------- | ------------ | ------------ | ---------------------- |
-| `GET`  | `/v1/projects/{ref}/api-keys` | Bearer token | none         | `[{name, api_key}]`    |
+| Method | Path | Auth | Request body | Response (used fields) |
+| ------ | ---- | ---- | ------------ | ---------------------- |
+| —      | —    | —    | —            | —                      |
 
 ## Environment Variables
 
-| Variable                | Purpose                                 | Required?                                               |
-| ----------------------- | --------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token                              | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path | no (falls back to `~/.supabase/profile` -> `supabase`)  |
+| Variable        | Purpose                            | Required?                      |
+| --------------- | ---------------------------------- | ------------------------------ |
+| `SUPABASE_HOME` | directory holding `telemetry.json` | no (defaults to `~/.supabase`) |
 
 ## Exit Codes
 
-| Code | Condition                             |
-| ---- | ------------------------------------- |
-| `0`  | success — keys printed to stdout      |
-| `1`  | authentication error (no token found) |
-| `1`  | API error (non-2xx response)          |
+| Code | Condition                          |
+| ---- | ---------------------------------- |
+| `1`  | every invocation (removed command) |
 
 ## Output
 
 ### `--output-format text`
 
-Prints key-value pairs in env format (default) or JSON.
+Writes the removal message and the replacement suggestion to stderr, two lines,
+regardless of `-o`/`--output`:
 
-### `--output-format json`
+```
+supabase gen keys was removed.
+Use `supabase projects api-keys --project-ref <ref>` to read a project's API keys.
+```
 
-Not applicable.
+### `--output-format json` / `stream-json`
 
-### `--output-format stream-json`
+Emits the JSON error envelope on stdout instead of the stderr lines above; the
+envelope's `code` is `RemovedSurfaceError` and `suggestion` carries the same
+replacement text.
 
-Not applicable.
+## Telemetry Events Fired
+
+One `cli_command_executed` event per invocation, with `exit_code: 1` and an
+`error_fingerprint` ending in `:removed_command` (`RemovedSurfaceError`).
 
 ## Notes
 
-- **Deprecated**: use `gen signing-key` instead.
-- `--project-ref` flag specifies the project ref.
-- In stack mode the project resolves from `--project-ref`, `SUPABASE_PROJECT_ID`, the link, then (on a TTY) an interactive project picker, and the resolved ref is passed to the delegated command.
-- `--override-name` overrides specific variable names in the output.
-- Experimental command for generating preview branch keys.
+- Unlisted (not shown in `supabase gen --help`), still reachable by exact name.
+- No flag value is read; the command fails identically regardless of
+  `--project-ref`/`--override-name`.

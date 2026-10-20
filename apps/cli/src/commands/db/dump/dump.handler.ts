@@ -6,12 +6,11 @@ import { RemoteTarget, type ResolvedRemoteTarget } from "../../../config/remote-
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
 import {
-  loadProjectEnv,
-  readDbToml,
-  warnDeprecatedOrioleDBVersionEnv,
-} from "../../../command-internal/db-config.toml-read.ts";
+  rejectPasswordWithDirectTarget,
+  type DbConnType,
+} from "../../../command-internal/db-target-flags.ts";
+import { loadProjectEnvValues, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
 import {
@@ -22,7 +21,7 @@ import { bold, yellow } from "../../../command-internal/colors.ts";
 import { DnsResolverFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
-import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
+import { mutuallyExclusiveFlagsMessage } from "../../../shared/cli/flag-groups.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import type { DbDumpFlags } from "./dump.command.ts";
 import {
@@ -54,7 +53,7 @@ import {
 } from "../../../command-internal/stack-local-database.ts";
 import { databaseArtifactPin } from "@supabase/stack/internal/artifacts";
 import { resolveBundledPostgresRuntime } from "../../../command-internal/bundled-postgres-client.ts";
-import { viperEnvStringWithProjectFallback } from "../../../command-internal/viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "../../../command-internal/supabase-env.ts";
 import { runWithPoolerFallback } from "../shared/pooler-fallback.ts";
 import {
   dumpDataScript,
@@ -66,7 +65,7 @@ import {
  * Mutually-exclusive flag groups, in the established check order (the group
  * keys are sorted alphabetically). Each group's flags are in registration
  * order, matching the `[group]` in the error text; the set of violating
- * flags is alphabetised separately by `cobraMutuallyExclusiveErrorMessage`.
+ * flags is alphabetised separately by `mutuallyExclusiveFlagsMessage`.
  */
 const DUMP_EXCLUSIVE_GROUPS = [
   ["db-url", "linked", "local"],
@@ -99,7 +98,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
   const linkedRefForCache = yield* Ref.make<string | undefined>(undefined);
 
   yield* Effect.gen(function* () {
-    const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+    const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
 
     // Resolves grouped boolean flags' effective values (default false) for code paths
     // that need the value, not just presence.
@@ -140,7 +139,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       const set = group.filter(isSet);
       if (set.length > 1) {
         return yield* new DbDumpMutuallyExclusiveFlagsError({
-          message: cobraMutuallyExclusiveErrorMessage(group, set),
+          message: mutuallyExclusiveFlagsMessage(group, set),
         });
       }
     }
@@ -153,6 +152,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       : useLocal
         ? "local"
         : "linked";
+    yield* rejectPasswordWithDirectTarget(connType, flags.password);
     // `--project-ref` never implies `--linked`; see push.handler.ts's identical guard.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
       return yield* new DbDumpMutuallyExclusiveFlagsError({
@@ -194,7 +194,6 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     // Read before the dry-run print so an invalid merged config fails rather than
     // silently printing a script.
     const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
-    yield* warnDeprecatedOrioleDBVersionEnv(tomlValues.envLookup);
 
     const backend = yield* currentStackBackend;
     const managedProject =
@@ -215,7 +214,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         : undefined;
     const useNativeClient = bundledRuntime?.kind === "native";
     const networkId = Option.getOrUndefined(networkIdFlag);
-    const envNetworkId = yield* viperEnvStringWithProjectFallback(
+    const envNetworkId = yield* supabaseEnvStringWithProjectFallback(
       "SUPABASE_NETWORK_ID",
       projectEnv,
     );

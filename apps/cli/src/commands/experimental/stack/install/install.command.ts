@@ -5,6 +5,8 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { frozenFlag } from "../stack.flags.ts";
 import { stackInstall } from "./install.handler.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 
 const config = {
   runtime: Flag.Literals("runtime", ["auto", "docker", "podman", "native"] as const).pipe(
@@ -38,4 +40,6 @@ export const stackInstallCommand = Command.make("install", config).pipe(
   Command.withHandler((flags) =>
     stackInstall(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

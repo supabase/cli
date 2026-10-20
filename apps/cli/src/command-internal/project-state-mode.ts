@@ -18,7 +18,6 @@ export type ProjectStateMode = "stack" | "legacy";
 export const projectStateMode = Effect.fn("ProjectStateMode.resolve")(function* (input: {
   readonly args?: ReadonlyArray<string>;
   readonly cwd: string;
-  readonly env: Readonly<Record<string, string | undefined>>;
 }): Effect.fn.Return<
   ProjectStateMode,
   ExperimentalFeatureFlagError,
@@ -30,9 +29,7 @@ export const projectStateMode = Effect.fn("ProjectStateMode.resolve")(function* 
       feature: "stack",
       args: input.args ?? [],
       cwd: input.cwd,
-      env: input.env,
     }),
-    env: input.env,
   });
   const mode: ProjectStateMode = enabled ? "stack" : "legacy";
   yield* Effect.annotateCurrentSpan("project_state.mode", mode);

@@ -15,7 +15,7 @@ import { CommandSettings } from "../config/command-settings.service.ts";
 import { commandSettingsLayer } from "../config/command-settings.layer.ts";
 import { RemoteTarget } from "../config/remote-target.service.ts";
 import { remoteTargetLayer } from "../config/remote-target.layer.ts";
-import { DebugLogger } from "./debug-logger.service.ts";
+import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { debugLoggerLayer } from "./debug-logger.layer.ts";
 import { dohFetchLayer } from "./http-dns.ts";
 import { IdentityStitch, identityStitchLayer } from "./identity-stitch.ts";

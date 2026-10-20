@@ -11,11 +11,17 @@ import {
   StackRoutingError,
   resolveProjectStateSelection,
 } from "../../../command-internal/stack-backend.ts";
+import { withConfigEnv } from "../../../../tests/helpers/command-mocks.ts";
 
-const select = (input: Parameters<typeof resolveProjectStateSelection>[0]) =>
-  resolveProjectStateSelection(input).pipe(Effect.provide(BunServices.layer));
+const select = ({
+  env,
+  ...input
+}: Parameters<typeof resolveProjectStateSelection>[0] & {
+  readonly env: Readonly<Record<string, string>>;
+}) =>
+  withConfigEnv(env, resolveProjectStateSelection(input)).pipe(Effect.provide(BunServices.layer));
 
-const resolve = (input: Parameters<typeof resolveProjectStateSelection>[0]) =>
+const resolve = (input: Parameters<typeof select>[0]) =>
   select(input).pipe(Effect.map(({ stackBackend }) => stackBackend));
 
 const project = (config: string, format: "toml" | "json" = "toml") =>
@@ -202,7 +208,7 @@ stack = true
           expect(Option.isSome(error)).toBe(true);
           if (Option.isSome(error)) {
             expect(error.value).toBeInstanceOf(StackRoutingError);
-            expect(String(error.value)).toContain("0 or 1");
+            expect(String(error.value)).toContain("expected true or false");
           }
         }
         expect(

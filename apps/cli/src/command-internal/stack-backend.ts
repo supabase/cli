@@ -89,7 +89,6 @@ export const resolveProjectStateSelection = Effect.fn("ProjectState.resolveSelec
   function* (input: {
     readonly args: ReadonlyArray<string>;
     readonly cwd: string;
-    readonly env: Readonly<Record<string, string | undefined>>;
   }): Effect.fn.Return<
     {
       readonly projectState: Exit.Exit<ProjectStateMode, ExperimentalFeatureFlagError> | undefined;

@@ -42,6 +42,7 @@ import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { functionsServeStack } from "./serve.stack.handler.ts";
 import { database15, selection } from "../../../../tests/helpers/pins.ts";
 import { seedLock, unbundled } from "../../../../tests/helpers/stack-lock.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 
 type DatabaseInstance = Extract<
   Effect.Success<ReturnType<Stack["services"]["get"]>>,
@@ -320,6 +321,7 @@ const fixture = (
     const api = Layer.succeed(StackApi, apiService);
     const recorder = recordingFileSystem();
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       BunServices.layer,
       recorder.layer,
       api,

@@ -23,14 +23,22 @@ import type {
   DbConfigPoolerLoginError,
   DbConfigUnbanNetworkError,
   DbConfigUnbanStatusError,
+  DbPasswordFlagsError,
 } from "./db-config.errors.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "./db-config.types.ts";
+import type {
+  CliConfigFlagConflictError,
+  CliConfigValueError,
+} from "../config/cli-config.errors.ts";
 
 /** Every error the resolver can raise across the direct / local / linked paths. */
 export type DbConfigError =
   | Config.ConfigError
   | DbConfigParseUrlError
+  | DbPasswordFlagsError
   | DbConfigLoadError
+  | CliConfigValueError
+  | CliConfigFlagConflictError
   | LocalDbRunningError
   | ProjectRefNotLinkedError
   | InvalidProjectRefError

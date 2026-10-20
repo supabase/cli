@@ -7,7 +7,7 @@ type StackRuntimePreference =
   | { readonly kind: "container"; readonly engine: "docker" | "podman" };
 
 import { NetworkIdFlag } from "./global-flags.ts";
-import { viperEnvStringWithProjectFallback } from "./viper-env.ts";
+import { supabaseEnvStringWithProjectFallback } from "./supabase-env.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { DockerRun } from "./docker-run.service.ts";
 import { DockerRunError } from "./docker-run.errors.ts";
@@ -114,7 +114,7 @@ export const dumpNetworkMode = Effect.fnUntraced(function* (
 ): Effect.fn.Return<{ readonly _tag: "named"; readonly name: string } | { readonly _tag: "host" }> {
   if (networkId !== undefined && networkId.length > 0) return { _tag: "named", name: networkId };
   if (forceHostNetwork) return { _tag: "host" };
-  const envNetworkId = yield* viperEnvStringWithProjectFallback(
+  const envNetworkId = yield* supabaseEnvStringWithProjectFallback(
     "SUPABASE_NETWORK_ID",
     projectEnvValues,
   );

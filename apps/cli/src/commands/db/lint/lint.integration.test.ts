@@ -309,7 +309,7 @@ describe("db lint", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("failed to marshal json");
+        expect(causeText).toContain("failed to parse lint result");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -507,7 +507,7 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("writes the linked-project cache for --linked (Go PersistentPostRun)", () => {
+  it.effect("writes the linked-project cache for --linked", () => {
     const { layer, projectRef, cache } = setup({
       isLocal: false,
       checkRows: { public: [] },

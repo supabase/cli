@@ -67,7 +67,7 @@ disabling safe compaction.
 | Code | Condition                                                                                           |
 | ---- | --------------------------------------------------------------------------------------------------- |
 | `0`  | success (migration created, applied, or "No schema changes found")                                  |
-| `1`  | pg-delta not enabled                                                                                |
+| `1`  | pg-delta disabled (`[experimental.pgdelta] enabled = false` and no `--experimental`)                |
 | `1`  | conflicting `--apply`/`--no-apply` (mutually exclusive)                                             |
 | `1`  | no declarative schema files found                                                                   |
 | `1`  | shadow-database / selected pg-delta engine / diff failure                                           |
@@ -76,7 +76,7 @@ disabling safe compaction.
 
 The pg-delta gate and the mutex check are both raised before any side effects run,
 but the gate wins when both conditions apply simultaneously: the gate check runs
-first, so a closed gate (missing `--experimental`) surfaces before an
+first, so a closed gate (`enabled = false` and no `--experimental`) surfaces before an
 `--apply`/`--no-apply` conflict is ever checked.
 
 ## Output
@@ -109,7 +109,8 @@ existing SQL or creates an export manifest.
 
 ## Notes
 
-- Requires `--experimental` or `[experimental.pgdelta] enabled = true`.
+- Open by default. The gate closes only when `[experimental.pgdelta] enabled = false`
+  and `--experimental` is omitted.
 - `--file` sets the migration filename stem (default `declarative_sync`); `--name`
   overrides it. In a TTY without `--name`/`--yes`, the name is prompted.
 - When no declarative files exist, a TTY offers to generate them (from local) first.
@@ -154,7 +155,7 @@ restore recreates the database; failed publication warns and keeps the live shad
 
 The bundled (pg-delta next) engine provisions both plan shadows through
 `acquireShadowDatabase` (`pgdelta-next-shadow.layer.ts`): on by default, off when
-`SUPABASE_SHADOW_CACHE` is set to anything not viper-true (ambient env or project dotenv); `--no-cache`
+`SUPABASE_SHADOW_CACHE` is set to anything not boolean-true (ambient env or project dotenv); `--no-cache`
 bypasses restore and publish for that invocation. Next allocates an ephemeral host port per
 shadow; the cache key hashes the cluster recipe (including the effective Webhooks/`pg_net`
 policy), not the published port, so worktrees and repeated syncs with the same settings share

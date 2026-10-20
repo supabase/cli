@@ -40,6 +40,9 @@ import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
 import { linkedProjectCacheLayer } from "../../telemetry/linked-project-cache.layer.ts";
+import { flagInput } from "../../../tests/helpers/config-values-layer.ts";
+import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { TemplateService } from "./bootstrap.templates.ts";
 import { bootstrap } from "./bootstrap.handler.ts";
 import type { V1GetProjectOutput } from "@supabase/api/effect";
@@ -241,6 +244,18 @@ describe("bootstrap linked-project cache location", () => {
           flagsLayer,
           debugLogger,
           successTrailerLayer,
+          cliConfigValuesLayer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                BunServices.layer,
+                out.layer,
+                Layer.succeed(
+                  CliConfigFlagInputs,
+                  makeCliConfigFlagInputs([flagInput("linkedDb.password", "password", "s3cret")]),
+                ),
+              ),
+            ),
+          ),
         );
 
         const flags: BootstrapFlags = {
@@ -320,7 +335,7 @@ describe("bootstrap linked-project cache location", () => {
         // requests are mapped.
         expect(
           api.requests
-            .filter(({ url }) => url.startsWith("https://api.supabase.com"))
+            .filter(({ url }) => new URL(url).origin === "https://api.supabase.com")
             .map(({ method, url }) => `${method} ${url.slice("https://api.supabase.com".length)}`),
         ).toEqual([
           "GET /v1/organizations",

@@ -36,6 +36,7 @@ import {
   withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { seedLegacyStateDecoys } from "../../../../tests/helpers/legacy-state-guard.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
@@ -52,7 +53,7 @@ import {
   shouldChmodBundleOutputDirectory,
 } from "../../../shared/functions/deploy.ts";
 import { toDockerPath } from "../../../shared/functions/functions-docker.ts";
-import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
+import { functionsLocalConfigLoader } from "../../../command-internal/functions-local-config.ts";
 import {
   ConflictingFunctionDeployFlagsError,
   FunctionImportMapSyntaxError,
@@ -199,6 +200,7 @@ describe("functions deploy", () => {
     const linkedProjectCache = mockLinkedProjectCacheTracked();
     const telemetry = mockTelemetryStateTracked();
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -264,6 +266,7 @@ describe("functions deploy", () => {
       projectId: Option.none(),
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -376,7 +379,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.effect("prints a duplicated slug argument verbatim, matching Go's raw strings.Join", () => {
+  it.effect("prints a duplicated slug argument verbatim", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       handler: (request) => {
@@ -404,6 +407,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -461,6 +465,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -525,6 +530,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -564,61 +570,6 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.effect("warns on stderr that a per-function import_map.json is removed in v3", () => {
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi({
-      handler: (request) => {
-        if (request.method === "GET") {
-          return Effect.succeed(jsonResponse(request, 200, []));
-        }
-        return Effect.succeed(
-          jsonResponse(request, 201, {
-            id: "function-id",
-            slug: "hello-world",
-            name: "hello-world",
-            status: "ACTIVE",
-            version: 2,
-            created_at: 1_687_423_025_152,
-            updated_at: 1_687_423_025_152,
-            verify_jwt: true,
-            import_map: true,
-            entrypoint_path: "supabase/functions/hello-world/index.ts",
-            import_map_path: "supabase/functions/hello-world/import_map.json",
-          }),
-        );
-      },
-    });
-    const layer = Layer.mergeAll(
-      buildTestRuntime({
-        out,
-        api,
-        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
-      }),
-      Layer.succeed(YesFlag, false),
-      Stdio.layerTest({
-        args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
-      }),
-    );
-
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* writeCliConfig(tempRoot.current);
-      yield* writeLocalFunction(tempRoot.current, "hello-world");
-      const functionDir = path.join(tempRoot.current, "supabase", "functions", "hello-world");
-      yield* fs.remove(path.join(functionDir, "deno.json"));
-      yield* fs.writeFileString(path.join(functionDir, "import_map.json"), '{"imports":{}}');
-
-      yield* functionsDeploy(baseFlags);
-
-      expect(out.stderrText).toContain(
-        "WARNING: import_map.json is deprecated and will be removed in v3, use deno.json instead. Functions using it: hello-world\n",
-      );
-      expect(out.stdoutText).not.toContain("import_map.json");
-    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
-  });
-
   it.effect("loads project config from the resolved workdir", () => {
     const callerDir = `${tempRoot.current}/caller`;
     const out = mockOutput({ format: "text" });
@@ -641,6 +592,7 @@ describe("functions deploy", () => {
         ),
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -715,6 +667,7 @@ describe("functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -770,6 +723,7 @@ describe("functions deploy", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ handler });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out:
           rateLimitNotices === undefined
@@ -868,6 +822,7 @@ describe("functions deploy", () => {
       const brokenPipe = new Error("EPIPE: broken pipe, write");
       const api = mockCommandPlatformApi({ handler: deployedHelloWorld });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out: {
             ...out,
@@ -907,6 +862,201 @@ describe("functions deploy", () => {
     },
   );
 
+  describe("per-function import_map.json", () => {
+    const functionDir = (slug: string) => `${tempRoot.current}/supabase/functions/${slug}`;
+
+    const harnessRecordingImportMapPaths = () => {
+      const importMapPaths: Array<string> = [];
+      const harness = apiDeployHarness((request, recorded) => {
+        if (Predicate.isTagged(request.body, "FormData")) {
+          const metadata = request.body.formData.get("metadata");
+          if (typeof metadata === "string")
+            importMapPaths.push(JSON.parse(metadata).import_map_path);
+        }
+        return deployedHelloWorld(request, recorded);
+      });
+      return { ...harness, importMapPaths };
+    };
+
+    it.effect(
+      "fails every function that only has import_map.json before anything is uploaded",
+      () => {
+        const { api, layer } = apiDeployHarness(deployedHelloWorld);
+
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* writeCliConfig(tempRoot.current);
+          for (const slug of ["hello-world", "other-fn"]) {
+            yield* writeLocalFunction(tempRoot.current, slug);
+            yield* fs.remove(`${functionDir(slug)}/deno.json`);
+            yield* fs.writeFileString(`${functionDir(slug)}/import_map.json`, '{"imports":{}}\n');
+          }
+
+          const error = yield* functionsDeploy({
+            ...baseFlags,
+            functionNames: [],
+          }).pipe(Effect.flip);
+
+          expect(error).toMatchObject({
+            message: expect.stringContaining("hello-world, other-fn"),
+            suggestion:
+              'Rename it to deno.json, or set functions.hello-world.import_map = "./functions/hello-world/import_map.json" in config.toml to keep the file.',
+          });
+          expect(api.requests).toEqual([]);
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+      },
+    );
+
+    it.effect(
+      "suggests a parent-relative import_map path for an entrypoint outside supabase/",
+      () => {
+        const { api, layer } = apiDeployHarness(deployedHelloWorld);
+
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* writeCliConfig(
+            tempRoot.current,
+            [
+              'project_id = "test-project"',
+              '[functions."hello-world"]',
+              'entrypoint = "../src/hello-world/index.ts"',
+              "",
+            ].join("\n"),
+          );
+          const sourceDir = `${tempRoot.current}/src/hello-world`;
+          yield* fs.makeDirectory(sourceDir, { recursive: true });
+          yield* fs.writeFileString(`${sourceDir}/index.ts`, "Deno.serve(() => new Response())\n");
+          yield* fs.writeFileString(`${sourceDir}/import_map.json`, '{"imports":{}}\n');
+
+          const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
+
+          expect(error).toMatchObject({
+            suggestion:
+              'Rename it to deno.json, or set functions.hello-world.import_map = "../src/hello-world/import_map.json" in config.toml to keep the file.',
+          });
+          expect(api.requests).toEqual([]);
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+      },
+    );
+
+    it.effect("deploys with deno.json when the function directory has both files", () => {
+      const { importMapPaths, layer } = harnessRecordingImportMapPaths();
+
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* fs.writeFileString(
+          `${functionDir("hello-world")}/import_map.json`,
+          '{"imports":{}}\n',
+        );
+
+        yield* functionsDeploy(baseFlags);
+
+        expect(importMapPaths).toEqual(["supabase/functions/hello-world/deno.json"]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("deploys an import_map.json that config.toml names explicitly", () => {
+      const { importMapPaths, layer } = harnessRecordingImportMapPaths();
+
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* writeCliConfig(
+          tempRoot.current,
+          [
+            'project_id = "test-project"',
+            '[functions."hello-world"]',
+            'import_map = "./functions/hello-world/import_map.json"',
+            "",
+          ].join("\n"),
+        );
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* fs.remove(`${functionDir("hello-world")}/deno.json`);
+        yield* fs.writeFileString(
+          `${functionDir("hello-world")}/import_map.json`,
+          '{"imports":{}}\n',
+        );
+
+        yield* functionsDeploy(baseFlags);
+
+        expect(importMapPaths).toEqual(["supabase/functions/hello-world/import_map.json"]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect(
+      "uses the shared fallback import map for an entrypoint directly under functions/",
+      () => {
+        const { importMapPaths, out, layer } = harnessRecordingImportMapPaths();
+
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* writeCliConfig(
+            tempRoot.current,
+            [
+              'project_id = "test-project"',
+              '[functions."hello-world"]',
+              'entrypoint = "./functions/hello-world.ts"',
+              "",
+            ].join("\n"),
+          );
+          yield* fs.makeDirectory(`${tempRoot.current}/supabase/functions`, { recursive: true });
+          yield* fs.writeFileString(
+            `${tempRoot.current}/supabase/functions/hello-world.ts`,
+            "Deno.serve(() => new Response())\n",
+          );
+          yield* fs.writeFileString(
+            `${tempRoot.current}/supabase/functions/import_map.json`,
+            '{"imports":{}}\n',
+          );
+
+          yield* functionsDeploy(baseFlags);
+
+          expect(importMapPaths).toEqual(["supabase/functions/import_map.json"]);
+          expect(out.stderrText).toContain(
+            "WARNING: Functions using fallback import map: hello-world\n",
+          );
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+      },
+    );
+
+    it.effect(
+      "skips a disabled function that only has import_map.json and deploys the enabled ones",
+      () => {
+        const { out, api, layer } = apiDeployHarness(deployedHelloWorld);
+
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* writeCliConfig(
+            tempRoot.current,
+            ['project_id = "test-project"', '[functions."legacy-fn"]', "enabled = false", ""].join(
+              "\n",
+            ),
+          );
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
+          yield* writeLocalFunction(tempRoot.current, "legacy-fn");
+          yield* fs.remove(`${functionDir("legacy-fn")}/deno.json`);
+          yield* fs.writeFileString(
+            `${functionDir("legacy-fn")}/import_map.json`,
+            '{"imports":{}}\n',
+          );
+
+          yield* functionsDeploy({ ...baseFlags, functionNames: [] });
+
+          const deployRequests = api.requests.filter(
+            (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
+          );
+          expect(deployRequests).toHaveLength(1);
+          expect(deployRequests[0]?.urlParams).toContain("slug=hello-world");
+          expect(api.requests.some((request) => request.urlWithParams.includes("legacy-fn"))).toBe(
+            false,
+          );
+          expect(out.stderrText).toContain("Skipping disabled Function: legacy-fn\n");
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+      },
+    );
+  });
+
   it.effect("keeps collecting upload files after the deploy is interrupted", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({ handler: deployedHelloWorld });
@@ -914,6 +1064,7 @@ describe("functions deploy", () => {
     const gate = Deferred.makeUnsafe<void>();
     const continued = Deferred.makeUnsafe<void>();
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out: {
           ...out,
@@ -1144,6 +1295,7 @@ describe("functions deploy", () => {
       });
       const child = mockDockerBundleSpawner();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1208,6 +1360,7 @@ describe("functions deploy", () => {
       });
       const child = mockDockerBundleSpawner();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1273,6 +1426,7 @@ describe("functions deploy", () => {
     const out = mockOutput({ format: "text" });
     const child = mockDockerBundleSpawner();
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api: mockCommandPlatformApi({ handler: deployedHelloWorld }),
@@ -1291,7 +1445,11 @@ describe("functions deploy", () => {
       const path = yield* Path.Path;
       yield* writeCliConfig(tempRoot.current);
       yield* writeLocalFunction(tempRoot.current, "hello-world");
-      yield* fs.writeFileString(path.join(tempRoot.current, "supabase", ".temp"), "");
+      // A dangling `.temp` link reads as unlinked yet cannot be created.
+      yield* fs.symlink(
+        path.join(tempRoot.current, "missing-target"),
+        path.join(tempRoot.current, "supabase", ".temp"),
+      );
 
       const error = yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true }).pipe(
         Effect.flip,
@@ -1330,6 +1488,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1425,6 +1584,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1486,6 +1646,7 @@ describe("functions deploy", () => {
       },
     });
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1581,6 +1742,7 @@ describe("functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1720,10 +1882,11 @@ describe("functions deploy", () => {
     });
   });
 
-  it.effect("rejects the bundler mutex with cobra's exact error text", () => {
+  it.effect("rejects the bundler mutex with the exact error text", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const layer = Layer.mergeAll(
+      cliConfigValuesTestLayer,
       buildTestRuntime({
         out,
         api,
@@ -1750,13 +1913,14 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  describe("--jobs validation (Go parity: cmd/functions.go:79-82)", () => {
+  describe("--jobs validation", () => {
     function setupJobsTest(rawArgs: ReadonlyArray<string>) {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi({
         handler: (request) => Effect.succeed(jsonResponse(request, 200, [])),
       });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1785,7 +1949,7 @@ describe("functions deploy", () => {
       });
     });
 
-    it.effect("rejects --jobs > 1 with --use-docker=false and no --use-api (Go parity gap)", () => {
+    it.effect("rejects --jobs > 1 with --use-docker=false and no --use-api", () => {
       const { layer } = setupJobsTest([
         "functions",
         "deploy",
@@ -1833,6 +1997,7 @@ describe("functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1886,6 +2051,7 @@ describe("functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1915,7 +2081,7 @@ describe("functions deploy", () => {
     });
   });
 
-  describe("bundler routing with --use-api=false (Go parity: cmd/functions.go:79-80)", () => {
+  describe("bundler routing with --use-api=false", () => {
     it.live("falls through to Docker bundling, not the API path, when --use-api=false", () => {
       // `useDocker` forces the API path only when `useApi` resolves to true, so
       // `--use-api=false` alone leaves `useDocker`'s own default (true) in effect.
@@ -1944,6 +2110,7 @@ describe("functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -1995,13 +2162,14 @@ describe("functions deploy", () => {
     );
   });
 
-  describe("no-functions error styling (Go parity: deploy.go:35; structured output stays plain)", () => {
+  describe("no-functions error styling (structured output stays plain)", () => {
     // Uses a marker `styleEmphasis` instead of `functionsDeploy`'s real `bold`
     // hook, which is TTY-gated and inert under vitest.
     function setupNoFunctionsTest(format: "text" | "json") {
       const out = mockOutput({ format });
       const api = mockCommandPlatformApi();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -2023,7 +2191,7 @@ describe("functions deploy", () => {
             projectRoot: tempRoot.current,
             supabaseDir: path.join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
-            goConfigCompat: functionsGoConfigCompat,
+            localConfigLoader: functionsLocalConfigLoader,
             yes: false,
             rawArgs: ["functions", "deploy"],
             edgeRuntimeVersion: "1.69.12",
@@ -2074,6 +2242,7 @@ describe("functions deploy", () => {
         const out = mockOutput({ format: "text" });
         const api = mockCommandPlatformApi();
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -2105,6 +2274,7 @@ describe("functions deploy", () => {
         const out = mockOutput({ format: "text" });
         const api = mockCommandPlatformApi();
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -2136,43 +2306,42 @@ describe("functions deploy", () => {
       },
     );
 
-    it.effect(
-      "reports a Config.Validate failure before an invalid slug's format error, matching Go's flags.LoadConfig-before-slug-validation order (deploy.go:22-28)",
-      () => {
-        const out = mockOutput({ format: "text" });
-        const api = mockCommandPlatformApi();
-        const layer = Layer.mergeAll(
-          buildTestRuntime({
-            out,
-            api,
-            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
-          }),
-          Layer.succeed(YesFlag, false),
-          Stdio.layerTest({
-            args: Effect.succeed(["functions", "deploy", "1-invalid-slug"]),
-          }),
-        );
+    it.effect("reports a Config.Validate failure before an invalid slug's format error", () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi();
+      const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(YesFlag, false),
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "1-invalid-slug"]),
+        }),
+      );
 
-        return Effect.gen(function* () {
-          yield* writeCliConfig(tempRoot.current, 'project_id = ""\n');
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current, 'project_id = ""\n');
 
-          const error = yield* functionsDeploy({
-            ...baseFlags,
-            functionNames: ["1-invalid-slug"],
-          }).pipe(Effect.flip);
+        const error = yield* functionsDeploy({
+          ...baseFlags,
+          functionNames: ["1-invalid-slug"],
+        }).pipe(Effect.flip);
 
-          expect(error).toBeInstanceOf(Error);
-          expect(error).toMatchObject({ message: "Missing required field in config: project_id" });
-          expect(api.requests).toEqual([]);
-        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
-      },
-    );
+        expect(error).toBeInstanceOf(Error);
+        expect(error).toMatchObject({ message: "Missing required field in config: project_id" });
+        expect(api.requests).toEqual([]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
 
     it.effect("still rejects an invalid slug once the config itself is valid", () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -2199,7 +2368,7 @@ describe("functions deploy", () => {
     });
   });
 
-  describe("Docker bundling path Go-parity config/env wiring (CLI-1963)", () => {
+  describe("Docker bundling path config/env wiring (CLI-1963)", () => {
     function mockFunctionCreateApi() {
       return mockCommandPlatformApi({
         handler: (request) => {
@@ -2231,6 +2400,7 @@ describe("functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -2387,6 +2557,7 @@ describe("functions deploy", () => {
       const api = mockFunctionCreateApi();
       const child = mockDockerBundleSpawner();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -2419,6 +2590,7 @@ describe("functions deploy", () => {
       const api = mockFunctionCreateApi();
       const child = mockDockerBundleSpawner();
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -2454,6 +2626,7 @@ describe("functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -2492,6 +2665,7 @@ describe("functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -2531,59 +2705,57 @@ describe("functions deploy", () => {
       },
     );
 
-    it.live(
-      "labels the bundler container with the resolved project id (Go parity: docker.go:349-386)",
-      () => {
-        const out = mockOutput({ format: "text" });
-        const api = mockFunctionCreateApi();
-        const child = mockDockerBundleSpawner();
-        const layer = Layer.mergeAll(
-          buildTestRuntime({
-            out,
-            api,
-            cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
-          }),
-          Layer.succeed(YesFlag, false),
-          child.layer,
-          Stdio.layerTest({
-            args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
-          }),
-        );
+    it.live("labels the bundler container with the resolved project id", () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockFunctionCreateApi();
+      const child = mockDockerBundleSpawner();
+      const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(YesFlag, false),
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+        }),
+      );
 
-        return Effect.gen(function* () {
-          const path = yield* Path.Path;
-          yield* writeCliConfig(tempRoot.current, 'project_id = "test-project"\n');
-          yield* writeLocalFunction(tempRoot.current, "hello-world");
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        yield* writeCliConfig(tempRoot.current, 'project_id = "test-project"\n');
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
 
-          yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
+        yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
-          const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-          expect(runCommand?.args).toEqual(
-            expect.arrayContaining([
-              "--label",
-              "com.supabase.cli.project=test-project",
-              "--label",
-              "com.docker.compose.project=test-project",
-            ]),
-          );
-          // Assert adjacent `--label KEY=VALUE` pairs, not merely present anywhere in argv.
-          const cliLabelIndex = runCommand?.args.indexOf("--label") ?? -1;
-          expect(runCommand?.args.slice(cliLabelIndex, cliLabelIndex + 4)).toEqual([
+        const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+        expect(runCommand?.args).toEqual(
+          expect.arrayContaining([
             "--label",
             "com.supabase.cli.project=test-project",
             "--label",
             "com.docker.compose.project=test-project",
-          ]);
-          // `-w` sets WorkingDir to the resolved `cliSettings.workdir` (`tempRoot.current` here).
-          const workingDirIndex = runCommand?.args.indexOf("-w") ?? -1;
-          expect(runCommand?.args.slice(workingDirIndex, workingDirIndex + 2)).toEqual([
-            "-w",
-            toDockerPath(tempRoot.current, path),
-          ]);
-        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
-      },
-    );
+          ]),
+        );
+        // Assert adjacent `--label KEY=VALUE` pairs, not merely present anywhere in argv.
+        const cliLabelIndex = runCommand?.args.indexOf("--label") ?? -1;
+        expect(runCommand?.args.slice(cliLabelIndex, cliLabelIndex + 4)).toEqual([
+          "--label",
+          "com.supabase.cli.project=test-project",
+          "--label",
+          "com.docker.compose.project=test-project",
+        ]);
+        // `-w` sets WorkingDir to the resolved `cliSettings.workdir` (`tempRoot.current` here).
+        const workingDirIndex = runCommand?.args.indexOf("-w") ?? -1;
+        expect(runCommand?.args.slice(workingDirIndex, workingDirIndex + 2)).toEqual([
+          "-w",
+          toDockerPath(tempRoot.current, path),
+        ]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
 
     it.live(
       "does not climb to an ancestor project's config.toml for the Docker bundling path",
@@ -2593,6 +2765,7 @@ describe("functions deploy", () => {
         const api = mockFunctionCreateApi();
         const child = mockDockerBundleSpawner();
         const layer = Layer.mergeAll(
+          cliConfigValuesTestLayer,
           buildTestRuntime({
             out,
             api,
@@ -2614,10 +2787,10 @@ describe("functions deploy", () => {
 
           expect(child.spawned[2]).toEqual({
             command: "docker",
-            args: ["network", "inspect", "supabase_network_abcdefghijklmnopqrst"],
+            args: ["network", "inspect", "supabase_network_nested"],
           });
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-          expect(runCommand?.args).toContain("supabase_network_abcdefghijklmnopqrst");
+          expect(runCommand?.args).toContain("supabase_network_nested");
           expect(runCommand?.args).not.toContain("supabase_network_ancestor-project");
         }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
       },
@@ -2654,6 +2827,7 @@ describe("functions deploy", () => {
         },
       });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -2691,7 +2865,7 @@ describe("functions deploy", () => {
     },
   );
 
-  describe("docker-not-running warning styling (Go parity: deploy.go:60; only WARNING: is styled)", () => {
+  describe("docker-not-running warning styling (only WARNING: is styled)", () => {
     it.live("wraps only the WARNING token, not the rest of the fallback line", () => {
       // Uses a marker `styleWarning` instead of `functionsDeploy`'s real
       // `yellow` hook, which is TTY-gated and inert under vitest.
@@ -2719,6 +2893,7 @@ describe("functions deploy", () => {
       });
       const child = mockChildProcessSpawner({ exitCode: 1 });
       const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
         buildTestRuntime({
           out,
           api,
@@ -2747,7 +2922,7 @@ describe("functions deploy", () => {
             projectRoot: tempRoot.current,
             supabaseDir: path.join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
-            goConfigCompat: functionsGoConfigCompat,
+            localConfigLoader: functionsLocalConfigLoader,
             yes: false,
             rawArgs: ["functions", "deploy", "hello-world", "--use-api=false"],
             edgeRuntimeVersion: "1.69.12",

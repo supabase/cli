@@ -4,6 +4,8 @@ import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { stackUpdate } from "./update.handler.ts";
 
 const config = {
@@ -58,4 +60,6 @@ export const stackUpdateCommand = Command.make("update", config).pipe(
   Command.withHandler((flags) =>
     stackUpdate(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

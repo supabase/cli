@@ -34,12 +34,13 @@ import {
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
+import { DbPasswordFlagsError } from "../../../command-internal/db-config.errors.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { MigrationsReadError } from "../../../command-internal/migration.errors.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
-import { MigrationPasswordFlagsError, MigrationTargetFlagsError } from "../migration.errors.ts";
+import { MigrationTargetFlagsError } from "../migration.errors.ts";
 import { migrationList } from "./list.handler.ts";
 import type { MigrationListFlags } from "./list.command.ts";
 import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
@@ -277,7 +278,17 @@ describe("migration list", () => {
       const error = yield* migrationList(
         flags({ dbUrl: Option.some("postgresql://x"), password: Option.some("pw") }),
       ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(MigrationPasswordFlagsError);
+      expect(error).toBeInstanceOf(DbPasswordFlagsError);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects --local combined with --password", () => {
+    const { layer } = setup(tmp.current, { args: ["--local"] });
+    return Effect.gen(function* () {
+      const error = yield* migrationList(
+        flags({ local: true, linked: false, password: Option.some("pw") }),
+      ).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(DbPasswordFlagsError);
     }).pipe(Effect.provide(layer));
   });
 

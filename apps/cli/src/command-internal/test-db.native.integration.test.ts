@@ -28,6 +28,7 @@ import type { Stack } from "@supabase/stack/effect";
 import type { InitializationCommand, PostgresCommand } from "@supabase/stack/commands";
 import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
 import { selection } from "../../tests/helpers/pins.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 
 const runtimes = ["native", "docker"] as const;
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
@@ -125,6 +126,7 @@ describe("managed test db pgTAP", { timeout: 180_000 }, () => {
             }),
             stackBackendLayer("stack"),
             dbConnectionLayer,
+            cliConfigValuesTestLayer,
           );
           const assertPgtapDropped = Effect.gen(function* () {
             const dbConnection = yield* DbConnection;

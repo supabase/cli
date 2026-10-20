@@ -38,7 +38,7 @@ export const encryptionGetRootKey = Effect.fn("encryption.get-root-key")(functio
       return;
     }
 
-    // text — Go prints the bare key + newline to stdout (`fmt.Println`).
+    // text — print the bare key + newline to stdout.
     yield* output.raw(root_key + "\n", "stdout");
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

@@ -1,6 +1,8 @@
 import { Layer, Option } from "effect";
 import { Command, Flag } from "effect/cli";
 
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { PROJECT_REF_PATTERN } from "../../../config/remote-target.service.ts";
 import type * as CliCommand from "effect/cli/Command";
 
@@ -123,4 +125,6 @@ export const configPushCommand = Command.make("push", config).pipe(
   ),
   Command.withHandler(configPushHandler),
   Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["config", "push"]), stdinLayer)),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

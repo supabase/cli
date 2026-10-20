@@ -34,6 +34,7 @@ import {
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withConfigEnv,
 } from "../../../tests/helpers/command-mocks.ts";
 import { writeProjectLink } from "../../command-internal/project-link.ts";
 import {
@@ -248,10 +249,10 @@ describe("unlink integration", () => {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const mode = yield* projectStateMode({
-        cwd: workdir,
-        env: { SUPABASE_EXPERIMENTAL_STACK: "maybe" },
-      }).pipe(Effect.exit);
+      const mode = yield* withConfigEnv(
+        { SUPABASE_EXPERIMENTAL_STACK: "maybe" },
+        projectStateMode({ cwd: workdir }),
+      ).pipe(Effect.exit);
       yield* seedProjectRef(workdir, VALID_REF);
       yield* writeProjectLink(workdir, {
         project: { ref: VALID_REF },

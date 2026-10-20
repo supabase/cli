@@ -17,14 +17,7 @@ import type { PermissionVariant } from "../../../tests/helpers/permission-regist
  * (`db diff --use-pg-schema`, `functions download --legacy-bundle`) stays mapped with a
  * `context` note instead.
  */
-const GO_DELEGATED_PATHS: ReadonlySet<string> = new Set([
-  "db branch create",
-  "db branch delete",
-  "db branch list",
-  "db branch switch",
-  "db remote changes",
-  "gen keys",
-]);
+const GO_DELEGATED_PATHS: ReadonlySet<string> = new Set<string>([]);
 
 /**
  * Operations a declaration may reference although the spec gives them no `x-fga-permissions`,

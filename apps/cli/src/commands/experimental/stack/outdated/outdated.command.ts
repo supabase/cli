@@ -2,9 +2,13 @@ import { Command } from "effect/cli";
 import { withPermissions } from "../../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { stackOutdated } from "./outdated.handler.ts";
 
-export const stackOutdatedCommand = Command.make("outdated").pipe(
+const config = {} as const;
+
+export const stackOutdatedCommand = Command.make("outdated", config).pipe(
   Command.withDescription(
     "Report, for each service in supabase/supabase.lock, the release supabase stack update would lock instead, this CLI's bundled pin, and whether the entry is out of date with config.toml. " +
       "Read-only: it writes nothing and downloads no artifacts.",
@@ -20,4 +24,6 @@ export const stackOutdatedCommand = Command.make("outdated").pipe(
   Command.withHandler(() =>
     stackOutdated().pipe(withCommandTelemetry({ flags: {} }), withJsonErrorHandling),
   ),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

@@ -22,6 +22,7 @@ import {
   type ReleaseFixture,
 } from "../../../../../tests/helpers/release-fixture.ts";
 import { selection } from "../../../../../tests/helpers/pins.ts";
+import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 import { ExperimentalFlag } from "../../../../command-internal/global-flags.ts";
 import { StackCommandInstallError } from "./install.errors.ts";
 import { stackInstall } from "./install.handler.ts";
@@ -87,6 +88,7 @@ const install = (
   ).pipe(
     Effect.provide(
       Layer.mergeAll(
+        cliConfigValuesTestLayer,
         BunServices.layer,
         mockRuntimeInfo({ platform: options.platform ?? "linux", arch: "x64" }),
         output.layer,

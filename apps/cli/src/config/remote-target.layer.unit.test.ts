@@ -18,7 +18,6 @@ const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function mockCliSettings(opts: { workdir: string; projectId?: string }) {
   return Layer.succeed(CommandSettings, {
-    dbPassword: Option.none(),
     githubToken: Option.none(),
     workdirEnvValue: Option.none(),
     profile: "supabase",
@@ -162,7 +161,7 @@ describe("remoteTargetLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("does not persist the selected ref to the temp file (Go parity)", () => {
+  it.effect("does not persist the selected ref to the temp file", () => {
     const projects = [
       { id: VALID_REF, name: "alpha", organization_slug: "acme", region: "us-east-1" },
     ];
@@ -269,7 +268,7 @@ describe("remoteTargetLayer", () => {
     });
   });
 
-  describe("load (Go flags.LoadProjectRef — non-prompting)", () => {
+  describe("load (non-prompting)", () => {
     it.effect("prefers flag, then projectId, then the ref file", () => {
       const { layer } = makeLayer({ workdir: tempRoot.current, projectId: ANOTHER_REF });
       return Effect.gen(function* () {
@@ -342,7 +341,7 @@ describe("remoteTargetLayer", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.effect("skips the ref file (Go MemMapFs) and fails off-TTY with no flag/projectId", () => {
+    it.effect("skips the ref file and fails off-TTY with no flag/projectId", () => {
       const { layer } = makeLayer({ workdir: tempRoot.current });
       return Effect.gen(function* () {
         yield* writeRefFile(tempRoot.current, VALID_REF);

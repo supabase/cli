@@ -3,6 +3,7 @@ import { defaultArtifactSelection } from "@supabase/stack/defaults";
 import { DateTime, Duration, Effect, Option, Ref, Schema } from "effect";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
+import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { RemoteTarget, PROJECT_REF_PATTERN } from "../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
@@ -350,6 +351,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
+  const configValues = yield* CliConfigValues;
   const resolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
@@ -397,6 +399,9 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       "link.via_branch": Option.isSome(branchResolution),
     });
     const workdir = cliSettings.workdir;
+    // Every `.temp`/`.link.json` write goes through `writeThrough`, so a later config load in
+    // this process never sees a resolved config memoised before the write.
+    const writeState = <A, E, R>(write: Effect.Effect<A, E, R>) => configValues.writeThrough(write);
 
     // 1. Check remote project status (404 tolerated for branch projects).
     const project = yield* api.v1
@@ -426,7 +431,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       // Updates the postgres image version to match the remote project.
       const version = project.value.database.version;
       if (!stackState && version.length > 0) {
-        yield* legacyState.write(workdir, "postgresVersion", version);
+        yield* writeState(legacyState.write(workdir, "postgresVersion", version));
       }
     }
 
@@ -445,12 +450,14 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
       ? flags.skipPooler
         ? Option.none<string>()
         : yield* fetchPoolerUrl(api, ref).pipe(Effect.option, Effect.map(Option.flatten))
-      : yield* linkServicesCore({
-          ref,
-          serviceKey: serviceRole,
-          skipPooler: flags.skipPooler,
-          workdir,
-        }).pipe(Effect.as(Option.none<string>()));
+      : yield* writeState(
+          linkServicesCore({
+            ref,
+            serviceKey: serviceRole,
+            skipPooler: flags.skipPooler,
+            workdir,
+          }),
+        ).pipe(Effect.as(Option.none<string>()));
 
     // 4. Save the link (mandatory — a write failure fails the command). In stack mode the link
     // and the lock are published together under the lock lease, the link first.
@@ -481,15 +488,17 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
         },
         fetchedAt: DateTime.formatIso(yield* DateTime.now),
       };
-      stackLock = yield* publishStackLink({
-        ref,
-        link,
-        serviceKey: serviceRole,
-        databaseVersion: Option.map(project, (found) => found.database.version),
-        frozen: flags.frozen,
-      });
+      stackLock = yield* writeState(
+        publishStackLink({
+          ref,
+          link,
+          serviceKey: serviceRole,
+          databaseVersion: Option.map(project, (found) => found.database.version),
+          frozen: flags.frozen,
+        }),
+      );
     } else {
-      yield* legacyState.write(workdir, "projectRef", ref);
+      yield* writeState(legacyState.write(workdir, "projectRef", ref));
     }
 
     // 5. Telemetry + linked-project cache (only for resolvable projects, not the 404 branch path).

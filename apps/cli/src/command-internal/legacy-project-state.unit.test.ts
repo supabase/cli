@@ -73,50 +73,63 @@ describe("LegacyProjectState file access", () => {
   );
 });
 
-describe("LegacyProjectState.readProjectRef", () => {
-  const workdir = Effect.gen(function* () {
+const withWorkdir = <A, E, E2>(
+  setup: (fs: FileSystem.FileSystem, path: Path.Path, dir: string) => Effect.Effect<void, E>,
+  run: (
+    dir: string,
+  ) => Effect.Effect<A, E2, FileSystem.FileSystem | Path.Path | LegacyProjectState>,
+) =>
+  Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const dir = yield* fs.makeTempDirectoryScoped({ prefix: "ref-" });
-    const tempDir = path.join(dir, "supabase", ".temp");
-    return { fs, dir, tempDir, refPath: path.join(tempDir, "project-ref") };
-  });
+    yield* setup(fs, path, dir);
+    return yield* run(dir);
+  }).pipe(Effect.scoped, Effect.provide(services));
 
+const seedRef = (contents: string) => (fs: FileSystem.FileSystem, path: Path.Path, dir: string) =>
+  fs
+    .makeDirectory(path.join(dir, "supabase", ".temp"), { recursive: true })
+    .pipe(
+      Effect.andThen(
+        fs.writeFileString(path.join(dir, "supabase", ".temp", "project-ref"), contents),
+      ),
+    );
+
+describe("LegacyProjectState.readProjectRef", () => {
   it.effect("returns None when the project-ref file is absent (not linked)", () =>
-    Effect.gen(function* () {
-      const { dir } = yield* workdir;
-      expect(Option.isNone(yield* readRef(dir))).toBe(true);
-    }).pipe(Effect.provide(services)),
+    withWorkdir(() => Effect.void, readRef).pipe(
+      Effect.tap((v) => Effect.sync(() => expect(Option.isNone(v)).toBe(true))),
+    ),
   );
 
   it.effect("returns the trimmed ref when the file holds a value", () =>
-    Effect.gen(function* () {
-      const { fs, dir, tempDir, refPath } = yield* workdir;
-      yield* fs.makeDirectory(tempDir, { recursive: true });
-      yield* fs.writeFileString(refPath, `  ${REF}\n`);
-      expect(Option.getOrNull(yield* readRef(dir))).toBe(REF);
-    }).pipe(Effect.provide(services)),
+    withWorkdir(seedRef(`  ${REF}\n`), readRef).pipe(
+      Effect.tap((v) => Effect.sync(() => expect(Option.getOrNull(v)).toBe(REF))),
+    ),
   );
 
   it.effect("treats a blank project-ref file as None", () =>
-    Effect.gen(function* () {
-      const { fs, dir, tempDir, refPath } = yield* workdir;
-      yield* fs.makeDirectory(tempDir, { recursive: true });
-      yield* fs.writeFileString(refPath, "   \n");
-      expect(Option.isNone(yield* readRef(dir))).toBe(true);
-    }).pipe(Effect.provide(services)),
+    withWorkdir(seedRef("   \n"), readRef).pipe(
+      Effect.tap((v) => Effect.sync(() => expect(Option.isNone(v)).toBe(true))),
+    ),
   );
 
   it.effect("fails with ProjectRefReadError when the ref path is unreadable", () =>
-    Effect.gen(function* () {
-      // Seeding project-ref as a directory makes the read fail with EISDIR, which must surface
-      // rather than collapse to "unlinked".
-      const { fs, dir, refPath } = yield* workdir;
-      yield* fs.makeDirectory(refPath, { recursive: true });
-      const error = yield* Effect.flip(readRef(dir));
-      expect(error).toBeInstanceOf(ProjectRefReadError);
-      expect(error.message).toMatch(/^failed to load project ref: /);
-    }).pipe(Effect.provide(services)),
+    // Seeding project-ref as a directory makes the read fail with EISDIR, which must surface
+    // rather than collapse to "unlinked".
+    withWorkdir(
+      (fs, path, dir) =>
+        fs.makeDirectory(path.join(dir, "supabase", ".temp", "project-ref"), { recursive: true }),
+      (dir) => Effect.flip(readRef(dir)),
+    ).pipe(
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error).toBeInstanceOf(ProjectRefReadError);
+          expect(error.message).toMatch(/^failed to load project ref: /);
+        }),
+      ),
+    ),
   );
 
   it("classifies an unreadable ref file as permission without an unrelated command", () => {

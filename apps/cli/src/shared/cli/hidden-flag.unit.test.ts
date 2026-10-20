@@ -1,21 +1,26 @@
 import { legacyProjectStateLayer } from "../../command-internal/legacy-project-state.layer.ts";
-import { Cause, Effect, Exit, FileSystem, Layer, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema, Stdio } from "effect";
 import { BunServices } from "@effect/platform-bun";
 import { CliOutput, Command, type HelpDoc } from "effect/cli";
 import { describe, expect, it } from "@effect/vitest";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { dbCommand } from "../../commands/db/db.command.ts";
+import { dbDiffCommand } from "../../commands/db/diff/diff.command.ts";
 import { functionsCommand } from "../../commands/functions/functions.command.ts";
 import { functionsDeployCommand } from "../../commands/functions/deploy/deploy.command.ts";
 import { functionsDownloadCommand } from "../../commands/functions/download/download.command.ts";
 import { functionsServeCommand } from "../../commands/functions/serve/serve.command.ts";
+import { genCommand } from "../../commands/gen/gen.command.ts";
 import { initCommand } from "../../commands/init/init.command.ts";
+import { inspectDbCommand } from "../../commands/inspect/db/db.command.ts";
+import { inspectCommand } from "../../commands/inspect/inspect.command.ts";
+import { issueCommand } from "../../commands/issue/issue.command.ts";
 import { projectsCommand } from "../../commands/projects/projects.command.ts";
 import { projectsCreateCommand } from "../../commands/projects/create/create.command.ts";
 import { startCommand } from "../../commands/start/start.command.ts";
 import { stopCommand } from "../../commands/stop/stop.command.ts";
 import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
-import { GoProxy } from "../../command-internal/go-proxy.service.ts";
+import { RemovedSurfaceError } from "../../command-internal/removed-command.ts";
 import { TestDbMutuallyExclusiveFlagsError } from "../../command-internal/test-db.errors.ts";
 import {
   mockAnalytics,
@@ -37,26 +42,8 @@ const buildHelpDoc = <Name extends string, Input, ContextInput, E, R>(
   cmd: Command.Command<Name, Input, ContextInput, E, R>,
 ): HelpDoc.HelpDoc => (cmd as unknown as CommandImpl).buildHelpDoc([]);
 
-function mockGoProxy() {
-  const calls: Array<ReadonlyArray<string>> = [];
-  const layer = Layer.succeed(GoProxy, {
-    exec: (args) =>
-      Effect.sync(() => {
-        calls.push([...args]);
-      }),
-    execCapture: () => Effect.succeed(""),
-  });
-
-  return { layer, calls };
-}
-
-const testRootLayer = (
-  proxy: Layer.Layer<GoProxy>,
-  formatter: CliOutput.Formatter,
-  args: ReadonlyArray<string>,
-) =>
+const testRootLayer = (formatter: CliOutput.Formatter, args: ReadonlyArray<string>) =>
   Layer.mergeAll(
-    proxy,
     CliOutput.layer(formatter),
     Layer.succeed(CliArgs, { args }),
     mockOutput({ format: "text" }).layer,
@@ -75,9 +62,12 @@ const testRoot = Command.make("supabase").pipe(
     stopCommand,
     initCommand,
     functionsCommand,
+    genCommand,
+    inspectCommand,
     projectsCommand,
     branchesCommand,
     dbCommand,
+    issueCommand,
   ]),
   Command.withGlobalFlags(GLOBAL_FLAGS),
 );
@@ -154,6 +144,10 @@ describe("native hidden flags", () => {
       "size",
       "high-availability",
     ]);
+
+    expect(buildHelpDoc(dbDiffCommand).flags.map((flag) => flag.name)).not.toContain(
+      "use-pg-schema",
+    );
   });
 
   it.effect("passes hidden flag values to handlers by exact name", () => {
@@ -193,14 +187,7 @@ describe("native hidden flags", () => {
         "abcdefghijklmnopqrst",
         "--use-docker=false",
       ]);
-      yield* runParser([
-        "functions",
-        "download",
-        "hello",
-        "--project-ref",
-        "abcdefghijklmnopqrst",
-        "--legacy-bundle",
-      ]);
+      yield* runParser(["functions", "download", "hello", "--legacy-bundle"]);
       yield* runParser(["functions", "deploy", "hello", "--use-docker=false"]);
       yield* runParser(["functions", "deploy", "hello", "--legacy-bundle"]);
       yield* runParser(["functions", "serve", "--all=false"]);
@@ -208,7 +195,7 @@ describe("native hidden flags", () => {
         expect.objectContaining({ preview: true }),
         expect.objectContaining({ backup: false }),
         expect.objectContaining({ useDocker: false }),
-        expect.objectContaining({ legacyBundle: true }),
+        expect.objectContaining({ legacyBundle: Option.some(true) }),
         expect.objectContaining({ useDocker: false }),
         expect.objectContaining({ legacyBundle: true }),
         expect.objectContaining({ all: false }),
@@ -218,11 +205,10 @@ describe("native hidden flags", () => {
 
   it.effect("does not leak hidden flag names through unknown-flag suggestions", () =>
     Effect.gen(function* () {
-      const proxy = mockGoProxy();
       const args = ["projects", "create", "demo", "--pla"];
 
       const exit = yield* Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
-        Effect.provide(testRootLayer(proxy.layer, silentCliOutputFormatter, args)),
+        Effect.provide(testRootLayer(silentCliOutputFormatter, args)),
         Effect.exit,
       );
 
@@ -262,23 +248,73 @@ describe("hidden subcommands", () => {
     ]);
   });
 
-  it.effect("still executes hidden subcommands by exact name", () =>
-    Effect.gen(function* () {
-      const proxy = mockGoProxy();
-      const run = (args: ReadonlyArray<string>) =>
-        Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
-          Effect.provide(testRootLayer(proxy.layer, textCliOutputFormatter(), args)),
-        );
+  it.effect(
+    "still executes hidden tombstoned subcommands by exact name, with or without their old flags",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-hidden-flag-tombstone-",
+        });
 
-      yield* run(["db", "branch", "list"]);
-      yield* run(["db", "remote", "changes"]);
-
-      expect(proxy.calls).toEqual([
-        ["db", "branch", "list"],
-        ["db", "remote", "changes"],
-      ]);
-    }),
+        for (const [path, flags, suggestion] of [
+          [["db", "branch", "list"], [], undefined],
+          [["db", "remote", "changes"], ["--schema", "public", "--linked"], undefined],
+          [["gen", "keys"], ["--project-ref", "abcdefghijklmnopqrst"], undefined],
+          [["db", "remote", "commit"], [], "Use `supabase db pull` instead."],
+          [
+            ["db", "remote", "commit"],
+            ["--schema", "public", "--linked", "-p", "secret"],
+            "Use `supabase db pull` instead.",
+          ],
+          [
+            ["inspect", "db", "total-index-size"],
+            ["--linked"],
+            "Use `supabase inspect db index-stats` instead.",
+          ],
+          [
+            ["inspect", "db", "total-table-sizes"],
+            ["--db-url", "postgresql://u:p@h/db"],
+            "Use `supabase inspect db table-stats` instead.",
+          ],
+          [
+            ["inspect", "db", "table-index-sizes"],
+            ["--local"],
+            "Use `supabase inspect db table-stats` instead.",
+          ],
+        ] as const) {
+          const args = [...path, ...flags];
+          const exit = yield* Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
+            Effect.provide(
+              Layer.merge(
+                testRootLayer(textCliOutputFormatter(), args),
+                processEnvLayer({ SUPABASE_HOME: home }),
+              ),
+            ),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (!Exit.isFailure(exit)) return;
+          const error = Cause.squash(exit.cause);
+          expect(error).toBeInstanceOf(RemovedSurfaceError);
+          if (!(error instanceof RemovedSurfaceError) || suggestion === undefined) continue;
+          expect(error.kind).toBe("command");
+          expect(error.message).toBe(`supabase ${path.join(" ")} was removed.`);
+          expect(error.suggestion).toBe(suggestion);
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
   );
+
+  it("does not list the removed inspect db aliases in help", () => {
+    const names = buildHelpDoc(inspectDbCommand).subcommands?.[0]?.commands.map(
+      (command) => command.name,
+    );
+    expect(names).toContain("index-stats");
+    expect(names).toContain("table-sizes");
+    expect(names).not.toContain("total-index-size");
+    expect(names).not.toContain("total-table-sizes");
+    expect(names).not.toContain("table-index-sizes");
+  });
 
   it.effect("still executes the native `db test` hidden alias by exact name (CLI-1962)", () =>
     Effect.gen(function* () {
@@ -286,10 +322,9 @@ describe("hidden subcommands", () => {
       // DB/docker IO, so that typed failure (not success) is what proves dispatch reached it.
       const fs = yield* FileSystem.FileSystem;
       const home = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-hidden-flag-" });
-      const proxy = mockGoProxy();
       const run = (args: ReadonlyArray<string>) =>
         Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
-          Effect.provide(testRootLayer(proxy.layer, textCliOutputFormatter(), args)),
+          Effect.provide(testRootLayer(textCliOutputFormatter(), args)),
           Effect.exit,
         );
 
@@ -306,5 +341,60 @@ describe("hidden subcommands", () => {
       if (!Exit.isFailure(unknownExit)) return;
       expect(Cause.hasFails(unknownExit.cause)).toBe(true);
     }).pipe(Effect.provide(BunServices.layer)),
+  );
+});
+
+describe("removed global flags", () => {
+  it.effect("hides --create-ticket from GLOBAL FLAGS help", () =>
+    Effect.gen(function* () {
+      const args = ["issue", "bug", "--help"];
+      let globalFlagNames: ReadonlyArray<string> = [];
+      const capturingFormatter: CliOutput.Formatter = {
+        ...silentCliOutputFormatter,
+        formatHelpDoc: (doc) => {
+          globalFlagNames = doc.globalFlags?.map((flag) => flag.name) ?? [];
+          return "";
+        },
+      };
+
+      yield* Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
+        Effect.provide(testRootLayer(capturingFormatter, args)),
+      );
+
+      expect(globalFlagNames).toContain("debug");
+      expect(globalFlagNames).not.toContain("create-ticket");
+    }),
+  );
+
+  it.effect(
+    "fails a command passed --create-ticket with the removal error, not a parse error",
+    () =>
+      Effect.gen(function* () {
+        const args = ["issue", "bug", "--no-browser", "--create-ticket"];
+        const analytics = mockAnalytics();
+
+        const exit = yield* Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              testRootLayer(textCliOutputFormatter(), args),
+              analytics.layer,
+              Stdio.layerTest({ args: Effect.succeed(args) }),
+            ),
+          ),
+          Effect.exit,
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) return;
+        const error = Cause.squash(exit.cause);
+        expect(error).toBeInstanceOf(RemovedSurfaceError);
+        if (!(error instanceof RemovedSurfaceError)) return;
+        expect(error.kind).toBe("flag");
+        expect(error.message).toBe("--create-ticket was removed.");
+        expect(analytics.captured.map((event) => event.event)).toEqual(["cli_command_executed"]);
+        expect(analytics.captured[0]?.properties).toMatchObject({
+          error_fingerprint: "tag:RemovedSurfaceError:removed_flag",
+        });
+      }),
   );
 });

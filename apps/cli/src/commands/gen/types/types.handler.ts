@@ -1,17 +1,17 @@
-import type { LoadedCliConfig } from "@supabase/config/effect";
-import { loadCliConfig } from "@supabase/config/internal";
 import { ChildProcessSpawner } from "effect/process";
 import { Effect, FileSystem, Match, Option, Path, Predicate, Stdio, Stream } from "effect";
 import { getDomain } from "tldts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
-  cobraMutuallyExclusiveErrorMessage,
+  mutuallyExclusiveFlagsMessage,
   PERSISTENT_VALUE_FLAG_NAMES,
   PERSISTENT_VALUE_FLAG_SHORTHANDS,
-  pflagArgvScan,
-} from "../../../shared/cli/cobra-flag-groups.ts";
+  scanArgvFlags,
+} from "../../../shared/cli/flag-groups.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import {
   RemoteTarget,
   PROJECT_NOT_LINKED_MESSAGE,
@@ -27,10 +27,7 @@ import {
 } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags } from "../../../command-internal/db-config.types.ts";
 import { poolerConfigFromConnectionString } from "../../../command-internal/db-config.parse.ts";
-import {
-  readDbToml,
-  warnDeprecatedOrioleDBVersionEnv,
-} from "../../../command-internal/db-config.toml-read.ts";
+import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import type { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
@@ -39,7 +36,6 @@ import {
   missingProjectConfigMessageEffect,
   relativeConfigPath,
 } from "../../../command-internal/workdir-project.ts";
-import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -71,7 +67,6 @@ import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-fa
 import {
   defaultSchemas,
   localDbContainerId,
-  localDbPassword,
   parseQueryTimeoutMillis,
   rootCaBundle,
 } from "./types.shared.ts";
@@ -132,7 +127,7 @@ const POSTGREST_V9_COMPAT_DEPRECATION_LINE =
   "Flag --postgrest-v9-compat has been deprecated, PostgREST 9 reached end of life; the flag still disables one-to-one relationship detection.";
 
 /**
- * Every value-taking flag `gen types` parses, telling `pflagArgvScan` which bare tokens
+ * Every value-taking flag `gen types` parses, telling `scanArgvFlags` which bare tokens
  * consume the next argv token as their value. Boolean flags (`--local`, `--linked`,
  * `--postgrest-v9-compat`) are excluded since they never consume a following token.
  */
@@ -239,13 +234,14 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   const remoteTarget = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
   const dbConfig = yield* DbConfigResolver;
+  const configValues = yield* CliConfigValues;
   const generator = yield* GenTypesGenerator;
   const backend = yield* currentStackBackend;
 
-  // "Set" means the flag appeared in argv at all (pflag's `Changed` semantics), not its parsed
+  // "Set" means the flag appeared in argv at all (set at all), not its parsed
   // value — `--linked=false` still counts. Argv is scanned directly since a token like
   // `-s --linked` consumes `--linked` as `-s`'s value, not as its own boolean flag.
-  const scan = pflagArgvScan(rawArgs, GEN_TYPES_COMMAND_PATH, GEN_TYPES_SCAN_SPEC);
+  const scan = scanArgvFlags(rawArgs, GEN_TYPES_COMMAND_PATH, GEN_TYPES_SCAN_SPEC);
   const occurrences = scan.occurrences;
 
   // Parsed before the telemetry context is installed, so an invalid `--query-timeout` wins
@@ -260,42 +256,60 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
   // `projectRef` is passed only for the `--linked`/`--project-id` paths, so a matching
   // `[remotes.*]` overlay is merged in the same load; omitted for `--local`/`--db-url`.
-  const loadConfig = (projectRef?: string) =>
-    loadCliConfig(cliSettings.workdir, {
-      ...(projectRef === undefined ? {} : { projectRef }),
-      goViperCompat: true,
-      search: shouldSearchAncestors(cliSettings),
-    }).pipe(
-      // `cause.path` names the actual failed file; `loadCliConfig` probes `config.json`
-      // before falling back to `config.toml`, so hardcoding `.toml` here would mislabel it.
-      // Caught before `requireProjectConfigWhenExplicit`, since a parse failure is distinct
-      // from the "no project here" case that guard handles.
-      Effect.catchTags({
-        CliConfigParseError: (cause) =>
-          new GenTypesParseConfigError({
-            message: `failed to parse ${toRelativeConfigPath(cause.path)}: ${String(cause.cause)}`,
-          }),
-        DuplicateRemoteProjectIdError: (cause) =>
-          new GenTypesParseConfigError({ message: cause.message }),
-      }),
-      Effect.flatMap(requireProjectConfigWhenExplicit),
-      Effect.tap((loaded) => Effect.annotateCurrentSpan("config.found", loaded !== null)),
-    );
+  const loadApiSchemas = (projectRef?: string) =>
+    configValues
+      .load({
+        workdir: cliSettings.workdir,
+        projectRef: Option.fromNullishOr(projectRef),
+        tolerateUnreadableLinkedRef: true,
+      })
+      .pipe(
+        // `cause.path` names the actual failed file, which may be `config.json` or `config.toml`.
+        // Caught before `requireProjectConfigWhenExplicit`, since a parse failure is distinct
+        // from the "no project here" case that guard handles.
+        Effect.catchTags({
+          CliConfigParseError: (cause) =>
+            new GenTypesParseConfigError({
+              message: `failed to parse ${toRelativeConfigPath(cause.path)}: ${String(cause.cause)}`,
+            }),
+          DuplicateRemoteProjectIdError: (cause) =>
+            new GenTypesParseConfigError({ message: cause.message }),
+          CliConfigLoadError: (cause) => new GenTypesParseConfigError({ message: cause.message }),
+        }),
+        Effect.tap((resolvedConfig) =>
+          requireProjectConfigWhenExplicit(resolvedConfig.hasConfigFile),
+        ),
+        Effect.tap((resolvedConfig) =>
+          Effect.annotateCurrentSpan("config.found", resolvedConfig.hasConfigFile),
+        ),
+        Effect.flatMap((resolvedConfig) =>
+          resolvedConfig.get(CliConfigKeys.api.schemas).pipe(
+            // Without a project the embedded default applies, not the schema's default list.
+            Effect.map(({ value, origin }) =>
+              origin.tier === "default" && !resolvedConfig.hasConfigFile ? [] : value,
+            ),
+          ),
+        ),
+      );
 
   // An explicit --workdir that holds no project must not silently resolve to the embedded
   // default schemas (dropping a declared [api].schemas and writing a public-only file at exit
   // 0). A defaulted workdir keeps the tolerant fallback.
-  const requireProjectConfigWhenExplicit = (loaded: LoadedCliConfig | null) =>
-    loaded === null && cliSettings.explicitWorkdir
+  const requireProjectConfigWhenExplicit = (configFound: boolean) =>
+    !configFound && cliSettings.explicitWorkdir
       ? Effect.gen(function* () {
           return yield* new GenTypesMissingProjectConfigError({
             message: yield* missingProjectConfigMessageEffect(cliSettings),
           });
         })
-      : Effect.succeed(loaded);
+      : Effect.void;
 
-  const schemasFromConfig = (apiSchemas: ReadonlyArray<string> | undefined) =>
-    defaultSchemas(apiSchemas);
+  // `--schema` skips the config load entirely, so a `--db-url --schema ...` invocation must not
+  // fail just because the workdir has no project config.
+  const resolveIncludedSchemas = (projectRef?: string) =>
+    schemas.length > 0
+      ? Effect.succeed(schemas)
+      : loadApiSchemas(projectRef).pipe(Effect.map(defaultSchemas));
 
   /**
    * Sets a session-level `statement_timeout` and connect timeout from `--query-timeout` on
@@ -498,10 +512,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       });
     });
 
-  const assertLocalDbRunning = (
-    projectId: string,
-    projectEnvValues?: Readonly<Record<string, string>>,
-  ) =>
+  const assertLocalDbRunning = (projectId: string) =>
     Effect.scoped(
       Effect.gen(function* () {
         // Only the exit code and stderr matter; discard stdout so the inspect JSON can't
@@ -513,8 +524,6 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
             stdin: "ignore",
             stdout: "ignore",
             stderr: "pipe",
-            env: projectEnvValues === undefined ? undefined : { ...projectEnvValues },
-            extendEnv: true,
           },
         );
         const [exitCode, stderr] = yield* Effect.all([
@@ -600,7 +609,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       const set = group.filter((flagName) => changedMutexFlags[flagName]);
       if (set.length > 1) {
         return yield* new GenTypesFlagUsageError({
-          message: cobraMutuallyExclusiveErrorMessage(group, set),
+          message: mutuallyExclusiveFlagsMessage(group, set),
         });
       }
     }
@@ -613,13 +622,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         "stack.backend": backend.kind,
       });
       const config = yield* readDbToml(fs, path, cliSettings.workdir);
-      yield* warnDeprecatedOrioleDBVersionEnv(config.envLookup);
-      const projectEnvValues = Object.fromEntries(
-        Object.entries(config.projectEnv).filter(([key]) => key !== "SUPABASE_DB_PASSWORD"),
-      );
-      const projectId = Option.getOrElse(config.projectId, () =>
-        path.basename(cliSettings.workdir),
-      );
+      const projectId = config.projectId;
 
       // Only forces v9 compat from the rest-version file's image tag when the database's
       // major version is > 14, so older databases aren't forced into v9 mode. A stack runs
@@ -648,13 +651,15 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         return;
       }
 
-      yield* assertLocalDbRunning(projectId, projectEnvValues);
+      yield* assertLocalDbRunning(projectId);
       yield* runGenerate({
         conn: {
-          host: yield* getHostname(projectEnvValues),
+          host: yield* getHostname(
+            yield* configValues.load({ workdir: cliSettings.workdir, projectRef: Option.none() }),
+          ),
           port: config.port,
           user: "postgres",
-          password: yield* localDbPassword(),
+          password: config.password,
           database: "postgres",
         },
         isLocal: true,
@@ -666,17 +671,12 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
     if (Option.isSome(flags.dbUrl)) {
       yield* Effect.annotateCurrentSpan("typegen.source", "db_url");
-      // Skips the config load entirely when `--schema` is explicit, since the load's only
-      // output here is the schema fallback — a `--db-url --schema ...` invocation must not
-      // fail just because the workdir has no project config.
-      const loaded = schemas.length > 0 ? null : yield* loadConfig();
+      const includedSchemas = yield* resolveIncludedSchemas();
       const resolved = yield* dbConfig.resolve({
         dbUrl: flags.dbUrl,
         connType: "db-url",
         dnsResolver,
       });
-      const includedSchemas =
-        schemas.length > 0 ? schemas : defaultSchemas(loaded?.config.api.schemas ?? []);
 
       // A DSN's own `sslmode`/`sslrootcert` is honored as-is; only a known Supabase host with
       // neither set gets the CA pinned, matching the project-ref/branch paths.
@@ -701,24 +701,14 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     if (flags.linked) {
       yield* Effect.annotateCurrentSpan("typegen.source", "linked");
       const target = yield* remoteTarget.resolve(Option.none());
-      const loaded = schemas.length > 0 ? null : yield* loadConfig(target.ref);
-      yield* runProjectTypes(
-        target,
-        schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),
-        false,
-      );
+      yield* runProjectTypes(target, yield* resolveIncludedSchemas(target.ref), false);
       return;
     }
 
     if (Option.isSome(flags.projectId)) {
       yield* Effect.annotateCurrentSpan("typegen.source", "project_id");
       const target = yield* remoteTarget.resolve(flags.projectId);
-      const loaded = schemas.length > 0 ? null : yield* loadConfig(target.ref);
-      yield* runProjectTypes(
-        target,
-        schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),
-        true,
-      );
+      yield* runProjectTypes(target, yield* resolveIncludedSchemas(target.ref), true);
       return;
     }
 
@@ -734,10 +724,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         ),
       ),
     );
-    const loaded = schemas.length > 0 ? null : yield* loadConfig(resolvedTarget.ref);
     yield* runProjectTypes(
       resolvedTarget,
-      schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),
+      yield* resolveIncludedSchemas(resolvedTarget.ref),
       false,
     );
   }).pipe(Effect.scoped, Effect.ensuring(telemetryState.flush));

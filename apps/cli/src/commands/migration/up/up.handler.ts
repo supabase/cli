@@ -6,10 +6,7 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { bold } from "../../../command-internal/colors.ts";
-import {
-  readDbToml,
-  warnDeprecatedOrioleDBVersionEnv,
-} from "../../../command-internal/db-config.toml-read.ts";
+import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
@@ -80,7 +77,6 @@ const runUp = Effect.fnUntraced(function* (
     });
     const ref = Option.getOrUndefined(cfg.ref ?? Option.none());
     const toml = yield* readDbToml(fs, path, cliSettings.workdir, ref);
-    yield* warnDeprecatedOrioleDBVersionEnv(toml.envLookup);
     yield* Effect.annotateCurrentSpan({
       "db.conn_type": target.connType ?? "local",
       "db.is_local": cfg.isLocal,

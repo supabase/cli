@@ -141,7 +141,7 @@ Docker-dependent.
 Once the db and functions steps run, they consume their own established environment variables
 exactly as documented in their own `SIDE_EFFECTS.md` files (e.g. `SUPABASE_DB_PASSWORD`,
 `SUPABASE_DB_SHADOW_PORT`, `SUPABASE_SHADOW_CACHE`, `SUPABASE_NETWORK_ID`,
-`SUPABASE_USE_SLIM_IMAGES`, `SUPABASE_EXPERIMENTAL_PG_DELTA` for db;
+`SUPABASE_USE_SLIM_IMAGES` for db;
 `SUPABASE_EDGE_RUNTIME_DENO_VERSION`, `SUPABASE_INTERNAL_IMAGE_REGISTRY`, `BITBUCKET_CLONE_DIR` for
 functions) — `pull` does not read or override any of these itself, it only supplies the resolved
 `ref`.
@@ -159,7 +159,7 @@ functions) — `pull` does not read or override any of these itself, it only sup
 | `1`  | `supabase/config.toml`/`.json`, `supabase/migrations`, and/or `supabase/functions` has uncommitted or untracked changes and no human will read the warning (`PullUncommittedChangesError`) — see Git above                                  |
 | `1`  | any one step fails (config, migration history, db, or functions) — every OTHER step still runs and is reported, but the process exits non-zero and re-fails with the FIRST original failure's own cause/classification                      |
 
-**Deliberate divergence from standalone `db pull`:** when the db step finds the remote already in
+**Difference from standalone `db pull`:** when the db step finds the remote already in
 sync with local migrations (`DbPullInSyncError`), `pull` reports it as `status: "unchanged"`
 — a finding, not a failure — rather than the non-zero exit standalone `db pull` gives that same
 condition. Every other step's failure still counts as a `pull` failure.
@@ -260,7 +260,7 @@ above.
 
 ### `-o`/`--output` (machine formats)
 
-Not supported. `pull` is a net-new TS command with no Go parity contract (CLI-2156). Any
+Not supported. `pull` does not accept `-o`/`--output` (CLI-2156). Any
 `-o`/`--output` value — every machine-format value AND `pretty` — is rejected outright before any
 config load, target resolution, or network call:
 
@@ -314,10 +314,9 @@ pull`/`migration fetch`'s own internal resolution) — this doesn't matter in pr
   reused step's own prompt is unconditionally bypassed (`assumeYes: true`) once `pull`'s own
   confirmation is accepted.
 - **The db step always runs in migration mode when orchestrated by `pull`, never the declarative
-  path.** `pull` never sets `--declarative`/`--use-pg-delta`/`--diff-engine` on its own db-step
-  invocation, AND `pullDbStep` (`pull.steps.ts`) passes `forceMigrationMode: true` into `runDbPull`
-  (`command-internal/db-pull-run.ts`), which forces `experimental` to `false` unconditionally,
-  regardless of any ambient `--experimental` flag or `SUPABASE_EXPERIMENTAL` (shell or project
-  dotenv). The deprecated `--experimental`-without-`--declarative` structured-dump export therefore
-  can never engage when the db step runs through `pull` — see `db/pull/SIDE_EFFECTS.md`'s own notes
-  on that path, which still applies to the standalone `db pull` command.
+  path.** `pull` never sets `--declarative`/`--diff-engine` on its own db-step invocation and calls
+  `runDbPull` (`command-internal/db-pull-run.ts`), where the experimental gate no longer selects
+  the pull mode (its local-container prelude still resolves the gate for the local stack). Only the
+  standalone `db pull` command rejects an ambient experimental gate without `--declarative` (see
+  `db/pull/SIDE_EFFECTS.md`), so `pull` keeps working when it is set. The retry hint for the db step ends in `--experimental=false` so that command does not hit
+  that rejection either.

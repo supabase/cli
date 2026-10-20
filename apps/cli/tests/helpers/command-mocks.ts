@@ -27,6 +27,7 @@ import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as UrlParams from "effect/http/UrlParams";
 import { afterEach, beforeEach } from "vitest";
 
+import { ConfigEnvPins } from "./config-env-pins.ts";
 import { CommandCredentials } from "../../src/auth/command-credentials.service.ts";
 import { DbExecError } from "../../src/command-internal/db-connection.errors.ts";
 import type {
@@ -67,6 +68,7 @@ import type { Output } from "../../src/shared/output/output.service.ts";
 import type { ProcessControl } from "../../src/shared/runtime/process-control.service.ts";
 import type { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
 import type { Tty } from "../../src/shared/runtime/tty.service.ts";
+import { CliEnvNameSource } from "../../src/shared/config/cli-config-provider.layer.ts";
 import { Analytics } from "../../src/shared/telemetry/analytics.service.ts";
 import {
   mockAnalytics,
@@ -411,11 +413,9 @@ export function mockCommandSettings(opts: {
   readonly projectId?: Option.Option<string>;
   readonly userAgent?: string;
   readonly supabaseHome?: string;
-  readonly dbPassword?: Option.Option<Redacted.Redacted<string>>;
   readonly githubToken?: Option.Option<Redacted.Redacted<string>>;
 }): Layer.Layer<CommandSettings> {
   return Layer.succeed(CommandSettings, {
-    dbPassword: opts.dbPassword ?? Option.none(),
     githubToken: opts.githubToken ?? Option.none(),
     profile: opts.profile ?? "supabase",
     profileEnvValue: opts.profileEnvValue ?? Option.none(),
@@ -760,7 +760,9 @@ export function useTempWorkdir(prefix = "supabase-test-"): {
 
 /**
  * Sets `name` to `value` (or unsets it when `value` is `undefined`) for the duration of `body`,
- * restoring whatever was there before.
+ * restoring whatever was there before — including a surrounding
+ * {@link useShadowCacheDisabled} pin, so a cache-subject test can opt back in. A set value is
+ * also pinned for the `Config` reads inside `body` (see {@link withConfigEnv}).
  */
 export const withEnvVar = <A, E, R>(
   name: string,
@@ -774,7 +776,10 @@ export const withEnvVar = <A, E, R>(
       else process.env[name] = value;
       return previous;
     }),
-    () => body,
+    () =>
+      value === undefined
+        ? withoutConfigEnvPin(name, body)
+        : withConfigEnv({ [name]: value }, body),
     (previous) =>
       Effect.sync(() => {
         if (previous === undefined) delete process.env[name];
@@ -795,14 +800,32 @@ export const withConfigEnv = <A, E, R>(
   values: Readonly<Record<string, string>>,
   body: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
-  body.pipe(
-    Effect.provide(
-      ConfigProvider.layerAdd(
-        ConfigProvider.fromEnvRecord(values, { preserveEmptyStrings: true }),
-        { asPrimary: true },
+  Effect.zip(Effect.service(ConfigEnvPins), Effect.service(CliEnvNameSource)).pipe(
+    Effect.flatMap(([pins, inheritedNames]) =>
+      body.pipe(
+        Effect.provideService(ConfigEnvPins, { ...pins, ...values }),
+        Effect.provideService(CliEnvNameSource, () => [
+          ...inheritedNames(),
+          ...Object.keys(values),
+        ]),
+        Effect.provide(
+          ConfigProvider.layerAdd(
+            ConfigProvider.fromEnvRecord(values, { preserveEmptyStrings: true }),
+            { asPrimary: true },
+          ),
+        ),
       ),
     ),
   );
+
+const withoutConfigEnvPin = <A, E, R>(
+  name: string,
+  body: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  Effect.flatMap(Effect.service(ConfigEnvPins), (pins) => {
+    const { [name]: _removed, ...rest } = pins;
+    return Effect.provideService(body, ConfigEnvPins, rest);
+  });
 
 /**
  * Hides every ambient env var from the `Config` reads in `body`; `process.env` is untouched.
@@ -1399,7 +1422,7 @@ export function mockDockerDaemonCliSpawner(
 // re-builds, including the easy-to-mis-wire `remoteTargetLayer.pipe(Layer.provide(...))` subgraph —
 // `Layer.provide` does not share to siblings inside `Layer.mergeAll`, so centralizing the
 // subgraph here removes a recurring footgun.
-type GoOutputValue = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+type OutputFlagValue = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
 
 export interface BuildTestRuntimeOpts {
   readonly out: { readonly layer: Layer.Layer<Output> };
@@ -1414,8 +1437,8 @@ export interface BuildTestRuntimeOpts {
   readonly tty?: Layer.Layer<Tty>;
   /**
    * `Stdin` for prompts routed through `promptYesNo` (piped-answer reads on
-   * a non-TTY, Go's `Console.ReadLine`). Defaults to a non-TTY stdin with no
-   * piped input, i.e. every bounded read times out like Go's empty 100ms scan.
+   * a non-TTY). Defaults to a non-TTY stdin with no
+   * piped input, i.e. every bounded read times out.
    */
   readonly stdin?: Layer.Layer<Stdin>;
   readonly processControl?: { readonly layer: Layer.Layer<ProcessControl> };
@@ -1423,7 +1446,7 @@ export interface BuildTestRuntimeOpts {
   readonly telemetry?: Layer.Layer<TelemetryState>;
   readonly linkedProjectCache?: Layer.Layer<LinkedProjectCache>;
   readonly analytics?: { readonly layer: Layer.Layer<Analytics> };
-  readonly goOutput?: Option.Option<GoOutputValue>;
+  readonly outputFlag?: Option.Option<OutputFlagValue>;
   /** Raw argv seen by the handler (e.g. to exercise an explicit `--yes=false`). */
   readonly cliArgs?: ReadonlyArray<string>;
   /** Replaces the Bun `FileSystem` every service in the runtime reads and writes through. */
@@ -1438,7 +1461,7 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
   const telemetry = opts.telemetry ?? mockTelemetryStateLayer;
   const linkedProjectCache = opts.linkedProjectCache ?? mockLinkedProjectCacheLayer;
   const analytics = (opts.analytics ?? mockAnalytics()).layer;
-  const goOutput = opts.goOutput ?? Option.none<GoOutputValue>();
+  const outputFlag = opts.outputFlag ?? Option.none<OutputFlagValue>();
   const httpClient = opts.api.httpClientLayer;
   const platform =
     opts.fileSystem === undefined
@@ -1482,7 +1505,7 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
     ),
     platform,
     legacyProjectStateLayer.pipe(Layer.provide(platform)),
-    Layer.succeed(OutputFlag, goOutput),
+    Layer.succeed(OutputFlag, outputFlag),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
     linkedProjectCache,
     telemetry,

@@ -3,7 +3,7 @@ import { Effect, Option, Stdio } from "effect";
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { aqua, bold, yellow } from "../../command-internal/colors.ts";
-import { functionsGoConfigCompat } from "../../command-internal/functions-go-config.ts";
+import { functionsLocalConfigLoader } from "../../command-internal/functions-local-config.ts";
 import {
   downloadFunctions,
   type DownloadFunctionsResult,
@@ -14,7 +14,7 @@ import {
   type ConfigPullRunPlan,
   type ConfigPullSource,
 } from "../../command-internal/config-pull-run.ts";
-import { runDbPull, type DbPullFlags } from "../../command-internal/db-pull-run.ts";
+import { runDbPull, type DbPullRunFlags } from "../../command-internal/db-pull-run.ts";
 import {
   runMigrationFetch,
   type MigrationFetchFlags,
@@ -83,17 +83,14 @@ export const pullMigrationHistoryStep = Effect.fnUntraced(function* (context: Pu
 /**
  * `db` step: pulls the linked project's schema in migration mode, targeting `context.ref`
  * directly and suppressing `db pull`'s remote-history-update prompt with `assumeYes`.
- * `forceMigrationMode: true` prevents an ambient `--experimental` gate from silently switching to
- * the declarative export path, which `pull`'s dirty-check and confirmation don't guard against.
  * `DbPullInSyncError` is caught and reported as `in_sync`, a finding rather than a failure at the
  * `pull` level (ADR 0024).
  */
 export const pullDbStep = Effect.fnUntraced(function* (context: PullStepContext) {
   const cliSettings = yield* CommandSettings;
-  const flags: DbPullFlags = {
+  const flags: DbPullRunFlags = {
     name: Option.none(),
     declarative: Option.none(),
-    usePgDelta: Option.none(),
     diffEngine: Option.none(),
     strictCoverage: false,
     schema: [],
@@ -103,10 +100,7 @@ export const pullDbStep = Effect.fnUntraced(function* (context: PullStepContext)
     projectRef: Option.some(context.ref),
     password: Option.none(),
   };
-  return yield* runDbPull(flags, {
-    assumeYes: context.assumeYes,
-    forceMigrationMode: true,
-  }).pipe(
+  return yield* runDbPull(flags, { assumeYes: context.assumeYes }).pipe(
     Effect.map((outcome): PullDbStepOutcome => ({
       kind: "applied",
       outcome,
@@ -120,8 +114,8 @@ export const pullDbStep = Effect.fnUntraced(function* (context: PullStepContext)
 
 /**
  * `functions` step: downloads every Edge Function's source, matching the standalone `functions
- * download` command's `--use-api`/`--use-docker` defaults. `legacyBundle: false` keeps
- * `proxyDownload` unreachable, so `resolveProjectRef` just returns the already-resolved ref.
+ * download` command's `--use-api`/`--use-docker` defaults. `resolveProjectRef` just returns the
+ * already-resolved ref.
  */
 export const pullFunctionsStep = Effect.fnUntraced(function* (context: PullStepContext) {
   const api = yield* CommandPlatformApi;
@@ -136,24 +130,17 @@ export const pullFunctionsStep = Effect.fnUntraced(function* (context: PullStepC
       projectRef: Option.some(context.ref),
       useApi: false,
       useDocker: true,
-      legacyBundle: false,
     },
     {
       api,
       projectRoot: cliSettings.workdir,
       rawArgs,
-      goConfigCompat: functionsGoConfigCompat,
+      localConfigLoader: functionsLocalConfigLoader,
       edgeRuntimeVersion,
       styleEmphasis: (text) => bold(text),
       styleAqua: (text) => aqua(text),
       styleWarning: (text) => yellow(text),
       resolveProjectRef: () => Effect.succeed(context.ref),
-      proxyDownload: () =>
-        Effect.die(
-          new Error(
-            "supabase pull: functions download unexpectedly delegated to the Go binary (legacyBundle is always false for pull)",
-          ),
-        ),
     },
   );
   return { kind: "downloaded", result } satisfies PullFunctionsStepOutcome;

@@ -1,7 +1,9 @@
-import { DateTime, Effect, Exit, FileSystem, Option, Path, Redacted, Ref, Schedule } from "effect";
+import { DateTime, Effect, Exit, FileSystem, Option, Path, Ref, Schedule } from "effect";
 import type * as HttpClientError from "effect/http/HttpClientError";
 
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
+import { CliConfigKeys } from "../../config/cli-config-keys.ts";
+import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
@@ -28,12 +30,9 @@ import { getProjectApiKeys } from "../../command-internal/get-api-keys.ts";
 import { sanitizeErrorBody } from "../../command-internal/http-errors.ts";
 import type { ConnectSuggestionContext } from "../../command-internal/connect-errors.ts";
 import { resolveLinkedConn } from "../../command-internal/db-config.layer.ts";
-import {
-  checkDbToml,
-  loadProjectEnv,
-  warnDeprecatedOrioleDBVersionEnv,
-} from "../../command-internal/db-config.toml-read.ts";
+import { checkDbToml, loadProjectEnvValues } from "../../command-internal/db-config.toml-read.ts";
 import { dbPushCore } from "../../command-internal/db-push-core.ts";
+import { resolveDbSeedInput } from "../../command-internal/seed-remote-consent.ts";
 import { fetchPoolerUrl, linkServicesCore } from "../../command-internal/link-services-core.ts";
 import { readLinkSnapshotSoft } from "../../command-internal/link-snapshot.ts";
 import {
@@ -46,11 +45,8 @@ import { withProjectLease } from "../../command-internal/stack-lock.ts";
 import { projectCreateCore } from "../../command-internal/project-create-core.ts";
 import { LegacyProjectState } from "../../command-internal/legacy-project-state.service.ts";
 import { extractServiceKeys } from "../../command-internal/tenant-keys.ts";
-import { parseDotEnv } from "../../command-internal/dotenv.ts";
-import {
-  experimentalFeatureEnv,
-  resolveExperimentalFeature,
-} from "../../command-internal/experimental-feature.ts";
+import { parseDotEnv } from "../../shared/config/dotenv.ts";
+import { resolveExperimentalFeature } from "../../command-internal/experimental-feature.ts";
 import { initProject } from "../../shared/init/project-init.ts";
 import { buildDotEnv, marshalDotEnv } from "./bootstrap.dotenv.ts";
 import {
@@ -96,6 +92,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
   const workdirFlag = yield* WorkdirFlag;
   const dnsResolver = yield* DnsResolverFlag;
   const yesFlag = yield* resolveYes;
+  const configValues = yield* CliConfigValues;
 
   const isText = output.format === "text";
   const retry = { schedule: retrySchedule, times: BOOTSTRAP_MAX_RETRIES } as const;
@@ -153,7 +150,6 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
         ? yield* resolveExperimentalFeature({
             feature: "stack",
             configValue: Effect.succeed(false),
-            env: yield* experimentalFeatureEnv("stack"),
           })
         : false;
 
@@ -188,36 +184,36 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
 
     if (starter.url.length > 0) {
       if (isText) yield* output.raw(`Downloading: ${starter.url}\n`, "stdout");
-      yield* templateService.download(starter.url, workdir);
+      yield* configValues.writeThrough(templateService.download(starter.url, workdir));
     } else {
-      yield* initProject({
-        cwd: workdir,
-        force: true,
-        interactive: false,
-        yes: yesFlag,
-        useOrioledb: false,
-        withVscodeSettings: false,
-        withIntellijSettings: false,
-        experimentalStack,
-      }).pipe(Effect.withSpan("bootstrap.initProject"));
+      yield* configValues.writeThrough(
+        initProject({
+          cwd: workdir,
+          force: true,
+          interactive: false,
+          yes: yesFlag,
+          useOrioledb: false,
+          withVscodeSettings: false,
+          withIntellijSettings: false,
+          experimentalStack,
+        }).pipe(Effect.withSpan("bootstrap.initProject")),
+      );
     }
 
     // The new project directory's own config can opt into stack mode, so the link target is
     // written and read per that directory rather than the directory bootstrap started in.
-    const linkMode = yield* projectStateMode({
-      cwd: workdir,
-      env: yield* experimentalFeatureEnv("stack"),
-    });
+    const linkMode = yield* projectStateMode({ cwd: workdir });
     yield* Ref.set(linkModeRef, linkMode);
 
     yield* Effect.gen(function* () {
       yield* ensureLogin({ openBrowser: tty.stdinIsTty });
 
-      const seededPassword = Option.isSome(flags.password)
-        ? flags.password.value
-        : Option.isSome(cliSettings.dbPassword)
-          ? Redacted.value(cliSettings.dbPassword.value)
-          : "";
+      const seededPassword = Option.getOrElse(
+        (yield* (yield* configValues.load({ workdir, projectRef: Option.none() })).get(
+          CliConfigKeys.linkedDb.password,
+        )).value,
+        () => "",
+      );
       const created = yield* projectCreateCore({
         name: path.basename(workdir),
         orgId: "",
@@ -246,7 +242,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       // Config load must run before link/health/`.env` steps: a malformed config.toml aborts here
       // rather than after side effects start.
       const { pushYes, toml } = yield* Effect.gen(function* () {
-        const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+        const projectEnv = yield* loadProjectEnvValues(fs, path, workdir);
         return {
           pushYes: yield* resolveYesWithProjectEnv(projectEnv),
           toml: yield* checkDbToml(fs, path, workdir, projectRef),
@@ -255,28 +251,32 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       if (toml.appliedRemote !== undefined) {
         yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
       }
-      yield* warnDeprecatedOrioleDBVersionEnv(toml.envLookup);
 
       if (linkMode === "stack") {
         const poolerUrl = yield* fetchPoolerUrl(api, projectRef).pipe(
           Effect.option,
           Effect.map(Option.flatten),
         );
-        yield* ensureProjectDirectory(workdir);
-        yield* withProjectLease(
-          workdir,
-          writeProjectLink(workdir, {
-            project: {
-              ref: projectRef,
-              name: created.name,
-              organization_id: created.organizationId,
-              organization_slug: created.organizationSlug,
-            },
-            active_branch: {
-              ref: projectRef,
-              ...(Option.isSome(poolerUrl) ? { pooler_url: poolerUrl.value } : {}),
-            },
-            fetchedAt: DateTime.formatIso(yield* DateTime.now),
+        const fetchedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* configValues.writeThrough(
+          Effect.gen(function* () {
+            yield* ensureProjectDirectory(workdir);
+            yield* withProjectLease(
+              workdir,
+              writeProjectLink(workdir, {
+                project: {
+                  ref: projectRef,
+                  name: created.name,
+                  organization_id: created.organizationId,
+                  organization_slug: created.organizationSlug,
+                },
+                active_branch: {
+                  ref: projectRef,
+                  ...(Option.isSome(poolerUrl) ? { pooler_url: poolerUrl.value } : {}),
+                },
+                fetchedAt,
+              }),
+            );
           }),
         );
         yield* identifyProjectGroups(analytics, {
@@ -286,13 +286,17 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
           organization_slug: created.organizationSlug,
         });
       } else {
-        yield* linkServicesCore({
-          ref: projectRef,
-          serviceKey: anon,
-          skipPooler: false,
-          workdir,
-        });
-        yield* legacyState.write(workdir, "projectRef", projectRef);
+        yield* configValues.writeThrough(
+          Effect.gen(function* () {
+            yield* linkServicesCore({
+              ref: projectRef,
+              serviceKey: anon,
+              skipPooler: false,
+              workdir,
+            });
+            yield* legacyState.write(workdir, "projectRef", projectRef);
+          }),
+        );
       }
 
       const healthNotify = yield* bootstrapRetryNotify;
@@ -330,30 +334,32 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       const dbConfig = deriveDbConfig(projectRef, created.dbPassword, cliSettings.projectHost);
       const supabaseUrl = `https://${projectRef}.${cliSettings.projectHost}`;
       const envFilePath = path.join(workdir, ".env");
-      const envFileWritten = yield* Effect.gen(function* () {
-        const examplePath = path.join(workdir, ".env.example");
-        const hasExample = yield* fs.exists(examplePath);
-        let example: Record<string, string> | undefined;
-        if (hasExample) {
-          const content = yield* fs.readFileString(examplePath);
-          example = yield* Effect.try({
-            try: () => parseDotEnv(content),
-            catch: (cause) =>
-              new BootstrapDotEnvParseError({
-                message: cause instanceof Error ? cause.message : String(cause),
-              }),
-          });
-        }
-        const env = buildDotEnv(keys, dbConfig, supabaseUrl, example);
-        yield* fs.writeFileString(envFilePath, marshalDotEnv(env));
-      }).pipe(
-        Effect.as(true),
-        Effect.catch((cause) =>
-          output
-            .raw(`Failed to create .env file: ${cause.message}\n`, "stderr")
-            .pipe(Effect.as(false)),
+      const envFileWritten = yield* configValues.writeThrough(
+        Effect.gen(function* () {
+          const examplePath = path.join(workdir, ".env.example");
+          const hasExample = yield* fs.exists(examplePath);
+          let example: Record<string, string> | undefined;
+          if (hasExample) {
+            const content = yield* fs.readFileString(examplePath);
+            example = yield* Effect.try({
+              try: () => parseDotEnv(content),
+              catch: (cause) =>
+                new BootstrapDotEnvParseError({
+                  message: cause instanceof Error ? cause.message : String(cause),
+                }),
+            });
+          }
+          const env = buildDotEnv(keys, dbConfig, supabaseUrl, example);
+          yield* fs.writeFileString(envFilePath, marshalDotEnv(env));
+        }).pipe(
+          Effect.as(true),
+          Effect.catch((cause) =>
+            output
+              .raw(`Failed to create .env file: ${cause.message}\n`, "stderr")
+              .pipe(Effect.as(false)),
+          ),
+          Effect.withSpan("bootstrap.writeDotEnv"),
         ),
-        Effect.withSpan("bootstrap.writeDotEnv"),
       );
 
       // `resolveLinkedConn` doesn't attach a suggestionContext like the full resolver does; build
@@ -383,6 +389,10 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       // command, since its CommandSettings-based resolvers would be stale after this handler's
       // own chdir above.
       const pushNotify = yield* bootstrapRetryNotify;
+      const seed = yield* resolveDbSeedInput(
+        yield* configValues.load({ workdir, projectRef: Option.some(projectRef) }),
+        { workdir, ref: projectRef },
+      );
       yield* dbPushCore({
         workdir,
         projectRef,
@@ -393,6 +403,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
         includeAll: false,
         includeRoles: true,
         includeSeed: true,
+        seed,
         includeVault: true,
         dnsResolver,
         toml,

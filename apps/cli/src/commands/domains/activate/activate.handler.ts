@@ -1,11 +1,10 @@
-import { Effect, Option } from "effect";
+import { Effect } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { warnIncludeRawOutputDeprecated } from "../domains.deprecation.ts";
 import { emitHostnameResult } from "../domains.emit.ts";
 import { mapDomainsHttpError } from "../domains.errors.ts";
 import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
@@ -22,8 +21,6 @@ export const domainsActivate = Effect.fn("domains.activate")(function* (
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  yield* warnIncludeRawOutputDeprecated(flags.includeRawOutput);
-
   const { ref } = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
@@ -35,9 +32,6 @@ export const domainsActivate = Effect.fn("domains.activate")(function* (
     );
     yield* activating?.clear ?? Effect.void;
 
-    yield* emitHostnameResult(
-      response,
-      Option.getOrElse(flags.includeRawOutput, () => false),
-    );
+    yield* emitHostnameResult(response);
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

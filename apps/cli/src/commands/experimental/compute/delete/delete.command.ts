@@ -5,6 +5,8 @@ import { compose, withKind } from "../../../../command-internal/command-permissi
 import { projectRefPicker } from "../../../../config/remote-target.layer.ts";
 import { linkedProjectCache } from "../../../../telemetry/linked-project-cache.layer.ts";
 import { computeRead } from "../../../../shared/compute/compute-api.ts";
+import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
@@ -50,4 +52,6 @@ export const computeDeleteCommand = Command.make("delete", config).pipe(
     computeDelete(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["compute", "delete"])),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

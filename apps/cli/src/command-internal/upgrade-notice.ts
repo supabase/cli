@@ -29,6 +29,7 @@ import {
   rootFlagTokens,
 } from "../shared/cli/run.ts";
 import { CLI_UPGRADE_GUIDE_URL, CLI_VERSION, parseSemver } from "../shared/cli/version.ts";
+import { candidateDotenvFilenames } from "../shared/config/cli-config-env.ts";
 import { resolveSupabaseHomeValue } from "../shared/config/supabase-home.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import {
@@ -38,8 +39,7 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 import { bold, yellow } from "./colors.ts";
 import { legacyProjectStatePaths } from "./legacy-project-state.paths.ts";
-import { parseDotEnv } from "./dotenv.ts";
-import { candidateDotenvFilenames } from "./project-environment.ts";
+import { parseDotEnv } from "../shared/config/dotenv.ts";
 import { projectStateMode } from "./project-state-mode.ts";
 
 const LATEST_RELEASE_URL = "https://api.github.com/repos/supabase/cli/releases/latest";
@@ -208,8 +208,10 @@ const resolveNoticeBaseDir = Effect.fnUntraced(function* (
   }
   let current = cwd;
   while (true) {
-    const configToml = path.join(current, "supabase", "config.toml");
-    if (yield* fs.exists(configToml).pipe(Effect.orElseSucceed(() => false))) return current;
+    for (const configFile of ["config.json", "config.toml"]) {
+      const configPath = path.join(current, "supabase", configFile);
+      if (yield* fs.exists(configPath).pipe(Effect.orElseSucceed(() => false))) return current;
+    }
     const parent = path.dirname(current);
     if (parent === current) return cwd;
     current = parent;
@@ -219,7 +221,7 @@ const resolveNoticeBaseDir = Effect.fnUntraced(function* (
 /**
  * The project dotenv chain as a merged map: `<base>/supabase` then `<base>`,
  * first file to define a key wins, shell env always beats a chain value —
- * same precedence as `resolveProjectEnvironmentValues`. Read for every real
+ * same precedence as `loadCliProjectEnvFiles`. Read for every real
  * command since this hook can't tell whether the command loads config; the
  * only effect is a suppressed notice or extra debug diagnostic either way.
  */
@@ -238,7 +240,8 @@ const projectDotenvValues = Effect.fnUntraced(function* (
       : [path.join(base, "supabase"), base];
   for (const dir of dirs) {
     for (const filename of candidateDotenvFilenames(env["SUPABASE_ENV"] || "development")) {
-      const contents = yield* readUtf8(fs, path.join(dir, filename)).pipe(Effect.option);
+      // `readFileString` drops a leading byte-order mark, as the main loader's reader does.
+      const contents = yield* fs.readFileString(path.join(dir, filename)).pipe(Effect.option);
       if (Option.isNone(contents)) continue;
       const parsed = Result.try(() => parseDotEnv(contents.value));
       // A malformed file is only reachable here when the command never
@@ -449,7 +452,6 @@ export const upgradeNoticeHook = (
   args: ReadonlyArray<string>,
   info: {
     readonly cleanShowHelp: boolean;
-    readonly delegatedToGo: boolean;
     readonly workingDirectory?: string;
     readonly isValueTakingFlagToken: (token: string) => boolean;
   },
@@ -459,52 +461,51 @@ export const upgradeNoticeHook = (
     HttpClient.HttpClient
   > = fetchLatestReleaseTag,
 ): Effect.Effect<void, never, FileSystem.FileSystem | Path.Path | RuntimeInfo> =>
-  info.delegatedToGo
-    ? Effect.void
-    : Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const clock = yield* Clock.Clock;
-        const runtime = yield* RuntimeInfo;
-        const env: Record<string, string | undefined> = {};
-        for (const key of NOTICE_ENV_KEYS) {
-          env[key] = Option.getOrUndefined(yield* Config.option(Config.String(key)));
-        }
-        const supabaseHome = yield* Config.option(Config.String("SUPABASE_HOME"));
-        const outcome = yield* runUpgradeNotice({
-          env,
-          args,
-          cleanShowHelp: info.cleanShowHelp,
-          isValueTakingFlagToken: info.isValueTakingFlagToken,
-          cwd: runtime.cwd,
-          resolvedCwd: info.workingDirectory,
-          currentVersion: CLI_VERSION,
-          supabaseHome: resolveSupabaseHomeValue(path, supabaseHome, runtime.homeDir),
-          /* An unreadable mode keeps the cache out of the project; a relative `--workdir` resolves against the process cwd. */
-          usesLegacyProjectState: projectStateMode(
-            info.workingDirectory === undefined
-              ? { args, cwd: runtime.cwd, env }
-              : {
-                  cwd: info.workingDirectory,
-                  env: { SUPABASE_EXPERIMENTAL_STACK: env["SUPABASE_EXPERIMENTAL_STACK"] },
-                },
-          ).pipe(
-            Effect.map((mode) => mode === "legacy"),
-            Effect.orElseSucceed(() => false),
-          ),
-          now: () => clock.currentTimeMillisUnsafe(),
-          /* Runs inside the check span, so the fetch is its child span. */
-          fetchLatestTag: fetchLatestTag.pipe(
-            Effect.provide(FetchHttpClient.layer),
-            Effect.withSpan("UpgradeNotice.fetch"),
-          ),
-          writeStderr: (text) => {
-            process.stderr.write(text);
-          },
-        });
-        if (outcome !== undefined) {
-          yield* Effect.annotateCurrentSpan({
-            "cache.location": outcome.cache,
-            "cache.hit": outcome.cacheFresh,
-          });
-        }
-      }).pipe(Effect.withSpan("UpgradeNotice.check"), Effect.ignoreCause);
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const clock = yield* Clock.Clock;
+    const runtime = yield* RuntimeInfo;
+    const env: Record<string, string | undefined> = {};
+    for (const key of NOTICE_ENV_KEYS) {
+      env[key] = Option.getOrUndefined(yield* Config.option(Config.String(key)));
+    }
+    const supabaseHome = yield* Config.option(Config.String("SUPABASE_HOME"));
+    const outcome = yield* runUpgradeNotice({
+      env,
+      args,
+      cleanShowHelp: info.cleanShowHelp,
+      isValueTakingFlagToken: info.isValueTakingFlagToken,
+      cwd: runtime.cwd,
+      resolvedCwd: info.workingDirectory,
+      currentVersion: CLI_VERSION,
+      supabaseHome: resolveSupabaseHomeValue(path, supabaseHome, runtime.homeDir),
+      /*
+       * An unreadable mode keeps the cache out of the project. The success working directory is
+       * passed as an explicit `--workdir` so it beats `SUPABASE_WORKDIR`; a relative one resolves
+       * against the process cwd.
+       */
+      usesLegacyProjectState: projectStateMode(
+        info.workingDirectory === undefined
+          ? { args, cwd: runtime.cwd }
+          : { args: ["--workdir", info.workingDirectory], cwd: runtime.cwd },
+      ).pipe(
+        Effect.map((mode) => mode === "legacy"),
+        Effect.orElseSucceed(() => false),
+      ),
+      now: () => clock.currentTimeMillisUnsafe(),
+      /* Runs inside the check span, so the fetch is its child span. */
+      fetchLatestTag: fetchLatestTag.pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.withSpan("UpgradeNotice.fetch"),
+      ),
+      writeStderr: (text) => {
+        process.stderr.write(text);
+      },
+    });
+    if (outcome !== undefined) {
+      yield* Effect.annotateCurrentSpan({
+        "cache.location": outcome.cache,
+        "cache.hit": outcome.cacheFresh,
+      });
+    }
+  }).pipe(Effect.withSpan("UpgradeNotice.check"), Effect.ignoreCause);

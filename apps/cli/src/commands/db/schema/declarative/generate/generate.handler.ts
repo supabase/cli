@@ -15,19 +15,15 @@ import {
 } from "../../../../../config/remote-target.service.ts";
 import { bold } from "../../../../../command-internal/colors.ts";
 import {
-  loadProjectEnv,
+  loadProjectEnvValues,
   readDbToml,
   resolveDeclarativeDir,
-  warnDeprecatedOrioleDBVersionEnv,
 } from "../../../../../command-internal/db-config.toml-read.ts";
+import { rejectPasswordWithDirectTarget } from "../../../../../command-internal/db-target-flags.ts";
 import { LinkedProjectCache } from "../../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
 import { listLocalMigrations } from "../../../../../command-internal/migration-list.ts";
-import { withSingleOrioleDBVersionEnvWarning } from "../../../../../command-internal/local-config-values.ts";
-import {
-  isPgDeltaDebugEnabled,
-  resolvePgDeltaProjectId,
-} from "../../../../../command-internal/pgdelta.ts";
+import { isPgDeltaDebugEnabled } from "../../../../../command-internal/pgdelta.ts";
 import type { PgDeltaDatabaseEndpoint } from "../../../shared/pgdelta-engine.service.ts";
 import { DeclarativeWriteError } from "../../../shared/pgdelta.errors.ts";
 import {
@@ -68,7 +64,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
   const dnsResolver = yield* DnsResolverFlag;
   // The project env is loaded and resolved before the gate below, so a `SUPABASE_EXPERIMENTAL`
   // set only in `supabase/.env` opens the gate too.
-  const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+  const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
   const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
   // `--yes` or `SUPABASE_YES` (shell env or project `.env`) must auto-confirm the prompts below.
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
@@ -79,7 +75,6 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
 
   yield* Effect.gen(function* () {
     const baseToml = yield* readDbToml(fs, path, cliSettings.workdir);
-    yield* warnDeprecatedOrioleDBVersionEnv(baseToml.envLookup);
     // Gate before the mutex check below (see `requirePgDelta`'s doc comment for why), and on the
     // base config: a remote `experimental.pgdelta.enabled = true` must not enable a
     // base-disabled command without `--experimental`.
@@ -101,6 +96,11 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
         message: `if any flags in the group [db-url linked local] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
       });
     }
+
+    yield* rejectPasswordWithDirectTarget(
+      Option.isSome(flags.dbUrl) ? "db-url" : Option.isSome(flags.local) ? "local" : "linked",
+      flags.password,
+    );
 
     // Explicit `--linked` re-loads config with the resolved ref, so a matching `[remotes.<ref>]`
     // block overrides `experimental.pgdelta.*` downstream only, not the gate above. Smart-mode's
@@ -143,11 +143,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     const resolvedLinkedProjectRef = yield* Ref.get(linkedProjectRef);
     const run: DeclarativeRunContext = {
       pgDelta: {
-        // `resolvePgDeltaProjectId` resolves `SUPABASE_PROJECT_ID` env → config.toml's
-        // `project_id` → sanitized workdir basename — not `cliSettings.projectId` alone, which
-        // is env-only and would mount the wrong `supabase_edge_runtime_` Deno-cache volume for a
-        // project relying on config or the workdir-basename default.
-        projectId: resolvePgDeltaProjectId(path, cliSettings.projectId, toml, cliSettings.workdir),
+        projectId: toml.projectId,
         cwd: cliSettings.workdir,
         // Merged config's deno_version (re-loaded with the linked ref above on
         // `--linked`), so pg-delta runs under the remote-configured Deno image.
@@ -263,9 +259,6 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
     yield* warnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
     yield* output.raw(declarativeSchemaWrittenLine(declarativeDirRel), "stderr");
   }).pipe(
-    // Starting or resetting the local database loads the project context, which would print the
-    // OrioleDB env WARN again.
-    withSingleOrioleDBVersionEnvWarning,
     // Writes the linked-project cache for any resolved ref, on success and failure. Only
     // explicit `--linked` resolves a ref here; the cache layer no-ops when the file exists, the
     // token is missing, or the GET is non-200.

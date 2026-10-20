@@ -20,7 +20,7 @@ import { GLOBAL_FLAGS } from "../../../command-internal/global-flags.ts";
 import {
   PERSISTENT_VALUE_FLAG_NAMES,
   PERSISTENT_VALUE_FLAG_SHORTHANDS,
-} from "../../../shared/cli/cobra-flag-groups.ts";
+} from "../../../shared/cli/flag-groups.ts";
 import { genTypes } from "./types.handler.ts";
 import {
   GEN_TYPES_LANGUAGES,
@@ -28,6 +28,8 @@ import {
   genTypesLanguageFlags,
 } from "./types.languages.ts";
 import { genTypesRuntimeLayer } from "./types.layers.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 
 const config = {
   local: Flag.Boolean("local").pipe(
@@ -59,7 +61,7 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  // Hidden: Effect V4 has no `Flag.withDeprecated`; the handler prints cobra's deprecation line.
+  // Hidden: Effect V4 has no `Flag.withDeprecated`; the handler prints the deprecation line.
   postgrestV9Compat: Flag.Boolean("postgrest-v9-compat").pipe(
     Flag.withDescription("Generate types compatible with PostgREST v9 and below."),
     Flag.withHidden,
@@ -184,4 +186,6 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
     ),
   ),
   Command.provide(genTypesRuntimeLayer),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(commandConfig),
 );

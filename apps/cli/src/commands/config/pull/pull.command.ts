@@ -2,6 +2,8 @@ import { Layer, Option } from "effect";
 import type * as CliCommand from "effect/cli/Command";
 import { Command, Flag } from "effect/cli";
 
+import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { PROJECT_REF_PATTERN } from "../../../config/remote-target.service.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
@@ -92,4 +94,6 @@ export const configPullCommand = Command.make("pull", config).pipe(
   // `stdinLayer`: the apply confirmation reads piped stdin via `promptYesNo`
   // on a non-TTY stdin.
   Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["config", "pull"]), stdinLayer)),
+  Command.provide(cliConfigValuesLayer),
+  withCliConfigFlags(config),
 );

@@ -1,7 +1,6 @@
 import { pgdeltaScratchDir } from "../../../../../command-internal/scratch-paths.ts";
 import { Clock, DateTime, Effect, FileSystem, Option, Path, Ref, Result } from "effect";
 
-import { withSingleOrioleDBVersionEnvWarning } from "../../../../../command-internal/local-config-values.ts";
 import {
   DnsResolverFlag,
   resolveExperimentalWithProjectEnv,
@@ -10,6 +9,7 @@ import {
 import { promptYesNo } from "../../../../../command-internal/prompt-yes-no.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../shared/runtime/tty.service.ts";
+import { CliConfigValues } from "../../../../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../../../../config/command-settings.service.ts";
 import { resetLocalDatabase } from "../../../../../command-internal/db-bootstrap/reset-local-database.ts";
 import { stackLocalDatabaseConn } from "../../../../../command-internal/stack-local-database.ts";
@@ -18,7 +18,7 @@ import { bold, red, yellow } from "../../../../../command-internal/colors.ts";
 import { DbConnection } from "../../../../../command-internal/db-connection.service.ts";
 import { getHostname } from "../../../../../command-internal/hostname.ts";
 import {
-  loadProjectEnv,
+  loadProjectEnvValues,
   readDbToml,
   resolveDeclarativeDir,
 } from "../../../../../command-internal/db-config.toml-read.ts";
@@ -32,10 +32,7 @@ import {
 import { LinkedProjectCache } from "../../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
 import { listLocalMigrations } from "../../../../../command-internal/migration-list.ts";
-import {
-  isPgDeltaDebugEnabled,
-  resolvePgDeltaProjectId,
-} from "../../../../../command-internal/pgdelta.ts";
+import { isPgDeltaDebugEnabled } from "../../../../../command-internal/pgdelta.ts";
 import { writePgDeltaMigrations } from "../../../shared/pgdelta-migrations.write.ts";
 import {
   resolveLocalTargetEndpoint,
@@ -89,7 +86,7 @@ const DEFAULT_SYNC_NAME = "declarative_sync";
 const formatTimestamp = (millis: number): string =>
   DateTime.formatIso(DateTime.makeUnsafe(millis)).replace(/\D/g, "").slice(0, 14);
 
-const runDbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(function* (
+export const dbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(function* (
   flags: DbSchemaDeclarativeSyncFlags,
 ) {
   const output = yield* Output;
@@ -97,11 +94,12 @@ const runDbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(funct
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const cliSettings = yield* CommandSettings;
+  const configValues = yield* CliConfigValues;
   const telemetryState = yield* TelemetryState;
   const remoteTarget = yield* RemoteTarget;
   // The project env is loaded and resolved before the gate below, so a `SUPABASE_EXPERIMENTAL`
   // set only in `supabase/.env` opens the gate too.
-  const projectEnv = yield* loadProjectEnv(fs, path, cliSettings.workdir);
+  const projectEnv = yield* loadProjectEnvValues(fs, path, cliSettings.workdir);
   const experimental = yield* resolveExperimentalWithProjectEnv(projectEnv);
   // `--yes` or `SUPABASE_YES` (shell env or project `.env`) must auto-confirm the prompts below.
   const yes = yield* resolveYesWithProjectEnv(projectEnv);
@@ -148,11 +146,7 @@ const runDbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(funct
     const tempDir = yield* pgdeltaScratchDir(cliSettings.workdir);
     const run: DeclarativeRunContext = {
       pgDelta: {
-        // `resolvePgDeltaProjectId` resolves `SUPABASE_PROJECT_ID` env → config.toml's
-        // `project_id` → sanitized workdir basename — not `cliSettings.projectId` alone, which
-        // is env-only and would mount the wrong `supabase_edge_runtime_` Deno-cache volume for a
-        // project relying on config or the workdir-basename default.
-        projectId: resolvePgDeltaProjectId(path, cliSettings.projectId, toml, cliSettings.workdir),
+        projectId: toml.projectId,
         cwd: cliSettings.workdir,
         denoVersion: toml.denoVersion,
         projectEnv: toml.projectEnv,
@@ -581,7 +575,9 @@ const runDbSchemaDeclarativeSync = Effect.fn("db.schema.declarative.sync")(funct
             ),
           )
         : {
-            host: yield* getHostname(),
+            host: yield* getHostname(
+              yield* configValues.load({ workdir: cliSettings.workdir, projectRef: Option.none() }),
+            ),
             port: toml.port,
             password: toml.password,
           };
@@ -693,11 +689,6 @@ const declarativeDirHasFiles = Effect.fnUntraced(function* (
 });
 
 /** Connects once and applies the ordered migration files. */
-// Starting or resetting the local database loads the project context, which would print the
-// OrioleDB env WARN again.
-export const dbSchemaDeclarativeSync = (flags: DbSchemaDeclarativeSyncFlags) =>
-  withSingleOrioleDBVersionEnvWarning(runDbSchemaDeclarativeSync(flags));
-
 const applyMigrationToLocal = Effect.fn("db.schema.declarative.sync.apply")(function* (
   local: { host: string; port: number; password: string; dnsResolver: "native" | "https" },
   migrationPaths: ReadonlyArray<string>,

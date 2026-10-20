@@ -139,10 +139,9 @@ are quoted so that sourcing the file performs no shell expansion. The exported v
 `PUBLISHABLE_KEY`, `SECRET_KEY`, `ANON_KEY`, and `SERVICE_ROLE_KEY`; `REST_URL` and
 `FUNCTIONS_URL` are `<API_URL>/rest/v1` and `<API_URL>/functions/v1`, `MCP_URL` is `<API_URL>/mcp`,
 whose port is assigned per project, and `DB_URL` uses the `postgres` role with the saved database
-password, URI-encoded, and no query string. `INBUCKET_URL` is also exported alongside
-`MAILPIT_URL`, with the same value, as a deprecated alias. `start` and `status` text output shows
-only the publishable and secret keys; `ANON_KEY` and `SERVICE_ROLE_KEY` appear only in JSON `env`
-and `status --env`. `start` and `status` JSON/stream-JSON results include this same connection map
+password, URI-encoded, and no query string. `start` and `status` text output shows only the
+publishable and secret keys; `ANON_KEY` and `SERVICE_ROLE_KEY` appear only in JSON `env` and
+`status --env`. `start` and `status` JSON/stream-JSON results include this same connection map
 under `env`; `status --env` remains the dotenv/variable-map export, and `--override-name` only
 applies there. `--override-name` accepts repeated or comma-separated `EXPORTED_VARIABLE=NAME`
 entries, requires `--env`, and rejects unknown variables, invalid names, and collisions. The
@@ -190,9 +189,9 @@ unavailable. An invalid `SUPABASE_EXPERIMENTAL_STACK` value is still an error.
 For temporary selection, set `SUPABASE_EXPERIMENTAL_STACK=1` to select the new backend or
 `SUPABASE_EXPERIMENTAL_STACK=0` to select the legacy backend. This environment variable takes
 precedence over `experimental.stack`; an unset or empty value falls back to the file setting.
-Other values are rejected, including by `supabase link`, `supabase unlink` and `supabase projects
-delete`, which read or write the project link. The override is applied before reading the project
-configuration.
+Non-boolean values are rejected, including by `supabase link`, `supabase unlink` and `supabase
+projects delete`, which read or write the project link. The override is applied before reading the
+project configuration.
 
 `supabase services` follows the same backend selection. In stack mode it lists image versions and
 canonical `ghcr.io/supabase/cli/...` names, including Mailpit. The versions come from
@@ -221,7 +220,7 @@ A `--db-url` that matches `config.toml` host and port is still rewritten like a 
 stack target for dump's tool container. Compose names (`supabase_db_*`, `supabase_network_*`,
 `db:5432`) are not used. The stack backend requires the in-process pg-delta engine;
 `--use-migra`, `--use-pgadmin`, `--use-pg-schema`, and `db pull --diff-engine migra` are
-rejected. The flag also routes local `functions serve` through the stack; other `functions`
+rejected (`--use-migra=false` and `--use-pgadmin=false` keep pg-delta and are accepted). The flag also routes local `functions serve` through the stack; other `functions`
 commands retain their existing behavior.
 
 `functions serve` requires a running project stack. It attaches to the existing Functions member,

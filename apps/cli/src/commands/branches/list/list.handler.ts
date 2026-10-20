@@ -7,10 +7,13 @@ import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.serv
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { encodeGoJson } from "../../../command-internal/go-output.encoders.ts";
-import { encodeGoToml, encodeGoYaml } from "../../../command-internal/go-struct-output.encoders.ts";
+import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
+import {
+  encodeStructToml,
+  encodeStructYaml,
+} from "../../../command-internal/struct-output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { GO_BRANCHES_LIST, GO_BRANCHES_TOML_WRAPPER } from "../branches.go-payload.ts";
+import { BRANCHES_LIST_SHAPE, BRANCHES_TOML_WRAPPER_SHAPE } from "../branches.response-shape.ts";
 import {
   BranchesEnvNotSupportedError,
   BranchesListNetworkError,
@@ -30,7 +33,7 @@ const mapListError = mapHttpError({
 
 export const branchesList = Effect.fn("branches.list")(function* (flags: BranchesListFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const remoteTarget = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
@@ -51,27 +54,27 @@ export const branchesList = Effect.fn("branches.list")(function* (flags: Branche
     yield* Effect.annotateCurrentSpan("branch.count", branches.length);
     yield* fetching?.clear ?? Effect.void;
 
-    const goFmt = Option.getOrUndefined(goOutputFlag);
+    const outputFlagFormat = Option.getOrUndefined(outputFlag);
 
-    if (goFmt === "env") {
+    if (outputFlagFormat === "env") {
       return yield* new BranchesEnvNotSupportedError({
         message: "--output env flag is not supported",
       });
     }
-    if (goFmt === "json") {
-      yield* output.raw(encodeGoJson(branches));
+    if (outputFlagFormat === "json") {
+      yield* output.raw(encodeSortedJson(branches));
       return;
     }
-    if (goFmt === "yaml") {
-      yield* output.raw(encodeGoYaml(branches, GO_BRANCHES_LIST));
+    if (outputFlagFormat === "yaml") {
+      yield* output.raw(encodeStructYaml(branches, BRANCHES_LIST_SHAPE));
       return;
     }
-    if (goFmt === "toml") {
+    if (outputFlagFormat === "toml") {
       // An empty branch list omits the `branches` key entirely rather than emitting `[]`.
       yield* output.raw(
-        encodeGoToml(
+        encodeStructToml(
           { branches: branches.length > 0 ? branches : undefined },
-          GO_BRANCHES_TOML_WRAPPER,
+          BRANCHES_TOML_WRAPPER_SHAPE,
         ),
       );
       return;
