@@ -2729,8 +2729,7 @@ describe("db diff", () => {
         label: "--linked with --local",
         selector: { linked: true, local: true },
         tag: "TargetSelectorConflictError",
-        suggestion:
-          "Use --from=remote or --to=remote instead of --linked, --from=<url> or --to=<url> instead of --db-url, and drop --local.",
+        suggestion: "Use --from=remote or --to=remote instead of --linked, and drop --local.",
       },
       {
         label: "--project-ref with --db-url",

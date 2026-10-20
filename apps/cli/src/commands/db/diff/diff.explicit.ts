@@ -12,7 +12,10 @@ import {
   deprecationLead,
   LOCAL_NOT_NEEDED_MESSAGE,
 } from "../../../command-internal/target/target-deprecation.ts";
-import type { TargetDeprecation } from "../../../command-internal/target/target-selector.ts";
+import {
+  joinFlags,
+  type TargetDeprecation,
+} from "../../../command-internal/target/target-selector.ts";
 import {
   TargetEmptyValueError,
   TargetInvalidValueError,
@@ -80,6 +83,15 @@ export const explicitDeprecationMessages = (
     return `${lead} Use ${replacementOf(remote)} instead`;
   });
 
+const CONFLICT_REPLACEMENTS = {
+  "--linked": "--from=remote or --to=remote instead of --linked",
+  "--db-url": "--from=<url> or --to=<url> instead of --db-url",
+  "--local": "drop --local",
+} as const;
+
+const isConflictFlag = (flag: string): flag is keyof typeof CONFLICT_REPLACEMENTS =>
+  Object.hasOwn(CONFLICT_REPLACEMENTS, flag);
+
 /** A selector error whose suggestion names `--from`/`--to`, as explicit mode rejects `--remote`. */
 export const explicitSelectorError = (error: TargetSelectorError): TargetSelectorError => {
   switch (error._tag) {
@@ -107,13 +119,15 @@ export const explicitSelectorError = (error: TargetSelectorError): TargetSelecto
             ? "Use --from=<ref> or --to=<ref> instead of --project-ref, and --from=<url> or --to=<url> instead of --db-url."
             : "Use --from=<ref> or --to=<ref> instead of --project-ref, and drop --local.",
       });
-    case "TargetSelectorConflictError":
+    case "TargetSelectorConflictError": {
+      if (!error.flags.every(isConflictFlag)) return error;
+      const clauses = error.flags.map((flag) => CONFLICT_REPLACEMENTS[flag]);
       return new TargetSelectorConflictError({
         flags: error.flags,
-        message: error.message,
-        suggestion:
-          "Use --from=remote or --to=remote instead of --linked, --from=<url> or --to=<url> instead of --db-url, and drop --local.",
+        message: `Only one of --linked, --db-url and --local can be set; got ${joinFlags(error.flags)}.`,
+        suggestion: `Use ${clauses.slice(0, -1).join(", ")}, and ${clauses[clauses.length - 1]}.`,
       });
+    }
   }
 };
 

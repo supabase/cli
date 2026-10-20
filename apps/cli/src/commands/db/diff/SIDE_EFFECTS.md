@@ -275,8 +275,12 @@ a postgresql:// URL; convert a connection string to a postgresql:// URL and pass
   `--project-ref only applies when --from or --to is remote; to diff another project, use --from=<ref> or --to=<ref>.`
   and a URL value fails with `--project-ref takes a project ref or a branch name, not a URL.`
   Selector flags that conflict (`--linked` with `--local`, `--project-ref` with `--db-url`), an
-  empty `--project-ref` or `--db-url`, and a URL in `--project-ref` keep their usual messages; each
-  suggestion names `--from`/`--to` instead of `--remote`, which this mode rejects.
+  empty `--project-ref` or `--db-url`, and a URL in `--project-ref` keep their usual messages,
+  except that a conflict among `--linked`, `--db-url` and `--local` leaves `--remote` out of the
+  flags it allows (`Only one of --linked, --db-url and --local can be set; got --linked and --local.`).
+  Each suggestion names `--from`/`--to` instead of `--remote`, which this mode rejects, and a
+  conflict's suggestion has one clause per flag passed
+  (`Use --from=remote or --to=remote instead of --linked, and drop --local.`).
 
 - **Explicit `--from`/`--to` with a project whose database is unreachable over IPv6.** A project
   or branch endpoint falls back to the pooler URL the API returns. With none, the run fails with
