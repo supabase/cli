@@ -222,6 +222,7 @@ export function describeDbTargetSelection<R>(
         check: (ctx) =>
           Effect.gen(function* () {
             yield* ctx.run;
+            // The banner carries the hint only if the leaf's `resolveTarget` called `hintLocal`.
             yield* announceTarget(renderLocalTarget("127.0.0.1", 54322));
             expect(stripAnsi(ctx.out.stderrText)).toContain(
               `default; pass --remote for ${VALID_REF}`,
