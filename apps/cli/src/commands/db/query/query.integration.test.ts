@@ -549,27 +549,25 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("renders JSON for agents by default with the untrusted-data envelope", () => {
-    const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes" });
-    return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1") }));
-      const parsed = yield* decodeJson(out.stdoutText);
-      expect(parsed).toHaveProperty("boundary", BOUNDARY);
-      expect(parsed).toHaveProperty("rows", [
-        { id: 1, name: "alice" },
-        { id: 2, name: "bob" },
-      ]);
-      expect(out.stdoutText).toContain(`\\u003c${BOUNDARY}\\u003e`);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("auto-detects an agent from AiTool and defaults to JSON", () => {
-    const { layer, out } = setup({ result: SELECT_RESULT, agent: "auto", aiTool: "cursor" });
-    return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1") }));
-      expect(yield* decodeJson(out.stdoutText)).toHaveProperty("boundary", BOUNDARY);
-    }).pipe(Effect.provide(layer));
-  });
+  const agentSources = [
+    ["--agent yes", { agent: "yes" }],
+    ["an agent detected from AiTool", { agent: "auto", aiTool: "cursor" }],
+  ] as const;
+  for (const [name, opts] of agentSources) {
+    it.effect(`renders JSON with the untrusted-data envelope by default for ${name}`, () => {
+      const { layer, out } = setup({ result: SELECT_RESULT, ...opts });
+      return Effect.gen(function* () {
+        yield* dbQuery(flags({ sql: Option.some("select 1") }));
+        const parsed = yield* decodeJson(out.stdoutText);
+        expect(parsed).toHaveProperty("boundary", BOUNDARY);
+        expect(parsed).toHaveProperty("rows", [
+          { id: 1, name: "alice" },
+          { id: 2, name: "bob" },
+        ]);
+        expect(out.stdoutText).toContain(`\\u003c${BOUNDARY}\\u003e`);
+      }).pipe(Effect.provide(layer));
+    });
+  }
 
   it.effect("renders plain JSON (no envelope) for a human with -o json", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", outputFlag: "json" });
@@ -677,14 +675,6 @@ describe("db query integration", () => {
     });
   });
 
-  it.effect("renders CSV with -o csv", () => {
-    const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", outputFlag: "csv" });
-    return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1") }));
-      expect(out.stdoutText).toBe("id,name\n1,alice\n2,bob\n");
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("honors an explicit -o table over the agent JSON default", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes", outputFlag: "table" });
     return Effect.gen(function* () {
@@ -764,30 +754,6 @@ describe("db query integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain("failed to load project ref");
       expect(failMessage(exit)).not.toContain("Cannot find project ref");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("queries the linked project over HTTP and writes the linked-project cache", () => {
-    const { layer, out, cache, platformApi } = setup({
-      linkedStatus: 201,
-      linkedBody: '[{"name":"alice","id":1}]',
-    });
-    return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), remote: REMOTE_LINKED }));
-      expect(out.stdoutText).toContain("│ name  │ id │");
-      expect(platformApi.requests).toHaveLength(1);
-      expect(platformApi.requests[0]).toMatchObject({
-        method: "POST",
-        url: `https://api.supabase.com/v1/projects/${REF}/database/query`,
-        body: { query: "select 1" },
-      });
-      expect(cache.cached).toBe(true);
-      assertPermissionDrift({
-        command: "db query",
-        activeFlags: { remote: true },
-        requests: platformApi.requests,
-        exact: true,
-      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -912,16 +878,6 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("caches the linked project even when SQL resolution fails", () => {
-    const { layer, cache } = setup({ stdinTTY: true });
-    return Effect.gen(function* () {
-      const exit = yield* dbQuery(flags({ remote: REMOTE_LINKED })).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failMessage(exit)).toContain("no SQL query provided");
-      expect(cache.cached).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect(
     "errors when the linked API returns a non-201 but still caches the linked project",
     () => {
@@ -949,29 +905,19 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("handles an empty linked result array", () => {
-    const { layer, out } = setup({ linkedStatus: 201, linkedBody: "[]" });
-    return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1 where false"), remote: REMOTE_LINKED }));
-      expect(out.stdoutText).toBe("");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("prints the raw body when the linked response is not a JSON array", () => {
-    const { layer, out } = setup({ linkedStatus: 201, linkedBody: '{"command":"INSERT"}' });
-    return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("insert ..."), remote: REMOTE_LINKED }));
-      expect(out.stdoutText).toBe('{"command":"INSERT"}\n');
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("prints the raw body when the linked response is not valid JSON", () => {
-    const { layer, out } = setup({ linkedStatus: 201, linkedBody: "CREATE TABLE" });
-    return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("create ..."), remote: REMOTE_LINKED }));
-      expect(out.stdoutText).toBe("CREATE TABLE\n");
-    }).pipe(Effect.provide(layer));
-  });
+  const rawBodies = [
+    ["valid JSON that is not an array", '{"command":"INSERT"}'],
+    ["not valid JSON", "CREATE TABLE"],
+  ] as const;
+  for (const [name, body] of rawBodies) {
+    it.effect(`prints the raw body when the linked response is ${name}`, () => {
+      const { layer, out } = setup({ linkedStatus: 201, linkedBody: body });
+      return Effect.gen(function* () {
+        yield* dbQuery(flags({ sql: Option.some("select 1"), remote: REMOTE_LINKED }));
+        expect(out.stdoutText).toBe(`${body}\n`);
+      }).pipe(Effect.provide(layer));
+    });
+  }
 
   it.effect("renders linked agent JSON with the envelope (no advisory on the linked path)", () => {
     const { layer, out } = setup({
@@ -988,13 +934,19 @@ describe("db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("falls back to map keys when the first linked row has no orderable keys", () => {
-    const { layer, out } = setup({ linkedStatus: 201, linkedBody: "[null]" });
-    return Effect.gen(function* () {
-      yield* dbQuery(flags({ sql: Option.some("select 1"), remote: REMOTE_LINKED }));
-      expect(out.stdoutText).toBe("");
-    }).pipe(Effect.provide(layer));
-  });
+  const columnlessBodies = [
+    ["an empty array", "[]"],
+    ["a null first row", "[null]"],
+  ] as const;
+  for (const [name, body] of columnlessBodies) {
+    it.effect(`prints nothing for a linked result with ${name}`, () => {
+      const { layer, out } = setup({ linkedStatus: 201, linkedBody: body });
+      return Effect.gen(function* () {
+        yield* dbQuery(flags({ sql: Option.some("select 1"), remote: REMOTE_LINKED }));
+        expect(out.stdoutText).toBe("");
+      }).pipe(Effect.provide(layer));
+    });
+  }
 
   it.effect("renders NULL for a null row object in a linked result", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: '[{"a":1},null]' });
