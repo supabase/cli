@@ -234,9 +234,8 @@ const tcpReachable = (host: string, port: number): Effect.Effect<boolean> =>
 
 // POST /v1/projects/{ref}/cli/login-role → mint a temporary postgres role. The Management API
 // client is built lazily via `CommandPlatformApiFactory.make` (not the eager
-// `CommandPlatformApi` stack), so the access token is resolved only here — when a temp role is
-// actually minted. `--linked --password` returns before reaching this, so it stays auth-free;
-// `--local`/`--db-url` never build this layer at all.
+// `CommandPlatformApi` stack), so the access token is resolved only when a call needs it: this
+// mint or the pooler-config fallback. `--local`/`--db-url` never build this layer at all.
 const initLoginRole = Effect.fn("DbConfig.initLoginRole")(function* (
   ref: string,
   conn: PgConnInput,
@@ -422,6 +421,16 @@ export const resolveLinkedPassword = Effect.fn("DbConfig.resolveLinkedPassword")
   return resolved.value.value;
 });
 
+/** The API's primary pooler URL; any failure, a missing access token included, means none. */
+const fetchApiPoolerUrl = Effect.fn("DbConfig.fetchApiPoolerUrl")(
+  function* (ref: string) {
+    const api = yield* (yield* CommandPlatformApiFactory).make;
+    const configs = yield* api.v1.getPoolerConfig({ ref });
+    return configs.find((config) => config.database_type === "PRIMARY")?.connection_string;
+  },
+  Effect.orElseSucceed(() => undefined),
+);
+
 /**
  * Resolve the IPv4 transaction pooler connection for `ref`. Returns `None` when no pooler URL is
  * configured or it fails validation, so the caller can keep the original error. With a password,
@@ -435,9 +444,6 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
   poolerHost: string,
   dnsResolver: "native" | "https",
   password: string,
-  // The container-fallback path falls back to the Management API's primary pooler config when
-  // no `.temp/pooler-url` is saved; the resolve-time IPv6 path uses the saved URL only and
-  // errors otherwise, so this defaults off.
   fetchFromApi = false,
   // For an ad-hoc `--project-ref` the saved `.temp/pooler-url` belongs to the
   // (possibly different) linked workdir, so ignore it and resolve the pooler for
@@ -460,27 +466,17 @@ const resolvePoolerConn = Effect.fn("DbConfig.resolvePoolerConn")(function* (
     : Option.getOrUndefined(tomlValues.poolerConnectionString);
   if (connectionString === undefined) {
     if (!fetchFromApi) return Option.none<PgConnInput>();
-    // No saved pooler URL → fetch the primary pooler config from the Management API. Any API
-    // failure means "no fallback", so swallow it to `None`.
-    const api = yield* (yield* CommandPlatformApiFactory).make;
-    const configsOpt = yield* api.v1.getPoolerConfig({ ref }).pipe(Effect.option);
-    if (Option.isNone(configsOpt)) return Option.none<PgConnInput>();
-    const primary = configsOpt.value.find((config) => config.database_type === "PRIMARY");
-    if (primary === undefined) return Option.none<PgConnInput>();
-    connectionString = primary.connection_string;
+    connectionString = yield* fetchApiPoolerUrl(ref);
+    if (connectionString === undefined) return Option.none<PgConnInput>();
   }
   let pooler = Option.none<PgConnInput>();
   if (connectionString !== undefined) {
     pooler = yield* poolerConfigFrom(ref, connectionString, poolerHost);
   }
   if (Option.isNone(pooler) && fetchFromApi) {
-    const api = yield* (yield* CommandPlatformApiFactory).make;
-    const configsOpt = yield* api.v1.getPoolerConfig({ ref }).pipe(Effect.option);
-    if (Option.isSome(configsOpt)) {
-      const primary = configsOpt.value.find((config) => config.database_type === "PRIMARY");
-      if (primary !== undefined) {
-        pooler = yield* poolerConfigFrom(ref, primary.connection_string, poolerHost);
-      }
+    const apiUrl = yield* fetchApiPoolerUrl(ref);
+    if (apiUrl !== undefined) {
+      pooler = yield* poolerConfigFrom(ref, apiUrl, poolerHost);
     }
   }
   if (Option.isNone(pooler)) return Option.none<PgConnInput>();
@@ -556,7 +552,7 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
 
   // Direct host unreachable (IPv6-only network) → try the pooler. An ad-hoc ref skips the saved
   // pooler URL, which belongs to the linked project; with `fetchPoolerFromApi`, either case falls
-  // back to the Management API's pooler config.
+  // back to the Management API's pooler config when an access token is available.
   const poolerConn = yield* resolvePoolerConn(
     ref,
     workdir,
@@ -793,7 +789,7 @@ export const dbConfigResolverLayer = Layer.effect(
       });
 
     // Built per linked call so `--local`/`--db-url` never touch it; the platform API factory
-    // resolves the access token only when a temp role is minted, so `--password` stays auth-free.
+    // resolves the access token only when a call needs it, and `--password` needs none.
     const withLinkedRuntime = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
         Effect.provide(
