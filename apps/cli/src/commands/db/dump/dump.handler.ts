@@ -290,6 +290,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       keepComments,
       excludeTable: flags.exclude,
       columnInsert: !flags.useCopy,
+      remote: !isLocal,
     };
     // The script + diagnostic verb are connection-independent; the env is rebuilt
     // per connection so the pooler-fallback retry can target a different host.

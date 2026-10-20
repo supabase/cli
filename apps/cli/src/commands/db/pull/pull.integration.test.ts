@@ -196,6 +196,7 @@ interface SetupOpts {
   readonly historyUpdateFailWith?: string;
   // Runs the real resolver and linked-project cache; `workdir` must be a real directory.
   readonly realLayers?: boolean;
+  readonly remoteTls?: { readonly sslmode: string };
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -424,6 +425,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           user: "postgres",
           password: "x",
           database: "postgres",
+          ...opts.remoteTls,
         },
         isLocal: connType === "local",
         ref: opts.resolvedRef !== undefined ? Option.some(opts.resolvedRef) : Option.none(),
@@ -1256,6 +1258,20 @@ describe("db pull", () => {
       }).pipe(Effect.provide(s.layer));
     },
   );
+
+  it.effect("an initial pull hands the linked project's TLS settings to pg_dump", () => {
+    const s = setup(tmp.current, {
+      remoteVersions: [],
+      dumpStdout: "create table dumped ();\n",
+      edgeStdout: "create table diffed ();\n",
+      yes: true,
+      remoteTls: { sslmode: "verify-full" },
+    });
+    return Effect.gen(function* () {
+      yield* dbPull(flags());
+      expect(s.dumpCalls[0]?.env).toMatchObject({ PGSSLMODE: "verify-full" });
+    }).pipe(Effect.provide(s.layer));
+  });
 
   it.effect("an initial pull in json mode emits a native structured envelope", () => {
     const s = setup(tmp.current, {
