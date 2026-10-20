@@ -1,5 +1,7 @@
 # `supabase notebooks push [Notebook name]`
 
+Target: hosted, consent default No — see [Command target](../../../../docs/command-target.md)
+
 Writes `supabase/notebooks/<name>.json` into the linked project, one call per
 file. A file is matched to a project notebook **by name** — the API assigns a
 uuid, but a checkout is shared through git and a uuid in a file name is
@@ -57,8 +59,7 @@ entry are canonicalized and refused when they resolve outside the project root.
 
 ## Confirmation
 
-- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
-- Asks `Push <n> notebook(s) on <target>?` (`Push <n> notebook(s) and delete <m> from the project on <target>?` for the delete answer; default No) before the first write, after printing one `Create`, `Update` or `Delete` line per notebook. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.
+- Asks `Push <n> notebook(s) on <target>?` (`Push <n> notebook(s) and delete <m> from the project on <target>?` for the delete answer; default No) before the first write, after printing one `Create`, `Update` or `Delete` line per notebook.
 - No confirmation is asked when nothing would be uploaded or deleted (an empty notebooks directory with the `keep` or write-locally answer). The reconciliation question above is separate: it chooses what to do with project-only notebooks, and the confirmation covers the resulting uploads and deletes together.
 
 ## API Routes
@@ -84,20 +85,19 @@ never mentions `favorite` keeps whatever the dashboard set.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                              |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                                |
-| `1`  | no project ref — not linked and no `--remote`                                                                                                                                                                          |
-| `1`  | the named notebook is not in `supabase/notebooks/`                                                                                                                                                                     |
-| `1`  | a file is unreadable, not JSON, or not a notebook — before anything is sent                                                                                                                                            |
-| `1`  | duplicate remote names (only the selected name for a named push)                                                                                                                                                       |
-| `1`  | the notebooks path exists but cannot be read as a directory                                                                                                                                                            |
-| `1`  | a project notebook name cannot be stored safely as a local file                                                                                                                                                        |
-| `1`  | a Management API call failed (transport, unexpected status, or undecodable body)                                                                                                                                       |
-| `1`  | `-o env`, which cannot represent the payload                                                                                                                                                                           |
-| `1`  | declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed                                                                                                           |
-| `1`  | JSON, stream-json, `-o` or non-interactive run without `--yes` (`HostedMutationConsentRequiredError`) — nothing is changed                                                                                             |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
+| Code | Condition                                                                                                                  |
+| ---- | -------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                    |
+| `1`  | no project ref — not linked and no `--remote`                                                                              |
+| `1`  | the named notebook is not in `supabase/notebooks/`                                                                         |
+| `1`  | a file is unreadable, not JSON, or not a notebook — before anything is sent                                                |
+| `1`  | duplicate remote names (only the selected name for a named push)                                                           |
+| `1`  | the notebooks path exists but cannot be read as a directory                                                                |
+| `1`  | a project notebook name cannot be stored safely as a local file                                                            |
+| `1`  | a Management API call failed (transport, unexpected status, or undecodable body)                                           |
+| `1`  | `-o env`, which cannot represent the payload                                                                               |
+| `1`  | declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed               |
+| `1`  | JSON, stream-json, `-o` or non-interactive run without `--yes` (`HostedMutationConsentRequiredError`) — nothing is changed |
 
 ## Environment Variables
 
@@ -141,17 +141,3 @@ response error. Partial inventories are never used to reconcile notebooks.
 Network operations show progress in text mode; machine output remains payload-only.
 `-o table` and `-o csv` are rejected by command instrumentation before the handler
 runs. `-o env` is rejected by the handler before resolving the project.
-
-## Notes
-
-- Requires `--remote=<ref|branch>`, `SUPABASE_PROJECT_ID`, a linked project (`supabase/.temp/project-ref`)
-  or, on an interactive terminal, the project picker. A bare `--remote` targets the linked project.
-- `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
-  project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
-  (`supabase notebooks push` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A bare `--remote` followed by a word that exactly matches a branch of the linked project, is
-  within a small edit distance of one, or can't be checked because the branch listing failed stops
-  the run before any other work with an error that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project. Any other word runs as the operand.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
-  branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
-  be combined with `--remote=<value>`.

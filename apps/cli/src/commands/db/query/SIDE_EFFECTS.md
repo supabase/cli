@@ -1,14 +1,10 @@
 # `supabase db query`
 
+Target: selectable, consent default No — see [Command target](../../../../docs/command-target.md)
+
 Implemented in `query.handler.ts`. Executes SQL against the local
 database (direct connection), a `--remote=<url>` database (direct connection) or a remote project
 or branch (Management API), then renders the result as a table or JSON.
-
-With no selector the command runs against the local stack, and in a linked checkout the `Target:`
-line adds `default; pass --remote for <project>`. `--remote` selects the linked project,
-`--remote=<ref>` another project, `--remote=<branch>` a branch of the linked project (by name or
-UUID) and `--remote=<url>` a custom database (see
-[ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md)).
 
 Any statement sent to a hosted target (remote project, branch or remote `--remote=<url>`) asks for one
 confirmation first, because the command cannot tell a read from a write. `--read-only` skips that
@@ -52,23 +48,19 @@ stack never prompts.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                                                                                     |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                                                                                                       |
-| `1`  | more than one of `--remote`/`--linked`/`--db-url`/`--local` (`TargetSelectorConflictError`); no SQL provided; empty stdin; unreadable `--file`; remote project or branch without login; `--remote=<branch>` naming no branch of the parent project; query exec failure; non-201 remote status |
-| `1`  | `--project-ref` with `--local`, `--db-url` or `--remote=<value>` (`TargetProjectRefConflictError`)                                                                                                                                                                                            |
-| `1`  | hosted target without `--read-only` in a JSON, piped, agent or non-TTY run without `--yes` or a shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`); nothing is sent                                                                                                                  |
-| `1`  | `--read-only` with a statement that does not start with `SELECT`, `WITH`, `VALUES`, `TABLE`, `SHOW`, `EXPLAIN` or `(`, or with input that ends inside a comment, quote or dollar quote (`DbQueryReadOnlyStatementError`); nothing is sent                                                     |
-| `1`  | hosted target confirmation declined (`HostedMutationDeclinedError`, `context canceled`); nothing is sent                                                                                                                                                                                      |
+| Code | Condition                                                                                                                                                                                                                                 |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                                   |
+| `1`  | no SQL provided; empty stdin; unreadable `--file`; remote project or branch without login; query exec failure; non-201 remote status                                                                                                      |
+| `1`  | hosted target without `--read-only` in a JSON, piped, agent or non-TTY run without `--yes` or a shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`); nothing is sent                                                              |
+| `1`  | `--read-only` with a statement that does not start with `SELECT`, `WITH`, `VALUES`, `TABLE`, `SHOW`, `EXPLAIN` or `(`, or with input that ends inside a comment, quote or dollar quote (`DbQueryReadOnlyStatementError`); nothing is sent |
+| `1`  | hosted target confirmation declined (`HostedMutationDeclinedError`, `context canceled`); nothing is sent                                                                                                                                  |
 
 ## Output
 
 The query payload goes to **stdout** in every `--output-format` mode (there is no
 `--output-format` for `db query`; there is no machine envelope around the
-payload). Diagnostics go to **stderr**: alias deprecation warnings, the `Target: …` line (remote
-project `Target: <name> (<ref>)`, branch `Target: project <parent> · branch <name> (<ref>)`,
-`Target: local stack (<host>:<port>)` with ` · default; pass --remote for <project>` appended in a
-linked checkout when no selector was given, `Target: custom Postgres (<host>:<port>)`)
+payload). Diagnostics go to **stderr**: alias deprecation warnings, the `Target:` line
 and the confirmation question. DDL/DML with no result columns prints the command tag.
 
 - **table** (default for humans): `olekukonko/tablewriter` v1 box layout, NULL for nil.
@@ -103,22 +95,9 @@ from the environment. Agent mode defaults the format to JSON (table for humans).
     See `output-formats.ts`.
 - **Local DDL command tags** use the raw `commandComplete` protocol tag (so
   `CREATE TABLE` etc. survive node-postgres' first-word-only parse of the tag).
-- **Target selection.** `--remote` is read as the linked project (bare), a project ref (20
-  lowercase letters), a Postgres URL, or else a branch of the linked project by name or UUID;
-  `--remote=false` fails with `--remote doesn't take false. Leave it out to target the local database.`, and `--remote=` with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A
-  bare `--remote` followed by a word that exactly matches a branch of the linked project, is within
-  a small edit distance of one, or can't be checked because the branch listing failed stops the run
-  with an error that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project. Any other word runs as the operand.
-- **Deprecated aliases.** `--linked`, `--project-ref=<ref>`, `--db-url=<url>` and `--local` still
-  work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
-  warns that local is the default). They are mutually exclusive with each other and with
-  `--remote`; a `false` switch counts as absent. `--project-ref` with `--local`, `--db-url` or
-  `--remote=<value>` is a hard error.
 - **Hosted consent.** A remote project, branch or remote `--remote=<url>` asks once, after the SQL is known and
   before it is sent: `Run a SQL statement`, with the statement (collapsed to one line, at most 120
-  characters) as the detail and default No. A shell `SUPABASE_YES` or `--yes` grants it
-  (`Confirmed by --yes: …`); a `SUPABASE_YES` in `supabase/.env` and a piped answer do not. Stdin
-  is never read for the answer. Reading a missing SQL source (no SQL, empty stdin, unreadable
+  characters) as the detail and default No. Reading a missing SQL source (no SQL, empty stdin, unreadable
   `--file`) fails before the question.
 - **`--read-only`.** Skips the hosted confirmation entirely and prints no question. On every
   target, before the statement is sent or any question is asked, the SQL is split into statements

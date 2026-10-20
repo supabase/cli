@@ -1,5 +1,7 @@
 # `supabase compute delete <name>`
 
+Target: hosted, consent default No — see [Command target](../../../../../docs/command-target.md)
+
 ## Feature gate
 
 This command is registered only when `experimental.compute` is enabled. Set
@@ -39,13 +41,9 @@ on disk; only the remote compute is deleted.
 ## Confirmation
 
 Interactively, the compute's name has to be typed back before anything is
-deleted. `--yes` (the root persistent flag) or a shell `SUPABASE_YES` skips that and
-prints `Confirmed by --yes: …` on stderr; a `SUPABASE_YES` in a project `.env` does not
-count. With neither — and no interactive terminal to prompt on, which includes a
-redirected stdout, piped stdin and any `--output-format json`/`stream-json` run — the
-command fails with the consent-required error rather than deleting unasked. Stdin is
-never read for the answer. The action line and the running-instance tally (when one is
-known) are written to stderr before the typed-name prompt.
+deleted. Under `--yes` the typed name is skipped and `Confirmed by --yes: …` is printed
+on stderr. The action line and the running-instance tally (when one is known) are
+written to stderr before the typed-name prompt.
 
 ## API Routes
 
@@ -107,9 +105,3 @@ A structured emission is the end of the run: the handler returns at
 branch below it — the kept-nothing notice and the redeploy trailer — is reached.
 `-o pretty`, `table` and `csv` are the exception, since they encode nothing and
 fall through to that same text branch.
-
-## Notes
-
-- Targets the linked project unless `--remote=<ref>` is given; a bare `--remote` also targets the linked project. `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked project (by name or UUID, resolved through `GET /v1/projects/{parent}/branches`, or `GET /v1/branches/{id}` for a UUID when no project is linked), or `true|yes|on|1` for the linked project. A database URL is rejected (`supabase experimental compute delete` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A bare `--remote` followed by a word that exactly matches a branch of the linked project, is within a small edit distance of one, or can't be checked because the branch listing failed stops the run before any other work with an error that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project. Any other word runs as the operand.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.

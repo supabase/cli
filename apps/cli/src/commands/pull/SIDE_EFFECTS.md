@@ -1,5 +1,7 @@
 # `supabase pull`
 
+Target: hosted, consent default No — see [Command target](../../../docs/command-target.md)
+
 Orchestrates four existing pull-style commands — `config pull`, an optional `migration fetch`,
 `db pull`, and `functions download` — behind one target resolution, one consent, and one
 aggregated result (ADR 0024). Each reused step is invoked through its own **run-core** (a typed
@@ -17,10 +19,6 @@ detail, see its own `SIDE_EFFECTS.md`:
 `supabase_migrations.schema_migrations` on the **remote** database (not just local files) whenever
 it actually pulls a migration-mode schema change, and that step requires Docker (shadow database +
 initial-pull `pg_dump` container). See "Consent", "Database writes" and "Docker" below.
-
-The target is always a linked project or branch, announced once as `Target: …` on stderr (the
-banner comes from the target resolution, not from the sub-steps); see
-[Command target](../../../docs/command-target.md).
 
 ## Files Read
 
@@ -116,14 +114,9 @@ any step writes: `Pull project state and update the remote migration history tab
 
 - Declining exits non-zero with `context canceled` (`HostedMutationDeclinedError`) before any
   file is written or any database is touched.
-- `--yes` or a `SUPABASE_YES` in the shell environment confirms it (`Confirmed by --yes: …`). A
-  `SUPABASE_YES` in the project `supabase/.env` does not. JSON, stream-json and non-TTY runs
-  cannot prompt and fail with `HostedMutationConsentRequiredError` without `--yes`; a piped answer
-  on stdin is ignored. `--dry-run` asks nothing.
+- `--dry-run` asks nothing.
 - The consent is passed to the db step, so `db pull` does not ask again. The migration-history
   step only writes local files and asks nothing.
-- `--yes` also lets a step's connection remove a network ban that blocks the temporary login role;
-  without it the step fails and points to `supabase network-bans remove`.
 
 ## Database writes
 
@@ -293,8 +286,6 @@ the -o/--output flag is not supported by pull; use --output-format json|stream-j
 
 ## Notes
 
-- `--remote=<value>` selects the target: a project ref (20 lowercase letters), or the name or UUID of a branch of the linked project (resolved through `GET /v1/projects/{parent}/branches`, or `GET /v1/branches/{id}` for a UUID when no project is linked). A bare `--remote` and no selector both target the linked project. A database URL is rejected (`supabase pull` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` (it still accepts a branch name or UUID) and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
 - **Steps run sequentially, not in parallel**, refining ADR 0004's "runs all sub-syncs in parallel"
   aspiration for `pull` specifically — see [ADR
   0024](../../../../../docs/adr/0024-top-level-pull-orchestration.md) for the two real data

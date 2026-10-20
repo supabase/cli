@@ -1,5 +1,7 @@
 # `supabase branches create`
 
+Target: hosted, consent default Yes — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                           | Format                    | When                                                                                                                           |
@@ -69,7 +71,5 @@ In `--output-format json` / `stream-json`, a `success` event carries the respons
 
 ## Notes
 
-- `--remote=<ref>` names the parent project; with no selector or a bare `--remote` the parent comes from the chain above. A branch name or UUID is rejected with `` `supabase branches create` acts on a parent project, so --remote takes its project ref, not a branch name. Use --remote=<ref>. ``, and a database URL with `` `supabase branches create` needs a project, not a database URL. ``; `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref>; leave it out to use the linked project.` The branch itself stays a positional argument.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
-- Resolves the parent project and prints `Target: <project>` once on stderr in every output format, for example `Target: project <name> (<ref>) · production`. `--output-format json|stream-json` object results and error envelopes also carry a `target` object; `--output {json,yaml,toml,env}` payloads are unchanged.
-- **Consent.** Asks once, after the parent project is resolved and the name is known (taken from the current git branch when `[name]` is omitted) and before the POST, with default Yes: `Create preview branch <name>`. The question lists the region, size, persistence and `--with-data` values that were set, and says when the name came from the git branch. The separate git-branch confirmation prompt is gone. `--yes` or a shell `SUPABASE_YES` approves it (`supabase/.env` does not) and echoes `Confirmed by --yes: <action> on <target>` to stderr. Without it, only an interactive text-mode terminal is asked: JSON, `-o`, piped and agent runs exit 1 with `HostedMutationConsentRequiredError` and change nothing, and declining exits 1 with `HostedMutationDeclinedError`. Stdin is never read.
+- `--remote=<ref>` names the parent project; with no selector or a bare `--remote` the parent comes from the chain above. A branch name or UUID is rejected with `` `supabase branches create` acts on a parent project, so --remote takes its project ref, not a branch name. Use --remote=<ref>. `` The branch itself stays a positional argument.
+- **Consent.** Asks once, after the parent project is resolved and the name is known (taken from the current git branch when `[name]` is omitted) and before the POST, with default Yes: `Create preview branch <name>`. The question lists the region, size, persistence and `--with-data` values that were set, and says when the name came from the git branch. The separate git-branch confirmation prompt is gone.

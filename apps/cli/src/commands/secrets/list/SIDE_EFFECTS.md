@@ -1,5 +1,7 @@
 # `supabase secrets list`
 
+Target: hosted, no consent — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                      | Format                    | When                                                                                                             |
@@ -37,17 +39,16 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                              |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — secrets printed to stdout                                                                                                                                                                                    |
-| `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                                                                                                                                                              |
-| `1`  | `InvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`                                                                                                                                          |
-| `1`  | `ProjectRefNotLinkedError` — `--remote=<ref>` unset, env/file empty, and stdin not a TTY                                                                                                                               |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
-| `1`  | `InvalidProjectRefError` — a `SUPABASE_PROJECT_ID` or link-file ref violates `^[a-z]{20}$`                                                                                                                             |
-| `1`  | `SecretsListUnexpectedStatusError` — non-2xx response from the secrets endpoint                                                                                                                                        |
-| `1`  | `SecretsListNetworkError` — transport-level network failure                                                                                                                                                            |
-| `1`  | `SecretsEnvNotSupportedError` — `--output env` flag is rejected                                                                                                                                                        |
+| Code | Condition                                                                                  |
+| ---- | ------------------------------------------------------------------------------------------ |
+| `0`  | success — secrets printed to stdout                                                        |
+| `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                                  |
+| `1`  | `InvalidAccessTokenError` — token violates `^sbp_(oauth_\|v0_)?[a-f0-9]{40}$`              |
+| `1`  | `ProjectRefNotLinkedError` — `--remote=<ref>` unset, env/file empty, and stdin not a TTY   |
+| `1`  | `InvalidProjectRefError` — a `SUPABASE_PROJECT_ID` or link-file ref violates `^[a-z]{20}$` |
+| `1`  | `SecretsListUnexpectedStatusError` — non-2xx response from the secrets endpoint            |
+| `1`  | `SecretsListNetworkError` — transport-level network failure                                |
+| `1`  | `SecretsEnvNotSupportedError` — `--output env` flag is rejected                            |
 
 ## Telemetry Events Fired
 
@@ -89,18 +90,7 @@ One `result` NDJSON event on success containing `{secrets: [...]}` and `target`.
 
 ## Notes
 
-- Prints the `Target:` banner (project name, ref and, for a branch, the parent project) to stderr before the request. It never asks for confirmation, so `--yes` and `SUPABASE_YES` have no effect.
 - The `--output {json,yaml,toml}` renderings emit the secret array as-is, without `target`.
 - The `value` field returned by the API is a digest/hash of the secret, not the plaintext value.
 - Results are sorted alphabetically by `name` before any encoding.
 - Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers.
-- Requires `--remote=<ref|branch>`, `SUPABASE_PROJECT_ID`, a linked project (`supabase/.temp/project-ref`)
-  or, on an interactive terminal, the project picker. A bare `--remote` targets the linked project.
-- `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
-  project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
-  (`supabase secrets list` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes
-  no operands.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
-  branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
-  be combined with `--remote=<value>`.

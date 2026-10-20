@@ -1,5 +1,7 @@
 # `supabase projects api-keys`
 
+Target: hosted, no consent — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                   | Format                    | When                                                                                                                                                  |
@@ -42,14 +44,13 @@ Management API to return the full secret keys (`sb_secret_...`) in `api_key` ins
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                              |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — API keys printed to stdout                                                                                                                                                                                   |
-| `1`  | authentication error — no valid token found                                                                                                                                                                            |
-| `1`  | API error — non-2xx response from `/v1/projects/{ref}/api-keys`                                                                                                                                                        |
-| `1`  | network / connection failure                                                                                                                                                                                           |
-| `1`  | project ref not provided and no linked project found                                                                                                                                                                   |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
+| Code | Condition                                                       |
+| ---- | --------------------------------------------------------------- |
+| `0`  | success — API keys printed to stdout                            |
+| `1`  | authentication error — no valid token found                     |
+| `1`  | API error — non-2xx response from `/v1/projects/{ref}/api-keys` |
+| `1`  | network / connection failure                                    |
+| `1`  | project ref not provided and no linked project found            |
 
 ## Telemetry Events Fired
 
@@ -107,14 +108,3 @@ On failure, an `error` event is emitted instead:
   in the toml/env env map; the json/yaml encodings preserve the raw `null`. Passing
   `--reveal` makes the API return the secret values, so they print in full across all
   formats (issue #4775).
-- Requires `--remote=<ref|branch>`, `SUPABASE_PROJECT_ID`, a linked project (`supabase/.temp/project-ref`)
-  or, on an interactive terminal, the project picker; it fails with a not-linked error otherwise. A
-  bare `--remote` targets the linked project.
-- `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
-  project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
-  (`supabase projects api-keys` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes
-  no operands.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
-  branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
-  be combined with `--remote=<value>`.

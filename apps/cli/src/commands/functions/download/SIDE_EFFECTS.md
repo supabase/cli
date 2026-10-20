@@ -1,5 +1,7 @@
 # `supabase functions download [Function name]`
 
+Target: hosted, no consent — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                                                                                                       | Format      | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
@@ -104,15 +106,10 @@ Same envelope as `json` above (including on the Docker-unbundle path).
 
 ## Notes
 
-- Targets the linked project unless `--remote=<ref>` is given; a bare `--remote` also targets the linked project. `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked project (by name or UUID, resolved through `GET /v1/projects/{parent}/branches`, or `GET /v1/branches/{id}` for a UUID when no project is linked), or `true|yes|on|1` for the linked project. A database URL is rejected (`supabase functions download` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A bare `--remote` followed by a word that exactly matches a branch of the linked project, is within a small edit distance of one, or can't be checked because the branch listing failed stops the run before any other work with an error that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project. Any other word runs as the operand.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
 - **Config value precedence** (ADR 0032): explicit flag > shell env > project `.env*` > config
   (`config.json` over `config.toml`) > default. The whole config is decoded up front, so an
   invalid value, including an unparsable `SUPABASE_*` override, fails the command.
 - If no function name is provided, downloads all functions.
-- Requires a linked project (`--remote=<ref>` or linked project config).
-- Prints the `Target:` banner (project name, ref and, for a branch, the parent project) to stderr before any download. It never asks for confirmation, so `--yes` and `SUPABASE_YES` have no effect.
 - The `--use-api` path rejects path traversal and symlink escapes before writing source files
   (`resolveDownloadDestination`/`ensureContainedPath`) — the Docker-unbundle path has no equivalent
   check of its own; it delegates the actual file writes to the `unbundle` subcommand running inside

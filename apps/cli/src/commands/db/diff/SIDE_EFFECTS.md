@@ -1,5 +1,7 @@
 # `supabase db diff`
 
+Target: selectable, no consent — see [Command target](../../../../docs/command-target.md)
+
 Diffs the local project's expected schema (a throwaway shadow
 database) against a target database (local / a remote project or branch / `--remote=<url>`), using one of
 three native engines: bundled in-process pg-delta, migra (edge-runtime), or
@@ -7,13 +9,6 @@ pgAdmin (CLI-1968 — a native `docker run` of the differ container, no
 edge-runtime involved). `--use-pg-schema` is removed: the flag stays parsed
 (hidden) only so using it fails with an actionable removal error instead of an
 unknown-flag parse error — see "`--use-pg-schema` is removed" below.
-
-With no selector the command diffs the local stack, and in a linked checkout the `Target:` line
-adds `default; pass --remote for <project>`. `--remote` selects the linked project,
-`--remote=<ref>` another project, `--remote=<branch>` a branch of the linked project (by name or
-UUID) and `--remote=<url>` a custom database (see
-[ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md)).
-It only reads, so it never asks for confirmation, on any target.
 
 When `[experimental].stack` is on, each shadow is a fresh database in an invocation-owned,
 unique temporary stack namespace. The command applies the catalog and project migrations as needed,
@@ -146,21 +141,18 @@ migra/pg-delta-engine-specific).
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                                                                                 |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success; empty diff ("No schema changes found")                                                                                                                                                                                                                                           |
-| `1`  | `--from` without `--to`; `--remote` or an alias combined with `--from`/`--to`; engine-flag mutex; unknown explicit target; connection/shadow/engine failure; file IO error; local db not running (`--use-pgadmin`); differ container non-zero exit; unparseable `--json-diff` output      |
-| `1`  | more than one of `--remote`/`--linked`/`--db-url`/`--local` (`TargetSelectorConflictError`); `--project-ref` with `--local`, `--db-url` or `--remote=<value>` (`TargetProjectRefConflictError`); `--remote=<branch>`, or a `--from`/`--to` branch, naming no branch of the parent project |
-| `1`  | `--use-pg-schema` passed at all (any value, including `=false`) — removed, see Notes                                                                                                                                                                                                      |
+| Code | Condition                                                                                                                                                                                                                                                                            |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | success; empty diff ("No schema changes found")                                                                                                                                                                                                                                      |
+| `1`  | `--from` without `--to`; `--remote` or an alias combined with `--from`/`--to`; engine-flag mutex; unknown explicit target; connection/shadow/engine failure; file IO error; local db not running (`--use-pgadmin`); differ container non-zero exit; unparseable `--json-diff` output |
+| `1`  | a `--from`/`--to` branch naming no branch of the parent project                                                                                                                                                                                                                      |
+| `1`  | `--use-pg-schema` passed at all (any value, including `=false`) — removed, see Notes                                                                                                                                                                                                 |
 
 ## Output
 
 ### `--output-format text`
 
-Progress to stderr (alias deprecation warnings, then the `Target: …` line — remote project
-`Target: <name> (<ref>)`, branch `Target: project <parent> · branch <name> (<ref>)`,
-`Target: local stack (<host>:<port>)` (with ` · default; pass --remote for <project>` appended in a
-linked checkout when no selector was given) or `Target: custom Postgres (<host>:<port>)`, printed
+Progress to stderr (alias deprecation warnings, then the `Target:` line, printed
 once per distinct target — then `Creating shadow database...`, `Diffing schemas[: <list>]`,
 `Finished supabase db diff on branch <branch>.`, drop-statement warning, and the
 `--file` write warning). A configured `[db.migrations].schema_paths` also warns
@@ -227,8 +219,7 @@ transaction metadata.
   invalid value fails the command. A remote project or branch also applies a matching
   `[remotes.*]` block. The linked-database password env is withheld when the target differs from
   `.temp/project-ref`, with a `Not sending SUPABASE_DB_PASSWORD to <target>: ...` warning and a
-  temporary login role instead. `--password` is rejected with `--remote=<url>` and for the local
-  default.
+  temporary login role instead.
 - **pg-delta selection**: `--use-pg-delta` sets `[experimental.pgdelta].enabled` at the flag tier,
   so `--use-pg-delta=false` selects migra over env and config. The default is pg-delta when the
   stack backend is active or `[experimental.pgdelta].enabled` resolves true. An explicit
@@ -237,18 +228,8 @@ transaction metadata.
   (pg-delta is the default unless `[experimental.pgdelta] enabled = false`). `--use-pg-schema`
   is removed and rejects before this group is even checked (see Notes below), so it is never a
   live member of the group.
-- **Target selection.** `--remote` is read as the linked project (bare), a project ref (20
-  lowercase letters), a Postgres URL, or else a branch of the linked project by name or UUID;
-  `--remote=false` fails with `--remote doesn't take false. Leave it out to target the local database.`, and `--remote=` with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A
-  word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes no
-  operands.
-  `--remote=<ref>` supplies only the ref; unlike `SUPABASE_PROJECT_ID`, it does not affect the
+- `--remote=<ref>` supplies only the ref; unlike `SUPABASE_PROJECT_ID`, it does not affect the
   shadow container's project id/labels.
-- **Deprecated aliases.** `--linked`, `--project-ref=<ref>`, `--db-url=<url>` and `--local` still
-  work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
-  warns that local is the default). They are mutually exclusive with each other and with
-  `--remote`; a `false` switch counts as absent. `--project-ref` with `--local`, `--db-url` or
-  `--remote=<value>` is a hard error.
 - **Explicit `--from`/`--to`.** Each endpoint is one of `local`, `migrations`, `remote` (the
   linked project), a project ref, a Postgres URL, or a branch name or UUID of the linked project
   (classified like a `--remote` value, so a branch named like a keyword is reached by its ref or

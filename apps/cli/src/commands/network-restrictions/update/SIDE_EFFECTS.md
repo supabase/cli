@@ -1,5 +1,7 @@
 # `supabase network-restrictions update`
 
+Target: hosted, consent default No — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                           | Format                    | When                                                                                                                                                               |
@@ -51,7 +53,6 @@ when no `--db-allow-cidr` was supplied).
 | `1`  | CIDR parse failure — `NetworkRestrictionsInvalidCidrError` (`failed to parse IP: <input>`)                                                                                                                                                                                                                                                                                                                                                                            |
 | `1`  | private-IP rejection — `NetworkRestrictionsPrivateIpError` (`private IP provided: <input>`)                                                                                                                                                                                                                                                                                                                                                                           |
 | `1`  | project ref unresolved (`ProjectRefNotLinkedError`; `InvalidProjectRefError` for a malformed `SUPABASE_PROJECT_ID` or link-file ref)                                                                                                                                                                                                                                                                                                                                  |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`)                                                                                                                                                                                                                                                |
 | `1`  | API non-201 (POST) / non-200 (PATCH) — `NetworkRestrictionsUpdateUnexpectedStatusError`                                                                                                                                                                                                                                                                                                                                                                               |
 | `1`  | transport failure — `NetworkRestrictionsUpdateNetworkError`                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `1`  | declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed                                                                                                                                                                                                                                                                                                                                                          |
@@ -127,15 +128,4 @@ One `result` event whose `data` is the full response object.
   writes nothing. A malformed `--db-allow-cidr` CSV value (e.g. an unterminated quote) also
   writes nothing and fires no telemetry, even with `--experimental` set — it fails during
   flag parsing, before the gate and the handler.
-- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
-- Asks `Replace the network restrictions on <target>?` (`Append to the network restrictions on <target>?` with `--append`; default No) before the first write, after printing the IPv4 and IPv6 CIDRs. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.
-- Requires `--remote=<ref|branch>`, `SUPABASE_PROJECT_ID`, a linked project (`supabase/.temp/project-ref`)
-  or, on an interactive terminal, the project picker. A bare `--remote` targets the linked project.
-- `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
-  project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
-  (`supabase network-restrictions update` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes
-  no operands.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
-  branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
-  be combined with `--remote=<value>`.
+- Asks `Replace the network restrictions on <target>?` (`Append to the network restrictions on <target>?` with `--append`; default No) before the first write, after printing the IPv4 and IPv6 CIDRs.

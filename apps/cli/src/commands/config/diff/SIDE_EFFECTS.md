@@ -1,5 +1,7 @@
 # `supabase config diff`
 
+Target: hosted, no consent — see [Command target](../../../../docs/command-target.md)
+
 Read-only comparison between the local `supabase/config.toml` and the effective
 configuration the Management API reports for a target project or branch.
 Classifies every remotely-managed property as `update` / `remote_only` /
@@ -146,9 +148,6 @@ and emit nothing.
 
 ## Notes
 
-- `--remote=<value>` selects the target: a project ref (20 lowercase letters), or the name or UUID of a branch of the linked project (resolved through `GET /v1/projects/{parent}/branches`, or `GET /v1/branches/{id}` for a UUID when no project is linked). A bare `--remote` and no selector both target the linked project. A database URL is rejected (`supabase config diff` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` (it still accepts a branch name or UUID) and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
-- Never asks for confirmation: the command reads and compares only, so `--yes` and `SUPABASE_YES` have no effect.
 - Run from the project root (or pass `--workdir`); `config.toml` is read relative to it.
   An explicit `--workdir`/`SUPABASE_WORKDIR` is never climbed past — see the `SUPABASE_WORKDIR` row above.
 - **Local operand per target (ADR 0018/0022):** when the resolved target ref matches a

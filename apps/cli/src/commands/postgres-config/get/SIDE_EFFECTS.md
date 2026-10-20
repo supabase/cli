@@ -1,5 +1,7 @@
 # `supabase postgres-config get`
 
+Target: hosted, no consent — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                           | Format                    | When                                                                                                                                                               |
@@ -36,15 +38,14 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                              |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success - Postgres config printed                                                                                                                                                                                      |
-| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) - checked before ref resolution/API/telemetry                                                                              |
-| `1`  | project ref unresolved (`ProjectRefNotLinkedError`; `InvalidProjectRefError` for a malformed `SUPABASE_PROJECT_ID` or link-file ref)                                                                                   |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
-| `1`  | API non-2xx (`PostgresConfigGetUnexpectedStatusError`)                                                                                                                                                                 |
-| `1`  | transport failure (`PostgresConfigGetNetworkError`); the GET retries on 5xx and transport errors first                                                                                                                 |
-| `1`  | response body is not a JSON object (`PostgresConfigGetUnmarshalError`)                                                                                                                                                 |
+| Code | Condition                                                                                                                                 |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success - Postgres config printed                                                                                                         |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) - checked before ref resolution/API/telemetry |
+| `1`  | project ref unresolved (`ProjectRefNotLinkedError`; `InvalidProjectRefError` for a malformed `SUPABASE_PROJECT_ID` or link-file ref)      |
+| `1`  | API non-2xx (`PostgresConfigGetUnexpectedStatusError`)                                                                                    |
+| `1`  | transport failure (`PostgresConfigGetNetworkError`); the GET retries on 5xx and transport errors first                                    |
+| `1`  | response body is not a JSON object (`PostgresConfigGetUnmarshalError`)                                                                    |
 
 ## Telemetry Events Fired
 
@@ -95,20 +96,9 @@ One `result` event on success.
 ## Notes
 
 - The `--output` flag wins over `--output-format` when both are provided.
-- Requires `--remote=<ref|branch>`, `SUPABASE_PROJECT_ID`, a linked project (`supabase/.temp/project-ref`)
-  or, on an interactive terminal, the project picker. A bare `--remote` targets the linked project.
 - `.temp/linked-project.json` is written after ref resolution (once the `--experimental` gate is open), even when the API call fails, but only on a cache miss with a token when `GET /v1/projects/{ref}` succeeds and `.temp/project-ref` does not name another ref. A closed gate writes nothing.
 - `telemetry.json` is written on every invocation, including failures, but only once the `--experimental` gate is open.
 - `postgres-config` is an experimental command: `get` requires `--experimental`
   (or `SUPABASE_EXPERIMENTAL`), checked before the login check. A closed gate exits 1
   before project-ref resolution, the API call, the `linked-project.json` write, the
   `telemetry.json` write, and the `cli_command_executed` event.
-- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
-- `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
-  project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
-  (`supabase postgres-config get` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes
-  no operands.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
-  branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
-  be combined with `--remote=<value>`.

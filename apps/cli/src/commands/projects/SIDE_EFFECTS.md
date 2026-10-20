@@ -1,5 +1,7 @@
 # `supabase projects` (group)
 
+Target: account, consent default Yes for `create`, No for `delete`, no consent for `list`; `api-keys` is hosted, no consent — see [Command target](../../../docs/command-target.md)
+
 Group-level side-effect summary for the natively-ported `projects` commands:
 `list`, `create`, `delete`, `api-keys`. Per-subcommand detail lives in each
 subcommand's own `SIDE_EFFECTS.md`.
@@ -94,13 +96,4 @@ subcommand's own `SIDE_EFFECTS.md`.
 - `create` interactivity is gated on `--interactive` (default true) **and** a TTY stdin
   **and** an interactive (text-mode) `Output`.
 - `create` asks before the `POST` (default **Yes**) and `delete` asks before the `DELETE`
-  (default **No**, irreversible). `--yes` or a shell `SUPABASE_YES` answers either;
-  a `SUPABASE_YES` in a project `.env` does not. Without one of them a run that
-  can't prompt (piped stdin, `--output-format json`/`stream-json`, `-o json`/`yaml`/`toml`/`env`)
-  fails with the consent-required error before any API write, and stdin is never
-  read for the answer.
-- `api-keys` resolves `--remote=<ref|branch>` (or the deprecated `--project-ref` alias) via the shared
-  resolver (flag → env → `.temp/project-ref` → prompt on a TTY → error when unlinked). A bare
-  `--remote` targets the linked project, `--remote=<branch>` looks the branch up on the linked
-  project (`GET /v1/projects/{parent}/branches`, or `GET /v1/branches/{id}` for a UUID when no
-  project is linked), and `--remote=<url>` is rejected.
+  (default **No**, irreversible); without consent neither makes an API write.

@@ -1,5 +1,7 @@
 # `supabase migration squash`
 
+Target: selectable, consent default No — see [Command target](../../../../docs/command-target.md)
+
 Squashes every local migration up to (optionally)
 `--version` into the last one — diffing a natively-provisioned shadow database's
 `auth`/`storage` schemas before and after applying every migration, dumping the
@@ -96,14 +98,12 @@ live shadow available.
 
 ## Exit Codes
 
-| Code  | Condition                                                                                                                                                                                                                                                                         |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`   | success — **including** the single-migration no-op                                                                                                                                                                                                                                |
-| `1`   | invalid `--version`; `--version` file not found; `version not found`; migrations-dir read failure; shadow create/health/setup/apply failure; `pg_dump` non-zero exit; migration-file open/write failure; baseline connect/batch failure; conflicting target selectors (see Notes) |
-| `1`   | `--password` with a local target or `--remote=<db-url>`                                                                                                                                                                                                                           |
-| `1`   | `--remote=<branch>` matches no branch of the linked project (`LinkBranchNotFoundError`, lists the branches that exist)                                                                                                                                                            |
-| `1`   | hosted target without `--yes` in a run that cannot prompt (`HostedMutationConsentRequiredError`); hosted confirmation declined (`context canceled`) — nothing is changed                                                                                                          |
-| `130` | SIGINT                                                                                                                                                                                                                                                                            |
+| Code  | Condition                                                                                                                                                                                                                               |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`   | success — **including** the single-migration no-op                                                                                                                                                                                      |
+| `1`   | invalid `--version`; `--version` file not found; `version not found`; migrations-dir read failure; shadow create/health/setup/apply failure; `pg_dump` non-zero exit; migration-file open/write failure; baseline connect/batch failure |
+| `1`   | hosted target without `--yes` in a run that cannot prompt (`HostedMutationConsentRequiredError`); hosted confirmation declined (`context canceled`) — nothing is changed                                                                |
+| `130` | SIGINT                                                                                                                                                                                                                                  |
 
 ## Output
 
@@ -151,37 +151,12 @@ code or the rest of the payload.
 
 ## Notes
 
-- **Target.** With no selector the command runs against the local database; when the directory is
-  linked the local `Target:` banner ends with `· default; pass --remote for <project>`. `--remote`
-  targets the linked project (`SUPABASE_PROJECT_ID`, else `.temp/project-ref`). `--remote=<value>`
-  is read as a project ref (20 lowercase letters), a database URL (`postgres://` or
-  `postgresql://`), `true|yes|on|1` (the linked project), or otherwise the name of a branch of the
-  linked project, which resolves to that branch's own project. `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to target the local database.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A word after a bare
-  `--remote` is read as its value, `--remote=<word>`, because the command takes no operands. The
-  resolved target is announced on stderr (`Target: …`) in every output format and, in JSON results,
-  as a `target` object. The shadow database is provisioned locally whatever the target; the target
-  only decides whether the remote history table is baselined.
-- **Deprecated selectors.** `--linked`, `--project-ref`, `--db-url` and `--local` are hidden aliases
-  that still select their target and print a warning on stderr naming the replacement, for example
-  `--linked is deprecated and will be removed in v4. Use --remote instead: supabase migration squash --remote`
-  and
-  `--local isn't needed (local is the default) and will be removed in v4: supabase migration squash`;
-  a database URL is never echoed. Two selectors together fail
-  (`Only one of --remote, --linked, --db-url and --local can be set; got …`), `--project-ref` cannot
-  be combined with `--local`, `--db-url` or `--remote=<value>`, an empty `--db-url` or
-  `--project-ref` is rejected, and `--linked=false` selects nothing.
+- The shadow database is provisioned locally whatever the target; the target only decides whether the
+  remote history table is baselined.
 - **Consent.** A hosted target (a remote project or a non-local database URL) needs one confirmation
-  (default **NO**) because the local checkout rewrite precedes the remote history reset. Only `--yes`
-  or an exported `SUPABASE_YES` approves a run that cannot prompt; a piped answer and a `SUPABASE_YES`
-  in the project `.env` do not. A local target never prompts.
-- **`--password`** applies only to a remote project. With `--remote=<db-url>` (or `--db-url`) it
-  fails with
-  `--password can't be used with --remote=<db-url>. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres`;
-  with a local target it fails with
-  `--password only applies to a linked project. The local database uses [db].password from supabase/config.toml.`
-  followed by `To use the linked project instead, pass --remote.` when the directory is linked (exit
-  1). For a remote project the password resolves as flag > shell `SUPABASE_DB_PASSWORD` > project
-  `.env*` > config; the env value is withheld when the target differs from `.temp/project-ref`
+  (default **NO**) because the local checkout rewrite precedes the remote history reset. A local target never prompts.
+- **`--password`.** For a remote project the password resolves as flag > shell `SUPABASE_DB_PASSWORD` >
+  project `.env*` > config; the env value is withheld when the target differs from `.temp/project-ref`
   (stderr
   `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.`),
   and a temporary login role is minted instead (ADR 0032).

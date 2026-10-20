@@ -1,5 +1,7 @@
 # `supabase snippets list`
 
+Target: hosted, no consent — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                           | Format                    | When                                                                                                            |
@@ -35,14 +37,13 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                              |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                                |
-| `1`  | `SnippetsEnvNotSupportedError` — `--output env` was requested                                                                                                                                                          |
-| `1`  | `ProjectRefNotLinkedError`; `InvalidProjectRefError` for a malformed `SUPABASE_PROJECT_ID` or link-file ref                                                                                                            |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
-| `1`  | `SnippetsListUnexpectedStatusError` — non-2xx response                                                                                                                                                                 |
-| `1`  | `SnippetsListNetworkError` — transport-level failure                                                                                                                                                                   |
+| Code | Condition                                                                                                   |
+| ---- | ----------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                     |
+| `1`  | `SnippetsEnvNotSupportedError` — `--output env` was requested                                               |
+| `1`  | `ProjectRefNotLinkedError`; `InvalidProjectRefError` for a malformed `SUPABASE_PROJECT_ID` or link-file ref |
+| `1`  | `SnippetsListUnexpectedStatusError` — non-2xx response                                                      |
+| `1`  | `SnippetsListNetworkError` — transport-level failure                                                        |
 
 ## Telemetry Events Fired
 
@@ -101,14 +102,3 @@ NDJSON `success` event with the full response as `data`.
 - When both `--output` and `--output-format` are set, `--output` wins (matches the precedence used elsewhere in ports).
 - `--output env` is rejected **after** project-ref resolution but **before** the API call.
 - The linked-project cache fires after project-ref resolves; the telemetry state always flushes. Both run on success and on every error path via the two `Effect.ensuring` blocks in the handler.
-- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
-- Requires `--remote=<ref|branch>`, `SUPABASE_PROJECT_ID`, a linked project (`supabase/.temp/project-ref`)
-  or, on an interactive terminal, the project picker. A bare `--remote` targets the linked project.
-- `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
-  project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
-  (`supabase snippets list` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes
-  no operands.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
-  branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
-  be combined with `--remote=<value>`.

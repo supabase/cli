@@ -1,5 +1,7 @@
 # `supabase sso remove`
 
+Target: hosted, consent default No — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                           | Format                    | When                                                                                                            |
@@ -39,16 +41,15 @@
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                              |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                                |
-| `1`  | `SsoInvalidUuidError` — provider ID is not a canonical UUID                                                                                                                                                            |
-| `1`  | `SsoRemoveNotFoundError` — 404 from delete endpoint                                                                                                                                                                    |
-| `1`  | `SsoRemoveUnexpectedStatusError` — other non-2xx                                                                                                                                                                       |
-| `1`  | `SsoRemoveNetworkError` — transport-level failure                                                                                                                                                                      |
-| `1`  | declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed                                                                                                           |
-| `1`  | JSON, stream-json, `-o` or non-interactive run without `--yes` (`HostedMutationConsentRequiredError`) — nothing is changed                                                                                             |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`) |
+| Code | Condition                                                                                                                  |
+| ---- | -------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                    |
+| `1`  | `SsoInvalidUuidError` — provider ID is not a canonical UUID                                                                |
+| `1`  | `SsoRemoveNotFoundError` — 404 from delete endpoint                                                                        |
+| `1`  | `SsoRemoveUnexpectedStatusError` — other non-2xx                                                                           |
+| `1`  | `SsoRemoveNetworkError` — transport-level failure                                                                          |
+| `1`  | declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed               |
+| `1`  | JSON, stream-json, `-o` or non-interactive run without `--yes` (`HostedMutationConsentRequiredError`) — nothing is changed |
 
 ## Telemetry Events Fired
 
@@ -79,16 +80,4 @@ Single `success` event with the removed provider's details as data.
 
 - Removing a provider will prevent existing SSO users from logging in.
 - The `<provider-id>` argument must be a valid UUID; UUIDs are accepted case-insensitively.
-- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
-- Asks `Remove SSO provider <id> on <target>?` (default No) before the first write. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.
-- Requires `--remote=<ref|branch>`, `SUPABASE_PROJECT_ID`, a linked project (`supabase/.temp/project-ref`)
-  or, on an interactive terminal, the project picker. A bare `--remote` targets the linked project.
-- `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
-  project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
-  (`supabase sso remove` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A bare `--remote` followed by a word that exactly matches a branch of the linked project, is
-  within a small edit distance of one, or can't be checked because the branch listing failed stops
-  the run before any other work with an error that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project. Any other word runs as the operand.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
-  branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
-  be combined with `--remote=<value>`.
+- Asks `Remove SSO provider <id> on <target>?` (default No) before the first write.

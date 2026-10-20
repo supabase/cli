@@ -1,5 +1,7 @@
 # `supabase compute push [name...] (alias: deploy)`
 
+Target: hosted, consent default No — see [Command target](../../../../../docs/command-target.md)
+
 ## Feature gate
 
 This command is registered only when `experimental.compute` is enabled. Set
@@ -35,12 +37,7 @@ and the command handler does not run. See the [Compute command guide](../../../.
 ## Confirmation
 
 Before anything is uploaded, the command asks `deploy compute <names>?` (default
-**No**). `--yes` (the root persistent flag) or a shell `SUPABASE_YES` answers it and
-prints `Confirmed by --yes: …` on stderr; a `SUPABASE_YES` in a project `.env` does not
-count. With neither — and no interactive terminal to prompt on, which includes a
-redirected stdout, piped stdin and any `--output-format json`/`stream-json` or `-o`
-machine format — the command fails with the consent-required error rather than
-deploying unasked. Stdin is never read for the answer.
+**No**). Under `--yes` it prints `Confirmed by --yes: …` on stderr instead of asking.
 
 ## API Routes
 
@@ -191,9 +188,3 @@ adding a hoisted `node_modules` link to `exclude` is a real answer to
 The presigned upload above is the one request whose URL is itself a credential.
 `--debug` logs every request URL, so `httpClientLayer` redacts query
 strings that carry a signature.
-
-## Notes
-
-- Targets the linked project unless `--remote=<ref>` is given; a bare `--remote` also targets the linked project. `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked project (by name or UUID, resolved through `GET /v1/projects/{parent}/branches`, or `GET /v1/branches/{id}` for a UUID when no project is linked), or `true|yes|on|1` for the linked project. A database URL is rejected (`supabase experimental compute push` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A bare `--remote` followed by a word that exactly matches a branch of the linked project, is within a small edit distance of one, or can't be checked because the branch listing failed stops the run before any other work with an error that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project. Any other word runs as the operand.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.

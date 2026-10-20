@@ -1,13 +1,8 @@
 # `supabase db lint`
 
-Checks a database for PL/pgSQL typing errors via the `plpgsql_check` extension.
+Target: selectable, no consent — see [Command target](../../../../docs/command-target.md)
 
-With no selector the command lints the local stack, and in a linked checkout the `Target:` line
-adds `default; pass --remote for <project>`. `--remote` selects the linked project,
-`--remote=<ref>` another project, `--remote=<branch>` a branch of the linked project (by name or
-UUID) and `--remote=<url>` a custom database (see
-[ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md)).
-It only reads, so it never asks for confirmation, on any target.
+Checks a database for PL/pgSQL typing errors via the `plpgsql_check` extension.
 
 ## Files Read
 
@@ -69,24 +64,18 @@ container stacks can enable it. Compose uses the Compose Postgres image.
 
 ## Exit Codes
 
-| Code | Condition                                                                                          |
-| ---- | -------------------------------------------------------------------------------------------------- |
-| `0`  | success — no issues at or above `--fail-on` (an empty result is still `0`)                         |
-| `1`  | more than one of `--remote` / `--linked` / `--db-url` / `--local` (`TargetSelectorConflictError`)  |
-| `1`  | connection / `BEGIN` / list-schemas / enable-extension / query failure                             |
-| `1`  | `--remote=<branch>` naming no branch of the parent project                                         |
-| `1`  | malformed `plpgsql_check` JSON                                                                     |
-| `1`  | an issue's level is at or above `--fail-on`                                                        |
-| `1`  | `--project-ref` with `--local`, `--db-url` or `--remote=<value>` (`TargetProjectRefConflictError`) |
+| Code | Condition                                                                  |
+| ---- | -------------------------------------------------------------------------- |
+| `0`  | success — no issues at or above `--fail-on` (an empty result is still `0`) |
+| `1`  | connection / `BEGIN` / list-schemas / enable-extension / query failure     |
+| `1`  | malformed `plpgsql_check` JSON                                             |
+| `1`  | an issue's level is at or above `--fail-on`                                |
 
 ## Output
 
 ### `--output-format text`
 
-Diagnostics on **stderr**: alias deprecation warnings, the `Target: …` line (remote project
-`Target: <name> (<ref>)`, branch `Target: project <parent> · branch <name> (<ref>)`,
-`Target: local stack (<host>:<port>)` with ` · default; pass --remote for <project>` appended in a
-linked checkout when no selector was given, or `Target: custom Postgres (<host>:<port>)`),
+Diagnostics on **stderr**: alias deprecation warnings, the `Target:` line,
 `Linting schema: <s>`, and `\nNo schema errors found` (when no issues).
 The result is a pretty-printed 2-space JSON array on **stdout** (struct-order
 keys, `omitempty` fields dropped, trailing newline). A filtered-empty result
@@ -109,15 +98,4 @@ the process exits non-zero (no error envelope is written over the payload).
 - `--level` (`warning` default) sets the minimum issue level to emit.
 - `--fail-on` (`none` default) sets the level that forces a non-zero exit.
 - `--schema` / `-s` restricts linting to specific schemas; omitted ⇒ all user schemas.
-- **Target selection.** `--remote` is read as the linked project (bare), a project ref (20
-  lowercase letters), a Postgres URL, or else a branch of the linked project by name or UUID;
-  `--remote=false` fails with `--remote doesn't take false. Leave it out to target the local database.`, and `--remote=` with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A
-  word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes no
-  operands.
-- **Deprecated aliases.** `--linked`, `--project-ref=<ref>`, `--db-url=<url>` and `--local` still
-  work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
-  warns that local is the default). They are mutually exclusive with each other and with
-  `--remote`; a `false` switch counts as absent. `--project-ref` with `--local`, `--db-url` or
-  `--remote=<value>` is a hard error, and an empty `--db-url` or `--project-ref` fails with
-  `TargetEmptyValueError` instead of reading as absent.
 - Telemetry: only the standard `cli_command_executed` event (no custom events).

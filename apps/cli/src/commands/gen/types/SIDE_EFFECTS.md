@@ -1,5 +1,7 @@
 # `supabase gen types`
 
+Target: selectable, no consent — see [Command target](../../../../docs/command-target.md)
+
 Generates PostgREST client types against a direct PostgreSQL connection. Introspection runs
 in-process via `@supabase/postgrest-typegen`; the language comes from the `@supabase/typegen`
 registry, which lists every `--lang` value and either calls that language's generator in-process
@@ -7,15 +9,11 @@ registry, which lists every `--lang` value and either calls that language's gene
 was run from, with the introspected document on stdin (`--lang dart` runs
 `dart run supabase_typegen --output -`, `--lang swift` runs supabase-swift's
 `supabase-typegen`). A bump of that dependency can add a `--lang` value or a
-language flag; the CLI names no language itself. The command is `selectable` and never asks for
-hosted-mutation consent. With no selector it targets the local database; `--remote` targets a remote
-project: bare for the linked project, `--remote=<ref>`, `--remote=<branch>` for a branch of the
-linked project, or `--remote=<db-url>` for a database URL. TypeScript output for a remote project
+language flag; the CLI names no language itself. TypeScript output for a remote project
 still comes from the Management API; every other language and target (including local and a database
 URL) connects to the database and introspects it directly — no pg-meta container is involved. When
 `[experimental].stack` is on, the local target resolves the project stack through `DbConfigResolver`
-instead of inspecting `supabase_db_*`. `--linked`, `--project-ref`, `--project-id`, `--db-url` and
-`--local` are deprecated aliases.
+instead of inspecting `supabase_db_*`.
 
 ## Files Read
 
@@ -116,9 +114,6 @@ way `--remote=<db-url>` does.
 | Code | Condition                                                                                                                                                                                                                                                                     |
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success — types printed to stdout                                                                                                                                                                                                                                             |
-| `1`  | conflicting target flags (see Notes): two selectors, `--project-ref` or `--project-id` combined with `--local`, `--db-url` or `--remote=<value>`, or `--project-id` combined with `--project-ref` (`TargetSelectorConflictError`, `TargetProjectRefConflictError`)            |
-| `1`  | an empty `--db-url`, `--project-ref` or `--project-id` (`TargetEmptyValueError`), `--remote` switched off or given an empty value                                                                                                                                             |
-| `1`  | `--remote=<branch>` matches no branch of the linked project (`LinkBranchNotFoundError`, lists the branches that exist)                                                                                                                                                        |
 | `1`  | a remote project selector (`--remote`, `--remote=<ref>`, `--remote=<branch>`, `--linked`, `--project-ref` or `--project-id`) combined with `--postgrest-v9-compat`, `--query-timeout` or a language flag (`GenTypesFlagUsageError`); `--remote=<db-url>` is outside the group |
 | `1`  | `--postgrest-v9-compat` used without `--remote=<db-url>` or `--db-url` (`GenTypesFlagUsageError`)                                                                                                                                                                             |
 | `1`  | a positional language other than `typescript` passed without `--lang` (`GenTypesFlagUsageError`)                                                                                                                                                                              |
@@ -138,14 +133,10 @@ way `--remote=<db-url>` does.
 ### `--output-format text`
 
 Prints generated TypeScript (or other language) type definitions to stdout.
-Diagnostics go to stderr: one `Target: …` banner naming the resolved target (the project
-ref and whether its identity is verified, the local stack host and port, or the custom
-Postgres host) and `Connecting to …` for database introspection. With the local default in a
-linked directory the banner ends with `· default; pass --remote for <project>`. On the legacy Docker
-Compose stack the banner prints before the running check, so a stopped stack still shows the chosen
-target. In-process TypeScript also prints a stderr note that the output is unformatted.
-Each deprecated selector additionally prints its warning on stderr, for example
-`--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase gen types --remote=<ref>`.
+Diagnostics go to stderr: alias deprecation warnings, one `Target:` banner and `Connecting to …` for database
+introspection. On the legacy Docker Compose stack the banner prints before the running check, so a
+stopped stack still shows the chosen target. In-process TypeScript also prints a stderr note that the
+output is unformatted.
 
 ### `--output-format json`
 
@@ -159,26 +150,10 @@ Not applicable.
 
 - TypeScript generated in-process is unformatted. stderr suggests `npx oxfmt <generated-file.ts>`.
   TypeScript for a remote project still comes from the Management API.
-- **Target.** With no selector the command runs against the local database; when the directory is
-  linked the local `Target:` banner ends with `· default; pass --remote for <project>`. `--remote`
-  targets the linked project (`SUPABASE_PROJECT_ID`, else `.temp/project-ref`). `--remote=<value>`
-  is read as a project ref (20 lowercase letters), a database URL (`postgres://` or
-  `postgresql://`), `true|yes|on|1` (the linked project), or otherwise the name of a branch of the
-  linked project, which resolves to that branch's own project. `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to target the local database.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` `--remote <word>` is always read as
-  `--remote=<word>`: the legacy positional language is hidden and takes no part in that reading, so a
-  language goes before `--remote` (`gen types typescript --remote`). The
-  resolved target is announced on stderr (`Target: …`) in every output format.
-- **Deprecated selectors.** `--linked`, `--project-ref`, `--project-id`, `--db-url` and `--local`
-  are hidden aliases that still select their target and print a warning on stderr naming the
-  replacement, for example
-  `--linked is deprecated and will be removed in v4. Use --remote instead: supabase gen types --remote`,
-  `--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase gen types --remote=<ref>`
-  and `--local isn't needed (local is the default) and will be removed in v4: supabase gen types`; a
-  database URL is never echoed. Two selectors together fail
-  (`Only one of --remote, --linked, --db-url and --local can be set; got …`), `--project-ref` and
-  `--project-id` cannot be combined with `--local`, `--db-url` or `--remote=<value>`, an empty
-  `--db-url`, `--project-ref` or `--project-id` is rejected, and `--linked=false` selects nothing.
-  `--project-id` is an alias of `--project-ref`; passing both fails with
+- **`--remote <word>`.** A word after `--remote` is always read as `--remote=<word>`: the legacy positional
+  language is hidden and takes no part in that reading, so a language goes before `--remote`
+  (`gen types typescript --remote`).
+- **`--project-id`.** A hidden alias of the deprecated `--project-ref`; passing both fails with
   `--project-id is a deprecated alias of --project-ref; pass only one of them.`
 - **Remote project flag groups.** `--remote` (bare, or with a ref or branch), `--linked`,
   `--project-ref` and `--project-id` count as one member of each group

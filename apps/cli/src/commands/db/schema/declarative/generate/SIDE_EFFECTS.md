@@ -1,15 +1,13 @@
 # `supabase db schema declarative generate`
 
+Target: selectable, no consent — see [Command target](../../../../../../docs/command-target.md)
+
 Generates declarative schema files from a database using pg-delta's managed
 platform view.
 
 Pg-delta runs in-process.
 Coverage gaps warn; `--strict-coverage` makes them fatal, and `PGDELTA_DEBUG`
 writes diagnostic JSON under `supabase/.temp/pgdelta/v2/debug/<id>/`.
-The command is `selectable` and never asks for hosted-mutation consent: the target is `--remote`
-(the linked project), `--remote=<ref>`, `--remote=<branch>` (a branch of the linked project, by name
-or UUID) or `--remote=<url>`, else the local database; in a linked checkout the default `Target:`
-line adds `default; pass --remote for <project>`. It never asks which database to use.
 A local target checks the local Postgres image, starts a stopped local database,
 and resets it first only with `--reset`. When `[experimental].stack` is on, the local target
 connects to the running primary database in the project stack's composition. It does not launch a
@@ -60,14 +58,11 @@ formatting without disabling safe compaction.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                          |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success (files written, or skipped after a declined prompt)                                                                                        |
-| `1`  | pg-delta disabled (`[experimental.pgdelta] enabled = false` and no `--experimental`)                                                               |
-| `1`  | conflicting target flags (`--remote`, `--linked`, `--db-url`, `--local`), or `--project-ref` combined with `--local`/`--db-url`/`--remote=<value>` |
-| `1`  | `--password` combined with `--remote=<url>` or the local default                                                                                   |
-| `1`  | `--remote=<branch>` naming no branch of the linked project                                                                                         |
-| `1`  | local-database bring-up / pg-delta engine / export failure                                                                                         |
+| Code | Condition                                                                            |
+| ---- | ------------------------------------------------------------------------------------ |
+| `0`  | success (files written, or skipped after a declined prompt)                          |
+| `1`  | pg-delta disabled (`[experimental.pgdelta] enabled = false` and no `--experimental`) |
+| `1`  | local-database bring-up / pg-delta engine / export failure                           |
 
 The pg-delta gate and the selector checks are both raised before any side effects run,
 but the gate wins when both conditions apply simultaneously: the gate check runs
@@ -91,20 +86,6 @@ always go to stderr, in every `--output-format`. On success:
 
 - Open by default. The gate closes only when `[experimental.pgdelta] enabled = false`
   and `--experimental` is omitted.
-- The target comes from `resolveTarget`: `--remote` or one of its forms wins, else local. With no
-  selector the command exports the local database; it neither prompts for a target nor fails in
-  non-interactive mode.
-- **Target selection.** `--remote` is read as the linked project (bare), a project ref (20
-  lowercase letters), a Postgres URL, or else a branch of the linked project by name or UUID;
-  `--remote=false` fails with `--remote doesn't take false. Leave it out to target the local database.`, and `--remote=` with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A
-  word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes no
-  operands.
-- **Deprecated aliases.** `--linked`, `--project-ref=<ref>`, `--db-url=<url>` and `--local` still
-  work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
-  warns that local is the default). They are mutually exclusive with each other and with
-  `--remote`; a `false` switch counts as absent. `--project-ref` with `--local`, `--db-url` or
-  `--remote=<value>` is a hard error, and an empty `--db-url` or `--project-ref` fails with
-  `TargetEmptyValueError` instead of reading as absent.
 - `--reset` recreates the local database from the migrations before exporting; it has no effect
   on a remote project, branch or `--remote=<url>` target.
 - Existing declarative files are overwritten only after the export succeeds: without

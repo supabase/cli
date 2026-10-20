@@ -1,5 +1,7 @@
 # `supabase postgres-config update`
 
+Target: hosted, consent default No — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                           | Format                    | When                                                                                                                                                               |
@@ -49,7 +51,6 @@ The keys passed with `--config` (and `restart_database`) are validated locally a
 | `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) - checked before ref resolution/API/telemetry                                                                                                                                                                                                 |
 | `1`  | malformed `--config` (`PostgresConfigInvalidConfigValueError`)                                                                                                                                                                                                                                                                            |
 | `1`  | project ref unresolved (`ProjectRefNotLinkedError`; `InvalidProjectRefError` for a malformed `SUPABASE_PROJECT_ID` or link-file ref)                                                                                                                                                                                                      |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`)                                                                                                                    |
 | `1`  | initial GET non-2xx (`PostgresConfigGetUnexpectedStatusError`)                                                                                                                                                                                                                                                                            |
 | `1`  | initial GET transport failure (`PostgresConfigGetNetworkError`)                                                                                                                                                                                                                                                                           |
 | `1`  | PUT non-2xx (`PostgresConfigUpdateUnexpectedStatusError`)                                                                                                                                                                                                                                                                                 |
@@ -109,8 +110,6 @@ One `result` event on success.
 
 - The `--output` flag wins over `--output-format` when both are provided.
 - Flags: `--config` (repeatable; each value must contain exactly one `=`, otherwise `PostgresConfigInvalidConfigValueError`), `--replace-existing-overrides`, `--no-restart`.
-- Requires `--remote=<ref|branch>`, `SUPABASE_PROJECT_ID`, a linked project (`supabase/.temp/project-ref`)
-  or, on an interactive terminal, the project picker. A bare `--remote` targets the linked project.
 - Integer-like values are coerced to integers, boolean-like values are coerced to booleans, and everything else stays stringly typed before the final JSON body is serialized.
 - Keys ending in `_timeout` are always stringified before the `PUT`.
 - `--no-restart` injects `restart_database = false` into the final request body.
@@ -120,14 +119,5 @@ One `result` event on success.
   (or `SUPABASE_EXPERIMENTAL`), checked before the login check. A closed gate exits 1
   before project-ref resolution, the API calls, the `linked-project.json` write, the
   `telemetry.json` write, and the `cli_command_executed` event.
-- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
-- Asks `Update the Postgres config overrides on <target>?` (default No) before the first write, after printing the overrides to set, whether all existing ones are replaced, and whether the restart is skipped. `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.
+- Asks `Update the Postgres config overrides on <target>?` (default No) before the first write, after printing the overrides to set, whether all existing ones are replaced, and whether the restart is skipped.
 - The current overrides are fetched (a read) before the confirmation so the plan is known; the `PUT` happens only after it.
-- `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
-  project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
-  (`supabase postgres-config update` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes
-  no operands.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
-  branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
-  be combined with `--remote=<value>`.

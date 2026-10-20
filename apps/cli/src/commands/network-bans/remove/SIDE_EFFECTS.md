@@ -1,5 +1,7 @@
 # `supabase network-bans remove`
 
+Target: hosted, consent default No — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                           | Format                    | When                                                                                                                                                               |
@@ -46,7 +48,6 @@
 | `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) — checked before ref resolution/API/telemetry                                                                                                                                                                                                                                                                                                                 |
 | `1`  | invalid IP supplied via `--db-unban-ip` (`NetworkBansInvalidIpError`)                                                                                                                                                                                                                                                                                                                                                                                     |
 | `1`  | project ref unresolved (`ProjectRefNotLinkedError`; `InvalidProjectRefError` for a malformed `SUPABASE_PROJECT_ID` or link-file ref)                                                                                                                                                                                                                                                                                                                      |
-| `1`  | invalid `--remote` selector — `--remote=<url>` (`TargetNeedsProjectError`), an empty value, `--remote=<value>` combined with `--project-ref`, or a branch the linked project does not have (`LinkBranchNotFoundError`)                                                                                                                                                                                                                                    |
 | `1`  | API non-2xx (`NetworkBansRemoveUnexpectedStatusError`)                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `1`  | transport failure (`NetworkBansRemoveNetworkError`)                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `1`  | declined at the confirmation prompt (`HostedMutationDeclinedError`, `context canceled`) — nothing is changed                                                                                                                                                                                                                                                                                                                                              |
@@ -86,22 +87,11 @@ One `result` event on success when the `--output` flag is unset.
 
 - The `--output` flag wins over `--output-format` when both are provided.
 - Requires `--db-unban-ip` flag to specify IP(s) to unban (repeatable). When omitted, the caller's own IP is unbanned (`requester_ip: true`).
-- Requires `--remote=<ref|branch>`, `SUPABASE_PROJECT_ID`, a linked project (`supabase/.temp/project-ref`)
-  or, on an interactive terminal, the project picker. A bare `--remote` targets the linked project.
 - `.temp/linked-project.json` is written after ref resolution (once the `--experimental` gate is open), even when the API call fails, but only on a cache miss with a token when `GET /v1/projects/{ref}` succeeds and `.temp/project-ref` does not name another ref. A closed gate writes nothing.
 - `telemetry.json` is written on every invocation that reaches the handler, including failures, but only once the `--experimental` gate is open. A malformed `--db-unban-ip` CSV value (e.g. an unterminated quote) fails during flag parsing — before the gate, the handler, both file writes, and the `cli_command_executed` event — even when `--experimental` is passed.
 - `network-bans` is an experimental command: `remove` requires `--experimental` (or
   `SUPABASE_EXPERIMENTAL`), checked before the login check.
   A closed gate exits 1 before project-ref resolution, the API call, the `linked-project.json`
   write, the `telemetry.json` write, and the `cli_command_executed` event.
-- After the project ref resolves, one `Target: …` banner naming the resolved project is printed on stderr in every output format; see [Command target](../../../../docs/command-target.md).
-- Asks `Remove network bans on <target>?` (default No) before the first write, after printing the IPs to unban (or the caller's own IP when `--db-unban-ip` is omitted). `--yes` or a shell `SUPABASE_YES` confirms without asking; a piped `y` on stdin is never read. Without `--yes`, a non-interactive, JSON, stream-json or `-o` run fails with `HostedMutationConsentRequiredError`, and declining fails with `HostedMutationDeclinedError`; neither changes anything.
+- Asks `Remove network bans on <target>?` (default No) before the first write, after printing the IPs to unban (or the caller's own IP when `--db-unban-ip` is omitted).
 - The `LinkedDbNetworkBannedError` raised by commands that connect to a linked database points at this command; it needs `--experimental` and the confirmation above like any other run.
-- `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
-  project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
-  (`supabase network-bans remove` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes
-  no operands.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` (a non-ref value is read as a
-  branch name) and prints a deprecation warning on stderr that names the replacement; it cannot
-  be combined with `--remote=<value>`.

@@ -1,11 +1,11 @@
 # `supabase db push`
 
+Target: selectable, consent default No — see [Command target](../../../../docs/command-target.md)
+
 Applies pending local migrations (and optionally seed data and custom roles) to
-the local database by default, or to the database `--remote` selects (the linked project,
-`--remote=<ref>`, a branch via `--remote=<branch>`, or a database via `--remote=<url>`),
+the local database by default, or to the database `--remote` selects,
 updating configured Vault secrets before migrations unless `--skip-vault`
-is set. A hosted target asks one combined confirmation before the first write. With no
-selector in a linked checkout, the `Target:` line adds `default; pass --remote for <project>`.
+is set. A hosted target asks one combined confirmation before the first write.
 
 ## Files Read
 
@@ -61,13 +61,10 @@ selector in a linked checkout, the `Target:` line adds `default; pass --remote f
 | Code | Condition                                                                                                                                                                                                               |
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success (including "up to date")                                                                                                                                                                                        |
-| `1`  | more than one of `--remote`, `--linked`, `--db-url` and `--local`, or `--project-ref` with `--local`/`--db-url`/`--remote=<value>` (target selector conflict)                                                           |
-| `1`  | `--remote=<branch>` naming no branch of the parent project                                                                                                                                                              |
 | `1`  | `ErrMissingLocal` — remote versions absent locally (suggests repair/pull)                                                                                                                                               |
 | `1`  | `ErrMissingRemote` without `--include-all` (suggests `--include-all`)                                                                                                                                                   |
 | `1`  | the combined confirmation declined at the prompt (`HostedMutationDeclinedError`); nothing is written                                                                                                                    |
 | `1`  | the combined confirmation needed but the run can't prompt (JSON or machine output, piped stdin, agent) and neither `--yes` nor a shell `SUPABASE_YES` is set (`HostedMutationConsentRequiredError`); nothing is written |
-| `1`  | `--password` with `--remote=<url>` or the local default (`--password can't be used with --remote=<db-url>. …` / `--password only applies to a linked project. …`)                                                       |
 | `1`  | an invalid config value, including an unparsable `SUPABASE_*` override                                                                                                                                                  |
 | `1`  | `config.toml` parse failure                                                                                                                                                                                             |
 | `1`  | database connection / migration / seed / roles / vault apply failure                                                                                                                                                    |
@@ -105,19 +102,6 @@ project ref and its environment.
 
 ## Notes
 
-- **Targets**: with no selector the target is the local database. The target is announced as a
-  `Target:` banner on stderr before anything is connected.
-- **Target selection.** `--remote` is read as the linked project (bare), a project ref (20
-  lowercase letters), a Postgres URL, or else a branch of the linked project by name or UUID;
-  `--remote=false` fails with `--remote doesn't take false. Leave it out to target the local database.`, and `--remote=` with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A
-  word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes no
-  operands.
-- **Deprecated aliases.** `--linked`, `--project-ref=<ref>`, `--db-url=<url>` and `--local` still
-  work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
-  warns that local is the default). They are mutually exclusive with each other and with
-  `--remote`; a `false` switch counts as absent. `--project-ref` with `--local`, `--db-url` or
-  `--remote=<value>` is a hard error, and an empty `--db-url` or `--project-ref` fails with
-  `TargetEmptyValueError` instead of reading as absent.
 - **Config value precedence** (ADR 0032): explicit flag > shell env > project
   `.env*` > config (`config.json` over `config.toml`; a matched `[remotes.*]`
   block over the base document) > default. The whole config is decoded up
@@ -126,18 +110,11 @@ project ref and its environment.
   is withheld when the target project differs from the one in
   `.temp/project-ref`. The command prints `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.` to stderr and mints a
   temporary login role instead. Unlinked workdirs use the env value.
-- **`--password`** is rejected with `--remote=<url>` and for the local default, because those
-  targets carry their own credentials.
 - **One combined confirmation**: after the plan is known and before the first write, a hosted
   target asks once, for everything the run will do — custom roles, migrations, vault secrets,
   seed files — e.g. `Create custom roles, apply 1 migration and seed 1 file?`, listing each
   item. The default is No; declining exits 1 with nothing written. The local default and
-  `--dry-run` ask nothing, and neither does a run that finds nothing to apply. JSON or machine
-  output, piped stdin and agent runs never prompt; they need `--yes` or a shell
-  `SUPABASE_YES`, which echoes `Confirmed by --yes: <action>` to stderr. A `SUPABASE_YES` in
-  `supabase/.env` is not consent. The same approval lets the connection remove a network ban
-  that blocks the temporary login role; without it the run fails and suggests
-  `supabase network-bans remove`.
+  `--dry-run` ask nothing, and neither does a run that finds nothing to apply.
 - **Seeding** requires `--include-seed`; `SUPABASE_DB_SEED_ENABLED=true` alone
   does not make push seed. `--include-seed` beats `[db.seed] enabled = false`
   in the base config. When the target matches a `[remotes.<name>]` block that does not

@@ -1,11 +1,10 @@
 # `supabase storage ls [path]`
 
+Target: selectable, no consent — see [Command target](../../../../docs/command-target.md)
+
 Lists objects/buckets by path prefix against the Storage gateway (local stack or a remote project).
 
-With no selector the command targets the local stack. `--remote` targets the linked project,
-`--remote=<ref>` another project and `--remote=<branch>` a branch of the linked project (see
-[ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md));
-`--local`, `--linked` and `--project-ref` are deprecated aliases. The local Storage gateway
+The local Storage gateway
 resolves through the `experimental.stack` feature flag, same `SUPABASE_EXPERIMENTAL_STACK=1|0` env
 precedence as [`docs/stack-commands.md`](../../../../docs/stack-commands.md); see Notes for the
 stack-backend endpoint, credential, capability-state, and error behavior.
@@ -61,17 +60,14 @@ Auth: `apikey` header always; `Authorization: Bearer <key>` unless the key is `s
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                                               |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                                                                 |
-| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`StorageWorkdirError`) — beats every other guard                                                                                                                            |
-| `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target holds no project config (`StorageMissingProjectConfigError`)                                                                                                                               |
-| `1`  | invalid URL / url-parse error / API non-2xx / network / auth / config parse                                                                                                                                                                             |
-| `1`  | two of `--remote`, `--linked` and `--local`, or `--project-ref` with `--local` or `--remote=<value>` (`TargetSelectorConflictError`, `TargetProjectRefConflictError`), after the experimental gate and the workdir check and before any Storage request |
-| `1`  | `--remote=<db-url>` (`TargetNeedsProjectError`): the Storage API needs a project, not a database URL; no Storage request is sent                                                                                                                        |
-| `1`  | `--remote=<branch>` matches no branch of the linked project (`LinkBranchNotFoundError`, lists the branches that exist)                                                                                                                                  |
-| `1`  | stack backend: Storage disabled or its stack `failed`/`stopped` (`StackStorageCapabilityError`)                                                                                                                                                         |
-| `1`  | stack backend: stack is not registered/ready, has no primary database, or the stack API is unavailable (`StackStorageUnavailableError`); a missing Storage endpoint is a capability failure (`StackStorageCapabilityError`)                             |
+| Code | Condition                                                                                                                                                                                                                   |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                     |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`StorageWorkdirError`) — beats every other guard                                                                                                |
+| `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target holds no project config (`StorageMissingProjectConfigError`)                                                                                                   |
+| `1`  | invalid URL / url-parse error / API non-2xx / network / auth / config parse                                                                                                                                                 |
+| `1`  | stack backend: Storage disabled or its stack `failed`/`stopped` (`StackStorageCapabilityError`)                                                                                                                             |
+| `1`  | stack backend: stack is not registered/ready, has no primary database, or the stack API is unavailable (`StackStorageUnavailableError`); a missing Storage endpoint is a capability failure (`StackStorageCapabilityError`) |
 
 ## Output
 
@@ -105,34 +101,13 @@ No custom storage telemetry events.
 - Default path is `ss:///` (all buckets root) → remotePath `/`; recursive file paths
   then carry a leading slash, while an empty bucket is reported bare as `<bucket>/`.
 - `--recursive`/`-r` walks the tree (BFS).
-- **Target.** With no selector the command runs against the local stack; when the directory is
-  linked the local `Target:` banner ends with `· default; pass --remote for <project>`. `--remote`
-  targets the linked project (`SUPABASE_PROJECT_ID`, else `.temp/project-ref`). `--remote=<value>`
-  is read as a project ref (20 lowercase letters), `true|yes|on|1` (the linked project), or
-  otherwise the name of a branch of the linked project, which resolves to that branch's own project.
-  A database URL (`--remote=<db-url>`) fails with a `needs a project, not a database URL` error and
-  sends no request. `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to target the local Storage API.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to target the local Storage API.` A bare `--remote` followed by a word that
-  exactly matches a branch of the linked project, is within a small edit distance of one, or can't
-  be checked because the branch listing failed stops the run with an error that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project. Any other word runs
-  as the operand. The resolved target is announced on stderr (`Target: …`)
-  in every output format and, in JSON results, as a `target` object.
-- **Deprecated selectors.** `--linked`, `--project-ref` and `--local` are hidden aliases that still
-  select their target and print a warning on stderr naming the replacement, for example
-  `--linked is deprecated and will be removed in v4. Use --remote instead: supabase storage ls <path> --remote`
-  and `--local isn't needed (local is the default) and will be removed in v4: supabase storage ls <path>`.
-  Two selectors together fail
-  (`Only one of --remote, --linked and --local can be set; got …`), `--project-ref` cannot
-  be combined with `--local` or `--remote=<value>`, an empty `--project-ref` is rejected, and
-  `--linked=false` selects nothing.
-- **Target banner.** A remote project prints `Target: …` to stderr once its ref resolves; the local
-  target prints `Target: local stack (<host>:<port>)` once the Storage endpoint is known. Both come
-  before the first Storage request.
+- **Target banner.** A remote project prints its `Target:` line to stderr once its ref resolves; the local
+  target prints it once the Storage endpoint is known. Both come before the first Storage request.
 - `--remote` and the deprecated `--local` and `--linked` are declared **per-leaf** (not as
   `storage`-group scoped globals) because Effect CLI requires global-flag names to be unique
   tree-wide and `seed` already owns them; the only behavioural cost is that they must follow the
   subcommand token (`storage ls --remote`, not `storage --remote ls`) — the same shape the `db`
   family uses.
-- Listing is a read: it never asks for consent.
 - **Stack backend (local target).** The Storage endpoint comes from the selected composition's
   Storage member observation, and the service-role JWT is generated from the primary database's
   observed JWT secret. The stack is opened by project identity through the `@supabase/stack` API,

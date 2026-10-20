@@ -1,11 +1,11 @@
 # `supabase inspect db <subcommand>`
 
+Target: selectable, no consent — see [Command target](../../../../docs/command-target.md)
+
 Single shared side-effect document for all 13 active `inspect db` subcommands and
-their 12 deprecated aliases. Every subcommand has the same surface — it resolves the
-target from `--remote` (or a deprecated alias; local by default), runs one read-only
+their 12 deprecated aliases. Every subcommand has the same surface — it resolves its target, runs one read-only
 `SELECT`, and renders the result as an ASCII table. They differ only in the SQL run and
-the columns rendered (see the per-subcommand `<name>.query.ts`). The commands are
-`selectable` and never ask for hosted-mutation consent.
+the columns rendered (see the per-subcommand `<name>.query.ts`).
 
 ## Files Read
 
@@ -88,12 +88,10 @@ flags, run no query and open no connection, and exit 1 with
 
 ## Exit Codes
 
-| Code | Condition                                                                                                              |
-| ---- | ---------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                |
-| `1`  | conflicting target selectors, empty `--db-url`/`--project-ref`, resolution, connection, or query failure               |
-| `1`  | `--project-ref` combined with `--local`, `--db-url` or `--remote=<value>`                                              |
-| `1`  | `--remote=<branch>` matches no branch of the linked project (`LinkBranchNotFoundError`, lists the branches that exist) |
+| Code | Condition                                |
+| ---- | ---------------------------------------- |
+| `0`  | success                                  |
+| `1`  | resolution, connection, or query failure |
 
 ## Telemetry Events Fired
 
@@ -130,24 +128,6 @@ Emit one extra stderr line before the table:
 
 ## Notes
 
-- **Target.** With no selector the command runs against the local database; when the directory is
-  linked the local `Target:` banner ends with `· default; pass --remote for <project>`. `--remote`
-  targets the linked project (`SUPABASE_PROJECT_ID`, else `.temp/project-ref`). `--remote=<value>`
-  is read as a project ref (20 lowercase letters), a database URL (`postgres://` or
-  `postgresql://`), `true|yes|on|1` (the linked project), or otherwise the name of a branch of the
-  linked project, which resolves to that branch's own project. `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to target the local database.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A word after a bare
-  `--remote` is read as its value, `--remote=<word>`, because the command takes no operands. The
-  resolved target is announced on stderr (`Target: …`) in every output format and, in JSON results,
-  as a `target` object.
-- **Deprecated selectors.** `--linked`, `--project-ref`, `--db-url` and `--local` are hidden aliases
-  that still select their target and print a warning on stderr naming the replacement, for example
-  `--linked is deprecated and will be removed in v4. Use --remote instead: supabase inspect db locks --remote`
-  and
-  `--local isn't needed (local is the default) and will be removed in v4: supabase inspect db locks`;
-  a database URL is never echoed. Two selectors together fail
-  (`Only one of --remote, --linked, --db-url and --local can be set; got …`), `--project-ref` cannot
-  be combined with `--local`, `--db-url` or `--remote=<value>`, an empty `--db-url` or
-  `--project-ref` is rejected, and `--linked=false` selects nothing.
 - The Management API stack is built lazily, only for a remote project or a branch lookup, so a
   local or database-URL target never requires an access token.
 - All queries are read-only `SELECT`s; the command performs no writes to the database.

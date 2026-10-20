@@ -1,11 +1,9 @@
 # `supabase seed buckets`
 
+Target: selectable, consent default No — see [Command target](../../../../docs/command-target.md)
+
 Seeds Supabase Storage buckets from `[storage.buckets]` and
-`[storage.vector]` in `supabase/config.toml`. With no selector the command targets the local
-stack; `--remote` targets the linked project, `--remote=<ref>` another project and
-`--remote=<branch>` a branch of the linked project (see
-[ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md)). `--local`, `--linked` and
-`--project-ref` are deprecated aliases. A run against a remote project asks for consent before its
+`[storage.vector]` in `supabase/config.toml`. A run against a remote project asks for consent before its
 first write.
 
 The local path resolves the Storage gateway through the `experimental.stack`
@@ -124,9 +122,6 @@ Analytics bucket routes (`/storage/v1/iceberg/...`) are only reached when
 | `1`  | network / connection failure to the Storage gateway                                                                                                                                                                                                                                                                           |
 | `1`  | malformed list response (a 200 body whose shape doesn't decode)                                                                                                                                                                                                                                                               |
 | `1`  | unreadable `objects_path` (filesystem error during walk/upload)                                                                                                                                                                                                                                                               |
-| `1`  | two of `--remote`, `--linked` and `--local`, or `--project-ref` with `--local` or `--remote=<value>` (`TargetSelectorConflictError`, `TargetProjectRefConflictError`) — after the workdir checks and before any Storage call                                                                                                  |
-| `1`  | `--remote=<db-url>` (`TargetNeedsProjectError`): seeding talks to the Storage API, which needs a project, not a database URL; no Storage request is sent                                                                                                                                                                      |
-| `1`  | `--remote=<branch>` matches no branch of the linked project (`LinkBranchNotFoundError`, lists the branches that exist)                                                                                                                                                                                                        |
 | `1`  | remote run without consent: a JSON, piped or non-interactive run without `--yes`/shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`), or a declined prompt (`HostedMutationDeclinedError`) — nothing is written                                                                                                       |
 | `1`  | stack backend: Storage disabled or its stack `failed`/`stopped` (`StackStorageCapabilityError`)                                                                                                                                                                                                                               |
 | `1`  | stack backend: stack is not registered/ready, has no primary database, or the stack API is unavailable (`StackStorageUnavailableError`); a missing Storage endpoint is a capability failure (`StackStorageCapabilityError`)                                                                                                   |
@@ -198,37 +193,15 @@ stdout and a terminal `result`/`error` event is emitted.
 
 ## Notes
 
-- **Target.** With no selector the command runs against the local stack; when the directory is
-  linked the local `Target:` banner ends with `· default; pass --remote for <project>`. `--remote`
-  targets the linked project (`SUPABASE_PROJECT_ID`, else `.temp/project-ref`). `--remote=<value>`
-  is read as a project ref (20 lowercase letters), `true|yes|on|1` (the linked project), or
-  otherwise the name of a branch of the linked project, which resolves to that branch's own project.
-  A database URL (`--remote=<db-url>`) fails with a `needs a project, not a database URL` error and
-  sends no request. `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to target the local Storage API.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to target the local Storage API.` A word after a bare `--remote` is read as
-  its value, `--remote=<word>`, because the command takes no operands. The resolved target is
-  announced on stderr (`Target: …`)
-  in every output format and, in JSON results, as a `target` object. `--remote`, `--linked`,
-  `--local` and the deprecated `--project-ref` are scoped globals on the `seed` group, so they are
-  also accepted before the subcommand token.
-- **Deprecated selectors.** `--linked`, `--project-ref` and `--local` are hidden aliases that still
-  select their target and print a warning on stderr naming the replacement, for example
-  `--linked is deprecated and will be removed in v4. Use --remote instead: supabase seed buckets --remote`
-  and
-  `--local isn't needed (local is the default) and will be removed in v4: supabase seed buckets`.
-  Two selectors together fail
-  (`Only one of --remote, --linked and --local can be set; got …`), `--project-ref` cannot
-  be combined with `--local` or `--remote=<value>`, an empty `--project-ref` is rejected, and
-  `--linked=false` selects nothing.
-- **Target banner.** A remote project prints `Target: …` to stderr once its ref resolves; the local
-  target prints `Target: local stack (<host>:<port>)` once the Storage endpoint is known, before the
-  first Storage request. `start` and `db reset` seed through the same core without this banner.
+- `--remote` and the deprecated `--linked`, `--local` and `--project-ref` are scoped globals on the `seed`
+  group, so they are also accepted before the subcommand token.
+- **Target banner.** A remote project prints its `Target:` line to stderr once its ref resolves; the local
+  target prints it once the Storage endpoint is known, before the first Storage request. `start` and
+  `db reset` seed through the same core without this banner.
 - **Remote consent.** After listing the existing buckets and before the first write, a remote run
   asks once, with default No, listing every create, overwrite, upload and prune it will make. The one
   answer covers all of them, so no per-bucket overwrite or prune prompt follows; a run that would
-  write nothing does not ask. `--yes` or a shell `SUPABASE_YES` grants it and echoes
-  `Confirmed by --yes: …` to stderr; otherwise only an interactive text-mode terminal is asked. A
-  piped answer on stdin and a `SUPABASE_YES` in `supabase/.env` do not count. The local stack never
-  asks for consent and keeps its per-item prompts.
+  write nothing does not ask. The local stack never asks for consent and keeps its per-item prompts.
 - **Remote project — config override merge.** The project ref is resolved
   BEFORE config is loaded. The config load then merges the `[remotes.<name>]`
   block whose `project_id` equals the resolved ref over the base config (including

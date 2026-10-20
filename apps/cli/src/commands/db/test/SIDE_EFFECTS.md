@@ -1,5 +1,7 @@
 # `supabase db test [path...]`
 
+Target: selectable, consent default No — see [Command target](../../../../docs/command-target.md)
+
 `db test` is a **hidden alias** for `supabase test db`. It
 shares the same flag config and handler: `test.command.ts` reuses `test db`'s
 flag config and assembled handler verbatim
@@ -74,11 +76,6 @@ Identical to `test db`. See
 
 - Hidden command —
   registered with `.pipe(Command.unlisted)` in `../db.command.ts`.
-- Target selection and the hosted-target confirmation are identical to `test db`: with no selector,
-  bare `supabase db test` runs against the local stack (a linked checkout adds
-  `default; pass --remote for <project>` to the `Target:` line), `--remote` and its forms select a
-  remote project, branch or database, and a remote project, branch or remote `--remote=<url>` run
-  asks for confirmation (or needs `--yes`) before pgTAP is enabled. The deprecated `--linked`,
-  `--project-ref`, `--db-url` and `--local` aliases warn on stderr.
+- Target selection and the hosted-target confirmation are identical to `test db`.
 - Shares every behavior documented on `test db` (pg_prove image pin,
   `pg_extension`-based "already exists" detection, global `--network-id` handling, etc.).

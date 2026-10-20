@@ -1,5 +1,7 @@
 # `supabase compute list`
 
+Target: hosted, no consent — see [Command target](../../../../../docs/command-target.md)
+
 ## Feature gate
 
 This command is registered only when `experimental.compute` is enabled. Set
@@ -84,9 +86,3 @@ wrapper emits for every command.
 The text table omits each compute's URL — it is the same host and prefix on
 every row, and carrying it made the table 137 columns wide. Every machine
 format still carries `url` per compute, and `compute status` renders it.
-
-## Notes
-
-- Targets the linked project unless `--remote=<ref>` is given; a bare `--remote` also targets the linked project. `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked project (by name or UUID, resolved through `GET /v1/projects/{parent}/branches`, or `GET /v1/branches/{id}` for a UUID when no project is linked), or `true|yes|on|1` for the linked project. A database URL is rejected (`supabase experimental compute list` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes no operands.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.

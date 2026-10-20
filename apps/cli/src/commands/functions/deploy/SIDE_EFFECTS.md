@@ -1,5 +1,7 @@
 # `supabase functions deploy [Function name]`
 
+Target: hosted, consent default No — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                                                                                                       | Format      | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
@@ -113,29 +115,14 @@ The `--output`/`-o` flag does not change deploy output.
   directory, forward slashes). Imports outside the workdir but inside
   the nearest git root still upload, with `../`-relative names. The nearest git
   root is the containment boundary for uploaded imports.
-- Requires a linked project unless `--remote=<ref|branch>` is given. A bare `--remote` targets the
-  linked project.
-- `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked
-  project (by name or UUID), or `true|yes|on|1` for the linked project. A database URL is rejected
-  (`functions deploy` takes a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A bare `--remote` followed by a word that exactly matches a branch of the linked project, is
-  within a small edit distance of one, or can't be checked because the branch listing failed stops
-  the run before any other work with an error that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project. Any other word runs as the operand.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning
-  on stderr that names the replacement; it cannot be combined with `--remote=<value>`.
 - Bundles locally with Docker by default (`--use-docker` defaults to true and is hidden); `--use-api` selects server-side bundling, and a stopped Docker daemon falls back to it after a `WARNING: Docker is not running`.
 - Local Docker bundling mounts existing local values declared under an import map's `scopes` read-only, including targets outside the nearest Git root; each such out-of-root mount prints a `WARN` naming the host path. The mounted target itself is bound as declared; imports reached from inside an out-of-root target are not additionally bound. API source uploads retain their existing source-root restrictions.
 - `--use-api`, `--use-docker`, and `--legacy-bundle` are mutually exclusive deploy modes.
-- Prints the `Target:` banner (project name, ref and, for a branch, the parent project) before
-  anything else.
+- Prints the target banner before anything else.
 - **Consent:** one question, `Deploy N Function(s)` on the target, asked after planning and
   before the first bundle, upload or delete. The default answer is No. `--prune` adds
   `delete N Function(s) with --prune` to the same question, so a deploy with pruning never asks
   twice. The question lists the Function slugs on stderr.
-- `--yes` or a `SUPABASE_YES` set in the shell skips the question and echoes
-  `Confirmed by --yes: <action> on <target>` to stderr. A `SUPABASE_YES` in a project `.env*`
-  file does not count. Piped stdin answers are never read, and `json`/`stream-json` runs need
-  `--yes`.
 - The question lists every enabled Function, including ones the upload later finds unchanged;
   a deploy with nothing enabled and nothing to prune does not ask.
 - `--prune` deletes deployed Functions that are not present locally, and runs even when every

@@ -1,5 +1,7 @@
 # `supabase logout`
 
+Target: account, no consent — see [Command target](../../../docs/command-target.md)
+
 Deletes the access token and sweeps all stored project credentials. Makes no
 API calls.
 

@@ -1,13 +1,12 @@
 # `supabase storage mv <src> <dst>`
 
+Target: selectable, consent default No — see [Command target](../../../../docs/command-target.md)
+
 Moves objects within a bucket. Both paths must be `ss://` and resolve to the same bucket.
 A direct move that returns `not_found` falls back to a recursive per-object move when
 `--recursive` is set.
 
-With no selector the command targets the local stack. `--remote` targets the linked project,
-`--remote=<ref>` another project and `--remote=<branch>` a branch of the linked project (see
-[ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md));
-`--local`, `--linked` and `--project-ref` are deprecated aliases. The local Storage gateway
+The local Storage gateway
 resolves through the `experimental.stack` feature flag, same `SUPABASE_EXPERIMENTAL_STACK=1|0` env
 precedence as [`docs/stack-commands.md`](../../../../docs/stack-commands.md); see Notes for the
 stack-backend endpoint, credential, capability-state, and error behavior.
@@ -60,18 +59,15 @@ backend — same roles as `storage ls`.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                                               |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                                                                 |
-| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`StorageWorkdirError`) — beats every other guard                                                                                                                            |
-| `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target holds no project config (`StorageMissingProjectConfigError`)                                                                                                                               |
-| `1`  | invalid/parse url, missing object path (both roots), cross-bucket move, object-not-found (recursive empty), API non-2xx, network, auth, config parse                                                                                                    |
-| `1`  | two of `--remote`, `--linked` and `--local`, or `--project-ref` with `--local` or `--remote=<value>` (`TargetSelectorConflictError`, `TargetProjectRefConflictError`), after the experimental gate and the workdir check and before any Storage request |
-| `1`  | `--remote=<db-url>` (`TargetNeedsProjectError`): the Storage API needs a project, not a database URL; no Storage request is sent                                                                                                                        |
-| `1`  | `--remote=<branch>` matches no branch of the linked project (`LinkBranchNotFoundError`, lists the branches that exist)                                                                                                                                  |
-| `1`  | move on a remote project without consent: a JSON, piped or non-interactive run without `--yes`/shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`), or a declined prompt (`HostedMutationDeclinedError`) — nothing is sent                      |
-| `1`  | stack backend: Storage disabled or its stack `failed`/`stopped` (`StackStorageCapabilityError`)                                                                                                                                                         |
-| `1`  | stack backend: stack is not registered/ready, has no primary database, or the stack API is unavailable (`StackStorageUnavailableError`); a missing Storage endpoint is a capability failure (`StackStorageCapabilityError`)                             |
+| Code | Condition                                                                                                                                                                                                                          |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                                                                                            |
+| `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`StorageWorkdirError`) — beats every other guard                                                                                                       |
+| `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` on a LOCAL target holds no project config (`StorageMissingProjectConfigError`)                                                                                                          |
+| `1`  | invalid/parse url, missing object path (both roots), cross-bucket move, object-not-found (recursive empty), API non-2xx, network, auth, config parse                                                                               |
+| `1`  | move on a remote project without consent: a JSON, piped or non-interactive run without `--yes`/shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`), or a declined prompt (`HostedMutationDeclinedError`) — nothing is sent |
+| `1`  | stack backend: Storage disabled or its stack `failed`/`stopped` (`StackStorageCapabilityError`)                                                                                                                                    |
+| `1`  | stack backend: stack is not registered/ready, has no primary database, or the stack API is unavailable (`StackStorageUnavailableError`); a missing Storage endpoint is a capability failure (`StackStorageCapabilityError`)        |
 
 ## Output
 
@@ -102,34 +98,11 @@ backend — same roles as `storage ls`.
 
 ## Notes
 
-- **Target.** With no selector the command runs against the local stack; when the directory is
-  linked the local `Target:` banner ends with `· default; pass --remote for <project>`. `--remote`
-  targets the linked project (`SUPABASE_PROJECT_ID`, else `.temp/project-ref`). `--remote=<value>`
-  is read as a project ref (20 lowercase letters), `true|yes|on|1` (the linked project), or
-  otherwise the name of a branch of the linked project, which resolves to that branch's own project.
-  A database URL (`--remote=<db-url>`) fails with a `needs a project, not a database URL` error and
-  sends no request. `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to target the local Storage API.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to target the local Storage API.` A bare `--remote` followed by a word that
-  exactly matches a branch of the linked project, is within a small edit distance of one, or can't
-  be checked because the branch listing failed stops the run with an error that names the cause (an HTTP status, or a missing or invalid access token) and offers both readings without echoing the word: `--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project. Any other word runs
-  as the operand. The resolved target is announced on stderr (`Target: …`)
-  in every output format and, in JSON results, as a `target` object.
-- **Deprecated selectors.** `--linked`, `--project-ref` and `--local` are hidden aliases that still
-  select their target and print a warning on stderr naming the replacement, for example
-  `--linked is deprecated and will be removed in v4. Use --remote instead: supabase storage mv <src> <dst> --remote`
-  and `--local isn't needed (local is the default) and will be removed in v4: supabase storage mv <src> <dst>`.
-  Two selectors together fail
-  (`Only one of --remote, --linked and --local can be set; got …`), `--project-ref` cannot
-  be combined with `--local` or `--remote=<value>`, an empty `--project-ref` is rejected, and
-  `--linked=false` selects nothing.
-- **Target banner.** A remote project prints `Target: …` to stderr once its ref resolves; the local
-  target prints `Target: local stack (<host>:<port>)` once the Storage endpoint is known. Both come
-  before the first Storage request.
+- **Target banner.** A remote project prints its `Target:` line to stderr once its ref resolves; the local
+  target prints it once the Storage endpoint is known. Both come before the first Storage request.
 - **Hosted consent.** Moving on a remote project asks once, after the path validation and before any
   Storage request: `Move <src> to <dst>?`, default No; a recursive move adds a line saying every
-  object under the source path is moved. `--yes` or a shell `SUPABASE_YES` grants it and echoes
-  `Confirmed by --yes: …` to stderr; otherwise only an interactive text-mode terminal is asked, and
-  JSON, piped, agent and non-TTY runs exit 1 with `HostedMutationConsentRequiredError`.
-  A piped answer on stdin and a `SUPABASE_YES` in `supabase/.env` do not count. Declining exits 1 with
+  object under the source path is moved. Declining exits 1 with
   `HostedMutationDeclinedError` (`context canceled`); no Storage request is sent.
   A move on the local stack never asks.
 - Both `src` and `dst` must be `ss://` URLs (a stricter parse than the lenient one

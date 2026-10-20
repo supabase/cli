@@ -1,5 +1,7 @@
 # `supabase db reset`
 
+Target: selectable, consent default No — see [Command target](../../../../docs/command-target.md)
+
 Reinitialises a database from local migrations (plus seed). Both targets are
 fully native. The **remote** path (`--remote` for a project or branch, or a remote `--remote=<url>`)
 drops all user schemas, upserts vault secrets, then either re-applies migrations
@@ -18,11 +20,7 @@ git-branch line are all native TS — including the local target's own
 `--experimental` schema-files apply (`migrateAndSeed`, shared with the remote
 path's branch above).
 
-With no selector the command resets the local stack, and in a linked checkout the `Target:` line
-adds `default; pass --remote for <project>`. `--remote` selects the linked project,
-`--remote=<ref>` another project, `--remote=<branch>` a branch of the linked project (by name or
-UUID) and `--remote=<url>` a custom database (see
-[ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md)). A hosted target (a remote project or branch, or a remote `--remote=<url>`) asks for one
+A hosted target (a remote project or branch, or a remote `--remote=<url>`) asks for one
 confirmation before anything is dropped; the local path never prompts for the reset itself.
 
 The whole local-reset composition is hoisted into `command-internal/db-bootstrap/
@@ -199,7 +197,6 @@ echoed, because those may genuinely have reached the server.
 | Code | Condition                                                                                                                                  |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `0`  | success                                                                                                                                    |
-| `1`  | more than one of `--remote`, `--linked`, `--db-url`, `--local` (`TargetSelectorConflictError`)                                             |
 | `1`  | `--version` + `--last` together (`[last version]`)                                                                                         |
 | `1`  | `--version` not an integer (`invalid version number`)                                                                                      |
 | `1`  | `--version` has no matching migration file                                                                                                 |
@@ -211,19 +208,14 @@ echoed, because those may genuinely have reached the server.
 | `1`  | drop / migrate / seed / vault apply failure, or connection error                                                                           |
 | `1`  | no `[db.migrations].schema_paths` pattern matched anything on the `--experimental` branch, either target                                   |
 | `1`  | local: container/volume remove, network/volume/container create, health-check timeout, PG14 SQL, satellite-restart, or Kong-reload failure |
-| `1`  | `--project-ref` with `--local`, `--db-url` or `--remote=<value>` (`TargetProjectRefConflictError`)                                         |
-| `1`  | `--remote=<branch>` naming no branch of the parent project                                                                                 |
 
 Neither target delegates to a child process — every failure is a native, typed error
 surfaced as `1`.
 
 ## Output
 
-Alias deprecation warnings print first. Every target prints a `Target: …` line to **stderr**
-before the first database change: a remote project (`Target: <name> (<ref>)`), a branch
-(`Target: project <parent> · branch <name> (<ref>)`), `Target: local stack (<host>:<port>)` with
-` · default; pass --remote for <project>` appended in a linked checkout when no selector was given,
-or `Target: custom Postgres (<host>:<port>)`. There is no `Connecting to … database…` line.
+Alias deprecation warnings print first. Every target prints a `Target:` line to **stderr**
+before the first database change. There is no `Connecting to … database…` line.
 
 The remote path then asks for confirmation (see Notes), prints `Resetting remote database…` to
 **stderr**, then either the schema-files branch's apply (no per-file progress, CLI-1958) or the
@@ -272,26 +264,15 @@ to those defaults (the usual outcome for an interactive terminal).
   its own suggestion (missing API gateway endpoint, Auth disabled, gateway 502/503), that
   suggestion is the next step instead of the generic one. The stack's service-role JWT is
   never printed or logged.
-- **Target selection.** `--remote` is read as the linked project (bare), a project ref (20
-  lowercase letters), a Postgres URL, or else a branch of the linked project by name or UUID;
-  `--remote=false` fails with `--remote doesn't take false. Leave it out to target the local database.`, and `--remote=` with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A
-  word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes no
-  operands.
-- **Deprecated aliases.** `--linked`, `--project-ref=<ref>`, `--db-url=<url>` and `--local` still
-  work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
-  warns that local is the default). They are mutually exclusive with each other and with
-  `--remote`; a `false` switch counts as absent. `--project-ref` with `--local`, `--db-url` or
-  `--remote=<value>` is a hard error, and an empty `--db-url` or `--project-ref` fails with
-  `TargetEmptyValueError` instead of reading as absent. Unlike `SUPABASE_PROJECT_ID`, `--remote=<ref>` and
-  `--project-ref` do not affect the local container id.
+- Unlike `SUPABASE_PROJECT_ID`, `--remote=<ref>` and `--project-ref` do not affect the local
+  container id.
 - **Target/local split** follows whether the resolved config points at the local
   stack, not the flag name: a `--remote=<url>` pointing at the local stack is treated
   as a local reset and never prompts.
 - **Hosted consent.** A remote project, branch or remote `--remote=<url>` reset asks once, after the plan is known
   and before the first drop, with default No. The question lists dropping every user schema,
   the vault upsert count, applying migrations (or the declarative schema files), and the seed
-  plan. A shell `SUPABASE_YES` or `--yes` grants it (`Confirmed by --yes: …`); a `SUPABASE_YES`
-  in `supabase/.env` and a piped answer do not. Stdin is never read for the answer.
+  plan.
 - **Pipeline-incompatible statements** (`CREATE INDEX CONCURRENTLY`, `VACUUM`, …) run
   standalone outside the per-file transaction batch, with the same non-atomic flush
   behaviour as `db push` — see `db push`'s SIDE_EFFECTS Notes (supabase/cli#5139,

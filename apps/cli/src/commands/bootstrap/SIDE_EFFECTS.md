@@ -1,5 +1,7 @@
 # `supabase bootstrap [template]`
 
+Target: account, consent default Yes — see [Command target](../../../docs/command-target.md)
+
 `bootstrap` is a meta-orchestrator: it chains a workdir prompt → hosted-mutation consent →
 template fetch/download → blank `init` → ensure-login → `projects create` → `projects api-keys` → `link` services →
 health poll → write `.env` → `db push` → start suggestion. Every step is native TypeScript,
@@ -125,14 +127,11 @@ suppressed; a single structured result is emitted for the whole command:
 
 ## Notes
 
-- **Hosted-mutation consent.** Bootstrap declares the `account` target group with consent
-  default Yes. After the template is chosen and before anything is written, it asks once:
+- **Hosted-mutation consent.** After the template is chosen and before anything is written, it asks once:
   `Create a new Supabase project from the "<template>" template?`. Declining stops the command
-  with nothing written. JSON, piped-stdin and agent runs never prompt and need `--yes` or a shell
-  `SUPABASE_YES`; under either, stderr echoes `Confirmed by --yes: Create a new Supabase project
-from the "<template>" template`. A `SUPABASE_YES` in `supabase/.env` is not consent. The one
-  confirmation also covers the push into the new project (migrations, roles, seed, vault), so the
-  native push step asks nothing further and every retry reuses it.
+  with nothing written. The one confirmation also covers the push into the new project
+  (migrations, roles, seed, vault), so the native push step asks nothing further and every
+  retry reuses it.
 - **Native migration push, sharing `db push`'s own core (CLI-1953).** The push step calls
   `dbPushCore` — the same handler `db push`'s own command extracts its business logic into
   — directly with `{ includeAll: false, includeRoles: true, includeSeed: true, includeVault: true,

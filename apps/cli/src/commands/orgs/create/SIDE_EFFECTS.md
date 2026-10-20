@@ -1,5 +1,7 @@
 # `supabase orgs create`
 
+Target: account, consent default Yes — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                      | Format                    | When                                                                                          |
@@ -40,11 +42,7 @@ linked-project cache is never written.
 ## Confirmation
 
 Before the `POST /v1/organizations`, the command asks `create organization "<name>"?`
-(default **Yes**). `--yes` or a shell `SUPABASE_YES` answers it and prints
-`Confirmed by --yes: …` on stderr; a `SUPABASE_YES` in a project `.env` does not count.
-A run that can't prompt (piped stdin, `--output-format json`/`stream-json`, or
-`-o json`/`yaml`/`toml`/`env`) without `--yes` fails with the consent-required error and
-makes no API write. Stdin is never read for the answer.
+(default **Yes**). Without consent the run makes no API write.
 
 ## Exit Codes
 

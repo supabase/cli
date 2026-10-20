@@ -1,16 +1,11 @@
 # `supabase db dump`
 
+Target: selectable, no consent — see [Command target](../../../../docs/command-target.md)
+
 Implemented in `dump.handler.ts`. Streams a `pg_dump`/`pg_dumpall`
 script run inside the compose Postgres image, or catalog `pg_dump` /
 `pg_dumpall` on the stack backend (native artifact or a one-shot of the same
 image), to stdout or `--file`.
-
-With no selector the command dumps the local stack, and in a linked checkout the `Target:` line
-adds `default; pass --remote for <project>`. `--remote` selects the linked project,
-`--remote=<ref>` another project, `--remote=<branch>` a branch of the linked project (by name or
-UUID) and `--remote=<url>` a custom database (see
-[ADR 0033](../../../../../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md)).
-It only reads, so it never asks for confirmation, on any target.
 
 ## Files Read
 
@@ -60,19 +55,12 @@ It only reads, so it never asks for confirmation, on any target.
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success                                                                                                                                                               |
 | `1`  | `--use-copy`/`--exclude` without `--data-only`; mutually-exclusive flags; bad `--file` path; connection failure; container or bundled `pg_dump`/`pg_dumpall` exit ≠ 0 |
-| `1`  | more than one of `--remote`/`--linked`/`--db-url`/`--local` (`TargetSelectorConflictError`)                                                                           |
-| `1`  | `--project-ref` with `--local`, `--db-url` or `--remote=<value>` (`TargetProjectRefConflictError`)                                                                    |
-| `1`  | `--password` with `--remote=<url>` or the local default (`TargetPasswordConflictError`)                                                                               |
-| `1`  | `--remote=<branch>` naming no branch of the parent project                                                                                                            |
 
 ## Output
 
 SQL goes to **stdout** (or `--file`) in **all** `--output-format` modes — there is
 no machine envelope for `db dump` (same rationale as `test db`). Diagnostics go
-to **stderr**: alias deprecation warnings, the `Target: …` line (remote project `Target: <name> (<ref>)`,
-branch `Target: project <parent> · branch <name> (<ref>)`, `Target: local stack (<host>:<port>)`
-with ` · default; pass --remote for <project>` appended in a linked checkout when no selector was
-given, or `Target: custom Postgres (<host>:<port>)`),
+to **stderr**: alias deprecation warnings, the `Target:` line,
 `Dumping {schemas|data| roles} from {local|remote} database...`,
 the `--dry-run` notice, and the `Dumped schema to <abs>.` confirmation when
 `--file` is used. `--dry-run` prints the env-expanded script to stdout without
@@ -102,21 +90,9 @@ shell inherits the suppressing variables and is missed.
 - **Config value precedence** (ADR 0032): explicit flag > shell env > project `.env*` > config
   (`config.json` over `config.toml`; a matched `[remotes.*]` block over the base document on
   a remote project or branch) > default. The linked-database password env is withheld when the target differs
-  from `.temp/project-ref`: stderr gets `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.` and a temporary login role is minted. `--password` is rejected with
-  `--remote=<url>` and for the local default, which carry their own credentials.
+  from `.temp/project-ref`: stderr gets `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.` and a temporary login role is minted.
 - `--data-only` XOR `--role-only`; `--keep-comments` XOR `--data-only`;
   `--schema` XOR `--role-only`. `--use-copy` / `--exclude` require `--data-only`.
-- **Target selection.** `--remote` is read as the linked project (bare), a project ref (20
-  lowercase letters), a Postgres URL, or else a branch of the linked project by name or UUID;
-  `--remote=false` fails with `--remote doesn't take false. Leave it out to target the local database.`, and `--remote=` with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch|url>; leave it out to target the local database.` A
-  word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes no
-  operands.
-- **Deprecated aliases.** `--linked`, `--project-ref=<ref>`, `--db-url=<url>` and `--local` still
-  work and print a deprecation warning on stderr naming the `--remote` replacement (`--local`
-  warns that local is the default). They are mutually exclusive with each other and with
-  `--remote`; a `false` switch counts as absent. `--project-ref` with `--local`, `--db-url` or
-  `--remote=<value>` is a hard error, and an empty `--db-url` or `--project-ref` fails with
-  `TargetEmptyValueError` instead of reading as absent.
 - **Container-level pooler fallback.** When a remote dump reaches the direct host
   from the host process but the `pg_dump` container fails over IPv6, the captured
   container stderr is classified (`isIPv6ConnectivityError`) and the dump is

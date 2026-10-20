@@ -1,5 +1,7 @@
 # `supabase domains [create|get|reverify|activate|delete]`
 
+Target: hosted, consent default Yes for `create`, No for `activate` and `delete`, no consent for `get` and `reverify` — see [Command target](../../../docs/command-target.md)
+
 Custom hostname management. Every subcommand resolves a project ref and calls a
 single Management API custom-hostname endpoint. `create` additionally performs a
 Cloudflare DNS-over-HTTPS CNAME pre-check.
@@ -98,13 +100,8 @@ suppressed on stderr. `delete` ignores `-o`.
 
 ## Notes
 
-- Targets the linked project unless `--remote=<ref>` is given; a bare `--remote` also targets the linked project. `--remote=<value>` is read as a project ref (20 lowercase letters), a branch of the linked project (by name or UUID, resolved through `GET /v1/projects/{parent}/branches`, or `GET /v1/branches/{id}` for a UUID when no project is linked), or `true|yes|on|1` for the linked project. A database URL is rejected (these commands take a project, not a database); `false|no|off|0` and `--no-remote` fail with `--remote doesn't take false. Leave it out to use the linked project.`, and an empty value with `--remote= has an empty value. Pass --remote for the linked project or --remote=<ref|branch>; leave it out to use the linked project.`
-- A word after a bare `--remote` is read as its value, `--remote=<word>`, because the command takes no operands.
-- The deprecated `--project-ref` is an alias of `--remote=<ref>` and prints a deprecation warning on stderr that names the replacement; it cannot be combined with `--remote=<value>`. An empty `--project-ref` is rejected.
 - `--custom-hostname` is required for `create`.
 - `create` validates the CNAME via Cloudflare DNS-over-HTTPS (`https://1.1.1.1`, 10s timeout) before initializing; on failure it short-circuits before any POST.
-- All subcommands resolve the ref via `--remote=<ref>` → `SUPABASE_PROJECT_ID` env → `supabase/.temp/project-ref` → interactive project picker (only when stdin is a TTY and output is interactive).
-- The project-ref fallback env var is `SUPABASE_PROJECT_ID`.
 - **Notes:**
   - `--include-raw-output` is removed on every subcommand, `delete` included. Passing it (any value, including `=false`) fails with `--include-raw-output was removed.` and the suggestion `Use -o json instead.`, before credentials are resolved or any API work runs, so it needs no login. `RemovedSurfaceError` records `cli_command_executed` with `error_fingerprint` ending in `:removed_flag`, and the post-run `telemetry.json` read and write under `SUPABASE_HOME` still happens. The flag stays parsed (hidden) only so misuse reaches this error instead of an unknown-flag parse error; its rejection lives in `domains.removed-flag.ts`.
   - The degenerate `validation_records != 1` status message is an approximate struct dump (the exact text is not stable).
@@ -112,9 +109,7 @@ suppressed on stderr. `delete` ignores `-o`.
   - In a structured `-o` mode the human status is suppressed on stderr, keeping stdout clean.
   - The CNAME pre-check's "failed to locate" error text embeds a readable, 1024-byte-capped JSON dump of the DNS answers, rather than an uncapped decimal byte-value array — see `domains.cname.ts`'s comment at the failure site for detail.
 
-- Prints `Target: <project>` once on stderr in every output format, for example `Target: project <name> (<ref>) · production`. `--output-format json|stream-json` object results and error envelopes also carry a `target` object (see [Command target](../../../docs/command-target.md)); `--output {json,yaml,toml,env}` payloads are unchanged.
 - **Consent (`create`).** Asks once, after the CNAME pre-check passes and before the POST, with default Yes: `Create custom hostname <hostname>`.
 - **Consent (`activate`).** Asks once before the POST, with default No: `Activate the custom hostname`. The question notes that third-party auth providers stop working on the Supabase-provisioned subdomain.
 - **Consent (`delete`).** Asks once before the DELETE, with default No: `Delete the custom hostname config`.
-- **Consent behaviour.** `--yes` or a shell `SUPABASE_YES` approves it (`supabase/.env` does not) and echoes `Confirmed by --yes: <action> on <target>` to stderr. Without it, only an interactive text-mode terminal is asked: JSON, `-o`, piped and agent runs exit 1 with `HostedMutationConsentRequiredError` and change nothing, and declining exits 1 with `HostedMutationDeclinedError`. Stdin is never read.
 - `get` never prompts. `reverify` never prompts: it re-runs verification and changes no configuration.
