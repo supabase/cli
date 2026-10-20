@@ -2,7 +2,7 @@ import { Layer, Option } from "effect";
 import type * as CliCommand from "effect/cli/Command";
 import { Command, Flag } from "effect/cli";
 
-import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
+import { PROJECT_REF_PATTERN } from "../../../config/remote-target.service.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { configPullRun } from "../../../command-internal/config-pull-run.ts";

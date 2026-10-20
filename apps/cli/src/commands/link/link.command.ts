@@ -2,11 +2,11 @@ import { Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
-import { PROJECT_REF_PATTERN } from "../../config/project-ref.service.ts";
+import { PROJECT_REF_PATTERN } from "../../config/remote-target.service.ts";
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withContext } from "../../command-internal/command-permissions/model.ts";
 import { linkServices } from "../../command-internal/link-services-core.ts";
-import { projectRefPicker } from "../../config/project-ref.layer.ts";
+import { projectRefPicker } from "../../config/remote-target.layer.ts";
 import { linkedProjectCache } from "../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { managementApiRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
@@ -34,6 +34,11 @@ const config = {
   skipPooler: Flag.Boolean("skip-pooler").pipe(
     Flag.withDescription("Use direct connection instead of pooler."),
     Flag.withDefault(false),
+  ),
+  frozen: Flag.Boolean("frozen").pipe(
+    Flag.withDescription("Leave supabase/supabase.lock untouched (stack mode only)."),
+    Flag.withDefault(false),
+    Flag.withHidden,
   ),
 } as const;
 
@@ -83,13 +88,19 @@ export const linkCommand = Command.make("link", config).pipe(
             request: { query: { reveal: "true" } },
           },
           {
+            operationId: "v1-get-a-branch-config",
+            kind: "best-effort",
+            context:
+              "stack mode, supabase/config.toml exists, and the project lookup returns 404 (the ref is a branch)",
+          },
+          {
             operationId: "v1-list-all-branches",
             kind: "best-effort",
             context:
               "the project lookup returns 404 (the ref is a branch), the ref was not resolved from a branch name, and supabase/.temp/linked-project.json names a different project",
           },
         ],
-        noApiEffectFlags: ["password"],
+        noApiEffectFlags: ["password", "frozen"],
       },
       withContext(projectRefPicker, "no [ref-or-branch] argument"),
       linkServices,

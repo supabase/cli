@@ -5,7 +5,7 @@ import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
 import { CommandCredentials } from "../../../auth/command-credentials.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { aqua } from "../../../command-internal/colors.ts";
 import { missingAccessTokenMessage } from "../../../auth/access-token.ts";
 import { failsOn } from "../../../command-internal/fail-on.ts";
@@ -116,13 +116,14 @@ const runLinked = Effect.fn("db.advisors.runLinked")(function* (
 ) {
   const resolver = yield* DbConfigResolver;
   const credentials = yield* CommandCredentials;
-  const projectRefResolver = yield* ProjectRefResolver;
+  const projectRefResolver = yield* RemoteTarget;
   const linkedProjectCache = yield* LinkedProjectCache;
 
   // The linked-project cache is written whenever the project ref was resolved, even when the
   // DB-config resolve below fails. Load the ref first (non-prompting, honoring an explicit
   // `--project-ref`) and wrap everything after it in the cache finalizer.
-  const ref = yield* projectRefResolver.loadProjectRef(flags.projectRef);
+  const linkedTarget = yield* projectRefResolver.load(flags.projectRef);
+  const { ref } = linkedTarget;
 
   return yield* Effect.gen(function* () {
     // The host probe / login-role mint / pooler / IPv6 fallback. The linked lint-gathering path
@@ -133,6 +134,7 @@ const runLinked = Effect.fn("db.advisors.runLinked")(function* (
       connType: "linked",
       dnsResolver,
       linkedProjectRef: flags.projectRef,
+      target: linkedTarget,
     });
 
     // The access token is validated against the `sbp_` pattern before calling the API: a

@@ -25,6 +25,11 @@ import { vi } from "vitest";
 
 import { mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";
 import {
+  legacyStateAccesses,
+  recordingFileSystem,
+  seedLegacyStateDecoys,
+} from "../../../tests/helpers/legacy-state-guard.ts";
+import {
   statusCodeFailure,
   transportFailure,
   mockCommandSettings,
@@ -41,6 +46,11 @@ import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { runtimeInfoLayer } from "../../shared/runtime/runtime-info.layer.ts";
 import { AccessTokenRequiredError } from "../../auth/errors.ts";
 import { OutputFlag } from "../../command-internal/global-flags.ts";
+import { writeProjectLink } from "../../command-internal/project-link.ts";
+import {
+  projectStateModeLayer,
+  type ProjectStateMode,
+} from "../../command-internal/project-state-mode.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
 import { machineErrorContextLayer } from "../../shared/output/machine-error-context.layer.ts";
 import { jsonOutputLayer, streamJsonOutputLayer } from "../../shared/output/output.layer.ts";
@@ -325,6 +335,8 @@ interface SetupOpts {
   readonly apiFactoryLayer?: Layer.Layer<CommandPlatformApiFactory>;
   /** `SUPABASE_PROJECT_ID` for the linked-state chain — defaults to unset. */
   readonly projectId?: Option.Option<string>;
+  /** Where the link state lives; defaults to the legacy `supabase/.temp` files. */
+  readonly projectStateMode?: ProjectStateMode;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -353,20 +365,32 @@ function setup(opts: SetupOpts = {}) {
       ? undefined
       : mockCommandPlatformApiFactoryDirect(opts.apiFactory);
 
+  const recorder = recordingFileSystem();
   const layer = Layer.mergeAll(
     BunServices.layer,
+    recorder.layer,
     runtimeInfoLayer,
     out.layer,
     cliSettings,
     telemetry.layer,
     child.layer,
+    projectStateModeLayer(opts.projectStateMode ?? "legacy"),
     Layer.succeed(OutputFlag, opts.goOutput ?? Option.none()),
     ...(apiMock === undefined ? [] : [apiMock.layer]),
     ...(apiFactoryMock === undefined ? [] : [apiFactoryMock.layer]),
     ...(opts.apiFactoryLayer === undefined ? [] : [opts.apiFactoryLayer]),
   );
 
-  return { workdir, out, telemetry, child, layer, apiMock, apiFactoryMock };
+  return {
+    workdir,
+    out,
+    telemetry,
+    child,
+    layer,
+    apiMock,
+    apiFactoryMock,
+    accessed: recorder.accessed,
+  };
 }
 
 /**
@@ -1249,6 +1273,52 @@ content_path = "./supabase/templates/password_changed_notification.html"
             ),
           ).toBe(true);
           expect(apiMock?.requests).toEqual([]);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.effect(
+      "stack mode: prints the Linked Project block from .link.json with zero Management API calls",
+      () => {
+        const { layer, out, workdir, apiMock } = setup({
+          branches: { ok: [] },
+          projectStateMode: "stack",
+        });
+        return Effect.gen(function* () {
+          yield* writeConfig();
+          yield* writeProjectLink(workdir, {
+            project: {
+              ref: LINKED_PLAIN_REF,
+              name: "My Project",
+              organization_id: "org_1",
+              organization_slug: "acme",
+            },
+            active_branch: { ref: LINKED_PLAIN_REF },
+            fetchedAt: "2026-01-01T00:00:00.000Z",
+          });
+          yield* status(flags());
+          expect(
+            out.stdoutText.startsWith(
+              `Linked Project:\n  Org: acme (org_1)\n  Project: My Project (${LINKED_PLAIN_REF})\n`,
+            ),
+          ).toBe(true);
+          expect(apiMock?.requests).toEqual([]);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.effect(
+      "stack mode: never reads or writes supabase/.temp and ignores a legacy link there",
+      () => {
+        const { layer, out, workdir, accessed } = setup({ projectStateMode: "stack" });
+        seedLegacyStateDecoys(workdir);
+        return Effect.gen(function* () {
+          yield* writeConfig();
+          yield* status(flags());
+          expect(out.stdoutText).not.toContain("Linked Project");
+          expect(out.stdoutText).not.toContain("decoy");
+          expect(accessed.some((entry) => entry.endsWith("config.toml"))).toBe(true);
+          expect(legacyStateAccesses(accessed)).toEqual([]);
         }).pipe(Effect.provide(layer));
       },
     );

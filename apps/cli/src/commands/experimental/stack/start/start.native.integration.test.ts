@@ -20,7 +20,7 @@ import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
 import { ExperimentalFlag, YesFlag } from "../../../../command-internal/global-flags.ts";
 import { stackStart } from "./start.handler.ts";
-import { stackPrepare } from "../prepare/prepare.handler.ts";
+import { selection } from "../../../../../tests/helpers/pins.ts";
 import { destroyTestStacks } from "../../../../../tests/helpers/stack-cleanup.ts";
 
 const excluded = [
@@ -40,14 +40,8 @@ const flags = (exclude: ReadonlyArray<string>) => ({
   stackId: Option.none<string>(),
   runtime: "native" as const,
   preparation: "on-demand" as const,
+  frozen: false,
   eager: false,
-});
-
-const prepareFlags = () => ({
-  stack: Option.none<string>(),
-  stackId: Option.none<string>(),
-  runtime: "native" as const,
-  capability: [],
 });
 
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
@@ -230,8 +224,16 @@ describe("experimental stack start native lifecycle", () => {
         const fixture = makeLayers(root);
         yield* Effect.ensuring(
           Effect.gen(function* () {
-            yield* Effect.scoped(stackPrepare(prepareFlags()));
             const api = yield* StackApi;
+            yield* Effect.scoped(
+              api.create({
+                projectRoot: root,
+                stateRoot: path.join(root, "stacks"),
+                cacheRoot: path.join(root, "cache"),
+                runtime: "native",
+                startOwner: true,
+              }),
+            );
             const preparedDefinitions = yield* api.discover({
               stateRoot: path.join(root, "stacks"),
             });
@@ -670,5 +672,67 @@ describe("experimental stack start native lifecycle", () => {
         ).pipe(Effect.provide(fixture.layer));
       }).pipe(Effect.provide(BunServices.layer)),
     { timeout: 120_000 },
+  );
+
+  it.live(
+    "refuses an Auth older than the one that migrated the data, and accepts a newer one",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-downgrade-" });
+        yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(root, "supabase", "config.toml"),
+          n2ProjectConfig(undefined),
+        );
+        const locations = {
+          stateRoot: path.join(root, "stacks"),
+          cacheRoot: path.join(root, "cache"),
+        };
+        const fixture = makeLayers(root);
+        yield* Effect.ensuring(
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            const stackId = yield* stackStart(flags(onlyRestAndAuth));
+            const stack = yield* api.open({ id: stackId, ...locations });
+            const database = (yield* stack.services.list).find(
+              (instance) => instance.service === "database",
+            );
+            if (database === undefined) return yield* Effect.die("database missing");
+            const record = path.join(
+              locations.stateRoot,
+              stackId,
+              "data",
+              database.id,
+              "schema-writers.json",
+            );
+            expect(yield* fs.readFileString(record)).toContain(selection.auth.upstreamVersion);
+            yield* stack.stop;
+
+            yield* fs.writeFileString(record, '{"auth":"v999.0.0"}');
+            const refused = yield* Effect.scoped(Effect.exit(stackStart(flags(onlyRestAndAuth))));
+            expect(Exit.isFailure(refused)).toBe(true);
+            if (!Exit.isFailure(refused)) return;
+            const message = Cause.pretty(refused.cause);
+            expect(message).toContain(
+              `auth ${selection.auth.upstreamVersion} is older than v999.0.0`,
+            );
+            expect(message).toContain(`supabase stack destroy --stack-id ${stackId}`);
+            expect(yield* fs.readFileString(record)).toContain("v999.0.0");
+
+            yield* fs.writeFileString(record, '{"auth":"v0.0.1"}');
+            expect(yield* stackStart({ ...flags(onlyRestAndAuth), eager: true })).toBe(stackId);
+            const raised = yield* fs.readFileString(record);
+            expect(raised).toContain(selection.auth.upstreamVersion);
+            expect(raised).not.toContain("v0.0.1");
+          }),
+          Effect.gen(function* () {
+            const api = yield* StackApi;
+            yield* destroyTestStacks(api, locations.stateRoot, locations.cacheRoot);
+          }),
+        ).pipe(Effect.provide(fixture.layer));
+      }).pipe(Effect.provide(BunServices.layer)),
+    { timeout: 180_000 },
   );
 });

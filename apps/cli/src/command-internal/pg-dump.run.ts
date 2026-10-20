@@ -1,5 +1,6 @@
 import { Effect, Option } from "effect";
 import type { Stack } from "@supabase/stack/effect";
+import type { ArtifactPin } from "@supabase/stack/internal/artifacts";
 import { postgres } from "@supabase/stack/commands";
 type StackRuntimePreference =
   | { readonly kind: "native" }
@@ -91,12 +92,12 @@ export type PgDumpClient =
       readonly kind: "stack";
       readonly stack: Stack;
       readonly command: "pg_dump" | "pg_dumpall";
-      readonly major: 15 | 17;
+      readonly pin: ArtifactPin;
     }
   | {
       readonly kind: "bundled";
       readonly command: "pg_dump" | "pg_dumpall";
-      readonly version: string;
+      readonly pin: ArtifactPin;
       readonly runtime?: StackRuntimePreference;
     };
 
@@ -301,8 +302,8 @@ export const streamPgDumpWithClient = Effect.fn("streamPgDumpWithClient")(functi
       yield* params.onStdout(new TextEncoder().encode("SET session_replication_role = replica;\n"));
     const result = yield* params.client.stack.commands.run(
       params.client.command === "pg_dump"
-        ? postgres.pgDump({ major: params.client.major })
-        : postgres.pgDumpAll({ major: params.client.major }),
+        ? postgres.pgDump({ pin: params.client.pin })
+        : postgres.pgDumpAll({ pin: params.client.pin }),
       {
         args,
         env: params.env,
@@ -332,7 +333,7 @@ export const streamPgDumpWithClient = Effect.fn("streamPgDumpWithClient")(functi
         ? ["host.docker.internal:host-gateway"]
         : [];
     return yield* bundled.run({
-      version: params.client.version,
+      pin: params.client.pin,
       runtime,
       argv: ["bash", "-c", params.script, "--"],
       env: params.env,

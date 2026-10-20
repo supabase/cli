@@ -39,3 +39,6 @@ export const DEFAULT_LOCAL_SERVICE_SECRET_KEY_BASE =
   "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG";
 /** Key used to encrypt local Pooler tenant secrets. */
 export const DEFAULT_POOLER_VAULT_ENCRYPTION_KEY = "12345678901234567890123456789032";
+
+/** The compiled default artifact pin of every service kind. */
+export { defaultArtifactSelection } from "./Artifacts.ts";

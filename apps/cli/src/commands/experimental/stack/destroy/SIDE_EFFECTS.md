@@ -1,8 +1,7 @@
 # `supabase stack destroy`
 
 Permanently removes each selected managed namespace, its service registrations,
-owned database data, port claims, and attached jobs. Caller-owned Storage upload
-files remain. The experimental feature flag controls command registration.
+owned database data, Storage upload files, port claims, and attached jobs. The experimental feature flag controls command registration.
 
 ## Selection and confirmation
 
@@ -13,10 +12,9 @@ found fail together, each named, before anything is destroyed, and ids naming th
 same stack select it once.
 Explicit legacy `-o/--output` is rejected in favor of `--output-format`.
 
-Interactive text mode asks one question for all selected stacks and states that
-Storage uploads are preserved. Non-interactive and machine-output runs require
+Interactive text mode asks one question for all selected stacks. Non-interactive and machine-output runs require
 `--yes`. With `--yes` the command prints no question; stderr states which stacks and
-data are destroyed and that Storage uploads are preserved. Rejection or cancellation
+data are destroyed. Rejection or cancellation
 does not open or destroy a stack. Discovery may create/chmod the registry directory
 to 0700 but does not launch an owner.
 
@@ -66,8 +64,12 @@ in place.
 
 Reads identity/state under `<SUPABASE_HOME or ~/.supabase>/stacks/<id>/` and, for
 implicit selection, the project's canonical Git context. Removes only the
-selected namespace's owned state/data; other stack namespaces and caller-owned
-uploads are preserved. The independent artifact cache is retained. Communicates
+selected namespace's owned state/data and its `uploads/` directory
+(`<SUPABASE_HOME or ~/.supabase>/stacks/<id>/uploads`), after the namespace is destroyed and
+including for the containers of a deleted stack; a failure to remove it fails the command naming
+the directory. This leaves the stack directory holding only an empty `data/`, which a later
+registry sweep prunes. Other stack namespaces and files outside the stack directory
+(a caller-supplied Storage path) are preserved. The independent artifact cache is retained. Communicates
 with the local owner and selected runtime, with no hosted API calls. Shared
 routing/settings can read project configuration and profiles.
 

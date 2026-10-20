@@ -32,6 +32,7 @@ import { engineTarget, testEngine } from "../tests/engine-target.ts";
 import { holdReleaseFifo } from "../tests/release-fifo.ts";
 import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
 import { watchEntry } from "../tests/watch-entry.ts";
+import { selection } from "../tests/pins.ts";
 
 const shortRegistrationPollFixture = fileURLToPath(
   new URL("../tests/short-registration-poll-fixture.ts", import.meta.url),
@@ -179,8 +180,8 @@ it.live.skipIf(process.platform === "win32")(
             Effect.flatMap((rpc) =>
               rpc.createService({
                 service: "database",
+                pin: selection.database,
                 config: {
-                  version: "17",
                   databasePassword: Redacted.make(`stack-shutdown-password-${suffix}`),
                   jwtSecret: Redacted.make(
                     `stack-shutdown-jwt-secret-${suffix}-at-least-thirty-two-characters`,
@@ -292,6 +293,7 @@ it.live.skipIf(process.platform === "win32")(
         const clientB3 = yield* ownerClient(accessB3);
         const mailA3 = yield* clientA3.createService({
           service: "mail",
+          pin: selection.mail,
           config: {},
           endpoints: { http: { port: "auto" } },
         });
@@ -299,6 +301,7 @@ it.live.skipIf(process.platform === "win32")(
         yield* clientA3.readyService({ id: mailA3.id });
         const mailB3 = yield* clientB3.createService({
           service: "mail",
+          pin: selection.mail,
           config: {},
           endpoints: { http: { port: "auto" } },
         });
@@ -386,8 +389,8 @@ it.live.skipIf(process.platform === "win32")(
         const client = yield* ownerClient(access);
         const database = yield* client.createService({
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("registration-lost-password"),
             jwtSecret: Redacted.make("registration-lost-jwt-secret-at-least-thirty-two-characters"),
             jwtExpiry: 3600,
@@ -535,8 +538,8 @@ const losesRegistrationWhileStopRuns = (trigger: StopTrigger) =>
       const client = yield* ownerClient(access);
       const database = yield* client.createService({
         service: "database",
+        pin: selection.database,
         config: {
-          version: "17",
           databasePassword: Redacted.make("registration-lost-gated-password"),
           jwtSecret: Redacted.make(
             "registration-lost-gated-jwt-secret-at-least-thirty-two-characters",
@@ -637,6 +640,7 @@ it.live.skipIf(process.platform === "win32")(
         // reaction to losing its mounted storage.
         const mail = yield* client.createService({
           service: "mail",
+          pin: selection.mail,
           config: {},
           endpoints: { http: { port: "auto" } },
         });
@@ -693,6 +697,7 @@ it.live.skipIf(process.platform === "win32")(
         const reclaimedClient = yield* ownerClient(reclaimedAccess);
         const reclaimedMail = yield* reclaimedClient.createService({
           service: "mail",
+          pin: selection.mail,
           config: {},
           endpoints: { http: { port } },
         });
@@ -749,8 +754,8 @@ it.live.skipIf(process.platform === "win32")(
         const password = Redacted.make("pinned-postgres-password");
         const database = yield* client.createService({
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: password,
             jwtSecret: Redacted.make("pinned-postgres-jwt-secret-at-least-thirty-two-characters"),
             jwtExpiry: 3600,

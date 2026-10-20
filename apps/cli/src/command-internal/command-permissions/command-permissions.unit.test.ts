@@ -1,4 +1,4 @@
-import { Option } from "effect";
+import { Exit, Option } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { rootCommandForFeatures } from "../../cli/root.ts";
@@ -43,9 +43,11 @@ const VARIANTS: ReadonlyArray<{ readonly name: string; readonly variant: Permiss
   {
     name: "stack backend",
     // Sets every option, so a new option added to `rootCommandForFeatures` is a type error here.
-    variant: { stackBackend: "stack", computeEnabled: true } satisfies Required<
-      NonNullable<PermissionVariant>
-    >,
+    variant: {
+      projectState: Exit.succeed("stack"),
+      stackBackend: "stack",
+      computeEnabled: true,
+    } satisfies Required<NonNullable<PermissionVariant>>,
   },
 ];
 

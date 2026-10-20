@@ -34,14 +34,16 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 - Every command that resolves a linked project ref for its own database
   connection has a TS-only `--project-ref` flag (no Go equivalent on any
   user-facing command — only the `SUPABASE_PROJECT_ID` env var could override
-  the linked ref; the sole Go registration is a hidden, non-user-facing seam,
-  `db declarative __catalog --project-ref`, `cmd/pgdelta_catalog.go:44`). This
+  the linked ref; the Go registrations are a hidden, non-user-facing seam,
+  `db declarative __catalog --project-ref`, `cmd/pgdelta_catalog.go:44`, and the
+  deprecated Go-delegated `db remote changes`, which receives the linked ref this
+  way in stack mode). This
   covers: `db push`, `db pull`, `db diff`, `db dump`, `db reset`, `db lint`,
   `db advisors`, `db query`; `migration list`/`up`/`down`/`repair`/`fetch`/`squash`;
   `seed buckets`; `storage ls`/`cp`/`mv`/`rm`; every `inspect db` subcommand and
   `inspect report`; and `test db` (and its hidden `db test` alias, which shares
   `test db`'s flag config verbatim). It feeds
-  `ProjectRefResolver.loadProjectRef`, keeping Go's precedence (flag >
+  `RemoteTarget.load`, keeping Go's precedence (flag >
   `SUPABASE_PROJECT_ID` > `supabase/.temp/project-ref`) and taking effect only on
   the linked path. It shares ONLY that ref-resolution precedence with
   `SUPABASE_PROJECT_ID` — unlike the env var, it does not affect the local
@@ -51,6 +53,11 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   flag, since Go's env var going unused on a non-linked target has no TS-only
   flag counterpart to accidentally discard. Default behavior (omitted flag)
   matches Go exactly.
+- A hosted ref from `SUPABASE_PROJECT_ID` that differs from the linked ref gets
+  its pooler URL from the Management API, like a `--project-ref` flag does. Go
+  reuses the saved `supabase/.temp/pooler-url` whichever ref the env var names.
+  The saved pooler URL, parent project, and branch name apply only when the
+  resolved ref is the linked one.
 - `projects api-keys` has a TS-only `--reveal` flag (no Go equivalent). It sends
   `reveal=true` so the Management API returns the full secret keys (`sb_secret_...`) in
   full instead of redacting them, addressing issue #4775. Default behavior (omitted flag)
@@ -84,6 +91,8 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   a timeout, or any transport/status/decode failure (fail-safe: an unverifiable divergent cache is
   untrustworthy). Both are best-effort and never affect `link`'s own outcome — see
   `link/SIDE_EFFECTS.md`.
+- `link` has a TS-only `--frozen` flag (no Go equivalent) that leaves `supabase/supabase.lock`
+  untouched in stack mode; it is a no-op in legacy mode, which has no lock.
 
 ## Behavioral divergences from the Go reference
 

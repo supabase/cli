@@ -4,7 +4,7 @@ import { Effect, FileSystem, Option, Path, Ref, Result, Stream } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -63,7 +63,7 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
   const cliSettings = yield* CommandSettings;
   const telemetryState = yield* TelemetryState;
   const linkedProjectCache = yield* LinkedProjectCache;
-  const resolver = yield* ProjectRefResolver;
+  const resolver = yield* RemoteTarget;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
@@ -91,7 +91,7 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
       });
     }
 
-    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
+    const projectRef = flags.local ? "" : (yield* resolver.load(flags.projectRef)).ref;
     if (projectRef !== "") {
       yield* Ref.set(linkedRef, Option.some(projectRef));
     }

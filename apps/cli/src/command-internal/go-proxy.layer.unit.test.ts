@@ -1,13 +1,29 @@
 import { describe, expect, it, vi } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Sink, Stream } from "effect";
+import { BunServices } from "@effect/platform-bun";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Path,
+  Sink,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/process";
 import {
   type CliProcessSignal,
   ProcessControl,
 } from "../shared/runtime/process-control.service.ts";
+import { mockRuntimeInfo } from "../../tests/helpers/mocks.ts";
+import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { GoChildExitError } from "./go-child-exit.error.ts";
 import { GoProxyInvocation, goProxyInvocationLayer } from "./go-proxy-invocation.ts";
 import { GoProxy } from "./go-proxy.service.ts";
+import { projectStateModeLayer } from "./project-state-mode.ts";
+import { stackBackendLayer } from "./stack-backend.ts";
 import { formatGoBinaryNotFoundError, makeGoProxyLayer } from "./go-proxy.layer.ts";
 
 /**
@@ -229,13 +245,20 @@ describe("formatGoBinaryNotFoundError - pinned snippet", () => {
   });
 });
 
+const proxyDeps = (
+  spawner: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>,
+  processControl: Layer.Layer<ProcessControl>,
+) => Layer.mergeAll(BunServices.layer, mockRuntimeInfo(), spawner, processControl);
+
 describe("makeGoProxyLayer", () => {
+  const tmp = useTempWorkdir("supabase-go-proxy-");
+
   it.effect("records delegated execution for the parent success trailer", () => {
     const spawner = mockSpawner({ kind: "success", code: 0 });
     const pc = mockProcessControl();
     const layer = Layer.mergeAll(
       makeGoProxyLayer({ binary: TEST_BINARY }).pipe(
-        Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+        Layer.provide(proxyDeps(spawner.layer, pc.layer)),
       ),
       goProxyInvocationLayer,
     );
@@ -257,7 +280,7 @@ describe("makeGoProxyLayer", () => {
         binary: TEST_BINARY,
         env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
         parentOwnsCapturedSuccessTail: true,
-      }).pipe(Layer.provide(Layer.mergeAll(spawner.layer, pc.layer))),
+      }).pipe(Layer.provide(proxyDeps(spawner.layer, pc.layer))),
       goProxyInvocationLayer,
     );
     return Effect.gen(function* () {
@@ -277,7 +300,7 @@ describe("makeGoProxyLayer", () => {
     const spawner = mockSpawner({ kind: "success", code: 0 });
     const pc = mockProcessControl();
     const layer = makeGoProxyLayer({ binary: TEST_BINARY, globalArgs: ["--debug"] }).pipe(
-      Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+      Layer.provide(proxyDeps(spawner.layer, pc.layer)),
     );
     return Effect.gen(function* () {
       const proxy = yield* GoProxy;
@@ -299,7 +322,7 @@ describe("makeGoProxyLayer", () => {
     const spawner = mockSpawner({ kind: "success", code: 0 });
     const pc = mockProcessControl();
     const layer = makeGoProxyLayer({ binary: TEST_BINARY }).pipe(
-      Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+      Layer.provide(proxyDeps(spawner.layer, pc.layer)),
     );
     return Effect.gen(function* () {
       const proxy = yield* GoProxy;
@@ -316,7 +339,7 @@ describe("makeGoProxyLayer", () => {
     const spawner = mockSpawner({ kind: "success", code: 0 });
     const pc = mockProcessControl();
     const layer = makeGoProxyLayer({ binary: TEST_BINARY }).pipe(
-      Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+      Layer.provide(proxyDeps(spawner.layer, pc.layer)),
     );
     return Effect.gen(function* () {
       const proxy = yield* GoProxy;
@@ -333,13 +356,91 @@ describe("makeGoProxyLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect(
+    "tells children to leave supabase/.temp alone and who is linked in stack mode only",
+    () => {
+      const spawner = mockSpawner({ kind: "success", code: 0 });
+      const pc = mockProcessControl();
+      const layer = makeGoProxyLayer({ binary: TEST_BINARY, cwd: tmp.current }).pipe(
+        Layer.provide(proxyDeps(spawner.layer, pc.layer)),
+      );
+      const run = (modeLayer: Layer.Layer<never> | undefined) =>
+        Effect.gen(function* () {
+          const proxy = yield* GoProxy;
+          yield* proxy.exec(["db", "remote", "changes"]);
+          yield* proxy.execCapture(["db", "diff"]);
+        }).pipe(Effect.provide(modeLayer === undefined ? layer : Layer.merge(layer, modeLayer)));
+      const childEnv = () =>
+        spawner.spawned.splice(0).map((captured) => ({
+          stackState: captured.options.env?.SUPABASE_INTERNAL_STACK_STATE,
+          linked: captured.options.env?.SUPABASE_INTERNAL_LINKED_PROJECT,
+          pooler: captured.options.env?.SUPABASE_INTERNAL_POOLER_URL,
+        }));
+
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const unlinked = { stackState: "1", linked: undefined, pooler: undefined };
+        const absent = { stackState: undefined, linked: undefined, pooler: undefined };
+
+        yield* run(projectStateModeLayer("stack"));
+        expect(childEnv()).toEqual([unlinked, unlinked]);
+
+        yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+        const writeLink = (poolerUrl?: string) =>
+          fs.writeFileString(
+            path.join(tmp.current, "supabase", ".link.json"),
+            JSON.stringify({
+              project: {
+                ref: "abcdefghijklmnopqrst",
+                name: "Acme",
+                organization_id: "org_123",
+                organization_slug: "acme",
+              },
+              active_branch: {
+                ref: "tsrqponmlkjihgfedcba",
+                name: "feature-x",
+                is_default: false,
+                ...(poolerUrl === undefined ? {} : { pooler_url: poolerUrl }),
+              },
+              fetchedAt: "2026-01-01T00:00:00.000Z",
+            }),
+          );
+        const linked = {
+          stackState: "1",
+          linked: JSON.stringify({
+            ref: "abcdefghijklmnopqrst",
+            name: "Acme",
+            organization_id: "org_123",
+            organization_slug: "acme",
+          }),
+          pooler: undefined,
+        };
+        yield* writeLink();
+        yield* run(projectStateModeLayer("stack"));
+        yield* run(stackBackendLayer("stack"));
+        expect(childEnv()).toEqual([linked, linked, linked, linked]);
+
+        const poolerUrl =
+          "postgresql://postgres.tsrqponmlkjihgfedcba:[YOUR-PASSWORD]@pooler.example.com:6543/postgres";
+        yield* writeLink(poolerUrl);
+        yield* run(projectStateModeLayer("stack"));
+        expect(childEnv()).toEqual([linked, linked]);
+
+        yield* run(projectStateModeLayer("legacy"));
+        yield* run(undefined);
+        expect(childEnv()).toEqual([absent, absent, absent, absent]);
+      }).pipe(Effect.provide(BunServices.layer));
+    },
+  );
+
   it.effect("passes the layer's env to children, letting per-call env win", () => {
     const spawner = mockSpawner({ kind: "success", code: 0 });
     const pc = mockProcessControl();
     const layer = makeGoProxyLayer({
       binary: TEST_BINARY,
       env: { SUPABASE_NO_UPDATE_NOTIFIER: "1" },
-    }).pipe(Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)));
+    }).pipe(Layer.provide(proxyDeps(spawner.layer, pc.layer)));
     return Effect.gen(function* () {
       const proxy = yield* GoProxy;
       yield* proxy.exec(["projects", "list"]);
@@ -356,7 +457,7 @@ describe("makeGoProxyLayer", () => {
     const spawner = mockSpawner({ kind: "success", code: 7 });
     const pc = mockProcessControl();
     const layer = makeGoProxyLayer({ binary: TEST_BINARY }).pipe(
-      Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+      Layer.provide(proxyDeps(spawner.layer, pc.layer)),
     );
     return Effect.gen(function* () {
       const proxy = yield* GoProxy;
@@ -375,7 +476,7 @@ describe("makeGoProxyLayer", () => {
     const spawner = mockSpawner({ kind: "success", code: 5 });
     const pc = mockProcessControl();
     const layer = makeGoProxyLayer({ binary: TEST_BINARY }).pipe(
-      Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+      Layer.provide(proxyDeps(spawner.layer, pc.layer)),
     );
     let finalizerRan = false;
     return Effect.gen(function* () {
@@ -396,7 +497,7 @@ describe("makeGoProxyLayer", () => {
     const spawner = mockSpawner({ kind: "success", code: 0 });
     const pc = mockProcessControl();
     const layer = makeGoProxyLayer({ binary: TEST_BINARY }).pipe(
-      Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+      Layer.provide(proxyDeps(spawner.layer, pc.layer)),
     );
     return Effect.gen(function* () {
       const proxy = yield* GoProxy;
@@ -409,7 +510,7 @@ describe("makeGoProxyLayer", () => {
     const spawner = mockSpawner({ kind: "success", code: 0 });
     const pc = mockProcessControl();
     const layer = makeGoProxyLayer({ binary: TEST_BINARY }).pipe(
-      Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+      Layer.provide(proxyDeps(spawner.layer, pc.layer)),
     );
     return Effect.gen(function* () {
       const proxy = yield* GoProxy;
@@ -428,7 +529,7 @@ describe("makeGoProxyLayer", () => {
     const spawner = mockSpawner({ kind: "success", code: 0 });
     const pc = mockProcessControl();
     const layer = makeGoProxyLayer({ binary: TEST_BINARY }).pipe(
-      Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+      Layer.provide(proxyDeps(spawner.layer, pc.layer)),
     );
     return Effect.gen(function* () {
       const proxy = yield* GoProxy;
@@ -445,7 +546,7 @@ describe("makeGoProxyLayer", () => {
     const spawner = mockSpawner({ kind: "fail", error: "spawn failed" });
     const pc = mockProcessControl();
     const layer = makeGoProxyLayer({ binary: TEST_BINARY }).pipe(
-      Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+      Layer.provide(proxyDeps(spawner.layer, pc.layer)),
     );
     return Effect.gen(function* () {
       const proxy = yield* GoProxy;
@@ -461,7 +562,7 @@ describe("makeGoProxyLayer", () => {
     const spawner = mockSpawner({ kind: "never" }, spawned);
     const pc = mockProcessControl();
     const layer = makeGoProxyLayer({ binary: TEST_BINARY }).pipe(
-      Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+      Layer.provide(proxyDeps(spawner.layer, pc.layer)),
     );
     return Effect.gen(function* () {
       const proxy = yield* GoProxy;
@@ -492,7 +593,7 @@ describe("makeGoProxyLayer", () => {
         "/usr/local/bin/supabase-go (not found alongside the shim)",
       ];
       const layer = makeGoProxyLayer({ binary: { notFound: tried } }).pipe(
-        Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+        Layer.provide(proxyDeps(spawner.layer, pc.layer)),
       );
       return Effect.gen(function* () {
         const proxy = yield* GoProxy;
@@ -525,7 +626,7 @@ describe("makeGoProxyLayer", () => {
       const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
       const tried = ["$SUPABASE_GO_BINARY (unset)"];
       const layer = makeGoProxyLayer({ binary: { notFound: tried } }).pipe(
-        Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+        Layer.provide(proxyDeps(spawner.layer, pc.layer)),
       );
       return Effect.gen(function* () {
         const proxy = yield* GoProxy;
@@ -549,7 +650,7 @@ describe("makeGoProxyLayer", () => {
     const spawner = mockSpawner({ kind: "success", code: 0 });
     const pc = mockProcessControl();
     const layer = makeGoProxyLayer({ binary: TEST_BINARY }).pipe(
-      Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+      Layer.provide(proxyDeps(spawner.layer, pc.layer)),
     );
     return Effect.gen(function* () {
       const proxy = yield* GoProxy;

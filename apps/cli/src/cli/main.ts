@@ -4,9 +4,9 @@ import { Effect, Exit, Layer, Stdio } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { runCli } from "../shared/cli/run.ts";
 import { upgradeNoticeHook } from "../command-internal/upgrade-notice.ts";
-import { analyticsLayer } from "../telemetry/analytics.layer.ts";
+import { analyticsLayerFor } from "../telemetry/analytics.layer.ts";
 import { defaultCompleteDeps, tryComplete } from "./complete.ts";
-import { resolveStackBackend } from "../command-internal/stack-backend.ts";
+import { resolveProjectStateSelection } from "../command-internal/stack-backend.ts";
 import { resolveComputeEnabled } from "../commands/experimental/compute/compute-backend.ts";
 import { cliEntrypointForFeatures } from "./root.ts";
 
@@ -19,13 +19,17 @@ const args = await Effect.runPromise(
 
 const selectionExit = await Effect.runPromiseExit(
   Effect.gen(function* () {
-    const stackBackend = yield* resolveStackBackend({ args, cwd: process.cwd(), env: process.env });
+    const { projectState, stackBackend } = yield* resolveProjectStateSelection({
+      args,
+      cwd: process.cwd(),
+      env: process.env,
+    });
     const computeEnabled = yield* resolveComputeEnabled({
       args,
       cwd: process.cwd(),
       env: process.env,
     });
-    return { stackBackend, computeEnabled };
+    return { projectState, stackBackend, computeEnabled };
   }).pipe(Effect.provide(BunServices.layer)),
 );
 const { rootCommand: selectedRoot, agentDefaultOutputFormat } = cliEntrypointForFeatures(
@@ -35,17 +39,30 @@ const { rootCommand: selectedRoot, agentDefaultOutputFormat } = cliEntrypointFor
   args,
 );
 const selectionCause = Exit.isFailure(selectionExit) ? selectionExit.cause : undefined;
+const selectedProjectState = Exit.isSuccess(selectionExit)
+  ? selectionExit.value.projectState
+  : undefined;
 
 if (
   !(await Effect.runPromise(
     tryComplete(
-      defaultCompleteDeps(Exit.isSuccess(selectionExit) ? selectedRoot : undefined, selectionCause),
+      defaultCompleteDeps(
+        Exit.isSuccess(selectionExit) ? selectedRoot : undefined,
+        selectionCause,
+        selectedProjectState !== undefined && Exit.isSuccess(selectedProjectState)
+          ? selectedProjectState.value
+          : "legacy",
+      ),
     ),
   ))
 ) {
   await Effect.runPromise(
     runCli(selectedRoot, {
-      analyticsLayer: analyticsLayer.pipe(Layer.provide(FetchHttpClient.layer)),
+      analyticsLayer: analyticsLayerFor(
+        selectedProjectState !== undefined && Exit.isSuccess(selectedProjectState)
+          ? selectedProjectState.value
+          : "legacy",
+      ).pipe(Layer.provide(FetchHttpClient.layer)),
       agentDefaultOutputFormat,
       afterSuccess: upgradeNoticeHook,
       ...(selectionCause ? { beforeParse: Effect.failCause(selectionCause) } : {}),

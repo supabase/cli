@@ -1,4 +1,5 @@
 import type { Option } from "effect";
+import type { ResolvedRemoteTarget } from "../config/remote-target.service.ts";
 import type { PgConnInput } from "./db-connection.service.ts";
 import type { DbConnType } from "./db-target-flags.ts";
 
@@ -35,15 +36,20 @@ export interface DbConfigFlags {
    * Optional explicit linked project ref override, letting e.g. `gen types --project-id <ref>`
    * reuse the linked resolver's temp-role and pooler fallback without the workdir being linked.
    * Shares only `SUPABASE_PROJECT_ID`'s ref-resolution precedence (flag > env >
-   * `.temp/project-ref`) — it never drives the local container id or pg-delta project id the way
+   * the link) — it never drives the local container id or pg-delta project id the way
    * that env var does. `None` preserves the normal `--linked` fallback.
    */
   readonly linkedProjectRef?: Option.Option<string>;
   /**
+   * The target the caller already resolved through `RemoteTarget`. The `--linked` path uses it
+   * as is instead of resolving again, and takes the saved pooler URL from it.
+   */
+  readonly target?: ResolvedRemoteTarget;
+  /**
    * Marks `linkedProjectRef` as an ad-hoc remote target (e.g. `gen types --project-id <ref>`)
    * rather than the current linked workdir, so the resolver must not reuse workdir-scoped
    * credentials or cached state for it: it ignores the ambient `SUPABASE_DB_PASSWORD` and skips
-   * the saved `.temp/pooler-url`, fetching pooler config from the Management API instead. Absent
+   * the saved pooler URL, fetching pooler config from the Management API instead. Absent
    * for the normal `--linked` path, which may reuse both.
    */
   readonly adHocProjectRef?: boolean;

@@ -311,6 +311,21 @@ instances = 3
 		assert.NoError(t, config.Load("", fsys))
 	})
 
+	t.Run("accepts the TS-owned local section", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+project_id = "test"
+
+[local.services]
+default = { version = "bundled" }
+auth = { version = "v2.197.0" }
+`)},
+		}
+
+		assert.NoError(t, config.Load("", fsys))
+	})
+
 	for _, tt := range []struct {
 		name       string
 		configData string
@@ -1261,5 +1276,52 @@ orioledb_version = "15.1.0.150"
 		})
 		assert.Equal(t, "15.1.0.150", config.Db.OrioleDBVersion)
 		assert.Contains(t, stderr, "WARN: remotes.staging.experimental.orioledb_version is deprecated. Please use remotes.staging.db.orioledb_version instead.")
+	})
+}
+
+func TestLoadLinkedStateFiles(t *testing.T) {
+	linkedFiles := fs.MapFS{
+		"supabase/.temp/pooler-url":           &fs.MapFile{Data: []byte("postgresql://postgres.decoy:[YOUR-PASSWORD]@pooler.example.com:6543/postgres")},
+		"supabase/.temp/rest-version":         &fs.MapFile{Data: []byte("v0.0.1-decoy")},
+		"supabase/.temp/gotrue-version":       &fs.MapFile{Data: []byte("v0.0.2-decoy")},
+		"supabase/.temp/storage-version":      &fs.MapFile{Data: []byte("v0.0.3-decoy")},
+		"supabase/.temp/storage-migration":    &fs.MapFile{Data: []byte("decoy-migration")},
+		"supabase/.temp/edge-runtime-version": &fs.MapFile{Data: []byte("v0.0.4-decoy")},
+	}
+
+	t.Run("legacy mode applies the pooler url and image pins", func(t *testing.T) {
+		t.Setenv(StackStateEnv, "")
+		config := NewConfig()
+		require.NoError(t, config.Load("", linkedFiles))
+		assert.Contains(t, config.Db.Pooler.ConnectionString, "pooler.example.com")
+		assert.True(t, strings.HasSuffix(config.Api.Image, ":v0.0.1-decoy"), config.Api.Image)
+		assert.True(t, strings.HasSuffix(config.Auth.Image, ":v0.0.2-decoy"), config.Auth.Image)
+		assert.True(t, strings.HasSuffix(config.Storage.Image, ":v0.0.3-decoy"), config.Storage.Image)
+		assert.Equal(t, "decoy-migration", config.Storage.TargetMigration)
+		assert.True(t, strings.HasSuffix(config.EdgeRuntime.Image, ":v0.0.4-decoy"), config.EdgeRuntime.Image)
+	})
+
+	t.Run("stack mode ignores the pooler url file and image pins", func(t *testing.T) {
+		t.Setenv(StackStateEnv, "1")
+		t.Setenv(StackPoolerUrlEnv, "")
+		want := NewConfig()
+		require.NoError(t, want.Load("", fs.MapFS{}))
+		config := NewConfig()
+		require.NoError(t, config.Load("", linkedFiles))
+		assert.Equal(t, want.Db.Pooler.ConnectionString, config.Db.Pooler.ConnectionString)
+		assert.Equal(t, want.Api.Image, config.Api.Image)
+		assert.Equal(t, want.Auth.Image, config.Auth.Image)
+		assert.Equal(t, want.Storage.Image, config.Storage.Image)
+		assert.Equal(t, want.Storage.TargetMigration, config.Storage.TargetMigration)
+		assert.Equal(t, want.EdgeRuntime.Image, config.EdgeRuntime.Image)
+	})
+
+	t.Run("stack mode applies the pooler url from the environment", func(t *testing.T) {
+		const poolerUrl = "postgresql://postgres.abcdefghijklmnopqrst:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
+		t.Setenv(StackStateEnv, "1")
+		t.Setenv(StackPoolerUrlEnv, poolerUrl)
+		config := NewConfig()
+		require.NoError(t, config.Load("", linkedFiles))
+		assert.Equal(t, poolerUrl, config.Db.Pooler.ConnectionString)
 	})
 }

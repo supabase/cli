@@ -29,7 +29,7 @@ or multi-host `--db-url` without an explicit `sslmode` still requires TLS.
 
 Pg-delta runs in-process. Coverage gaps warn; `--strict-coverage` makes them
 fatal, while `PGDELTA_DEBUG` writes diagnostic JSON under
-`supabase/.temp/pgdelta/v2/debug/<id>/`. The engine may emit transaction-aware
+`supabase/.temp/pgdelta/v2/debug/<id>/` (`<SUPABASE_HOME>/tmp/pgdelta/v2/debug/<id>/` in stack mode). The engine may emit transaction-aware
 file splits; applicable, convergent SQL is the contract. Its formatter
 defaults to lowercase SQL at width 180; config overrides it, and JSON `null`
 disables formatting without disabling safe compaction.
@@ -57,7 +57,7 @@ disables formatting without disabling safe compaction.
 | `<workdir>/supabase/schemas/**`                                             | SQL     | `--declarative` or deprecated `--experimental` export                                                                                                                                                                                                                                                                                                              |
 | `<workdir>/supabase/schemas/.pgdelta-export.json`                           | JSON    | bundled declarative / deprecated-`--experimental` export metadata                                                                                                                                                                                                                                                                                                  |
 | `<workdir>/supabase/config.toml`                                            | TOML    | declarative export updates `[db.migrations].schema_paths` when `[experimental.pgdelta] enabled` resolves false (section absent, `enabled` omitted, or `enabled = false` — the default); skipped when `enabled = true`                                                                                                                                              |
-| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                     | JSON    | bundled engine with `PGDELTA_DEBUG`                                                                                                                                                                                                                                                                                                                                |
+| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                     | JSON    | bundled engine with `PGDELTA_DEBUG`; `<SUPABASE_HOME>/tmp/pgdelta/v2/debug/<id>/` in stack mode                                                                                                                                                                                                                                                                    |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar     | cache-enabled COLD shadow provision creates the current key's snapshot, migration-style pull only (never a declarative / deprecated-`--experimental` export, which provisions no shadow); a warm hit `touch`es its mtime (LRU); every cache-eligible acquire may delete other keys under LRU keep-3 + 2-day mtime TTL — ~90MB (`SUPABASE_HOME` overrides the root) |
 | managed snapshot key `<key>`                                                | backend | stack-mode cache-enabled cold shadow provision saves the database baseline; the last completed save replaces the key                                                                                                                                                                                                                                               |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial` | tar     | during a cold export — the in-flight temp file, `rename`d into the tar above on success and removed on failure; only a crash/SIGKILL leaves it behind, and later cold exports / warm hits sweep leftovers older than 5 minutes                                                                                                                                     |
@@ -185,7 +185,7 @@ Progress strings still go to stderr; stdout carries a single structured envelope
 - `--declarative` / deprecated `--use-pg-delta` are mutually exclusive with
   `--diff-engine`; `--db-url` / `--linked` (default) / `--local` are a target group.
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
-  command) overrides ONLY the linked-ref resolution `ProjectRefResolver`
+  command) overrides ONLY the linked-ref resolution `RemoteTarget`
   performs (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`) — unlike
   `SUPABASE_PROJECT_ID`, it does not affect the shadow container's project
   id/labels. It never implies `--linked`: passing it with a resolved

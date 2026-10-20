@@ -6,7 +6,7 @@ import {
   withCondition,
   withContext,
 } from "../../../../command-internal/command-permissions/model.ts";
-import { projectRefPicker } from "../../../../config/project-ref.layer.ts";
+import { projectRefPicker } from "../../../../config/remote-target.layer.ts";
 import { linkedProjectCache } from "../../../../telemetry/linked-project-cache.layer.ts";
 import { computeRead } from "../../../../shared/compute/compute-api.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";

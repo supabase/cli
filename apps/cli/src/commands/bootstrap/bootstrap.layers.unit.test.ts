@@ -37,11 +37,11 @@ import {
 } from "../../command-internal/global-flags.ts";
 
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
-import { ProjectRefResolver } from "../../config/project-ref.service.ts";
 import { IdentityStitch } from "../../command-internal/identity-stitch.ts";
 import { TemplateService } from "./bootstrap.templates.ts";
 
 import { bootstrapRuntimeLayer } from "./bootstrap.layers.ts";
+import { stubRemoteTarget } from "../../../tests/helpers/remote-target.ts";
 
 const tempRoot = useTempWorkdir("supabase-bootstrap-layers-");
 
@@ -62,19 +62,19 @@ function ambientStubs() {
   );
 
   // These stubs exist only so the Effect type system sees CommandPlatformApi,
-  // CommandPlatformApiFactory, and ProjectRefResolver as satisfiable in the outer context; the
+  // CommandPlatformApiFactory, and RemoteTarget as satisfiable in the outer context; the
   // runtime layer's own provisions take precedence at runtime.
   const heavyServiceStubs = Layer.mergeAll(
     mockCommandPlatformApiService().layer,
     Layer.succeed(CommandPlatformApiFactory, {
       make: Effect.die("platform-api-factory not needed for layer-exposure test"),
     }),
-    Layer.succeed(ProjectRefResolver, {
+    stubRemoteTarget({
       resolve: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveForLink: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
       resolveOptional: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
-      loadProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
-      promptProjectRef: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
+      load: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
+      prompt: () => Effect.die("project-ref-resolver not needed for layer-exposure test"),
     }),
     Layer.succeed(TemplateService, {
       listSamples: Effect.die("template-service not needed for layer-exposure test"),

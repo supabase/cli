@@ -2,7 +2,7 @@ import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { aqua } from "../../../command-internal/colors.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
@@ -20,12 +20,12 @@ export const encryptionUpdateRootKey = Effect.fn("encryption.update-root-key")(f
 ) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
+  const resolver = yield* RemoteTarget;
   const stdin = yield* Stdin;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  const { ref } = yield* resolver.resolve(flags.projectRef);
 
   // In text mode, the piped-input path writes the prompt to stderr and echoes a
   // trailing newline to stdout after reading; on a TTY the masked prompt uses

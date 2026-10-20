@@ -28,7 +28,7 @@ import {
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { invalidOutputFormatMessage } from "../../../command-internal/go-output-flag.ts";
-import { INVALID_PROJECT_REF_MESSAGE } from "../../../config/project-ref.service.ts";
+import { INVALID_PROJECT_REF_MESSAGE } from "../../../config/remote-target.service.ts";
 import { FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import type { FeedbackAddArgs } from "./add.command.ts";
 import { feedbackAddHandler } from "./add.command.ts";
@@ -320,7 +320,7 @@ describe("feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("treats an empty --project-ref as unset, like ProjectRefResolver", () => {
+  it.effect("treats an empty --project-ref as unset, like RemoteTarget", () => {
     const { layer, submitter } = setupFeedback({ projectIdEnv: "envenvenvenvenvenvre" });
     return Effect.gen(function* () {
       yield* feedbackAdd(addArgs(["empty flag feedback"], { projectRef: Option.some("") }));
@@ -402,7 +402,7 @@ describe("feedback add", () => {
   });
 
   it.effect("rejects a malformed SUPABASE_PROJECT_ID instead of submitting unlinked", () => {
-    // A value the user supplied is validated the way `ProjectRefResolver` does
+    // A value the user supplied is validated the way `RemoteTarget` does
     // for every command: a typo fails as invalid input rather than silently
     // falling through to the linked ref file (or to "unlinked").
     const { layer, submitter } = setupFeedback({ projectIdEnv: "not-a-valid-ref!" });

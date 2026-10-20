@@ -35,7 +35,6 @@ import {
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
@@ -46,6 +45,7 @@ import { MigrationTargetFlagsError } from "../migration.errors.ts";
 import { MigrationMissingLocalError, MigrationMissingRemoteError } from "./up.errors.ts";
 import { migrationUp } from "./up.handler.ts";
 import type { MigrationUpFlags } from "./up.command.ts";
+import { stubRemoteTarget } from "../../../../tests/helpers/remote-target.ts";
 
 const LIST_SQL = "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
 const READ_VAULT = "SELECT id, name FROM vault.secrets WHERE name = ANY($1)";
@@ -119,15 +119,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   // The flag value takes precedence over the VALID_REF fallback, so tests can assert the
   // flag drives the linked ref.
-  const projectRef = Layer.succeed(ProjectRefResolver, {
+  const projectRef = stubRemoteTarget({
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
-    loadProjectRef: (flagValue: Option.Option<string>) =>
+    load: (flagValue: Option.Option<string>) =>
       Effect.succeed(
         Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : VALID_REF,
       ),
-    promptProjectRef: () => Effect.succeed(VALID_REF),
+    prompt: () => Effect.succeed(VALID_REF),
   });
 
   const http = recordingProjectHttpClient(VALID_REF);

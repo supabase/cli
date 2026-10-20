@@ -1,6 +1,7 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Redacted } from "effect";
+import { selection } from "../../tests/pins.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 
 const options = (root: string) => ({
@@ -13,7 +14,7 @@ const options = (root: string) => ({
 });
 
 describe("service catalog", () => {
-  it.live("validates endpoint names at the service creation boundary", () =>
+  it.live("validates endpoint names and the artifact pin at the service creation boundary", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -21,18 +22,17 @@ describe("service catalog", () => {
         const result = yield* makeServiceRecipe(
           {
             service: "rest",
+            pin: selection.rest,
             config: { databaseUrl: "postgres://db" },
             endpoints: { smtp: { port: "auto" } },
           },
           options(root),
         ).pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
-        const misplacedDatabaseVersion = yield* makeServiceRecipe(
+        const unpinnedDatabase = yield* makeServiceRecipe(
           {
             service: "database",
-            version: "17",
             config: {
-              version: "17",
               databasePassword: Redacted.make("postgres"),
               jwtSecret: Redacted.make("catalog-database-secret-with-at-least-32-chars"),
               jwtExpiry: 3600,
@@ -40,7 +40,7 @@ describe("service catalog", () => {
           },
           options(root),
         ).pipe(Effect.exit);
-        expect(Exit.isFailure(misplacedDatabaseVersion)).toBe(true);
+        expect(Exit.isFailure(unpinnedDatabase)).toBe(true);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );
@@ -54,6 +54,7 @@ describe("service catalog", () => {
           makeServiceRecipe(
             {
               service: "storage",
+              pin: selection.storage,
               config: { databaseUrl: "postgres://db" },
             },
             options(root),

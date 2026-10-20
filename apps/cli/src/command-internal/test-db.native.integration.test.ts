@@ -27,14 +27,15 @@ import type { InitializationCommandOptions, PostgresCommandOptions } from "@supa
 import type { Stack } from "@supabase/stack/effect";
 import type { InitializationCommand, PostgresCommand } from "@supabase/stack/commands";
 import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
+import { selection } from "../../tests/helpers/pins.ts";
 
 const runtimes = ["native", "docker"] as const;
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
 
 const databaseCreation = {
   service: "database" as const,
+  pin: selection.database,
   config: {
-    version: "17",
     databasePassword: Redacted.make("cli-pgtap-password"),
     jwtSecret: Redacted.make("cli-pgtap-jwt-secret-at-least-thirty-two-characters"),
     jwtExpiry: 3600,

@@ -1,9 +1,11 @@
 import type { Effect } from "effect";
 import { describe, expectTypeOf, it } from "vitest";
+import type { ArtifactPin } from "./Artifacts.ts";
 import type { InitializationCommand } from "./Commands.ts";
 import type * as StackEffect from "./effect.ts";
 import type * as PromiseApi from "./index.ts";
 import { createTestStack, makeTestStack } from "./testing.ts";
+import { selection } from "../tests/pins.ts";
 
 type Kind = StackEffect.ServiceCreationInput["service"];
 type CallOptions = PromiseApi.CallOptions;
@@ -65,11 +67,12 @@ describe("Promise API derived from the Effect API", () => {
   it("accepts plain secrets wherever the Effect API takes Redacted configuration", () => {
     expectTypeOf<{
       service: "database";
-      config: { version: "17"; jwtExpiry: 3600; databasePassword: string; jwtSecret: string };
+      config: { jwtExpiry: 3600; databasePassword: string; jwtSecret: string };
+      pin: ArtifactPin;
       endpoints: {};
     }>().toExtend<PromiseApi.ServiceCreationInput>();
     expectTypeOf<{
-      config: { version: string; jwtExpiry: number; databasePassword: string };
+      config: { jwtExpiry: number; databasePassword: string };
     }>().toExtend<Parameters<PromiseApi.DatabaseInstance["restart"]>[0]>();
   });
 
@@ -86,11 +89,12 @@ describe("Promise API derived from the Effect API", () => {
     const createDatabase = (stack: PromiseApi.Stack) =>
       stack.services.create({
         service: "database",
-        config: { version: "17", jwtExpiry: 3600 },
+        pin: selection.database,
+        config: { jwtExpiry: 3600 },
         endpoints: {},
       });
     const createRest = (stack: PromiseApi.Stack) =>
-      stack.services.create({ service: "rest", config: {}, endpoints: {} });
+      stack.services.create({ service: "rest", pin: selection.rest, config: {}, endpoints: {} });
     type Rest = Awaited<ReturnType<typeof createRest>>;
     expectTypeOf<
       Awaited<ReturnType<typeof createDatabase>>
@@ -105,9 +109,9 @@ describe("Promise API derived from the Effect API", () => {
   it("types test stack services by the selected kinds", () => {
     const selectDefault = () => createTestStack().then((test) => test.services);
     const selectMany = () =>
-      createTestStack({ services: ["database", { service: "rest", config: {} }] }).then(
-        (test) => test.services,
-      );
+      createTestStack({
+        services: ["database", { service: "rest", pin: selection.rest, config: {} }],
+      }).then((test) => test.services);
     expectTypeOf<keyof Awaited<ReturnType<typeof selectDefault>>>().toEqualTypeOf<"database">();
     expectTypeOf<Awaited<ReturnType<typeof selectMany>>>().toEqualTypeOf<{
       readonly database: PromiseApi.DatabaseInstance;

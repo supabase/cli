@@ -7,6 +7,7 @@ import { create as createStack } from "@supabase/stack/effect";
 import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
 import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
 import { stackArtifactCacheRoot } from "../../../../tests/helpers/stack-artifacts.ts";
+import { selection } from "../../../../tests/helpers/pins.ts";
 
 const COMMAND_TIMEOUT_MS = 8 * 60_000;
 const TEST_TIMEOUT_MS = COMMAND_TIMEOUT_MS + 2 * 60_000;
@@ -124,8 +125,8 @@ const composeStack = Effect.fn("DbResetStackE2e.composeStack")(function* (
   yield* stack.composition.supabase([
     {
       service: "database",
+      pin: selection.database,
       config: {
-        version: "17",
         databasePassword: Redacted.make("postgres"),
         jwtSecret: Redacted.make(JWT_SECRET),
         jwtExpiry: 3600,
@@ -134,6 +135,7 @@ const composeStack = Effect.fn("DbResetStackE2e.composeStack")(function* (
     },
     {
       service: "rest",
+      pin: selection.rest,
       config: {
         jwtSecret: JWT_SECRET,
       },
@@ -141,6 +143,7 @@ const composeStack = Effect.fn("DbResetStackE2e.composeStack")(function* (
     },
     {
       service: "auth",
+      pin: selection.auth,
       config: {
         jwtSecret: JWT_SECRET,
       },

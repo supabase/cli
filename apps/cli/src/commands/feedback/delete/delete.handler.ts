@@ -51,7 +51,7 @@ export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: Feed
     // when the same ref is presented. Flag → SUPABASE_PROJECT_ID → the linked
     // ref file; extra context against a context-free row is ignored server-side,
     // so sending whatever resolves is always safe. An empty `--project-ref ""`
-    // counts as unset, as in `ProjectRefResolver`; a malformed flag or env value
+    // counts as unset, as in `RemoteTarget`; a malformed flag or env value
     // fails as invalid input instead of falling through.
     const projectRef = yield* resolveFeedbackProjectRef(
       cliSettings.workdir,

@@ -8,7 +8,7 @@ import {
 } from "../../../../shared/telemetry/error-actionability.ts";
 
 export class StackCommandStartError extends Data.TaggedError("ExperimentalStackStartError")<{
-  readonly reason: "invalid-config" | "flags" | "runtime" | "lifecycle" | "seed" | "stack";
+  readonly reason: "invalid-config" | "lock" | "flags" | "runtime" | "lifecycle" | "seed" | "stack";
   readonly message: string;
   readonly detail?: string;
   readonly suggestion?: string;
@@ -18,6 +18,13 @@ export class StackCommandStartError extends Data.TaggedError("ExperimentalStackS
     switch (this.reason) {
       case "invalid-config":
         return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
+      case "lock":
+        return (
+          causeDeclaration(this.cause) ?? {
+            ...actionability.invalidConfig,
+            fingerprint_suffix: "invalid_config",
+          }
+        );
       case "flags":
         return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
       case "runtime":

@@ -39,6 +39,7 @@ import { engineStub } from "../tests/docker-fixture.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
+import { database15, selection } from "../tests/pins.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 // Below the stack's native and auto port ranges and every OS ephemeral range, so neither another
@@ -73,8 +74,8 @@ it.live("registers and discovers saved definitions without inventing live observ
 
     const database = stack.services.create({
       service: "database",
+      pin: selection.database,
       config: {
-        version: "17",
         databasePassword: Redacted.make("test"),
         jwtSecret: Redacted.make("test"),
         jwtExpiry: 3600,
@@ -82,6 +83,7 @@ it.live("registers and discovers saved definitions without inventing live observ
     });
     const rest = stack.services.create({
       service: "rest",
+      pin: selection.rest,
       config: { databaseUrl: "postgres://external" },
     });
     expectTypeOf<Effect.Success<typeof database>>().toEqualTypeOf<DatabaseInstance>();
@@ -137,7 +139,11 @@ it.live("starts the owner on opt-in reopen without starting saved services", () 
     const stack = yield* create(options);
     yield* Effect.ensuring(
       Effect.gen(function* () {
-        const mail = yield* stack.services.create({ service: "mail", config: {} });
+        const mail = yield* stack.services.create({
+          service: "mail",
+          pin: selection.mail,
+          config: {},
+        });
         yield* stack.stop;
 
         const offline = yield* open({ ...options, id: stack.id });
@@ -171,8 +177,8 @@ it.live(
         yield* Effect.addFinalizer(() => stack.stop.pipe(Effect.ignore));
         const instance = yield* stack.services.create({
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("destroy-test-password"),
             jwtSecret: Redacted.make("destroy-test-jwt-secret-at-least-thirty-two-characters"),
             jwtExpiry: 3600,
@@ -237,8 +243,8 @@ it.live(
         yield* Effect.addFinalizer(() => destroyTestStack(stack));
         const database = yield* stack.services.create({
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("idle-tcp-password"),
             jwtSecret: Redacted.make("idle-tcp-jwt-secret-at-least-thirty-two-characters"),
             jwtExpiry: 3600,
@@ -288,8 +294,8 @@ const resetDataStory = (runtime: "native" | ContainerEngine) =>
         Effect.gen(function* () {
           const target = yield* current.services.create({
             service: "database",
+            pin: selection.database,
             config: {
-              version: "17",
               databasePassword: Redacted.make("reset-shared-password"),
               jwtSecret: Redacted.make("reset-shared-jwt-secret-long-enough-32chars"),
               jwtExpiry: 3600,
@@ -298,8 +304,8 @@ const resetDataStory = (runtime: "native" | ContainerEngine) =>
           });
           const sibling = yield* current.services.create({
             service: "database",
+            pin: selection.database,
             config: {
-              version: "17",
               databasePassword: Redacted.make("reset-shared-password"),
               jwtSecret: Redacted.make("reset-shared-jwt-secret-long-enough-32chars"),
               jwtExpiry: 3600,
@@ -338,7 +344,11 @@ const resetDataStory = (runtime: "native" | ContainerEngine) =>
           if (runtime === "native") {
             const existingServices = yield* current.services.list;
             const initialized = yield* current.commands.run(
-              initialization.realtime({ databaseUrl: targetUrl }),
+              initialization.realtime({
+                pin: selection.realtime,
+                databaseId: target.id,
+                databaseUrl: targetUrl,
+              }),
             );
             expect(initialized.exitCode).toBe(0);
             expect((yield* current.services.list).map((service) => service.id)).toEqual(
@@ -354,7 +364,7 @@ const resetDataStory = (runtime: "native" | ContainerEngine) =>
             const stdout: Array<string> = [];
             const stderr: Array<string> = [];
             return client.commands
-              .run(postgres.psql({ major: 17 }), {
+              .run(postgres.psql({ pin: selection.database }), {
                 args: ["--dbname", url, "-Atc", sql],
                 stdout: (bytes) => Effect.sync(() => stdout.push(new TextDecoder().decode(bytes))),
                 stderr: (bytes) => Effect.sync(() => stderr.push(new TextDecoder().decode(bytes))),
@@ -469,7 +479,11 @@ it.live("stops an instance without starting an owner when none is live", () =>
     const stack = yield* create(options);
     yield* Effect.ensuring(
       Effect.gen(function* () {
-        const mail = yield* stack.services.create({ service: "mail", config: {} });
+        const mail = yield* stack.services.create({
+          service: "mail",
+          pin: selection.mail,
+          config: {},
+        });
         yield* stack.stop;
         expect((yield* discover(options))[0]?.host).toBeUndefined();
 
@@ -610,7 +624,9 @@ it.live("reclaims a registered stack's leftovers when stopping without an owner"
       identity,
       lifetime: "session",
       runtime: "native",
-      instances: [{ id: "leftover", creation: { service: "mail", config: {} } }],
+      instances: [
+        { id: "leftover", creation: { service: "mail", pin: selection.mail, config: {} } },
+      ],
       composition: { members: [], dependencies: [] },
     });
     const leftover = `${options.stateRoot}/${id}/data/leftover`;
@@ -853,7 +869,7 @@ it.live("reports a stopped owner as unavailable to attach-only calls", () =>
       runtime: "native",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
-    const mail = yield* stack.services.create({ service: "mail", config: {} });
+    const mail = yield* stack.services.create({ service: "mail", pin: selection.mail, config: {} });
     yield* stack.stop;
 
     const unavailable = yield* Effect.flip(mail.status);
@@ -900,7 +916,7 @@ it.live("sends no call to a process that took a dead owner's port", () =>
       runtime: "native",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
-    const mail = yield* stack.services.create({ service: "mail", config: {} });
+    const mail = yield* stack.services.create({ service: "mail", pin: selection.mail, config: {} });
     yield* mail.status;
     const state = yield* StackNamespace.Service.pipe(
       Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
@@ -931,7 +947,7 @@ it.live("sends no call to a process that took the port of a replaced owner", () 
       runtime: "native",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
-    const mail = yield* stack.services.create({ service: "mail", config: {} });
+    const mail = yield* stack.services.create({ service: "mail", pin: selection.mail, config: {} });
     yield* mail.status;
     const state = yield* StackNamespace.Service.pipe(
       Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
@@ -976,7 +992,7 @@ it.live(
         Effect.gen(function* () {
           yield* mail.status;
           yield* mail.followStatus.pipe(Stream.take(1), Stream.runDrain);
-          const version = yield* stack.commands.run(postgres.psql({ major: 17 }), {
+          const version = yield* stack.commands.run(postgres.psql({ pin: selection.database }), {
             args: ["--version"],
             stdout: () => Effect.void,
             stderr: () => Effect.void,
@@ -985,7 +1001,11 @@ it.live(
         });
       yield* Effect.ensuring(
         Effect.gen(function* () {
-          const mail = yield* stack.services.create({ service: "mail", config: {} });
+          const mail = yield* stack.services.create({
+            service: "mail",
+            pin: selection.mail,
+            config: {},
+          });
           yield* useHandle(mail);
           const settled = handleFinalizers();
 
@@ -1055,7 +1075,9 @@ it.live("replaces a dead session stack that holds the requested identity", () =>
       identity,
       lifetime: "session",
       runtime: "native",
-      instances: [{ id: "abandoned", creation: { service: "mail", config: {} } }],
+      instances: [
+        { id: "abandoned", creation: { service: "mail", pin: selection.mail, config: {} } },
+      ],
       composition: { members: [], dependencies: [] },
     });
 
@@ -1084,14 +1106,18 @@ it.live(
       } satisfies Parameters<typeof create>[0];
       const stack = yield* create(options);
       const version = (stack: Effect.Success<ReturnType<typeof open>>) =>
-        stack.commands.run(postgres.psql({ major: 17 }), {
+        stack.commands.run(postgres.psql({ pin: selection.database }), {
           args: ["--version"],
           stdout: () => Effect.void,
           stderr: () => Effect.void,
         });
       yield* Effect.ensuring(
         Effect.gen(function* () {
-          const mail = yield* stack.services.create({ service: "mail", config: {} });
+          const mail = yield* stack.services.create({
+            service: "mail",
+            pin: selection.mail,
+            config: {},
+          });
           expect((yield* version(stack)).exitCode).toBe(0);
           const first = (yield* discover(options))[0]?.host;
 
@@ -1109,6 +1135,38 @@ it.live(
           yield* other.stop;
           expect(yield* other.composition.start).toEqual([]);
           expect((yield* mail.status).lifecycle, "a call follows the new owner").toBe("stopped");
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  { timeout: 120_000 },
+);
+
+it.live(
+  "keeps the saved pin on a configuration-only restart that starts a stopped owner",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-restart-pin-" });
+      const options = {
+        projectRoot: root,
+        stateRoot: `${root}/state`,
+        cacheRoot: testArtifactCacheRoot,
+        runtime: "native",
+      } satisfies Parameters<typeof create>[0];
+      const stack = yield* create(options);
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const savedPin = { ...selection.mail, upstreamImage: "axllent/mailpit:saved-pin" };
+          const mail = yield* stack.services.create({ service: "mail", pin: savedPin, config: {} });
+          yield* stack.stop;
+          expect(Option.getOrUndefined(yield* find(options))?.host).toBeUndefined();
+
+          yield* mail.restart({ config: {} });
+
+          const restarted = yield* mail.status;
+          expect(restarted.config.pin).toEqual(savedPin);
+          expect(restarted.lifecycle).toBe("running");
         }),
         destroyTestStack(stack),
       );
@@ -1162,8 +1220,8 @@ it.live("plans requested creations against the saved composition and honours eag
       Effect.gen(function* () {
         const database = {
           service: "database",
+          pin: selection.database,
           config: {
-            version: "17",
             databasePassword: Redacted.make("plan-database-password"),
             jwtSecret: Redacted.make("plan-database-jwt-secret-at-least-32-chars"),
             jwtExpiry: 3600,
@@ -1172,11 +1230,13 @@ it.live("plans requested creations against the saved composition and honours eag
         } as const;
         const rest = {
           service: "rest",
+          pin: selection.rest,
           config: { maxRows: 100 },
           endpoints: { http: { port: FIXED_API_PORT } },
         } as const;
         const auth = {
           service: "auth",
+          pin: selection.auth,
           config: {},
           endpoints: { http: { port: "auto" } },
         } as const;
@@ -1195,7 +1255,7 @@ it.live("plans requested creations against the saved composition and honours eag
             database,
             { ...rest, config: { maxRows: 500 } },
             auth,
-            { service: "mail", config: {} },
+            { service: "mail", pin: selection.mail, config: {} },
           ]),
         ).toEqual([
           { id: databaseId, service: "database", member: true, change: "unchanged" },
@@ -1208,6 +1268,29 @@ it.live("plans requested creations against the saved composition and honours eag
           },
           { id: authId, service: "auth", member: true, change: "unchanged" },
         ]);
+        // Any pin field counts; only a database release-line change is incompatible.
+        const sameLineDatabasePin = {
+          ...selection.database,
+          revision: selection.database.revision + 1,
+        };
+        const upstreamImageOnlyPin = { ...selection.auth, upstreamImage: "supabase/gotrue:other" };
+        expect(
+          yield* stack.composition.plan([
+            { ...database, pin: sameLineDatabasePin },
+            { ...rest, pin: { ...selection.rest, image: `${selection.rest.image}-other` } },
+            { ...auth, pin: upstreamImageOnlyPin },
+          ]),
+        ).toEqual([
+          {
+            id: databaseId,
+            service: "database",
+            member: true,
+            change: "changed",
+            paths: ["pin"],
+          },
+          { id: restId, service: "rest", member: true, change: "changed", paths: ["pin"] },
+          { id: authId, service: "auth", member: true, change: "changed", paths: ["pin"] },
+        ]);
         const client = yield* Effect.promise(() =>
           PromiseApi.open({ id: stack.id, stateRoot: `${root}/state`, cacheRoot: `${root}/cache` }),
         );
@@ -1219,9 +1302,27 @@ it.live("plans requested creations against the saved composition and honours eag
         expect(promisePlan).toEqual([
           { id: restId, service: "rest", member: true, change: "unchanged" },
         ]);
+        if (databaseId === undefined) return yield* Effect.die("Composition is missing a database");
         expect(
           yield* stack.composition.plan([
-            { ...database, config: { ...database.config, version: "15" } },
+            { ...database, pin: database15 },
+            { ...rest, endpoints: { http: { port: FIXED_API_PORT + 1 } } },
+          ]),
+        ).toEqual([
+          { id: databaseId, service: "database", member: true, change: "changed", paths: ["pin"] },
+          {
+            id: restId,
+            service: "rest",
+            member: true,
+            change: "incompatible",
+            paths: ["endpoints.http.port"],
+            endpointsOnly: true,
+          },
+        ]);
+        yield* markDatabaseInitialized(`${root}/state`, stack.id, databaseId);
+        expect(
+          yield* stack.composition.plan([
+            { ...database, pin: database15 },
             { ...rest, endpoints: { http: { port: FIXED_API_PORT + 1 } } },
           ]),
         ).toEqual([
@@ -1230,7 +1331,7 @@ it.live("plans requested creations against the saved composition and honours eag
             service: "database",
             member: true,
             change: "incompatible",
-            paths: ["config.version"],
+            paths: ["pin"],
             endpointsOnly: false,
           },
           {
@@ -1271,21 +1372,27 @@ it.live("plans a Studio public API URL the project sets but not the one the stac
       Effect.gen(function* () {
         const studio = {
           service: "studio",
+          pin: selection.studio,
           config: {},
           endpoints: { http: { port: "auto" } },
         } as const;
         const members = yield* stack.composition.supabase([
           {
             service: "database",
+            pin: selection.database,
             config: {
-              version: "17",
               databasePassword: Redacted.make("plan-database-password"),
               jwtSecret: Redacted.make("plan-database-jwt-secret-at-least-32-chars"),
               jwtExpiry: 3600,
             },
             endpoints: { sql: { port: "auto" } },
           },
-          { service: "rest", config: {}, endpoints: { http: { port: FIXED_API_PORT } } },
+          {
+            service: "rest",
+            pin: selection.rest,
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          },
           studio,
         ]);
         const studioId = members.find(({ service }) => service === "studio")?.id;
@@ -1326,11 +1433,13 @@ it.live("plans a project's own URL for an input whose supplying member is absent
         const moved = "postgresql://postgres@moved.example.test:5432/postgres";
         const rest = {
           service: "rest",
+          pin: selection.rest,
           config: { databaseUrl: external },
           endpoints: { http: { port: "auto" } },
         } as const;
         const functions = {
           service: "functions",
+          pin: selection.functions,
           config: { functionsRoot: `${root}/functions`, databaseUrl: external },
           endpoints: { http: { port: "auto" } },
         } as const;
@@ -1372,14 +1481,26 @@ it.live("plans a project's own URL for an input whose supplying member is absent
 const replanDatabase = (tag: string) =>
   ({
     service: "database",
+    pin: selection.database,
     config: {
-      version: "17",
       databasePassword: Redacted.make(`${tag}-password`),
       jwtSecret: Redacted.make(`${tag}-jwt-secret-at-least-32-characters-long`),
       jwtExpiry: 3600,
     },
     endpoints: { sql: { port: "auto" } },
   }) as const;
+
+/** Writes the readiness marker a completed database bootstrap leaves, which marks its data initialized. */
+const markDatabaseInitialized = (stateRoot: string, stackId: string, databaseId: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const instanceRoot = `${stateRoot}/${stackId}/data/${databaseId}`;
+    yield* fs.makeDirectory(instanceRoot, { recursive: true });
+    yield* fs.writeFileString(
+      `${instanceRoot}/.supabase-database-ready.json`,
+      '{"runtime":"native","profile":"supabase"}',
+    );
+  });
 
 const restPort = (status: { readonly endpoints: ReadonlyArray<{ name: string; port: number }> }) =>
   status.endpoints.find(({ name }) => name === "http")?.port;
@@ -1422,6 +1543,7 @@ it.live(
           const database = replanDatabase("replan-auto");
           const rest = {
             service: "rest",
+            pin: selection.rest,
             config: {},
             endpoints: { http: { port: FIXED_API_PORT } },
           } as const;
@@ -1483,6 +1605,7 @@ it.live(
           const database = replanDatabase("replan-fixed");
           const rest = {
             service: "rest",
+            pin: selection.rest,
             config: {},
             endpoints: { http: { port: "auto" } },
           } as const;
@@ -1557,6 +1680,7 @@ it.live(
           const database = replanDatabase("replan-conflict");
           const rest = {
             service: "rest",
+            pin: selection.rest,
             config: {},
             endpoints: { http: { port: "auto" } },
           } as const;
@@ -1641,6 +1765,7 @@ it.live(
           const database = replanDatabase("replan-collide");
           const rest = {
             service: "rest",
+            pin: selection.rest,
             config: {},
             endpoints: { http: { port: FIXED_API_PORT } },
           } as const;
@@ -1675,7 +1800,7 @@ it.live(
 );
 
 it.live(
-  "leaves a changed Postgres major version incompatible without re-planning any endpoint",
+  "leaves a changed Postgres major version incompatible on initialized data without re-planning any endpoint",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1688,6 +1813,7 @@ it.live(
           const database = replanDatabase("replan-version");
           const rest = {
             service: "rest",
+            pin: selection.rest,
             config: {},
             endpoints: { http: { port: FIXED_API_PORT } },
           } as const;
@@ -1696,8 +1822,9 @@ it.live(
           const restId = members.find(({ service }) => service === "rest")?.id;
           if (databaseId === undefined || restId === undefined)
             return yield* Effect.die("Composition is missing a member");
+          yield* markDatabaseInitialized(stateRoot, stack.id, databaseId);
 
-          const olderVersion = { ...database, config: { ...database.config, version: "15" } };
+          const olderVersion = { ...database, pin: database15 };
           const requestedAuto = { ...rest, endpoints: { http: { port: "auto" } } } as const;
           const reopened = yield* restartWithReplan(stack, stateRoot, cacheRoot, [
             olderVersion,
@@ -1710,7 +1837,7 @@ it.live(
               service: "database",
               member: true,
               change: "incompatible",
-              paths: ["config.version"],
+              paths: ["pin"],
               endpointsOnly: false,
             },
             {
@@ -1721,6 +1848,56 @@ it.live(
               paths: ["endpoints.http.port"],
               endpointsOnly: true,
             },
+          ]);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "plans a changed Postgres major version as a restart while the database data is uninitialized",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-uninit-version-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-uninit-version");
+          const rest = {
+            service: "rest",
+            pin: selection.rest,
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, rest], { eager: true });
+          const databaseId = members.find(({ service }) => service === "database")?.id;
+          const restId = members.find(({ service }) => service === "rest")?.id;
+          if (databaseId === undefined || restId === undefined)
+            return yield* Effect.die("Composition is missing a member");
+
+          const olderVersion = { ...database, pin: database15 };
+          const requestedAuto = { ...rest, endpoints: { http: { port: "auto" } } } as const;
+          const reopened = yield* restartWithReplan(stack, stateRoot, cacheRoot, [
+            olderVersion,
+            requestedAuto,
+          ]);
+          const changes = yield* reopened.startupEndpointChanges;
+          expect(
+            changes.map(({ service, endpoint, from }) => ({ service, endpoint, from })),
+          ).toEqual([{ service: "rest", endpoint: "http", from: FIXED_API_PORT }]);
+          expect(yield* reopened.composition.plan([olderVersion, requestedAuto])).toEqual([
+            {
+              id: databaseId,
+              service: "database",
+              member: true,
+              change: "changed",
+              paths: ["pin"],
+            },
+            { id: restId, service: "rest", member: true, change: "unchanged" },
           ]);
         }),
         destroyTestStack(stack),
@@ -1742,11 +1919,13 @@ it.live(
           const database = replanDatabase("replan-excluded");
           const rest = {
             service: "rest",
+            pin: selection.rest,
             config: {},
             endpoints: { http: { port: FIXED_API_PORT } },
           } as const;
           const auth = {
             service: "auth",
+            pin: selection.auth,
             config: {},
             endpoints: { http: { port: FIXED_API_PORT } },
           } as const;
@@ -1799,11 +1978,13 @@ it.live(
           const database = replanDatabase("replan-readd");
           const rest = {
             service: "rest",
+            pin: selection.rest,
             config: {},
             endpoints: { http: { port: FIXED_API_PORT } },
           } as const;
           const auth = {
             service: "auth",
+            pin: selection.auth,
             config: {},
             endpoints: { http: { port: FIXED_API_PORT } },
           } as const;
@@ -1885,11 +2066,13 @@ it.live(
           const database = replanDatabase("replan-swapped");
           const auth = {
             service: "auth",
+            pin: selection.auth,
             config: {},
             endpoints: { http: { port: "auto" } },
           } as const;
           const rest = {
             service: "rest",
+            pin: selection.rest,
             config: {},
             endpoints: { http: { port: FIXED_API_PORT } },
           } as const;
@@ -1929,6 +2112,7 @@ it.live("attaches to a live owner without re-planning or leaving a startup paylo
         const database = replanDatabase("replan-attach");
         const rest = {
           service: "rest",
+          pin: selection.rest,
           config: {},
           endpoints: { http: { port: FIXED_API_PORT } },
         } as const;
@@ -1968,6 +2152,7 @@ it.live(
           const database = replanDatabase("replan-concurrent");
           const rest = {
             service: "rest",
+            pin: selection.rest,
             config: {},
             endpoints: { http: { port: FIXED_API_PORT } },
           } as const;

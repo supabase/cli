@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/pkg/config"
 )
 
 var testProject = api.V1ProjectWithDatabaseResponseOutput{
@@ -122,5 +124,28 @@ func TestLinkedProjectGroups(t *testing.T) {
 			GroupOrganization: "org_123",
 			GroupProject:      "proj_abc",
 		}, groups)
+	})
+
+	t.Run("reads the linked project from the env in stack mode", func(t *testing.T) {
+		t.Setenv(config.StackStateEnv, "1")
+		t.Setenv(linkedProjectEnv, `{"ref":"proj_abc","name":"n","organization_id":"org_123","organization_slug":"acme"}`)
+		fsys := afero.NewMemMapFs()
+		// The legacy cache must stay unread.
+		require.NoError(t, SaveLinkedProject(api.V1ProjectWithDatabaseResponseOutput{Ref: "stale", OrganizationId: "stale"}, fsys))
+		assert.Equal(t, map[string]string{
+			GroupOrganization: "org_123",
+			GroupProject:      "proj_abc",
+		}, linkedProjectGroups(fsys))
+		assert.True(t, HasLinkedProject(fsys))
+	})
+
+	t.Run("reads as unlinked in stack mode without the env", func(t *testing.T) {
+		t.Setenv(config.StackStateEnv, "1")
+		t.Setenv(linkedProjectEnv, "")
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, SaveLinkedProject(testProject, fsys))
+		_, err := LoadLinkedProject(fsys)
+		assert.ErrorIs(t, err, os.ErrNotExist)
+		assert.Nil(t, linkedProjectGroups(fsys))
 	})
 }

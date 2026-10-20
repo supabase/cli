@@ -128,6 +128,8 @@ func init() {
 	remoteFlags.String("db-url", "", "Connect using the specified Postgres URL (must be percent-encoded).")
 	remoteFlags.Bool("linked", true, "Connect to the linked project.")
 	dbRemoteCmd.MarkFlagsMutuallyExclusive("db-url", "linked")
+	remoteFlags.StringVar(&flags.ProjectRef, "project-ref", "", "Project ref of the Supabase project.")
+	markFlagTelemetrySafe(remoteFlags.Lookup("project-ref"))
 	remoteFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", remoteFlags.Lookup("password")))
 	dbRemoteCmd.AddCommand(dbRemoteChangesCmd)

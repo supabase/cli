@@ -2514,6 +2514,176 @@
       },
       "additionalProperties": false
     },
+    "local": {
+      "type": "object",
+      "properties": {
+        "services": {
+          "type": "object",
+          "properties": {
+            "default": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Version specifier: `linked` (the linked project's version), `bundled` (the version shipped with this CLI), or an upstream version optionally followed by `-r<N>`. A `-orioledb` version is only valid for `database`.",
+                  "examples": ["bundled", "v2.197.0", "v1.30.2-r1", "17.6.1.200-orioledb"]
+                }
+              },
+              "required": ["version"],
+              "additionalProperties": false
+            },
+            "database": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Version specifier: `linked` (the linked project's version), `bundled` (the version shipped with this CLI), or an upstream version optionally followed by `-r<N>`. A `-orioledb` version is only valid for `database`.",
+                  "examples": ["bundled", "v2.197.0", "v1.30.2-r1", "17.6.1.200-orioledb"]
+                }
+              },
+              "required": ["version"],
+              "additionalProperties": false
+            },
+            "auth": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Version specifier: `linked` (the linked project's version), `bundled` (the version shipped with this CLI), or an upstream version optionally followed by `-r<N>`. A `-orioledb` version is only valid for `database`.",
+                  "examples": ["bundled", "v2.197.0", "v1.30.2-r1", "17.6.1.200-orioledb"]
+                }
+              },
+              "required": ["version"],
+              "additionalProperties": false
+            },
+            "rest": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Version specifier: `linked` (the linked project's version), `bundled` (the version shipped with this CLI), or an upstream version optionally followed by `-r<N>`. A `-orioledb` version is only valid for `database`.",
+                  "examples": ["bundled", "v2.197.0", "v1.30.2-r1", "17.6.1.200-orioledb"]
+                }
+              },
+              "required": ["version"],
+              "additionalProperties": false
+            },
+            "realtime": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Version specifier: `linked` (the linked project's version), `bundled` (the version shipped with this CLI), or an upstream version optionally followed by `-r<N>`. A `-orioledb` version is only valid for `database`.",
+                  "examples": ["bundled", "v2.197.0", "v1.30.2-r1", "17.6.1.200-orioledb"]
+                }
+              },
+              "required": ["version"],
+              "additionalProperties": false
+            },
+            "storage": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Version specifier: `linked` (the linked project's version), `bundled` (the version shipped with this CLI), or an upstream version optionally followed by `-r<N>`. A `-orioledb` version is only valid for `database`.",
+                  "examples": ["bundled", "v2.197.0", "v1.30.2-r1", "17.6.1.200-orioledb"]
+                }
+              },
+              "required": ["version"],
+              "additionalProperties": false
+            },
+            "imgproxy": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Version specifier: `linked` (the linked project's version), `bundled` (the version shipped with this CLI), or an upstream version optionally followed by `-r<N>`. A `-orioledb` version is only valid for `database`.",
+                  "examples": ["bundled", "v2.197.0", "v1.30.2-r1", "17.6.1.200-orioledb"]
+                }
+              },
+              "required": ["version"],
+              "additionalProperties": false
+            },
+            "functions": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Version specifier: `linked` (the linked project's version), `bundled` (the version shipped with this CLI), or an upstream version optionally followed by `-r<N>`. A `-orioledb` version is only valid for `database`.",
+                  "examples": ["bundled", "v2.197.0", "v1.30.2-r1", "17.6.1.200-orioledb"]
+                }
+              },
+              "required": ["version"],
+              "additionalProperties": false
+            },
+            "studio": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Version specifier: `linked` (the linked project's version), `bundled` (the version shipped with this CLI), or an upstream version optionally followed by `-r<N>`. A `-orioledb` version is only valid for `database`.",
+                  "examples": ["bundled", "v2.197.0", "v1.30.2-r1", "17.6.1.200-orioledb"]
+                }
+              },
+              "required": ["version"],
+              "additionalProperties": false
+            },
+            "pgmeta": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Version specifier: `linked` (the linked project's version), `bundled` (the version shipped with this CLI), or an upstream version optionally followed by `-r<N>`. A `-orioledb` version is only valid for `database`.",
+                  "examples": ["bundled", "v2.197.0", "v1.30.2-r1", "17.6.1.200-orioledb"]
+                }
+              },
+              "required": ["version"],
+              "additionalProperties": false
+            },
+            "mail": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Version specifier: `linked` (the linked project's version), `bundled` (the version shipped with this CLI), or an upstream version optionally followed by `-r<N>`. A `-orioledb` version is only valid for `database`.",
+                  "examples": ["bundled", "v2.197.0", "v1.30.2-r1", "17.6.1.200-orioledb"]
+                }
+              },
+              "required": ["version"],
+              "additionalProperties": false
+            },
+            "analytics": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Version specifier: `linked` (the linked project's version), `bundled` (the version shipped with this CLI), or an upstream version optionally followed by `-r<N>`. A `-orioledb` version is only valid for `database`.",
+                  "examples": ["bundled", "v2.197.0", "v1.30.2-r1", "17.6.1.200-orioledb"]
+                }
+              },
+              "required": ["version"],
+              "additionalProperties": false
+            },
+            "pooler": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Version specifier: `linked` (the linked project's version), `bundled` (the version shipped with this CLI), or an upstream version optionally followed by `-r<N>`. A `-orioledb` version is only valid for `database`.",
+                  "examples": ["bundled", "v2.197.0", "v1.30.2-r1", "17.6.1.200-orioledb"]
+                }
+              },
+              "required": ["version"],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false,
+          "description": "Per-service version specifiers for the local stack, keyed by service."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Local-stack-only settings; hosted commands never read this section."
+    },
     "remotes": {
       "anyOf": [
         {

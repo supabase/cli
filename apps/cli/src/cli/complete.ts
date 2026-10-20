@@ -11,6 +11,7 @@ import {
 } from "../command-internal/go-output-flag.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
 import { isValidBase0Int64, parseUintBase0 } from "../command-internal/parse-uint.ts";
+import type { ProjectStateMode } from "../command-internal/project-state-mode.ts";
 import { parseStringSliceFlag } from "../command-internal/string-slice-flag.ts";
 import { withAnalyticsContext } from "../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
@@ -25,7 +26,7 @@ import { cliSettingsLayer } from "../shared/config/cli-settings.layer.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
 import { ttyLayer } from "../shared/runtime/tty.layer.ts";
 import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
-import { analyticsLayer } from "../telemetry/analytics.layer.ts";
+import { analyticsLayerFor } from "../telemetry/analytics.layer.ts";
 import { formatCliError, normalizeCliError } from "../shared/output/normalize-error.ts";
 
 /**
@@ -1118,19 +1119,23 @@ const COMPLETE_TELEMETRY_TIMEOUT = "2 seconds";
 
 // Completion telemetry fires before `runCli` builds its layer tree, so the
 // `CliSettings`/`RuntimeInfo`/`Tty` set that `analyticsLayer` needs is resolved here.
-const completeAnalyticsLayer = analyticsLayer.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      cliSettingsLayer.pipe(Layer.provide(cliProjectContextLayer), Layer.provide(runtimeInfoLayer)),
-      runtimeInfoLayer,
-      ttyLayer,
+const completeAnalyticsLayer = (mode: ProjectStateMode) =>
+  analyticsLayerFor(mode).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        cliSettingsLayer.pipe(
+          Layer.provide(cliProjectContextLayer),
+          Layer.provide(runtimeInfoLayer),
+        ),
+        runtimeInfoLayer,
+        ttyLayer,
+      ),
     ),
-  ),
-  Layer.provide(FetchHttpClient.layer),
-  Layer.provide(cliConfigProviderLayer),
-  Layer.provide(BunServices.layer),
-  Layer.merge(BunCrypto.layer),
-);
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(cliConfigProviderLayer),
+    Layer.provide(BunServices.layer),
+    Layer.merge(BunCrypto.layer),
+  );
 
 /**
  * Production default for `CompleteDeps.captureTelemetry`. Best-effort and bounded: a missing
@@ -1138,9 +1143,13 @@ const completeAnalyticsLayer = analyticsLayer.pipe(
  * must run this to completion before exiting, since `process.exit` kills the process without
  * waiting for pending async work.
  */
-function captureCompleteTelemetry(exitCode: number, durationMs: number): Effect.Effect<void> {
+function captureCompleteTelemetry(
+  mode: ProjectStateMode,
+  exitCode: number,
+  durationMs: number,
+): Effect.Effect<void> {
   return captureCompleteTelemetryEffect(exitCode, durationMs).pipe(
-    Effect.provide(completeAnalyticsLayer),
+    Effect.provide(completeAnalyticsLayer(mode)),
     Effect.timeout(COMPLETE_TELEMETRY_TIMEOUT),
     Effect.ignore,
   );
@@ -1180,6 +1189,7 @@ export const tryComplete = Effect.fn("cli.complete")(function* (deps: CompleteDe
 export function defaultCompleteDeps(
   root?: Command.Command.Any,
   routingFailure?: Cause.Cause<unknown>,
+  projectState: ProjectStateMode = "legacy",
 ): CompleteDeps {
   return {
     root,
@@ -1195,6 +1205,7 @@ export function defaultCompleteDeps(
     exit: (code) => {
       process.exit(code);
     },
-    captureTelemetry: captureCompleteTelemetry,
+    captureTelemetry: (exitCode, durationMs) =>
+      captureCompleteTelemetry(projectState, exitCode, durationMs),
   };
 }

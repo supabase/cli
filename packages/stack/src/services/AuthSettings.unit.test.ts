@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import { Effect, Schema } from "effect";
 import { Creation, makeSpec } from "./Auth.ts";
 import { Settings, settingsEnvironment } from "./AuthSettings.ts";
+import { selection } from "../../tests/pins.ts";
 
 describe("Auth settings environment", () => {
   it("derives public Auth defaults from configured external URLs", () => {
     const creation = Schema.decodeSync(Creation)({
       service: "auth",
+      pin: selection.auth,
       config: {
         databaseUrl: "postgresql://localhost/postgres",
         apiExternalUrl: "https://api.example",
@@ -26,6 +28,7 @@ describe("Auth settings environment", () => {
     const run = (config: Record<string, unknown>) => {
       const creation = Schema.decodeSync(Creation)({
         service: "auth",
+        pin: selection.auth,
         config: { databaseUrl: "postgresql://localhost/postgres", ...config },
       });
       return Effect.runSync(makeSpec().env(creation, new Map(), false));

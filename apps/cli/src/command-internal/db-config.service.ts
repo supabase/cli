@@ -8,7 +8,7 @@ import type {
   ProjectRefNotLinkedError,
 } from "../config/project-ref.errors.ts";
 import type { ProfileLoadError } from "./profile-load.ts";
-import type { ProjectRefReadError } from "./temp-paths.ts";
+import type { LinkedProjectRefReadError } from "./project-link.ts";
 import type { DbConnectError } from "./db-connection.errors.ts";
 import type { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import type {
@@ -34,9 +34,9 @@ export type DbConfigError =
   | LocalDbRunningError
   | ProjectRefNotLinkedError
   | InvalidProjectRefError
-  // A hard linked-ref load surfaces a real `.temp/project-ref` read error instead of masking it
+  // A hard linked-ref load surfaces a real link-state read error instead of masking it
   // as not-linked.
-  | ProjectRefReadError
+  | LinkedProjectRefReadError
   | DbConfigLoginRoleNetworkError
   | DbConfigLoginRoleStatusError
   | DbConfigListBansNetworkError
