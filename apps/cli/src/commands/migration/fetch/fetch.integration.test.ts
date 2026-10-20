@@ -21,6 +21,10 @@ import {
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
+  assertTargetDefaultWarning,
+  setLinkedRefFile,
+} from "../../../../tests/helpers/target-default-warning.ts";
+import {
   asRecordedRequests,
   provideEnv,
   realDbConfigResolver,
@@ -62,6 +66,7 @@ interface SetupOpts {
   readonly confirm?: boolean;
   readonly rows?: ReadonlyArray<MigrationRow>;
   readonly resolveFails?: boolean;
+  readonly noProjectId?: boolean;
   /** Raw argv seen by `resolveDbTargetFlags` (e.g. to exercise a flag conflict). */
   readonly cliArgs?: ReadonlyArray<string>;
 }
@@ -145,7 +150,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       : resolver,
     connection,
     projectRef,
-    mockCommandSettings({ workdir }),
+    mockCommandSettings({
+      workdir,
+      ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
+    }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
@@ -550,4 +558,47 @@ describe("migration fetch", () => {
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
+});
+
+describe("migration fetch target default warning", () => {
+  const selectors = [
+    { label: "--linked", args: ["--linked"], over: {} },
+    { label: "--linked=false", args: ["--linked=false"], over: { linked: false } },
+    { label: "--local", args: ["--local"], over: { linked: false, local: true } },
+    {
+      label: "--db-url",
+      args: ["--db-url", "postgresql://x"],
+      over: { dbUrl: Option.some("postgresql://x") },
+    },
+    {
+      label: "--project-ref",
+      args: ["--project-ref", VALID_REF],
+      over: { projectRef: Option.some(VALID_REF) },
+    },
+  ] as const;
+
+  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) => {
+    setLinkedRefFile(tmp.current, linked);
+    const { layer, out } = setup(tmp.current, {
+      cliArgs: selector?.args ?? [],
+      rows: [],
+      noProjectId: true,
+    });
+    return migrationFetch(flags(selector?.over)).pipe(
+      Effect.provide(layer),
+      Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
+    );
+  };
+
+  it.effect(
+    "warns on a bare run in a linked workdir and stays silent with every selector or when unlinked",
+    () =>
+      assertTargetDefaultWarning({
+        command: "migration fetch",
+        sameTarget: selectors[0],
+        selectors,
+        run: runWith(true),
+        runUnlinked: runWith(false),
+      }),
+  );
 });

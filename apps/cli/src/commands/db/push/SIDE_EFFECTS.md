@@ -91,6 +91,14 @@ stdout is payload-only. A single `result` object is emitted:
 }
 ```
 
+### Target default warning
+
+A run that passes none of `--local`, `--linked`, `--db-url` or `--project-ref` (in any form, including `--linked=false`) writes one line to **stderr** before the target is resolved, in every `--output-format`, when a linked project ref is configured (from `SUPABASE_PROJECT_ID` or the link file). An unlinked run prints only the existing not-linked error. stdout is unchanged. The next major version targets the local database by default.
+
+```
+Warning: supabase db push will target the local database by default in the next major version. Pass --linked to keep targeting the linked project.
+```
+
 ## Notes
 
 - **Targets**: `--db-url`, `--linked` (default), and `--local` are mutually

@@ -14,6 +14,7 @@ import {
   StorageLocalFlagDef,
   StorageProjectRefFlagDef,
   assertStorageTargetsExclusive,
+  warnStorageTargetDefault,
 } from "../storage.flags.ts";
 import { storageMv } from "./mv.handler.ts";
 
@@ -48,6 +49,7 @@ export const storageMvCommand = Command.make("mv", config).pipe(
       yield* requireExperimental;
       const cliArgs = yield* CliArgs;
       yield* assertStorageTargetsExclusive(cliArgs.args);
+      yield* warnStorageTargetDefault("storage mv", cliArgs.args, flags.projectRef);
       const telemetryFlags = {
         recursive: flags.recursive,
         linked: flags.linked,

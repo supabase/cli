@@ -9,6 +9,7 @@ import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
+import { warnLinkedTargetDefault } from "../../../command-internal/target-default-warning.ts";
 import {
   listRemoteMigrations,
   loadLocalVersions,
@@ -117,5 +118,9 @@ export const migrationList = Effect.fn("migration.list")(function* (flags: Migra
   const telemetryState = yield* TelemetryState;
   const cliArgs = yield* CliArgs;
   const target = resolveDbTargetFlags(cliArgs.args);
+  yield* warnLinkedTargetDefault({
+    command: "migration list",
+    targetSelected: target.connType !== undefined || Option.isSome(flags.projectRef),
+  });
   yield* runList(flags, target).pipe(Effect.ensuring(telemetryState.flush));
 });

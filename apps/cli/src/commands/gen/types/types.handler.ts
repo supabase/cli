@@ -41,6 +41,7 @@ import {
 } from "../../../command-internal/workdir-project.ts";
 import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
+import { warnLinkedTargetDefault } from "../../../command-internal/target-default-warning.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
@@ -734,6 +735,11 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         ),
       ),
     );
+    yield* warnLinkedTargetDefault({
+      command: "gen types",
+      targetSelected: occurrences.has("linked") || occurrences.has("local"),
+      linkedRefResolved: true,
+    });
     const loaded = schemas.length > 0 ? null : yield* loadConfig(resolvedTarget.ref);
     yield* runProjectTypes(
       resolvedTarget,

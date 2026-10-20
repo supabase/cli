@@ -14,6 +14,7 @@ import {
   StorageLocalFlagDef,
   StorageProjectRefFlagDef,
   assertStorageTargetsExclusive,
+  warnStorageTargetDefault,
 } from "../storage.flags.ts";
 import { storageLs } from "./ls.handler.ts";
 
@@ -50,6 +51,7 @@ export const storageLsCommand = Command.make("ls", config).pipe(
       yield* requireExperimental;
       const cliArgs = yield* CliArgs;
       yield* assertStorageTargetsExclusive(cliArgs.args);
+      yield* warnStorageTargetDefault("storage ls", cliArgs.args, flags.projectRef);
       const telemetryFlags = {
         recursive: flags.recursive,
         linked: flags.linked,

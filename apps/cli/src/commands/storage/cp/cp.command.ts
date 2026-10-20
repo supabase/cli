@@ -17,6 +17,7 @@ import {
   StorageLocalFlagDef,
   StorageProjectRefFlagDef,
   assertStorageTargetsExclusive,
+  warnStorageTargetDefault,
 } from "../storage.flags.ts";
 import { storageCp } from "./cp.handler.ts";
 
@@ -101,6 +102,7 @@ export const storageCpCommand = Command.make("cp", config).pipe(
       yield* requireExperimental;
       const cliArgs = yield* CliArgs;
       yield* assertStorageTargetsExclusive(cliArgs.args);
+      yield* warnStorageTargetDefault("storage cp", cliArgs.args, flags.projectRef);
       const telemetryFlags = {
         recursive: flags.recursive,
         cacheControl: flags.cacheControl,
