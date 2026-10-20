@@ -400,7 +400,7 @@ describe("inspect db query runner", () => {
         out: ctx.out,
         run: inspectDbDbStats(flags(target)),
         target: () => ctx.resolver.connectionInput?.target,
-        branchLookups: () => ctx.branchRequests.map(({ method, url }) => `${method} ${url}`),
+        branchLookups: () => ctx.branchRequests,
       };
     },
   });

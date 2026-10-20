@@ -358,7 +358,7 @@ describe("inspect report", () => {
         out: ctx.out,
         run: inspectReport(flags({ ...target, outputDir: workdir })),
         target: () => ctx.resolver.connectionInput?.target,
-        branchLookups: () => ctx.branchRequests.map(({ method, url }) => `${method} ${url}`),
+        branchLookups: () => ctx.branchRequests,
       };
     },
   });

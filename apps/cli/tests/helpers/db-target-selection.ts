@@ -17,6 +17,7 @@ import { normalizeCause } from "../../src/shared/output/normalize-error.ts";
 import { textCliOutputFormatter } from "../../src/shared/output/text-formatter.ts";
 import { stripAnsi } from "./ansi.ts";
 import { VALID_REF } from "./command-mocks.ts";
+import { assertPermissionDrift } from "./permission-drift.ts";
 import {
   mockAnalytics,
   mockOutput,
@@ -29,9 +30,8 @@ import { BRANCH_PROJECT_REF, warningsOf } from "./remote-selection.ts";
 
 const FLAG_REF = "flagflagflagflagflag";
 const DB_URL = "postgresql://postgres:postgres@db.example.com:5432/postgres";
-const branchListRequest = (ref: string) =>
-  `GET https://api.supabase.com/v1/projects/${ref}/branches`;
-const BRANCH_LOOKUP = branchListRequest(VALID_REF);
+const branchListUrl = (ref: string) => `https://api.supabase.com/v1/projects/${ref}/branches`;
+const BRANCH_LOOKUP = `GET ${branchListUrl(VALID_REF)}`;
 
 /** Every selector flag absent, so a command takes its default target. */
 export const NO_TARGET: TargetFlagValuesWithDbUrl = {
@@ -56,15 +56,21 @@ type ObservedTarget =
   | { readonly kind: "linked"; readonly ref: string }
   | { readonly kind: "db-url" };
 
+interface RecordedLookup {
+  readonly method: string;
+  readonly url: string;
+  readonly urlParams?: string;
+}
+
 /** The branch lookups, as `branchLookups` reports them, among the Management API method calls a fake recorded. */
 export const branchLookupsOf = (
   calls: ReadonlyArray<{ readonly method: string; readonly input: unknown }>,
-): ReadonlyArray<string> =>
+): ReadonlyArray<RecordedLookup> =>
   calls.flatMap(({ method, input }) =>
     method === "listAllBranches" &&
     Predicate.hasProperty(input, "ref") &&
     Predicate.isString(input.ref)
-      ? [branchListRequest(input.ref)]
+      ? [{ method: "GET", url: branchListUrl(input.ref) }]
       : [],
   );
 
@@ -85,8 +91,8 @@ interface DbTargetAttempt<R> {
   /** The target the leaf opened its connection or requests for; `undefined` until it reached one. */
   readonly target: () => ObservedTarget | undefined;
   readonly cachedRef?: () => string | undefined;
-  /** The `METHOD url` of each branch-list request, for a leaf that records them. */
-  readonly branchLookups?: () => ReadonlyArray<string>;
+  /** The branch-list requests the leaf sent, for a leaf that records them. */
+  readonly branchLookups?: () => ReadonlyArray<RecordedLookup>;
 }
 
 type Row =
@@ -246,7 +252,15 @@ export function describeDbTargetSelection<R>(
           expect(ctx.target()).toMatchObject({ kind: "linked", ref: BRANCH_PROJECT_REF });
           expect(warningsOf(ctx.out)).toEqual([]);
           expectCachedRef(ctx, BRANCH_PROJECT_REF);
-          if (ctx.branchLookups !== undefined) expect(ctx.branchLookups()).toEqual([BRANCH_LOOKUP]);
+          if (ctx.branchLookups !== undefined) {
+            const lookups = ctx.branchLookups();
+            expect(lookups.map(({ method, url }) => `${method} ${url}`)).toEqual([BRANCH_LOOKUP]);
+            assertPermissionDrift({
+              command: path,
+              activeFlags: { remote: "feature-x" },
+              requests: lookups,
+            });
+          }
         }),
     });
 

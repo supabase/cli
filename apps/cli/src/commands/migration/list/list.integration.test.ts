@@ -401,7 +401,7 @@ describeDbTargetSelection("migration list", {
       ),
       target: () => ctx.resolverCalls[0]?.target,
       cachedRef: () => ctx.cache.cachedRef,
-      branchLookups: () => ctx.branchRequests.map(({ method, url }) => `${method} ${url}`),
+      branchLookups: () => ctx.branchRequests,
     };
   },
 });
