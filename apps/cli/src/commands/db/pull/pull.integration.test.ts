@@ -75,10 +75,7 @@ import {
   OutputFlag,
   YesFlag,
 } from "../../../command-internal/global-flags.ts";
-import {
-  HostedMutationConsentRequiredError,
-  HostedMutationDeclinedError,
-} from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
+import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import type {
   DbConnectionInput,
@@ -158,8 +155,6 @@ interface SetupOpts {
   readonly remoteVersions?: ReadonlyArray<string>;
   readonly edgeStdout?: string; // diff SQL or declarative export JSON
   readonly stdinIsTty?: boolean;
-  // Piped (non-TTY) stdin answers, one consumed per confirmation prompt.
-  readonly pipedAnswers?: ReadonlyArray<string>;
   readonly yes?: boolean;
   readonly experimental?: boolean;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
@@ -538,10 +533,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       ...(opts.realLayers === true ? { projectHost: "invalid" } : {}),
     }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
-    mockStdin(
-      opts.stdinIsTty ?? false,
-      opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined,
-    ),
+    mockStdin(opts.stdinIsTty ?? false),
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(OutputFlag, Option.none()),
     Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
@@ -1466,28 +1458,6 @@ describe("db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect(
-    "declining the history update aborts before any migration file is written (tty)",
-    () => {
-      const s = setup(tmp.current, {
-        migrations: ["20240101000000"],
-        remoteVersions: ["20240101000000"],
-        edgeStdout: "create table remote ();\n",
-        stdinIsTty: true,
-        promptConfirmResponses: [false],
-      });
-      return Effect.gen(function* () {
-        const error = yield* dbPull(
-          flags({ remote: REMOTE_LINKED, diffEngine: Option.some("migra") }),
-        ).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(HostedMutationDeclinedError);
-        expect(yield* migrationFiles(tmp.current)).toEqual(["20240101000000_local.sql"]);
-        expect(s.historyUpserts.length).toBe(0);
-        expect(streamText(s.out, "stderr")).not.toContain("Schema written to");
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
-
   it.effect("an initial migra pull asks before the dump writes anything", () => {
     const s = setup(tmp.current, {
       remoteVersions: [],
@@ -1543,24 +1513,6 @@ describe("db pull", () => {
       ).pipe(Effect.flip);
       expect(error).toMatchObject({ _tag: "DbPullInSyncError" });
       expect(s.out.promptConfirmCalls).toHaveLength(0);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("a non-interactive run without --yes writes no migration file", () => {
-    const s = setup(tmp.current, {
-      migrations: ["20240101000000"],
-      remoteVersions: ["20240101000000"],
-      edgeStdout: "create table remote ();\n",
-      stdinIsTty: false,
-      pipedAnswers: ["y"],
-    });
-    return Effect.gen(function* () {
-      const error = yield* dbPull(
-        flags({ remote: REMOTE_LINKED, diffEngine: Option.some("migra") }),
-      ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
-      expect(yield* migrationFiles(tmp.current)).toEqual(["20240101000000_local.sql"]);
-      expect(s.historyUpserts.length).toBe(0);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1931,24 +1883,6 @@ describe("db pull", () => {
       }).pipe(Effect.provide(s.layer));
     },
   );
-
-  it.effect("machine output without --yes refuses the history update and emits no payload", () => {
-    const s = setup(tmp.current, {
-      migrations: ["20240101000000"],
-      format: "json",
-      remoteVersions: ["20240101000000"],
-      edgeStdout: "create table remote ();\n",
-      stdinIsTty: true,
-    });
-    return Effect.gen(function* () {
-      const error = yield* dbPull(
-        flags({ remote: REMOTE_LINKED, diffEngine: Option.some("migra") }),
-      ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
-      expect(s.historyUpserts.length).toBe(0);
-      expect(s.out.messages.find((m) => m.type === "success")).toBeUndefined();
-    }).pipe(Effect.provide(s.layer));
-  });
 
   it.effect("a linked [remotes.<ref>] block enabling pg-delta selects the pg-delta engine", () => {
     // The linked path merges the matching [remotes.<ref>] block before
@@ -2371,11 +2305,20 @@ describeHostedConsent("db pull", {
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
     });
+    let migrationsAfterRun: ReadonlyArray<string> = [];
     return {
       run: dbPull(flags({ remote: REMOTE_LINKED, diffEngine: Option.some("migra") })).pipe(
+        Effect.ensuring(
+          migrationFiles(workdir).pipe(
+            Effect.tap((files) => Effect.sync(() => void (migrationsAfterRun = files))),
+            Effect.orDie,
+          ),
+        ),
         Effect.provide(Layer.mergeAll(s.engineLayer, configValuesLayer({ output: out.layer }))),
       ),
-      mutations: () => s.historyUpserts.length,
+      mutations: () =>
+        s.historyUpserts.length +
+        migrationsAfterRun.filter((file) => file !== "20240101000000_local.sql").length,
     };
   },
 });
