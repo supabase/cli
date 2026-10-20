@@ -1116,6 +1116,7 @@ function setup(
     catalogApplied: catalog?.applied ?? [],
     requests,
     projectHttp,
+    platformApi,
   };
 }
 
@@ -3745,6 +3746,7 @@ describe("db reset", () => {
         target: () => ctx.resolver.inputs[0]?.target,
         cachedRef: () => ctx.linkedCache.cachedRef,
         branchLookups: () => branchApi.requests,
+        apiRequests: () => [...branchApi.requests, ...ctx.platformApi.requests],
       };
     },
   });

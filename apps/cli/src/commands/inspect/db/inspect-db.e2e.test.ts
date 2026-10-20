@@ -7,8 +7,10 @@ const E2E_TIMEOUT_MS = 30_000;
 
 // A definitely-closed local port: `--remote=<url>` resolves without a config.toml or running
 // stack, then the native handler dials and fails fast — exercising the real subprocess path
-// without depending on a live database in CI.
-const DEAD_DB_URL = "postgres://postgres:postgres@127.0.0.1:1/postgres";
+// without depending on a live database in CI. The password is unique so a leak shows up even
+// when the scheme or path of the URL is rewritten.
+const DEAD_DB_PASSWORD = "e2e-dead-secret";
+const DEAD_DB_URL = `postgres://postgres:${DEAD_DB_PASSWORD}@127.0.0.1:1/postgres`;
 
 // `--agent no` forces text-mode output; otherwise the CLI may auto-select a machine format
 // (JSON on stdout) in a detected coding-agent environment, routing the error away from stderr.
@@ -28,6 +30,7 @@ describe("supabase inspect db", () => {
           expect(exitCode).toBe(1);
           expect(stderr).toContain("Target: custom Postgres (127.0.0.1:1)");
           expect(stderr).toMatch(/failed to connect to postgres|connection refused|ECONNREFUSED/i);
+          expect(`${stdout}${stderr}`).not.toContain(DEAD_DB_PASSWORD);
           expect(`${stdout}${stderr}`).not.toContain(DEAD_DB_URL);
         }),
       ),
