@@ -3672,6 +3672,57 @@ describe("db reset", () => {
       });
     });
 
+    describe("the apply step in the single reset question", () => {
+      const remoteReset = (toml: string, extra: { experimental?: boolean } = {}) =>
+        setup(tmp.current, {
+          toml,
+          files: {
+            ...migrationFile("20240101000000"),
+            "supabase/schemas/01_users.sql": "create table schema_users ();",
+          },
+          confirm: [true],
+          ref: VALID_REF,
+          ...extra,
+        });
+
+      it.effect("names the local migrations when migrations are enabled", () => {
+        const { layer, out } = remoteReset('project_id = "test"\n');
+        return Effect.gen(function* () {
+          yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain("drop every user schema\napply local migrations\n");
+          expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
+        });
+      });
+
+      it.effect("names no apply step when migrations are disabled", () => {
+        const { layer, out } = remoteReset(
+          'project_id = "test"\n\n[db.migrations]\nenabled = false\n',
+        );
+        return Effect.gen(function* () {
+          yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
+          expect(out.promptConfirmCalls).toHaveLength(1);
+          expect(out.stderrText).toContain("drop every user schema");
+          expect(out.stderrText).not.toContain("apply local migrations");
+          expect(out.stderrText).not.toContain("apply the declarative schema files");
+          expect(out.stderrText).not.toContain("Applying migration");
+        });
+      });
+
+      it.effect("names the schema files instead of the migrations when they apply", () => {
+        const { layer, out } = remoteReset(
+          'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
+          { experimental: true },
+        );
+        return Effect.gen(function* () {
+          yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain(
+            "drop every user schema\napply the declarative schema files\n",
+          );
+          expect(out.stderrText).not.toContain("apply local migrations");
+        });
+      });
+    });
+
     it.effect("rejects --no-seed together with --sql-paths", () => {
       const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
       return Effect.gen(function* () {

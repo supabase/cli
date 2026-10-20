@@ -228,6 +228,11 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       ? (yield* sqlFilesGlob(fs, path, seedSqlPaths, workdir)).files
       : [];
     const vaultCount = vaultSecrets.filter((secret) => secret.resolved).length;
+    const applyDetail = useSchemaFiles
+      ? "apply the declarative schema files"
+      : toml.migrationsEnabled
+        ? `apply local migrations${resolvedVersion === "" ? "" : ` up to version ${resolvedVersion}`}`
+        : undefined;
     yield* requireHostedMutationConsent({
       action: `Reset the remote database${resolvedVersion === "" ? "" : ` to version ${resolvedVersion}`}`,
       details: [
@@ -235,9 +240,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
         ...(vaultCount > 0
           ? [`upsert ${vaultCount} vault secret${vaultCount === 1 ? "" : "s"}`]
           : []),
-        useSchemaFiles
-          ? "apply the declarative schema files"
-          : `apply local migrations${resolvedVersion === "" ? "" : ` up to version ${resolvedVersion}`}`,
+        ...Option.toArray(Option.fromNullishOr(applyDetail)),
         ...Option.toArray(Option.fromNullishOr(seedPlan.detail(seedFiles))),
       ],
     });
