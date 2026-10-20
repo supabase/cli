@@ -70,29 +70,34 @@ line and nowhere else.
 | `--remote=<branch>` | A branch of the linked project, by name or UUID                          |
 
 Every command resolves a `--remote=<branch|uuid>` value with one resolver, the one `supabase link`
-uses. A value that matches no branch fails with link's error, which lists the branches. A branch
-UUID also resolves in a checkout with no linked project, where it is reported as the bare project
-ref, `unverified` in JSON, because the lookup does not say whether it is the default branch. A
-keyword connection string (`host=… user=…`) is rejected, not looked up as a branch. A URL applies
-only where the remote side is Postgres: `storage`, `seed buckets` and `hosted` commands need a
-project and reject one. `hosted` commands accept `--remote=<ref|branch>`, and bare `--remote`
-changes nothing for them. `SUPABASE_PROJECT_ID` alone never makes a `selectable` command remote; it
-is only a ref source once `--remote` is passed, and it alone is enough for the
-`default; pass --remote` hint. An unresolvable remote target fails. The CLI never falls back between
-local and remote.
+uses. A value that matches no branch fails with link's error, which lists the branches; a 20-letter
+value with an uppercase letter is still looked up as a branch, and the error hints that refs are
+lowercase. A branch UUID also resolves in a checkout with no linked project, where it is reported as
+the bare project ref, `unverified` in JSON, because the lookup does not say whether it is the
+default branch, and one the API can't look up fails as branch not found. A keyword connection string
+(`host=… user=…`) is rejected, not looked up as a branch. A URL applies only where the remote side
+is Postgres: `storage`, `seed buckets` and `hosted` commands need a project, so the `--remote`
+parser rejects a URL there as an invalid value, before any later check or request, without echoing
+it. `hosted` commands accept `--remote=<ref|branch>`, and bare `--remote` changes nothing for them.
+`SUPABASE_PROJECT_ID` alone never makes a `selectable` command remote; it is only a ref source once
+`--remote` is passed, and it alone is enough for the `default; pass --remote` hint. An unresolvable
+remote target fails. The CLI never falls back between local and remote.
 
 `--remote=<value>` always parses. `--remote <value>` is rewritten to `--remote=<value>` before
 parsing when the command takes no positional (a hidden one, such as `gen types`'s legacy language,
-does not count), when the token is a ref or URL, or when the command already has more bare tokens
+does not count), when the token is a database URL, or when the command already has more bare tokens
 than positionals. The one ambiguous shape, a bare `--remote` directly followed by a token the
-command took as a positional, is checked against the linked project's branches before anything runs.
-A token that exactly matches a branch, is within a small edit distance of one, or can't be checked
-because the branch listing failed stops the run with an error that names the cause (an HTTP status,
-or a missing or invalid access token) and offers both readings without echoing the word:
-`--remote=<branch>` for the branch, the command's operands then `--remote` for the linked project.
-Any other token runs as the command's operand. Docs, help and examples put `--remote` last, in the
-`=` form when it has a value, so it cannot be read as anything else, and shell completion never
-offers a space-separated value for `--remote` on a command that has a positional.
+command took as a positional, is settled before anything runs. A project-ref-shaped token fails
+with no request, because a 20-letter operand such as a migration or function name must not silently
+retarget the command at another project: the error offers `--remote=<ref>` for that project and
+`--remote` last to keep the operand. Any other token is checked against the linked project's
+branches. It fails when it names a branch, equals one ignoring case, or is one edit (an adjacent swap
+counts as one) from a non-default branch name of five or more characters, so an ordinary word is not
+mistaken for a typo; otherwise it runs as the operand. When the branches can't be listed the run
+still fails closed, and the error names the cause (an HTTP status or the network error, with the fix
+for a 401, 403 or 404). Docs, help and examples put `--remote` last, in the `=` form when it has a
+value, so it cannot be read as anything else, and shell completion never offers a space-separated
+value for `--remote` on a command that has a positional.
 
 ### Deprecated aliases
 
@@ -100,9 +105,9 @@ offers a space-separated value for `--remote` on a command that has a positional
 aliases. Each goes through the same resolver as the `--remote` form it maps to, prints a warning
 that names that form, and says v4 removes it. `--local` is still accepted and does nothing, because
 local is already the default; it warns the same way. v4 removes all of them, and `db diff`'s
-`linked` value for `--from` and `--to`, which `remote` replaces. A warning shows the command path,
-the command's operand placeholders and the `--remote` replacement, last. It never repeats the user's
-operands or other flags, because they can be secrets that a CI log would then keep.
+`linked` value for `--from` and `--to`, which `remote` replaces. A warning names only the
+replacement and carries no example command. It never repeats an operand, a flag value or a URL,
+because they can be secrets that a CI log would then keep.
 
 ### Selector rules
 
@@ -112,6 +117,8 @@ onto `--remote`:
 - `--remote` and the aliases name one target and are never resolved by precedence.
   `--remote=<value>` together with an alias is an error, and so are two of `--remote`, `--linked`,
   `--db-url` and `--local`, or `--project-ref` with `--local` or `--db-url`.
+- A repeated `--remote` is one selection when every occurrence resolves to the same target, with a
+  bare `--remote` counting as the linked project, and an error before anything runs when they differ.
 - A bare `--remote` together with `--project-ref=<x>` is accepted, as `--linked --project-ref=<x>`
   is: the alias's value wins and its warning prints.
 - `db diff` with `--remote` or an alias together with `--from` or `--to` is an error. In `--from`
@@ -164,8 +171,9 @@ hosted.
   because the checkout must not pre-approve its collaborators' and agents' production writes. The
   compiled binary also loads `.env`, `.env.local` and `.env.$NODE_ENV[.local]` from the working
   directory into the environment, so a `SUPABASE_YES` that any of those files also defines with the
-  same value is treated as the file's; a shell export of that value then needs `--yes` as well.
-  `--yes=false` wins over the environment.
+  same value is treated as the file's; a shell export of that value then needs `--yes` as well. The
+  last `--yes` on the command line wins and beats the environment: `--yes=false --yes` confirms and
+  `--yes --yes=false` declines.
 - **No stdin.** The CLI never reads stdin for consent. A piped `y` does nothing.
 - **Interactive only.** A prompt appears only for text output on an interactive stdout with a TTY
   stdin. JSON, stream-json, `-o json|yaml|toml|env`, agents (`--agent`, or an AI tool detected from
