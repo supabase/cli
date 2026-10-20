@@ -147,11 +147,13 @@ export function describeHostedConsent(path: string, scenario: HostedConsentScena
         };
       });
 
-    it.effect("refuses JSON output without --yes and changes nothing", () =>
+    it.effect("refuses JSON output without --yes, changes nothing and prints no payload", () =>
       Effect.gen(function* () {
-        const { exit, mutations } = yield* runCase({ json: true });
+        const { exit, out, mutations } = yield* runCase({ json: true });
         expect(failureOf(exit)).toBeInstanceOf(HostedMutationConsentRequiredError);
         expect(mutations).toBe(0);
+        expect(out.messages.filter((message) => message.type === "success")).toEqual([]);
+        expect(out.stdoutText).toBe("");
       }),
     );
 
