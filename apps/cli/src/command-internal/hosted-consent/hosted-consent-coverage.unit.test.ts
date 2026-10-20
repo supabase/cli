@@ -15,17 +15,18 @@ const VARIANTS: ReadonlyArray<PermissionVariant> = [
   { stackBackend: "stack", computeEnabled: true },
 ];
 
-const consentLeafPaths: ReadonlySet<string> = new Set(
+const consentDefaultByLeaf: ReadonlyMap<string, "no" | "yes"> = new Map(
   VARIANTS.flatMap((variant) =>
-    [...commandTreeFor(variant)]
-      .filter(([, node]) => node.isLeaf)
-      .filter(([, node]) => {
-        const policy = readTargetPolicy(node.command);
-        return Option.isSome(policy) && policy.value.consent !== "none";
-      })
-      .map(([path]) => path),
+    [...commandTreeFor(variant)].flatMap(([path, node]) => {
+      const policy = readTargetPolicy(node.command);
+      return node.isLeaf && Option.isSome(policy) && policy.value.consent !== "none"
+        ? [[path, policy.value.consent] as const]
+        : [];
+    }),
   ),
 );
+
+const consentLeafPaths: ReadonlySet<string> = new Set(consentDefaultByLeaf.keys());
 
 const LITERAL_CALL = /\bdescribeHostedConsent\(\s*"([^"]+)"/g;
 const ANY_CALL = /\bdescribeHostedConsent\(/g;
@@ -89,5 +90,61 @@ describe("hosted consent coverage", () => {
 
   it("starts every consent action literal with a capital letter", () => {
     expect(lowercaseActions).toEqual([]);
+  });
+
+  it("defaults the prompt to Yes for create-only leaves and No for everything else", () => {
+    expect(Object.fromEntries(consentDefaultByLeaf)).toMatchInlineSnapshot(`
+      {
+        "backups restore": "no",
+        "bootstrap": "yes",
+        "branches create": "yes",
+        "branches delete": "no",
+        "branches disable": "no",
+        "branches pause": "no",
+        "branches unpause": "no",
+        "branches update": "no",
+        "compute delete": "no",
+        "compute push": "no",
+        "config push": "no",
+        "db pull": "no",
+        "db push": "no",
+        "db query": "no",
+        "db reset": "no",
+        "db test": "no",
+        "domains activate": "no",
+        "domains create": "yes",
+        "domains delete": "no",
+        "encryption update-root-key": "no",
+        "feedback delete": "no",
+        "functions delete": "no",
+        "functions deploy": "no",
+        "migration down": "no",
+        "migration repair": "no",
+        "migration squash": "no",
+        "migration up": "no",
+        "network-bans remove": "no",
+        "network-restrictions update": "no",
+        "notebooks push": "no",
+        "orgs create": "yes",
+        "postgres-config delete": "no",
+        "postgres-config update": "no",
+        "projects create": "yes",
+        "projects delete": "no",
+        "pull": "no",
+        "secrets set": "no",
+        "secrets unset": "no",
+        "seed buckets": "no",
+        "ssl-enforcement update": "no",
+        "sso add": "no",
+        "sso remove": "no",
+        "sso update": "no",
+        "storage cp": "no",
+        "storage mv": "no",
+        "storage rm": "no",
+        "test db": "no",
+        "vanity-subdomains activate": "no",
+        "vanity-subdomains delete": "no",
+      }
+    `);
   });
 });
