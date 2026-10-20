@@ -146,12 +146,14 @@ UUIDs go through the one branch resolver on every command, the `config` family i
 
 A command that resolves a target announces it once on stderr, in every output format, and reports
 the same identity as JSON `target`; [the command target doc](../../apps/cli/docs/command-target.md)
-has the formats. The announcement is best effort: it adds no API call and no auth requirement, and
-it never prints credentials. Identity comes from `supabase/.temp/linked-project.json`, which can be
-stale or missing, so it never proves a branch: "branch" is shown only on positive evidence (a
-branch lookup by name or UUID, or a live probe), and anything else is the bare ref, `unverified` in
-JSON. A project's default branch is production, not a preview branch: `--remote=<default branch>`,
-by name or UUID, resolves to the production project, so the banner, the consent prompt and JSON
+has the formats. A command with two database endpoints (`db diff --from`/`--to`) announces each in
+resolution order, the local stack and a database URL included, and reports the first. The
+announcement is best effort: it adds no API call and no auth requirement, and it never prints
+credentials. Identity comes from `supabase/.temp/linked-project.json`, which can be stale or
+missing, so it never proves a branch: "branch" is shown only on positive evidence (a branch lookup
+by name or UUID, or a live probe), and anything else is the bare ref, `unverified` in JSON. A
+project's default branch is production, not a preview branch: `--remote=<default branch>`, by name
+or UUID, resolves to the production project, so the banner, the consent prompt and JSON
 `environment: "production"` all say so, and a script that checks `environment` to stay away from
 production sees it. A UUID looked up with no linked project cannot tell, so it stays `unverified`.
 

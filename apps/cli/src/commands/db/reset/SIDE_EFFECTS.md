@@ -269,10 +269,12 @@ to those defaults (the usual outcome for an interactive terminal).
 - **Target/local split** follows whether the resolved config points at the local
   stack, not the flag name: a `--remote=<url>` pointing at the local stack is treated
   as a local reset and never prompts.
-- **Hosted consent.** A remote project, branch or remote `--remote=<url>` reset asks once, after the plan is known
-  and before the first drop, with default No. The question lists dropping every user schema,
-  the vault upsert count, applying migrations (or the declarative schema files), and the seed
-  plan.
+- **Hosted consent.** A remote project, branch or remote `--remote=<url>` reset asks once, after the
+  plan is known and before the first drop, with default No. The question lists dropping every user
+  schema, the vault upsert count, the apply step and the seed plan. The apply step reads
+  `apply the declarative schema files` when schema files are in use, and otherwise
+  `apply local migrations` (`apply local migrations up to version <version>` with `--version`) only
+  when `[db.migrations].enabled` is true; with migrations disabled the question lists no apply step.
 - **Pipeline-incompatible statements** (`CREATE INDEX CONCURRENTLY`, `VACUUM`, …) run
   standalone outside the per-file transaction batch, with the same non-atomic flush
   behaviour as `db push` — see `db push`'s SIDE_EFFECTS Notes (supabase/cli#5139,

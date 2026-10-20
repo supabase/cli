@@ -159,6 +159,12 @@ once per distinct target — then `Creating shadow database...`, `Diffing schema
 that it no longer changes the migrations baseline. The SQL diff prints to stdout
 when neither `--file` nor explicit `--output` is set.
 
+Explicit `--from`/`--to` announces every database endpoint in resolution order, `--from` first: a
+URL endpoint as `Target: custom Postgres (<host>:<port>)`, never with its credentials; `local` as
+`Target: local stack (<host>:<port>)`, with an IPv6 host in brackets; and a hosted endpoint as its
+project or branch line. `migrations` announces nothing, and the same target on both sides prints
+one line.
+
 Explicit `--from`/`--to` mode returns before normal `--file` handling, so `-f` is
 ignored. It joins the pg-delta plan files with blank lines and writes that same
 flattened review representation to stdout or `--output`. File header comments
@@ -186,7 +192,11 @@ enabled in config or the directory is `supabase/schemas`; never on the stack bac
 
 In explicit `--from`/`--to` mode, the `diff` field is the same flattened review
 representation as text stdout; the machine envelope does not restore the per-unit
-transaction metadata.
+transaction metadata. The envelope's `target` is the first endpoint announced:
+`{"kind":"local","host":"127.0.0.1","port":54322}` for `local`,
+`{"kind":"db-url","host":"db.example.com","port":6543}` for a URL, or the linked identity for a
+hosted endpoint. `--from migrations` announces nothing, so `--to`'s endpoint supplies it when it
+announces one.
 
 ### `--use-pgadmin` (CLI-1968)
 
@@ -215,11 +225,11 @@ transaction metadata.
 ## Notes / Delegation
 
 - **Config value precedence** (ADR 0032): explicit flag > shell env > project `.env*` > config
-  (`config.json` over `config.toml`) > default. The whole config is decoded up front, so an
-  invalid value fails the command. A remote project or branch also applies a matching
-  `[remotes.*]` block. The linked-database password env is withheld when the target differs from
-  `.temp/project-ref`, with a `Not sending SUPABASE_DB_PASSWORD to <target>: ...` warning and a
-  temporary login role instead.
+  (`config.json` over `config.toml`) > default. The whole config is decoded where it is loaded, so
+  an invalid value fails the command; explicit `--from`/`--to` loads it lazily (see below). A remote
+  project or branch also applies a matching `[remotes.*]` block. The linked-database password env is
+  withheld when the target differs from `.temp/project-ref`, with a
+  `Not sending SUPABASE_DB_PASSWORD to <target>: ...` warning and a temporary login role instead.
 - **pg-delta selection**: `--use-pg-delta` sets `[experimental.pgdelta].enabled` at the flag tier,
   so `--use-pg-delta=false` selects migra over env and config. The default is pg-delta when the
   stack backend is active or `[experimental.pgdelta].enabled` resolves true. An explicit
@@ -243,13 +253,21 @@ be removed in v4. Use --from remote instead.` A `--remote` selector (or an alias
   `--project-ref`, `--db-url`, `--local`) given alongside fails with `--remote doesn't apply with
 --from/--to; use --from=remote or --to=remote.` (the flag named is the one passed; `--db-url`
   suggests `<db-url>` and `--local` suggests `local`), before any target resolves, and the default
-  `Target:` hint is not printed. The first hosted endpoint merges its `[remotes.<ref>]` override
-  into the config the later endpoints see. The linked project resolves once, so `--from remote
+  `Target:` hint is not printed. The linked project resolves once, so `--from remote
 --to remote` announces it once, and a branch or ref used on both sides shares one connection. A branch
   endpoint looks the name up in the branch list of `SUPABASE_PROJECT_ID`, else the linked
   project. `--use-pgadmin` honors the same selection (CLI-1968 — same target resolve);
   `--use-pg-schema` is removed and rejects before any target resolution happens (see Notes
   below).
+- **Explicit `--from`/`--to` config and URLs.** The config is read when the first endpoint that
+  needs it resolves, not before. A hosted endpoint resolved first merges its `[remotes.<ref>]`
+  block into that read, before validation and before its temporary login role is minted, so
+  `--from=remote --to=migrations` honours a remote override (a `major_version` that only
+  `[remotes.<ref>]` sets, for example) and a config error surfaces before that side effect. A
+  `local` or `migrations` endpoint resolved first reads the base config, and the first hosted
+  endpoint after it merges its block into the config the later endpoints and the diff itself see.
+  A malformed URL endpoint fails as soon as it is parsed (`PgDeltaEngineError`, the URL is never
+  echoed), before a later hosted endpoint mints its temporary login role.
 - Explicit `--from`/`--to` mode always uses pg-delta and writes the flattened review
   representation to `--output` (or stdout). It ignores `--file`; normal mode retains
   per-unit migration files for the CLI apply paths.
