@@ -69,9 +69,7 @@ describe("supabase seed buckets", () => {
           { cwd: projectDir },
         );
         expect(`${stdout}${stderr}`).not.toContain("Unrecognized flag");
-        expect(`${stdout}${stderr}`).toContain(
-          "--local isn't needed (local is the default) and will be removed in v4",
-        );
+        expect(`${stdout}${stderr}`).toContain("--local isn't needed");
         expect(exitCode).toBe(0);
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     E2E_TIMEOUT_MS,

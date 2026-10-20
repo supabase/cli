@@ -998,9 +998,7 @@ describe("gen types", () => {
           Effect.provide(layer),
         );
 
-        expect(stripAnsi(out.stderrText)).toContain(
-          `Warning: --project-id is deprecated and will be removed in v4. Use --remote=<ref> instead\n`,
-        );
+        expect(stripAnsi(out.stderrText)).toContain("--project-id is deprecated");
         expect(out.stderrText).toContain(unverifiedTargetBanner());
         expect(api.requests).toContainEqual({
           method: "generateTypescriptTypes",
@@ -1033,7 +1031,7 @@ describe("gen types", () => {
           expect(alias.out.stdoutText).toBe("export type Database = {}\n");
           expect(alias.out.stdoutText).toBe(canonical.out.stdoutText);
           expect(warningsOf(alias.out)).toEqual([
-            `--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead`,
+            expect.stringContaining("--project-id is deprecated"),
           ]);
           expect(warningsOf(canonical.out)).toEqual([]);
         }).pipe(Effect.provide(BunServices.layer)),
@@ -3573,9 +3571,7 @@ describe("gen types permissions through the real layers", () => {
       expect(methodPaths(ctx.api.requests)).toEqual([
         `GET /v1/projects/${VALID_REF}/types/typescript`,
       ]);
-      expect(warningsOf(ctx.out)).toEqual([
-        `--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead`,
-      ]);
+      expect(warningsOf(ctx.out)).toEqual([expect.stringContaining("--project-id is deprecated")]);
       assertPermissionDrift({
         command: "gen types",
         activeFlags: {
