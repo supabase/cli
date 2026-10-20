@@ -13,7 +13,7 @@ is set. A hosted target asks one combined confirmation before the first write.
 | ------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.json` or `config.toml` | JSON / TOML | always; `config.json` is preferred when both exist (embedded defaults used when neither exists)                                                   |
 | `<workdir>/.env*`, `<workdir>/supabase/.env*`     | dotenv      | project env files, resolved with `SUPABASE_ENV` (default `development`); a variable the shell sets is never taken from a file                     |
-| `~/.supabase/<hash>/project-ref`                  | plain text  | bare `--remote`, to resolve the ref — skipped when `SUPABASE_PROJECT_ID` is set; with no selector, only to name the project in the `Target:` hint |
+| `<workdir>/supabase/.temp/project-ref`            | plain text  | bare `--remote`, to resolve the ref — skipped when `SUPABASE_PROJECT_ID` is set; with no selector, only to name the project in the `Target:` hint |
 | `~/.supabase/access-token`                        | plain text  | when `SUPABASE_ACCESS_TOKEN` unset and a remote temp-role is minted                                                                               |
 | `<workdir>/supabase/migrations/`                  | directory   | when `[db.migrations].enabled` (default true), to list local files                                                                                |
 | `<workdir>/supabase/migrations/*.sql`             | SQL         | for each pending migration, when applied (and not `--dry-run`)                                                                                    |
@@ -22,10 +22,10 @@ is set. A hosted target asks one combined confirmation before the first write.
 
 ## Files Written
 
-| Path                                             | Format | When                                           |
-| ------------------------------------------------ | ------ | ---------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | on a remote project or branch (post-run cache) |
-| `~/.supabase/telemetry.json`                     | JSON   | always (post-run telemetry flush)              |
+| Path                                           | Format | When                                           |
+| ---------------------------------------------- | ------ | ---------------------------------------------- |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | on a remote project or branch (post-run cache) |
+| `~/.supabase/telemetry.json`                   | JSON   | always (post-run telemetry flush)              |
 
 ## Database Mutations
 

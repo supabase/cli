@@ -72,7 +72,7 @@ or migrations fail, companion services remain stopped. Fix the reported error an
 | `<workdir>/supabase/config.json` or `config.toml`                                            | JSON / TOML | always, parsed and decoded up front before any destructive work (`config.json` preferred; embedded defaults when neither exists); re-read for local bucket seeding |
 | `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file    | dotenv      | always, resolved before the local prelude (config values, bootstrap config)                                                                                        |
 | `<workdir>/.git/HEAD` (walked upward)                                                        | plain text  | local path, for the `Finished … on branch <branch>.` line                                                                                                          |
-| `~/.supabase/<hash>/project-ref`                                                             | plain text  | bare `--remote`, to resolve the ref — skipped when `SUPABASE_PROJECT_ID` is set; with no selector, only to name the project in the `Target:` hint                  |
+| `<workdir>/supabase/.temp/project-ref`                                                       | plain text  | bare `--remote`, to resolve the ref — skipped when `SUPABASE_PROJECT_ID` is set; with no selector, only to name the project in the `Target:` hint                  |
 | `~/.supabase/access-token`                                                                   | plain text  | a remote project or branch, when `SUPABASE_ACCESS_TOKEN` unset and a temp role is minted                                                                           |
 | seed files from `--sql-paths` or `[db.seed].sql_paths`                                       | SQL         | when seeding is enabled (not `--no-seed`); `--sql-paths` overrides config                                                                                          |
 | schema files from `[db.migrations].schema_paths`                                             | SQL         | when the `--experimental` schema-files branch is taken, either target (see Notes)                                                                                  |
@@ -82,10 +82,10 @@ or migrations fail, companion services remain stopped. Fix the reported error an
 
 ## Files Written
 
-| Path                                             | Format | When                                        |
-| ------------------------------------------------ | ------ | ------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | a remote project or branch (post-run cache) |
-| `~/.supabase/telemetry.json`                     | JSON   | always (post-run telemetry flush)           |
+| Path                                           | Format | When                                        |
+| ---------------------------------------------- | ------ | ------------------------------------------- |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | a remote project or branch (post-run cache) |
+| `~/.supabase/telemetry.json`                   | JSON   | always (post-run telemetry flush)           |
 
 On the local path, the native recreate additionally recreates the
 `supabase_db_<project>` container/volume (PG15) or the `postgres`/`_supabase`
