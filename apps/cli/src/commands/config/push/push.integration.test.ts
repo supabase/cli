@@ -46,7 +46,6 @@ import {
 import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { cliConfigProviderLayer } from "../../../shared/config/cli-config-provider.layer.ts";
-import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { secretDigestHex } from "./push.secret.ts";
 import { configDiff } from "../diff/diff.handler.ts";
 import { configPush } from "./push.handler.ts";
