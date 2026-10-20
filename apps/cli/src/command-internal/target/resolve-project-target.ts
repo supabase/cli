@@ -1,7 +1,7 @@
 import { Effect, Option } from "effect";
 
 import { resolveParentScopedProjectRef } from "./parent-scoped-project-ref.ts";
-import { resolveHostedRemote, selectTarget } from "./remote-resolution.ts";
+import { rejectRefShapedRemote, resolveHostedRemote, selectTarget } from "./remote-resolution.ts";
 import type { ProjectTargetFlagValues } from "./target-flags.ts";
 import { TargetNeedsProjectError } from "./target.errors.ts";
 
@@ -63,6 +63,9 @@ const resolveParent = Effect.fn("Target.resolveProject")(function* (
       return yield* resolveParentScopedProjectRef(Option.some(selection.ref));
     case "Linked":
     case "Default":
+      // A branch-name word has one reading here, since `--remote=<branch>` is an error;
+      // only a ref-shaped word reads both ways.
+      yield* rejectRefShapedRemote();
       return yield* resolveParentScopedProjectRef(Option.none());
     case "Local":
     case "DbUrl":

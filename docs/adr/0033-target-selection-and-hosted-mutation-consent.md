@@ -90,10 +90,11 @@ than positionals. The one ambiguous shape, a bare `--remote` directly followed b
 command took as a positional, is settled before anything runs. A project-ref-shaped token fails
 with no request, because a 20-letter operand such as a migration or function name must not silently
 retarget the command at another project: the error offers `--remote=<ref>` for that project and
-`--remote` last to keep the operand. Any other token is checked against the linked project's
-branches. It fails when it names a branch, equals one ignoring case, or is one edit (an adjacent swap
-counts as one) from a non-default branch name of five or more characters, so an ordinary word is not
-mistaken for a typo; otherwise it runs as the operand. When the branches can't be listed the run
+`--remote` last to keep the operand. A `branches *` command, whose `--remote` never names a branch,
+applies only this check. Any other token is checked against the linked project's branches. It fails
+when it names a branch, equals one ignoring case, or is one edit (an adjacent swap counts as one)
+from a non-default branch name of five or more characters, so an ordinary word is not mistaken for
+a typo; otherwise it runs as the operand. When the branches can't be listed the run
 still fails closed, and the error names the cause (an HTTP status or the network error, with the fix
 for a 401, 403 or 404). Docs, help and examples put `--remote` last, in the `=` form when it has a
 value, so it cannot be read as anything else, and shell completion never offers a space-separated
