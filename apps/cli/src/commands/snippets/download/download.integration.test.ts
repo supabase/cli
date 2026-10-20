@@ -439,6 +439,7 @@ describe("snippets download integration", () => {
 
   describeHostedTargetSelection("snippets download", {
     operands: [VALID_ID],
+    requestsNameProject: false,
     respond: (request) => Effect.succeed(jsonResponse(request, 200, SNIPPET_RESPONSE)),
     run: (flags) => snippetsDownload({ ...flags, snippetId: VALID_ID }),
   });
