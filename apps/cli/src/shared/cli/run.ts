@@ -63,6 +63,7 @@ import {
 } from "./agent-output.ts";
 import {
   bareRemoteOperand,
+  hasConflictingRemotes,
   joinRemoteOperands,
   remoteOperandCapacity,
   type RemoteArgvLeaf,
@@ -73,7 +74,6 @@ import {
   flagAliasesFor,
   isRemoteFlagMisuse,
   isValueTakingFlagTokenFor,
-  operandPlaceholdersAt,
   resolvedCommandPathForArgv,
 } from "./subcommand-flag-suggestions.ts";
 
@@ -202,7 +202,7 @@ export function remoteArgvLeafFor(
   rootCommand: Command.Command.Any,
   args: ReadonlyArray<string>,
 ): RemoteArgvLeaf | undefined {
-  if (!args.includes("--remote")) return undefined;
+  if (!args.some((arg) => arg === "--remote" || arg.startsWith("--remote="))) return undefined;
   const path = resolvedCommandPathForArgv(rootCommand, extractCommandPath(args));
   const operandCapacity = remoteOperandCapacity(rootCommand, path);
   if (operandCapacity === undefined) return undefined;
@@ -222,30 +222,22 @@ export function remoteArgvLeafFor(
 
 /**
  * `rawArgs` with a bare `--remote <word>` joined to `--remote=<word>` wherever the command's
- * operands leave no other reading, plus the word a bare `--remote` is still followed by.
+ * operands leave no other reading, plus the word a bare `--remote` is still followed by and
+ * whether `--remote` is given more than once with different values.
  */
 export function prepareCliArgs(
   rootCommand: Command.Command.Any,
   rawArgs: ReadonlyArray<string>,
 ): CliArgsShape {
   const leaf = remoteArgvLeafFor(rootCommand, rawArgs);
-  if (leaf === undefined) {
-    return { args: rawArgs, operandPlaceholders: operandPlaceholdersFor(rootCommand, rawArgs) };
-  }
+  if (leaf === undefined) return { args: rawArgs };
   const args = joinRemoteOperands(rawArgs, leaf);
   return {
     args,
     bareRemoteOperand: bareRemoteOperand(args, leaf),
-    operandPlaceholders: operandPlaceholdersFor(rootCommand, args),
+    remoteConflict: hasConflictingRemotes(args, leaf),
   };
 }
-
-const operandPlaceholdersFor =
-  (rootCommand: Command.Command.Any, args: ReadonlyArray<string>) => (): ReadonlyArray<string> =>
-    operandPlaceholdersAt(
-      rootCommand,
-      resolvedCommandPathForArgv(rootCommand, extractCommandPath(args)),
-    );
 
 /** `CliArgs` and a `Stdio` whose `args` is the same argv, so every reader of either sees the rewritten command line. */
 export const cliArgsLayer = (cliArgs: CliArgsShape) =>

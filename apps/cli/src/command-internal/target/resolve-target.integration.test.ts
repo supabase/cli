@@ -7,6 +7,7 @@ import {
   jsonResponse,
   mockCommandPlatformApi,
   mockCommandSettings,
+  transportFailure,
 } from "../../../tests/helpers/command-mocks.ts";
 import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
@@ -22,15 +23,19 @@ import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.
 import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 import { announceTarget } from "../../shared/output/command-target.service.ts";
 import type { OutputFormat } from "../../shared/output/types.ts";
-import { actionability, ErrorActionabilityId } from "../../shared/telemetry/error-actionability.ts";
+import {
+  actionability,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../../shared/telemetry/error-actionability.ts";
 import type { RemoteValue } from "./remote-value.ts";
 import { resolveTarget } from "./resolve-target.ts";
 import { renderLocalTarget } from "./target-identity.ts";
 import { TargetPolicy } from "./target-policy.ts";
 import type { TargetGroup } from "./target-policy.ts";
-import type { TargetFlagValuesWithDbUrl } from "./target-flags.ts";
+import type { TargetFlagValues } from "./target-flags.ts";
 
-const none: TargetFlagValuesWithDbUrl = {
+const none: TargetFlagValues = {
   remote: Option.none(),
   local: false,
   linked: false,
@@ -38,13 +43,15 @@ const none: TargetFlagValuesWithDbUrl = {
   projectRef: Option.none(),
 };
 
-const remote = (value: RemoteValue): Partial<TargetFlagValuesWithDbUrl> => ({
+const remote = (value: RemoteValue): Partial<TargetFlagValues> => ({
   remote: Option.some(value),
 });
 
 const FILE_REF = "filefilefilefilefile";
 const FLAG_REF = "flagflagflagflagflag";
 const BRANCH_REF = "branchprojectrefabcd";
+const STALE_REF = "stalestalestalestale";
+const GONE_REF = "gonegonegonegonegone";
 const SECRET_URL =
   "postgresql://postgres:hunter2@db.abcdefghijklmnopqrst.supabase.co:5432/postgres";
 
@@ -60,6 +67,15 @@ const branchRow = (name: string, projectRef = BRANCH_REF, isDefault = false) => 
   updated_at: "2026-05-27T01:02:04Z",
   with_data: true,
 });
+
+const failingListings = {
+  unavailable: { status: 500, message: "boom" },
+  unauthorized: { status: 401, message: "Unauthorized" },
+  forbidden: { status: 403, message: "Forbidden" },
+  missing: { status: 404, message: "Not found" },
+} as const;
+
+type Listing = ReadonlyArray<ReturnType<typeof branchRow>> | keyof typeof failingListings;
 
 const root = rootCommandForFeatures();
 
@@ -88,7 +104,7 @@ const projectRefResolver = (options: { readonly linked: boolean }) => {
 
 const run = (
   group: TargetGroup,
-  input: TargetFlagValuesWithDbUrl,
+  input: TargetFlagValues,
   options: {
     readonly linked?: boolean;
     readonly projectId?: Option.Option<string>;
@@ -98,11 +114,10 @@ const run = (
     readonly command?: ReadonlyArray<string>;
     readonly format?: OutputFormat;
     readonly tokenFailure?: AccessTokenRequiredError | InvalidAccessTokenError;
-    readonly branches?:
-      | ReadonlyArray<ReturnType<typeof branchRow>>
-      | "unavailable"
-      | "unauthorized"
-      | "forbidden";
+    readonly storedToken?: boolean;
+    readonly unreachable?: string;
+    readonly branches?: Listing;
+    readonly listings?: Readonly<Record<string, Listing>>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -125,16 +140,18 @@ const run = (
     const resolver = projectRefResolver({ linked: options.linked ?? true });
     const out = mockOutput({ format: options.format ?? "text" });
     const api = mockCommandPlatformApi({
-      handler: (request) =>
-        Effect.succeed(
-          options.branches === "unavailable"
-            ? jsonResponse(request, 500, { message: "boom" })
-            : options.branches === "unauthorized"
-              ? jsonResponse(request, 401, { message: "Unauthorized" })
-              : options.branches === "forbidden"
-                ? jsonResponse(request, 403, { message: "Forbidden" })
-                : jsonResponse(request, 200, options.branches ?? []),
-        ),
+      handler: (request) => {
+        if (options.unreachable !== undefined) {
+          return Effect.fail(transportFailure(request, options.unreachable));
+        }
+        const parentRef = new URL(request.url).pathname.split("/")[3] ?? "";
+        const branches = options.listings?.[parentRef] ?? options.branches ?? [];
+        if (typeof branches === "string") {
+          const { status, message } = failingListings[branches];
+          return Effect.succeed(jsonResponse(request, status, { message }));
+        }
+        return Effect.succeed(jsonResponse(request, 200, branches));
+      },
     });
     const spans: Array<Tracer.NativeSpan> = [];
     const tracer = Tracer.make({
@@ -158,6 +175,7 @@ const run = (
           mockCommandSettings({
             workdir: dir,
             projectId: options.projectId ?? Option.none(),
+            ...(options.storedToken === true ? { accessToken: Option.none() } : {}),
           }),
           options.args === undefined
             ? Layer.empty
@@ -276,6 +294,7 @@ describe("resolveTarget", () => {
           matchesLinkedRef: false,
           branch: "feature-x",
           parentRef: FILE_REF,
+          isDefault: false,
         });
         expect(result.apiRequests).toEqual([`GET /v1/projects/${FILE_REF}/branches`]);
         expect(result.refFlags).toEqual([]);
@@ -297,6 +316,59 @@ describe("resolveTarget", () => {
         expect(result.stderr).toContain(
           `Target: project alpha (${FILE_REF}) · branch feature-x (${BRANCH_REF})\n`,
         );
+      }),
+    );
+
+    it.effect("looks a branch up under the cached parent that lists the linked project", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "feature-x" }) },
+          {
+            savedRef: BRANCH_REF,
+            cache: { ref: FILE_REF },
+            listings: { [FILE_REF]: [branchRow("feature-x"), branchRow("other", FLAG_REF)] },
+          },
+        );
+        expect(succeeded(result.exit)).toMatchObject({ ref: BRANCH_REF, parentRef: FILE_REF });
+        expect(result.apiRequests).toEqual([`GET /v1/projects/${FILE_REF}/branches`]);
+      }),
+    );
+
+    it.effect("ignores a cached parent that does not list the linked project", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "feature-x" }) },
+          {
+            savedRef: FILE_REF,
+            cache: { ref: STALE_REF },
+            listings: {
+              [STALE_REF]: [branchRow("feature-x", FLAG_REF)],
+              [FILE_REF]: [branchRow("feature-x")],
+            },
+          },
+        );
+        expect(succeeded(result.exit)).toMatchObject({
+          ref: BRANCH_REF,
+          branch: "feature-x",
+          parentRef: FILE_REF,
+        });
+      }),
+    );
+
+    it.effect("keeps the cached parent when the linked project cannot list branches", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "feature-x" }) },
+          {
+            savedRef: GONE_REF,
+            cache: { ref: FILE_REF },
+            listings: { [FILE_REF]: [branchRow("feature-x")], [GONE_REF]: "missing" },
+          },
+        );
+        expect(succeeded(result.exit)).toMatchObject({ ref: BRANCH_REF, parentRef: FILE_REF });
       }),
     );
 
@@ -356,6 +428,47 @@ describe("resolveTarget", () => {
       }),
     );
 
+    it.effect("suggests the branch when two letters of the name are swapped", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "mian" }) },
+          { savedRef: FILE_REF, branches: [branchRow("main", FILE_REF, true)] },
+        );
+        expect(failureOf(result.exit)).toMatchObject({ _tag: "LinkBranchNotFoundError" });
+        expect(String((failureOf(result.exit) as Error).message)).toContain(
+          'Available branches: main. Did you mean "main"?',
+        );
+      }),
+    );
+
+    it.effect("suggests the lowercased ref when a 20-letter value has uppercase letters", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "ABCDEFGHIJKLMNOPQRST" }) },
+          { savedRef: FILE_REF, branches: [branchRow("main")] },
+        );
+        expect(failureOf(result.exit)).toMatchObject({
+          _tag: "LinkBranchNotFoundError",
+          message: `Branch "ABCDEFGHIJKLMNOPQRST" not found for project ${FILE_REF}. Available branches: main.\n  If you meant a project ref: refs are exactly 20 lowercase letters (try "abcdefghijklmnopqrst").`,
+        });
+      }),
+    );
+
+    it.effect("gives no ref hint to a mixed-case value that is not 20 letters", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "ABCDEFGHIJKLMNOPQRS" }) },
+          { savedRef: FILE_REF, branches: [branchRow("main")] },
+        );
+        expect(String((failureOf(result.exit) as Error).message)).not.toContain(
+          "If you meant a project ref",
+        );
+      }),
+    );
+
     it.effect("tells an expired token to log in instead of showing the response body", () =>
       Effect.gen(function* () {
         const result = yield* run(
@@ -382,6 +495,21 @@ describe("resolveTarget", () => {
       }),
     );
 
+    it.effect("suggests the lowercased ref when no project is linked", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", {
+          ...none,
+          ...remote({ _tag: "Branch", name: "ABCDEFGHIJKLMNOPQRST" }),
+        });
+        expect(failureOf(result.exit)).toMatchObject({
+          _tag: "LinkBranchNotLinkedError",
+          message: expect.stringContaining(
+            'If you meant a project ref: refs are exactly 20 lowercase letters (try "abcdefghijklmnopqrst").',
+          ),
+        });
+      }),
+    );
+
     it.effect("fails with not-linked instead of falling back to local when it cannot resolve", () =>
       Effect.gen(function* () {
         const result = yield* run(
@@ -399,7 +527,7 @@ describe("resolveTarget", () => {
     const command = ["db", "pull"];
     const bare = { ...none, ...remote({ _tag: "Linked" }) };
     const options = `For the branch: supabase db pull --remote=feature-x. For the linked project: supabase db pull feature-x --remote`;
-    const placeholderOptions = `For the branch: supabase db pull --remote=<branch>. For the linked project: supabase db pull <migration name> --remote`;
+    const placeholderOptions = `For the branch: supabase db pull --remote=<branch>. For the linked project, put --remote last: supabase db pull <operands> --remote`;
 
     it.effect("fails when the word is a branch of the linked project", () =>
       Effect.gen(function* () {
@@ -417,6 +545,25 @@ describe("resolveTarget", () => {
       }),
     );
 
+    it.effect("checks the branches of the linked project when the cached parent is stale", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args,
+          command,
+          savedRef: FILE_REF,
+          cache: { ref: STALE_REF },
+          listings: {
+            [STALE_REF]: [branchRow("other", FLAG_REF)],
+            [FILE_REF]: [branchRow("feature-x")],
+          },
+        });
+        expect(failureOf(result.exit)).toMatchObject({
+          _tag: "TargetRemoteAmbiguousError",
+          message: `"feature-x" is a branch of project ${FILE_REF}. ${options}`,
+        });
+      }),
+    );
+
     it.effect("resolves the linked project when the word names no branch", () =>
       Effect.gen(function* () {
         const result = yield* run("selectable", bare, {
@@ -426,6 +573,28 @@ describe("resolveTarget", () => {
         });
         expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FILE_REF });
       }),
+    );
+
+    it.effect.each([
+      { name: "a project is linked", options: { savedRef: FILE_REF } },
+      { name: "no project is linked", options: { linked: false } },
+    ])(
+      "fails before any lookup when the word is shaped like a project ref and $name",
+      ({ options: linkState }) =>
+        Effect.gen(function* () {
+          const result = yield* run("selectable", bare, {
+            ...linkState,
+            args: ["db", "pull", "--remote", FLAG_REF],
+            command,
+            branches: [branchRow("feature-x")],
+          });
+          expect(failureOf(result.exit)).toMatchObject({
+            _tag: "TargetRemoteAmbiguousError",
+            message: `"${FLAG_REF}" after --remote looks like a project ref. For that project: supabase db pull --remote=${FLAG_REF}. To keep it as an operand, put --remote last: supabase db pull <operands> --remote`,
+          });
+          expect(result.apiRequests).toEqual([]);
+          expect(result.refFlags).toEqual([]);
+        }),
     );
 
     it.effect("names the branch of a linked, named project", () =>
@@ -454,7 +623,7 @@ describe("resolveTarget", () => {
         const error = failureOf(result.exit);
         expect(error).toMatchObject({
           _tag: "TargetRemoteAmbiguousError",
-          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed with HTTP 500). ${placeholderOptions}`,
+          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed: HTTP 500). ${placeholderOptions}`,
           status: 500,
           cause: { _tag: "LinkBranchListStatusError", status: 500 },
         });
@@ -462,23 +631,95 @@ describe("resolveTarget", () => {
       }),
     );
 
-    it.effect.each([
-      { name: "unauthorized", status: 401 },
-      { name: "forbidden", status: 403 },
-    ] as const)("suggests logging in when the branch listing is $name", ({ name, status }) =>
+    it.effect("names the transport failure when the listing never gets a response", () =>
       Effect.gen(function* () {
         const result = yield* run("selectable", bare, {
           args,
           command,
           savedRef: FILE_REF,
-          branches: name,
+          unreachable: "ECONNREFUSED",
         });
-        expect(failureOf(result.exit)).toMatchObject({
+        const error = failureOf(result.exit);
+        expect(error).toMatchObject({
           _tag: "TargetRemoteAmbiguousError",
-          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed with HTTP ${status}). ${placeholderOptions}`,
-          suggestion: "Run `supabase login` with an account that can list this project's branches.",
-          status,
+          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed: ECONNREFUSED). ${placeholderOptions}`,
+          cause: { _tag: "LinkBranchListNetworkError" },
         });
+        expect(error).not.toHaveProperty("status");
+        expect(error).not.toHaveProperty("suggestion");
+      }),
+    );
+
+    it.effect("keeps URL credentials out of a transport failure it names", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args,
+          command,
+          savedRef: FILE_REF,
+          unreachable:
+            "connect ECONNREFUSED https://proxy-user:hunter2@proxy.test:8080\nsecond line",
+        });
+        const message = String((failureOf(result.exit) as Error).message);
+        expect(message).toContain(
+          `failed: connect ECONNREFUSED https://proxy.test:8080). ${placeholderOptions}`,
+        );
+        expect(message).not.toContain("hunter2");
+        expect(message).not.toContain("second line");
+      }),
+    );
+
+    it.effect.each([
+      {
+        name: "unauthorized with a token from SUPABASE_ACCESS_TOKEN",
+        branches: "unauthorized",
+        storedToken: false,
+        status: 401,
+        suggestion: "Set SUPABASE_ACCESS_TOKEN to a valid access token.",
+        actionability: actionability.authToken,
+      },
+      {
+        name: "unauthorized with a stored token",
+        branches: "unauthorized",
+        storedToken: true,
+        status: 401,
+        suggestion: "Run `supabase login` with an account that can list this project's branches.",
+        actionability: statusCodeActionability(401),
+      },
+      {
+        name: "forbidden",
+        branches: "forbidden",
+        storedToken: false,
+        status: 403,
+        suggestion: "Use an access token that can read this project's branches.",
+        actionability: statusCodeActionability(403),
+      },
+      {
+        name: "not found",
+        branches: "missing",
+        storedToken: false,
+        status: 404,
+        suggestion: `If ${FILE_REF} is itself a preview branch, link its parent project first: supabase link --project-ref <parent-ref>`,
+        actionability: actionability.provideFlags,
+      },
+    ] as const)("suggests the fix when the branch listing is $name", (testCase) =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args,
+          command,
+          savedRef: FILE_REF,
+          branches: testCase.branches,
+          storedToken: testCase.storedToken,
+        });
+        const error = failureOf(result.exit);
+        expect(error).toMatchObject({
+          _tag: "TargetRemoteAmbiguousError",
+          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed: HTTP ${testCase.status}). ${placeholderOptions}`,
+          suggestion: testCase.suggestion,
+          status: testCase.status,
+        });
+        expect((error as { [ErrorActionabilityId]: unknown })[ErrorActionabilityId]).toEqual(
+          testCase.actionability,
+        );
       }),
     );
 
@@ -557,7 +798,7 @@ describe("resolveTarget", () => {
         const error = failureOf(result.exit);
         expect(error).toMatchObject({
           _tag: "TargetRemoteAmbiguousError",
-          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed with HTTP 403). For the branch: supabase secrets unset --remote=<branch>. For the linked project: supabase secrets unset <NAME>... --remote`,
+          message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${FILE_REF} failed: HTTP 403). For the branch: supabase secrets unset --remote=<branch>. For the linked project, put --remote last: supabase secrets unset <operands> --remote`,
         });
         expect(JSON.stringify(error)).not.toContain("sk_live_secret");
       }),
@@ -576,6 +817,55 @@ describe("resolveTarget", () => {
           message: `"feature-y" isn't a branch, but "feature-x" is. For the branch: supabase db pull --remote=feature-x. For the linked project: supabase db pull feature-y --remote`,
         });
         expect(result.refFlags).toEqual([]);
+      }),
+    );
+
+    it.effect.each([
+      { name: "two edits from a branch", word: "feature-yz", branches: [branchRow("feature-x")] },
+      { name: "one edit from a short branch", word: "den", branches: [branchRow("dev")] },
+      {
+        name: "one edit from the default branch",
+        word: "mail",
+        branches: [branchRow("main", FILE_REF, true)],
+      },
+    ])("keeps a word that is $name as an operand", ({ word, branches }) =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args: ["db", "pull", "--remote", word],
+          command,
+          savedRef: FILE_REF,
+          branches,
+        });
+        expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FILE_REF });
+      }),
+    );
+
+    it.effect("fails for a word with two letters swapped from a branch", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args: ["db", "pull", "--remote", "stagign"],
+          command,
+          savedRef: FILE_REF,
+          branches: [branchRow("staging")],
+        });
+        expect(failureOf(result.exit)).toMatchObject({
+          _tag: "TargetRemoteAmbiguousError",
+          message: `"stagign" isn't a branch, but "staging" is. For the branch: supabase db pull --remote=staging. For the linked project: supabase db pull stagign --remote`,
+        });
+      }),
+    );
+
+    it.effect("fails for a word that differs from the default branch only by case", () =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, {
+          args: ["db", "pull", "--remote", "Main"],
+          command,
+          savedRef: FILE_REF,
+          branches: [branchRow("main", FILE_REF, true)],
+        });
+        expect(failureOf(result.exit)).toMatchObject({
+          message: `"Main" isn't a branch, but "main" is. For the branch: supabase db pull --remote=main. For the linked project: supabase db pull Main --remote`,
+        });
       }),
     );
 
@@ -663,6 +953,48 @@ describe("resolveTarget", () => {
     );
   });
 
+  describe("a repeated --remote", () => {
+    const command = ["db", "push"];
+    const bare = { ...none, ...remote({ _tag: "Linked" }) };
+
+    it.effect("fails before anything runs when the values differ", () =>
+      Effect.gen(function* () {
+        const result = yield* run(
+          "selectable",
+          { ...none, ...remote({ _tag: "Branch", name: "feature-x" }) },
+          {
+            args: ["db", "push", "--remote=feature-x", "--remote"],
+            command,
+            savedRef: FILE_REF,
+            branches: [branchRow("feature-x")],
+          },
+        );
+        const error = failureOf(result.exit);
+        expect(error).toMatchObject({
+          _tag: "TargetSelectorConflictError",
+          flags: ["--remote"],
+          message: "--remote is given more than once with different values; pass it once.",
+          suggestion: "Pass --remote once, as --remote or --remote=<ref|branch|url>.",
+        });
+        expect((error as { [ErrorActionabilityId]: unknown })[ErrorActionabilityId]).toEqual(
+          actionability.provideFlags,
+        );
+        expect(result.apiRequests).toEqual([]);
+        expect(result.refFlags).toEqual([]);
+      }),
+    );
+
+    it.effect.each([
+      { name: "the same value", args: ["db", "push", "--remote=feature-x", "--remote=feature-x"] },
+      { name: "a bare switch", args: ["db", "push", "--remote", "--remote"] },
+    ])("accepts $name given twice", ({ args }) =>
+      Effect.gen(function* () {
+        const result = yield* run("selectable", bare, { args, command, savedRef: FILE_REF });
+        expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FILE_REF });
+      }),
+    );
+  });
+
   describe("deprecated selectors", () => {
     it.effect("warns that --linked is replaced by --remote, with the command as run", () =>
       Effect.gen(function* () {
@@ -673,7 +1005,7 @@ describe("resolveTarget", () => {
         );
         expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FILE_REF });
         expect(result.warnings).toEqual([
-          "--linked is deprecated and will be removed in v4. Use --remote instead: supabase db push --remote",
+          "--linked is deprecated and will be removed in v4. Use --remote instead",
         ]);
       }),
     );
@@ -689,7 +1021,7 @@ describe("resolveTarget", () => {
           );
           expect(succeeded(result.exit)).toMatchObject({ kind: "linked" });
           expect(result.warnings).toEqual([
-            "--linked is deprecated and will be removed in v4. Use --remote instead: supabase db push --remote",
+            "--linked is deprecated and will be removed in v4. Use --remote instead",
           ]);
           expect(result.outputWarnCalls).toEqual([]);
           expect(result.stdout).toBe("");
@@ -708,7 +1040,7 @@ describe("resolveTarget", () => {
         );
         expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FLAG_REF });
         expect(result.warnings).toEqual([
-          `--linked and --project-ref are deprecated and will be removed in v4. Use --remote=<ref> instead: supabase db push --remote=${FLAG_REF}`,
+          `--linked and --project-ref are deprecated and will be removed in v4. Use --remote=<ref> instead`,
         ]);
       }),
     );
@@ -725,7 +1057,7 @@ describe("resolveTarget", () => {
         );
         expect(succeeded(result.exit)).toMatchObject({ kind: "db-url" });
         expect(result.warnings).toEqual([
-          "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead: supabase db push --remote=<db-url>, or --remote=abcdefghijklmnopqrst with an access token set",
+          "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead, or --remote=abcdefghijklmnopqrst with an access token set",
         ]);
         expect(result.warnings.join("\n")).not.toContain("hunter2");
       }),
@@ -740,7 +1072,7 @@ describe("resolveTarget", () => {
         );
         expect(succeeded(result.exit)).toEqual({ kind: "local" });
         expect(result.warnings).toEqual([
-          "--local isn't needed (local is the default) and will be removed in v4: supabase db push",
+          "--local isn't needed (local is the default) and will be removed in v4",
         ]);
         expect(result.refFlags).toEqual([]);
       }),
@@ -848,6 +1180,18 @@ describe("resolveTarget", () => {
         const result = yield* run("selectable", none, { projectId: Option.some("not-a-ref") });
         expect(result.stderr).toBe("Target: local stack (127.0.0.1:54322)\n");
       }),
+    );
+
+    it.effect(
+      "adds no hint when SUPABASE_PROJECT_ID is not a project ref, even if a link exists",
+      () =>
+        Effect.gen(function* () {
+          const result = yield* run("selectable", none, {
+            projectId: Option.some("not-a-ref"),
+            savedRef: FILE_REF,
+          });
+          expect(result.stderr).toBe("Target: local stack (127.0.0.1:54322)\n");
+        }),
     );
 
     it.effect("adds no hint when the checkout is not linked", () =>

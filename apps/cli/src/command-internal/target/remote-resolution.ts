@@ -14,24 +14,27 @@ import {
 import { yellow } from "../colors.ts";
 import { formatNamedRef, sanitizeInlineName } from "../http-errors.ts";
 import { readCachedLinkedProject, resolveLinkedParentRef } from "../parent-project-ref.ts";
-import { findBranch, listParentBranches, resolveRemoteBranchRef } from "./branch-resolution.ts";
-import { LinkBranchListStatusError } from "./branch-resolution.errors.ts";
-import { closestByName } from "./closest-branch.ts";
+import { BRANCH_PROJECT_REF_PATTERN } from "../ref-patterns.ts";
+import {
+  findBranch,
+  isDefaultBranch,
+  listBranchesFailureCause,
+  listLinkedParentBranches,
+  previewBranchHint,
+  resolveRemoteBranchRef,
+} from "./branch-resolution.ts";
+import {
+  LinkBranchListNetworkError,
+  LinkBranchListStatusError,
+} from "./branch-resolution.errors.ts";
+import { nearMissByName } from "./closest-branch.ts";
 import type { RemoteValue } from "./remote-value.ts";
 import { stripUserinfo } from "./remote-vocabulary.ts";
 import type { LinkedTarget } from "./resolve-target.ts";
-import {
-  type DeprecationCommand,
-  deprecationMessages,
-  remoteFlagText,
-  shellQuote,
-} from "./target-deprecation.ts";
+import { deprecationMessages, remoteFlagText, shellQuote } from "./target-deprecation.ts";
+import type { TargetFlagValues } from "./target-flags.ts";
 import { describeLinkedTarget, renderBranchTarget } from "./target-identity.ts";
-import {
-  parseTargetSelector,
-  type TargetDeprecation,
-  type TargetSelectorInput,
-} from "./target-selector.ts";
+import { parseTargetSelector, type TargetDeprecation } from "./target-selector.ts";
 import { TargetRemoteAmbiguousError } from "./target.errors.ts";
 
 /** A `--remote` value that names a hosted project, as opposed to a database URL. */
@@ -43,24 +46,13 @@ export const warnTarget = Effect.fnUntraced(function* (message: string) {
   yield* output.raw(`${yellow(`Warning: ${message}`)}\n`, "stderr");
 });
 
-const currentCommand = Effect.fnUntraced(function* () {
-  const runtime = yield* Effect.serviceOption(CommandRuntime);
-  if (Option.isNone(runtime)) return undefined;
-  const cliArgs = Option.getOrUndefined(yield* Effect.serviceOption(CliArgs));
-  return {
-    path: getCommandRuntimeCommand(runtime.value),
-    operands: cliArgs?.operandPlaceholders?.() ?? [],
-  } satisfies DeprecationCommand;
-});
-
-/** Prints one warning per deprecated selector flag the run used, naming the command, its operand placeholders and the `--remote` replacement. */
+/** Prints one warning per deprecated selector flag the run used, naming its `--remote` replacement. */
 export const warnTargetDeprecations = Effect.fnUntraced(function* (
   deprecations: ReadonlyArray<TargetDeprecation>,
 ) {
   if (deprecations.length === 0) return;
   const { projectHost } = yield* CommandSettings;
-  const command = yield* currentCommand();
-  for (const message of deprecationMessages(deprecations, { command, projectHost })) {
+  for (const message of deprecationMessages(deprecations, projectHost)) {
     yield* warnTarget(message);
   }
 });
@@ -70,15 +62,17 @@ export const warnTargetDeprecations = Effect.fnUntraced(function* (
  * errors that need it.
  */
 export const selectTarget = Effect.fnUntraced(function* (
-  flags: TargetSelectorInput,
+  flags: TargetFlagValues,
   options: { readonly valueHint?: string } = {},
 ) {
   const runtime = yield* Effect.serviceOption(CommandRuntime);
   const commandName = Option.isSome(runtime)
     ? `\`supabase ${getCommandRuntimeCommand(runtime.value)}\``
     : "This command";
+  const cliArgs = yield* Effect.serviceOption(CliArgs);
+  const remoteConflict = Option.getOrUndefined(cliArgs)?.remoteConflict === true;
   const { selection, deprecations } = yield* Result.match(
-    parseTargetSelector(flags, { commandName, ...options }),
+    parseTargetSelector(flags, { remoteConflict, ...options }),
     { onFailure: Effect.fail, onSuccess: Effect.succeed },
   );
   yield* warnTargetDeprecations(deprecations);
@@ -95,6 +89,10 @@ const linkedProjectName = Effect.fnUntraced(function* (ref: string) {
 
 const LOGIN_SUGGESTION =
   "Run `supabase login` with an account that can list this project's branches.";
+const SET_TOKEN_SUGGESTION = "Set SUPABASE_ACCESS_TOKEN to a valid access token.";
+const FORBIDDEN_SUGGESTION = "Use an access token that can read this project's branches.";
+
+type TokenSource = "env" | "stored";
 
 interface ListingFailure {
   readonly reason: string;
@@ -103,14 +101,36 @@ interface ListingFailure {
   readonly authFailure?: "login" | "token";
 }
 
-const listingFailure = (error: unknown): ListingFailure => {
+const statusFailure = (
+  status: number,
+  parentRef: string,
+  tokenSource: TokenSource,
+): ListingFailure => {
+  const reason = `: HTTP ${status}`;
+  switch (status) {
+    case 401:
+      return tokenSource === "env"
+        ? { status, reason, suggestion: SET_TOKEN_SUGGESTION, authFailure: "token" }
+        : { status, reason, suggestion: LOGIN_SUGGESTION };
+    case 403:
+      return { status, reason, suggestion: FORBIDDEN_SUGGESTION };
+    case 404:
+      return { status, reason, suggestion: previewBranchHint(parentRef) };
+    default:
+      return { status, reason };
+  }
+};
+
+const listingFailure = (
+  error: unknown,
+  parentRef: string,
+  tokenSource: TokenSource,
+): ListingFailure => {
   if (error instanceof LinkBranchListStatusError) {
-    const { status } = error;
-    return {
-      status,
-      reason: ` with HTTP ${status}`,
-      suggestion: status === 401 || status === 403 ? LOGIN_SUGGESTION : undefined,
-    };
+    return statusFailure(error.status, parentRef, tokenSource);
+  }
+  if (error instanceof LinkBranchListNetworkError) {
+    return { reason: `: ${sanitizeInlineName(stripUserinfo(listBranchesFailureCause(error)))}` };
   }
   if (error instanceof AccessTokenRequiredError) {
     return {
@@ -123,7 +143,7 @@ const listingFailure = (error: unknown): ListingFailure => {
     return error.source === "env"
       ? {
           reason: " because SUPABASE_ACCESS_TOKEN is not a valid access token",
-          suggestion: "Set SUPABASE_ACCESS_TOKEN to a valid access token.",
+          suggestion: SET_TOKEN_SUGGESTION,
           authFailure: "token",
         }
       : {
@@ -135,37 +155,46 @@ const listingFailure = (error: unknown): ListingFailure => {
   return { reason: "" };
 };
 
+const commandUsage = Effect.fnUntraced(function* () {
+  const runtime = yield* Effect.serviceOption(CommandRuntime);
+  return `supabase ${Option.isSome(runtime) ? getCommandRuntimeCommand(runtime.value) : "<command>"}`;
+});
+
 const checkRemoteOperand = Effect.fn("Target.checkRemoteOperand")(function* (rawOperand: string) {
   const parent = yield* resolveLinkedParentRef();
   if (parent.kind !== "resolved") return;
 
   const operand = stripUserinfo(rawOperand);
-  const runtime = yield* Effect.serviceOption(CommandRuntime);
-  const usage = `supabase ${Option.isSome(runtime) ? getCommandRuntimeCommand(runtime.value) : "<command>"}`;
+  const usage = yield* commandUsage();
   const options = `For the branch: ${usage} ${remoteFlagText({ _tag: "Branch", name: operand })}. For the linked project: ${usage} ${shellQuote(operand)} --remote`;
 
-  const listed = yield* listParentBranches(parent.ref, "Checking branches...").pipe(Effect.result);
+  const listed = yield* listLinkedParentBranches(parent, "Checking branches...").pipe(
+    Effect.result,
+  );
   if (Result.isFailure(listed)) {
-    const failure = listingFailure(listed.failure);
-    const cliArgs = Option.getOrUndefined(yield* Effect.serviceOption(CliArgs));
-    const operands = cliArgs?.operandPlaceholders?.() ?? [];
+    const { accessToken } = yield* CommandSettings;
+    const failure = listingFailure(
+      listed.failure,
+      parent.ref,
+      Option.isSome(accessToken) ? "env" : "stored",
+    );
     return yield* new TargetRemoteAmbiguousError({
-      message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${parent.ref} failed${failure.reason}). For the branch: ${usage} --remote=<branch>. For the linked project: ${[usage, ...operands, "--remote"].join(" ")}`,
+      message: `Can't tell whether the word after --remote is a branch (listing the branches of project ${parent.ref} failed${failure.reason}). For the branch: ${usage} --remote=<branch>. For the linked project, put --remote last: ${usage} <operands> --remote`,
       ...(failure.suggestion === undefined ? {} : { suggestion: failure.suggestion }),
       ...(failure.status === undefined ? {} : { status: failure.status }),
       ...(failure.authFailure === undefined ? {} : { authFailure: failure.authFailure }),
       cause: listed.failure,
     });
   }
-  const branches = listed.success;
+  const { parentRef, branches } = listed.success;
   if (findBranch(branches, operand) !== undefined) {
-    const name = yield* linkedProjectName(parent.ref);
-    const project = name === undefined ? `project ${parent.ref}` : formatNamedRef(name, parent.ref);
+    const name = yield* linkedProjectName(parentRef);
+    const project = name === undefined ? `project ${parentRef}` : formatNamedRef(name, parentRef);
     return yield* new TargetRemoteAmbiguousError({
       message: `"${operand}" is a branch of ${project}. ${options}`,
     });
   }
-  const closest = closestByName(branches, operand);
+  const closest = nearMissByName(branches, operand, (branch) => isDefaultBranch(branch, parentRef));
   if (closest !== undefined) {
     const closestName = sanitizeInlineName(closest.name);
     return yield* new TargetRemoteAmbiguousError({
@@ -174,14 +203,23 @@ const checkRemoteOperand = Effect.fn("Target.checkRemoteOperand")(function* (raw
   }
 });
 
+const rejectRefShapedOperand = Effect.fnUntraced(function* (operand: string) {
+  const usage = yield* commandUsage();
+  return yield* new TargetRemoteAmbiguousError({
+    message: `"${operand}" after --remote looks like a project ref. For that project: ${usage} --remote=${operand}. To keep it as an operand, put --remote last: ${usage} <operands> --remote`,
+  });
+});
+
 /**
- * Fails a bare `--remote` whose next word is, or may be, a branch of the linked project, before
- * the command prompts, connects or writes.
+ * Fails a bare `--remote` whose next word is a project ref, or is, or may be, a branch of the
+ * linked project, before the command prompts, connects or writes.
  */
 const rejectAmbiguousRemote = Effect.fnUntraced(function* () {
   const cliArgs = yield* Effect.serviceOption(CliArgs);
   const operand = Option.getOrUndefined(cliArgs)?.bareRemoteOperand;
-  if (operand !== undefined) yield* checkRemoteOperand(operand);
+  if (operand === undefined) return;
+  if (BRANCH_PROJECT_REF_PATTERN.test(operand)) return yield* rejectRefShapedOperand(operand);
+  yield* checkRemoteOperand(operand);
 });
 
 /** The linked target for a ref the ref chain has already resolved and announced. */
@@ -236,6 +274,7 @@ export const resolveRemoteTarget = Effect.fn("Target.resolveRemote")(function* (
       }),
       branch: remote.name,
       ...(found.parentRef === undefined ? {} : { parentRef: found.parentRef }),
+      ...(found.isDefault === undefined ? {} : { isDefault: found.isDefault }),
     } satisfies LinkedTarget;
   }
   const projectRef = yield* ProjectRefResolver;

@@ -7,7 +7,12 @@ import { announceTarget } from "../shared/output/command-target.service.ts";
 import { describeLinkedTarget } from "./target/target-identity.ts";
 
 export type ParentRefResolution =
-  | { readonly kind: "resolved"; readonly ref: string }
+  | {
+      readonly kind: "resolved";
+      readonly ref: string;
+      /** The project the `project-ref` file links when a cached parent differs from it; the cache stands only while that parent lists it as a branch. */
+      readonly linkedRef?: string;
+    }
   | { readonly kind: "invalid" }
   | { readonly kind: "absent" };
 
@@ -92,12 +97,10 @@ function classifyParentCandidates(
 }
 
 /**
- * Resolves the currently-linked PARENT project ref, not the branch's own ref that
- * `ProjectRefResolver.resolveOptional`/`resolve` would return right after `link <branch>`.
- * The first present candidate wins, in order: `SUPABASE_PROJECT_ID` env, the
- * `linked-project.json` cache, then the temp `project-ref` file. A malformed candidate
- * hard-classifies as `"invalid"` rather than falling through to a lower-priority one; no
- * candidate at all means the workdir was never linked (`"absent"`).
+ * Resolves the linked PARENT project ref, not the branch's own ref that `resolve`/`resolveOptional`
+ * return right after `link <branch>`. The first present candidate wins: `SUPABASE_PROJECT_ID`, the
+ * `linked-project.json` cache, then the temp `project-ref` file. A malformed candidate is
+ * `"invalid"` and never falls through; no candidate at all is `"absent"`.
  */
 export const resolveLinkedParentRef = Effect.fnUntraced(function* () {
   const cliSettings = yield* CommandSettings;
@@ -117,10 +120,8 @@ export const resolveLinkedParentRef = Effect.fnUntraced(function* () {
       )
     : Option.none<string>();
 
-  // An env candidate that merely restates the file candidate's own (valid) value carries no
-  // parent information; drop it so the cache gets a chance to win instead. Restricted to
-  // pattern-valid values so a garbage env equal to a garbage file still hard-classifies as
-  // invalid below instead of sneaking past to the cache.
+  // An env candidate restating the file's own valid value carries no parent information; drop it
+  // so the cache can win. Pattern-valid only, so a garbage env equal to a garbage file stays invalid.
   const envRef =
     Option.isSome(cliSettings.projectId) &&
     Option.isSome(fileRef) &&
@@ -129,7 +130,14 @@ export const resolveLinkedParentRef = Effect.fnUntraced(function* () {
       ? Option.none<string>()
       : cliSettings.projectId;
 
-  return classifyParentCandidates([envRef, cachedRef, fileRef]);
+  const parent = classifyParentCandidates([envRef, cachedRef, fileRef]);
+  if (parent.kind !== "resolved" || Option.isSome(envRef) || Option.isNone(cachedRef))
+    return parent;
+  const linkedRef = Option.filter(
+    fileRef,
+    (ref) => ref !== parent.ref && PROJECT_REF_PATTERN.test(ref),
+  );
+  return Option.isSome(linkedRef) ? { ...parent, linkedRef: linkedRef.value } : parent;
 });
 
 /**
@@ -168,13 +176,17 @@ export const resolveParentScopedProjectRef = Effect.fn("ParentProjectRef.resolve
 });
 
 /**
- * A value made entirely of lowercase letters (but not 20 of them, or it would already have
- * been treated as a ref) is a plausible ref typo. Appended to both {@link parentNotLinkedMessage}
- * and `link`'s own branch-not-found message.
+ * A plausible ref typo: all lowercase letters but not 20 of them, or 20 letters with an uppercase
+ * one. Appended to {@link parentNotLinkedMessage} and `link`'s own branch-not-found message.
  */
 export function parentRefTypoHint(value: string): string {
-  if (!/^[a-z]+$/.test(value)) return "";
-  return `\n  If you meant a project ref: refs are exactly 20 lowercase letters ("${value}" has ${value.length}).`;
+  if (/^[a-z]+$/.test(value)) {
+    return `\n  If you meant a project ref: refs are exactly 20 lowercase letters ("${value}" has ${value.length}).`;
+  }
+  if (/^[A-Za-z]{20}$/.test(value)) {
+    return `\n  If you meant a project ref: refs are exactly 20 lowercase letters (try "${value.toLowerCase()}").`;
+  }
+  return "";
 }
 
 /**

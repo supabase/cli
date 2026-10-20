@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { closestByName } from "./closest-branch.ts";
+import { closestByName, nearMissByName } from "./closest-branch.ts";
 
 const branches = ["feature-x", "staging", "Main", "add_profiles", "db"].map((name) => ({ name }));
 
@@ -9,6 +9,8 @@ describe("closestByName", () => {
     { word: "feature-y", expected: "feature-x" },
     { word: "Feature-X", expected: "feature-x" },
     { word: "stagin", expected: "staging" },
+    { word: "stagign", expected: "staging" },
+    { word: "mian", expected: "Main" },
     { word: "staging2", expected: "staging" },
     { word: "main", expected: "Main" },
     { word: "add_profile", expected: "add_profiles" },
@@ -37,5 +39,40 @@ describe("closestByName", () => {
 
   it("finds nothing among no branches", () => {
     expect(closestByName([], "staging")).toBeUndefined();
+  });
+});
+
+describe("nearMissByName", () => {
+  const projectBranches = [
+    { name: "main", isDefault: true },
+    ...["develop", "staging", "app", "dev", "prod"].map((name) => ({ name, isDefault: false })),
+  ];
+  const nearMiss = (word: string) =>
+    nearMissByName(projectBranches, word, (branch) => branch.isDefault)?.name;
+
+  it.each(["mail", "man", "rain", "api", "pro", "devel"])(
+    "leaves %s an ordinary word, being close only to short names, the default branch or neither",
+    (word) => {
+      expect(nearMiss(word)).toBeUndefined();
+    },
+  );
+
+  it.each([
+    { word: "stagin", expected: "staging" },
+    { word: "stagign", expected: "staging" },
+    { word: "Dev", expected: "dev" },
+    { word: "dev", expected: "dev" },
+    { word: "MAIN", expected: "main" },
+  ])("takes $word for $expected", ({ word, expected }) => {
+    expect(nearMiss(word)).toBe(expected);
+  });
+
+  it("takes the first name alphabetically when several match ignoring case", () => {
+    const names = [{ name: "release-b" }, { name: "Release-A" }, { name: "release-a" }];
+    expect(nearMissByName(names, "RELEASE-A", () => false)?.name).toBe("Release-A");
+  });
+
+  it("finds nothing among no branches", () => {
+    expect(nearMissByName([], "staging", () => false)).toBeUndefined();
   });
 });

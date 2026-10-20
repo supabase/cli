@@ -697,7 +697,7 @@ describe("config diff integration", () => {
     return Effect.gen(function* () {
       yield* configDiff({ ...noFlags, projectRef: Option.some("staging") });
       expect(warningsOf(out)).toEqual([
-        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead: supabase config diff --remote=staging",
+        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead",
       ]);
       expect(out.stderrText).toContain(
         `Comparing against 'staging' (branch ${BRANCH_REF}) using base config`,
@@ -706,31 +706,6 @@ describe("config diff integration", () => {
         api.requests.some((request) => request.url.endsWith(`/v1/projects/${VALID_REF}/branches`)),
       ).toBe(true);
     }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--remote=<url> is rejected before any request", () => {
-    const { layer, api } = setup({ toml: 'project_id = "test"\n' });
-    return Effect.gen(function* () {
-      const error = yield* configDiff({
-        ...noFlags,
-        remote: Option.some<RemoteValue>({
-          _tag: "DbUrl",
-          url: "postgresql://postgres:pw@db.example.com:5432/postgres",
-        }),
-      }).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "TargetNeedsProjectError",
-        message: "`supabase config diff` needs a project, not a database URL.",
-      });
-      expect(api.requests).toEqual([]);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layer,
-          commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunServices.layer)),
-        ),
-      ),
-    );
   });
 
   it.effect("an unknown branch fails listing the available branches", () => {

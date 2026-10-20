@@ -435,31 +435,28 @@ describe("inspect report", () => {
         cliArgs: ["inspect", "report", "--linked"],
         flags: { linked: true },
         target: { kind: "linked", ref: VALID_REF },
-        warning:
-          "--linked is deprecated and will be removed in v4. Use --remote instead: supabase inspect report --remote",
+        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
       },
       {
         alias: "--project-ref",
         cliArgs: ["inspect", "report", "--project-ref", FLAG_REF],
         flags: { projectRef: Option.some(FLAG_REF) },
         target: { kind: "linked", ref: FLAG_REF, source: "flag" },
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase inspect report --remote=${FLAG_REF}`,
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
       },
       {
         alias: "--db-url",
         cliArgs: ["inspect", "report", "--db-url", DEPRECATED_DB_URL],
         flags: { dbUrl: Option.some(DEPRECATED_DB_URL) },
         target: { kind: "db-url" },
-        warning:
-          "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead: supabase inspect report --remote=<db-url>",
+        warning: "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead",
       },
       {
         alias: "--local",
         cliArgs: ["inspect", "report", "--local"],
         flags: { local: true },
         target: { kind: "local" },
-        warning:
-          "--local isn't needed (local is the default) and will be removed in v4: supabase inspect report",
+        warning: "--local isn't needed (local is the default) and will be removed in v4",
       },
     ] as const satisfies ReadonlyArray<{
       readonly alias: string;

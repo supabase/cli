@@ -540,35 +540,8 @@ describe("functions deploy", () => {
           `https://api.supabase.com/v1/projects/${OTHER_REF}/functions/deploy`,
         ]);
         expect(warnings()).toEqual([
-          `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase functions deploy <Function name>... --remote=${OTHER_REF}`,
+          `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
         ]);
-      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
-    });
-
-    it.effect("rejects a database URL before any request", () => {
-      const { api, layer } = selectionHarness([
-        "functions",
-        "deploy",
-        "hello-world",
-        "--remote=postgresql://postgres:pw@db.example.com:5432/postgres",
-      ]);
-      return Effect.gen(function* () {
-        yield* writeCliConfig(tempRoot.current);
-        yield* writeLocalFunction(tempRoot.current, "hello-world");
-
-        const error = yield* functionsDeploy({
-          ...baseFlags,
-          remote: Option.some({
-            _tag: "DbUrl",
-            url: "postgresql://postgres:pw@db.example.com:5432/postgres",
-          }),
-        }).pipe(Effect.flip);
-
-        expect(error).toMatchObject({
-          _tag: "TargetNeedsProjectError",
-          message: "`supabase functions deploy` needs a project, not a database URL.",
-        });
-        expect(api.requests).toEqual([]);
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
 

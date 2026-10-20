@@ -15,12 +15,11 @@ import { Output } from "../../../shared/output/output.service.ts";
 /**
  * What `ref` actually is, resolved for `config push`'s payload:
  *
- * - `"project"` — `ref` is the linked project itself.
- * - `"branch"` — `ref` is confirmed to be a preview branch (an explicit `--remote
- *   <name-or-uuid>`, or a live 404); `parentRef`/`branch` are each present only when they could
- *   be determined.
- * - `"unknown"` — the live probe couldn't tell (a timeout, a transport failure, or an
- *   unexpected status). Asserted as neither a branch nor a project.
+ * - `"project"` — `ref` is the linked or production project itself.
+ * - `"branch"` — `ref` is confirmed to be a preview branch (a `--remote` branch, or a live 404);
+ *   `parentRef`/`branch` are each present only when they could be determined.
+ * - `"unknown"` — nothing could settle it (a probe timeout, transport failure or unexpected
+ *   status, or a UUID looked up with no linked project). Asserted as neither a branch nor a project.
  */
 export type ConfigPushTarget =
   | { readonly kind: "project"; readonly ref: string }
@@ -33,24 +32,22 @@ export type ConfigPushTarget =
   | { readonly kind: "unknown"; readonly ref: string };
 
 /**
- * A branch name/UUID the caller already resolved `ref` from — this makes the caller's knowledge
- * that `ref` is a branch definitive, so {@link resolveConfigPushTarget} never runs the live
- * `getProject` probe for it:
+ * What the caller already knows about the `--remote` branch name/UUID `ref` was resolved from, so
+ * {@link resolveConfigPushTarget} never runs the live `getProject` probe for it:
  *
- * - `"name"` — both fields were resolved eagerly, nothing more to recover.
- * - `"uuid"` — certain to be a branch, but a UUID carries no display name and never forces its
- *   parent, so it runs the same best-effort cache recovery a live 404 does. A discriminated
- *   union rather than an all-optional shape, since a partial state (a parent without a name, or
- *   vice versa) never occurs in practice.
+ * - `"name"` — a branch found by name under its parent; both fields are known.
+ * - `"uuid"` — certainly a branch, but a UUID carries no display name and never forces its parent,
+ *   so it runs the same best-effort cache recovery a live 404 does.
+ * - `"production"` — the project's default branch, which is the project itself.
+ * - `"unverified"` — a UUID looked up with no linked project, which says nothing about `ref`.
  */
 export type ConfigPushKnownBranch =
   | { readonly kind: "name"; readonly branchName: string; readonly parentRef: string }
-  | { readonly kind: "uuid" };
+  | { readonly kind: "uuid" }
+  | { readonly kind: "production" }
+  | { readonly kind: "unverified" };
 
-/** `V1GetProjectOutput.name`/a branch's `name` are unconstrained strings — an
- * empty (or empty-after-sanitization-adjacent) live value must render as "no
- * name available", matching `parseCachedLinkedProject`'s own
- * empty-filtering convention for cached names. */
+/** An API name is an unconstrained string; an empty one means "no name available". */
 function normalizeApiName(name: string | undefined): string | undefined {
   return name !== undefined && name.length > 0 ? name : undefined;
 }
@@ -103,10 +100,11 @@ export function resolveConfigPushTarget(
       const { branchName, parentRef } = opts.knownBranch;
       return { kind: "branch", ref, parentRef, branch: branchName };
     }
+    if (opts.knownBranch?.kind === "production") return { kind: "project", ref };
+    if (opts.knownBranch?.kind === "unverified") return { kind: "unknown", ref };
 
-    // A uuid known-branch means ref is certainly a branch, so skip the live probe. Otherwise
-    // the probe's only certain outcomes are 200 (return immediately) and 404 (fall through to
-    // shared recovery).
+    // A known branch skips the live probe; otherwise its only certain outcomes are 200 (return)
+    // and 404 (fall through to the shared recovery).
     if (opts.knownBranch === undefined) {
       const api = yield* CommandPlatformApi;
       const output = yield* Output;
@@ -132,8 +130,7 @@ export function resolveConfigPushTarget(
       const probed = ProbeOutcome.$match(probe, {
         Project: (): ConfigPushTarget => ({ kind: "project", ref }),
         Unknown: (): ConfigPushTarget => ({ kind: "unknown", ref }),
-        // A Branch probe (404) falls into the shared recovery below, same as an
-        // incomplete uuid knownBranch.
+        // A 404 falls into the shared recovery below, same as a uuid known branch.
         Branch: () => undefined,
       });
       if (probed !== undefined) {

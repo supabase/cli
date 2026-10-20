@@ -1,7 +1,8 @@
+import { Result } from "effect";
 import type { Command } from "effect/cli";
 
 import { unwrapToSingleParam } from "../../command-internal/param-introspection.ts";
-import { BRANCH_PROJECT_REF_PATTERN } from "../../command-internal/ref-patterns.ts";
+import { parseRemoteValue, type RemoteValue } from "../../command-internal/target/remote-value.ts";
 import {
   couldNameBranch,
   DB_URL_PATTERN,
@@ -21,11 +22,15 @@ export interface RemoteArgvLeaf {
   readonly consumesNextToken: (token: string) => boolean;
 }
 
+const INLINE_REMOTE_PREFIX = "--remote=";
+
 interface RemoteArgvScan {
   /** Indexes of the bare (non-flag, non-flag-value) tokens ahead of any `--`. */
   readonly bare: ReadonlyArray<number>;
   /** Indexes of the `--remote` tokens that carry no inline value. */
   readonly remotes: ReadonlyArray<number>;
+  /** Indexes of the `--remote=<value>` tokens. */
+  readonly inline: ReadonlyArray<number>;
   /** Index of the first `--`, or `args.length`. */
   readonly end: number;
 }
@@ -33,6 +38,7 @@ interface RemoteArgvScan {
 const scanRemoteArgv = (args: ReadonlyArray<string>, leaf: RemoteArgvLeaf): RemoteArgvScan => {
   const bare: Array<number> = [];
   const remotes: Array<number> = [];
+  const inline: Array<number> = [];
   let end = args.length;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -45,6 +51,10 @@ const scanRemoteArgv = (args: ReadonlyArray<string>, leaf: RemoteArgvLeaf): Remo
       bare.push(index);
       continue;
     }
+    if (arg.startsWith(INLINE_REMOTE_PREFIX)) {
+      inline.push(index);
+      continue;
+    }
     const next = args[index + 1];
     const isLiteral = next !== undefined && BOOLEAN_FLAG_VALUES.has(next);
     if (arg === "--remote") {
@@ -54,13 +64,13 @@ const scanRemoteArgv = (args: ReadonlyArray<string>, leaf: RemoteArgvLeaf): Remo
       index += 1;
     }
   }
-  return { bare, remotes, end };
+  return { bare, remotes, inline, end };
 };
 
 /**
  * Joins a bare `--remote <word>` into `--remote=<word>` when the word cannot be one of the
- * command's operands: the command takes none, the word is a project ref, a database URL or a
- * boolean literal, or the command already has more operands than it takes.
+ * command's operands: the command takes none, the word is a database URL or a boolean literal, or
+ * the command already has more operands than it takes.
  */
 export function joinRemoteOperands(
   args: ReadonlyArray<string>,
@@ -79,7 +89,6 @@ export function joinRemoteOperands(
     if (
       LINKED_LITERAL.test(word) ||
       leaf.operandCapacity === 0 ||
-      BRANCH_PROJECT_REF_PATTERN.test(word) ||
       DB_URL_PATTERN.test(word) ||
       (couldNameBranch(word) && operandCount > leaf.operandCapacity)
     ) {
@@ -91,6 +100,35 @@ export function joinRemoteOperands(
     if (joined.has(index)) return [`--remote=${args[index + 1]}`];
     return joined.has(index - 1) ? [] : [arg];
   });
+}
+
+const selectionKey = (value: RemoteValue): string => {
+  switch (value._tag) {
+    case "Linked":
+      return "linked";
+    case "Ref":
+      return `ref:${value.ref}`;
+    case "DbUrl":
+      return `db-url:${value.url}`;
+    case "Branch":
+      return `branch:${value.name}`;
+  }
+};
+
+/**
+ * Whether `args`, with bare `--remote <word>` already joined, give `--remote` more than once with
+ * values that differ. A bare `--remote` selects the linked project, even when an operand follows
+ * it; a value the flag rejects is left for its parser to report.
+ */
+export function hasConflictingRemotes(args: ReadonlyArray<string>, leaf: RemoteArgvLeaf): boolean {
+  const { remotes, inline } = scanRemoteArgv(args, leaf);
+  const selections = new Set<string>();
+  if (remotes.length > 0) selections.add(selectionKey({ _tag: "Linked" }));
+  for (const index of inline) {
+    const parsed = parseRemoteValue((args[index] ?? "").slice(INLINE_REMOTE_PREFIX.length));
+    if (Result.isSuccess(parsed)) selections.add(selectionKey(parsed.success));
+  }
+  return selections.size > 1;
 }
 
 const UNKNOWN_LEAF: RemoteArgvLeaf = {

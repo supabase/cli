@@ -95,6 +95,10 @@ function branchNotFoundMessage(value: string, parentRef: string, branches: Branc
   );
 }
 
+/** The production branch is the linked project itself. */
+export const isDefaultBranch = (branch: ParentBranch, parentRef: string): boolean =>
+  branch.is_default || branch.project_ref === parentRef;
+
 /** UUID matching is case-insensitive; name matching is exact, with the not-found hint covering near misses. */
 export const findBranch = (branches: Branches, value: string): ParentBranch | undefined =>
   branches.find(
@@ -133,23 +137,37 @@ const startBranchLookupTask = Effect.fnUntraced(function* (label: string) {
   return output.format === "text" && output.interactive ? yield* output.task(label) : undefined;
 });
 
-/** `GET /v1/projects/{ref}/branches`, shared by every branch-name lookup. */
-export const listParentBranches = Effect.fnUntraced(function* (parentRef: string, label: string) {
+const LIST_BRANCHES_FAILED = "failed to list branches: ";
+
+/** The transport failure behind a branch-list error, without the `failed to list branches: ` lead the error message carries. */
+export const listBranchesFailureCause = (error: LinkBranchListNetworkError): string => {
+  const [firstLine = ""] = error.message.split("\n");
+  return firstLine.startsWith(LIST_BRANCHES_FAILED)
+    ? firstLine.slice(LIST_BRANCHES_FAILED.length)
+    : firstLine;
+};
+
+/** What to try when the project whose branches were listed is itself a preview branch, which has none. */
+export const previewBranchHint = (ref: string): string =>
+  `If ${ref} is itself a preview branch, link its parent project first: supabase link --project-ref <parent-ref>`;
+
+/** `GET /v1/projects/{ref}/branches`, shared by every branch-name lookup; no `label` means no spinner. */
+const listParentBranches = Effect.fnUntraced(function* (parentRef: string, label?: string) {
   const api = yield* acquireApi();
 
   const mapBranchListError = mapHttpError({
     networkError: LinkBranchListNetworkError,
     statusError: LinkBranchListStatusError,
-    networkMessage: (cause) => `failed to list branches: ${cause}`,
+    networkMessage: (cause) => `${LIST_BRANCHES_FAILED}${cause}`,
     statusMessage: (status, body) => {
       if (status === 401) return AUTHENTICATION_FAILED_STATUS_MESSAGE;
       return status === 404
-        ? `Cannot list branches for project ${parentRef} (HTTP 404). If ${parentRef} is itself a preview branch, link its parent project first: supabase link --project-ref <parent-ref>`
+        ? `Cannot list branches for project ${parentRef} (HTTP 404). ${previewBranchHint(parentRef)}`
         : `unexpected list branches status ${status}: ${body}`;
     },
   });
 
-  const task = yield* startBranchLookupTask(label);
+  const task = label === undefined ? undefined : yield* startBranchLookupTask(label);
   const branches: Branches = yield* api.v1.listAllBranches({ ref: parentRef }).pipe(
     Effect.tapError(() => task?.fail() ?? Effect.void),
     Effect.catch(mapBranchListError),
@@ -158,8 +176,30 @@ export const listParentBranches = Effect.fnUntraced(function* (parentRef: string
   return branches;
 });
 
-const resolveInParent = Effect.fnUntraced(function* (value: string, parentRef: string) {
-  const branches = yield* listParentBranches(parentRef, "Resolving branch...");
+type ResolvedParent = Extract<ParentRefResolution, { readonly kind: "resolved" }>;
+
+/**
+ * The branches of the parent a lookup runs under. A cached parent stands only while it lists the
+ * linked project as a branch; otherwise the linked project's own branches are used, unless they
+ * cannot be listed, as for a deleted branch's project, which keeps the cached parent.
+ */
+export const listLinkedParentBranches = Effect.fnUntraced(function* (
+  parent: ResolvedParent,
+  label: string,
+) {
+  const cached = yield* listParentBranches(parent.ref, label);
+  const { linkedRef } = parent;
+  if (linkedRef === undefined || cached.some((branch) => branch.project_ref === linkedRef)) {
+    return { parentRef: parent.ref, branches: cached };
+  }
+  const own = yield* listParentBranches(linkedRef).pipe(Effect.option);
+  return Option.isSome(own)
+    ? { parentRef: linkedRef, branches: own.value }
+    : { parentRef: parent.ref, branches: cached };
+});
+
+const resolveInParent = Effect.fnUntraced(function* (value: string, parent: ResolvedParent) {
+  const { parentRef, branches } = yield* listLinkedParentBranches(parent, "Resolving branch...");
   yield* Effect.annotateCurrentSpan({
     "project.parent_ref": parentRef,
     "branch.count": branches.length,
@@ -184,7 +224,7 @@ const resolveInParent = Effect.fnUntraced(function* (value: string, parentRef: s
     projectRef: found.project_ref,
     branchName: found.name,
     parentRef,
-    isDefault: found.is_default || found.project_ref === parentRef,
+    isDefault: isDefaultBranch(found, parentRef),
   } satisfies BranchResolution;
 });
 
@@ -199,20 +239,19 @@ const resolveInParent = Effect.fnUntraced(function* (value: string, parentRef: s
 export const resolveLinkBranchRef = Effect.fn("Target.resolveBranch")(function* (value: string) {
   const parent = yield* resolveLinkedParentRef();
   if (parent.kind !== "resolved") return yield* unresolvedParent(parent, value);
-  return yield* resolveInParent(value, parent.ref);
+  return yield* resolveInParent(value, parent);
 });
 
 const resolveBranchById = Effect.fnUntraced(function* (id: string) {
   const api = yield* acquireApi();
+  const notFoundMessage = `Branch "${sanitizeInlineName(id)}" not found. Run \`supabase branches list\` to see available branches.`;
   const mapBranchGetError = mapHttpError({
     networkError: LinkBranchListNetworkError,
     statusError: LinkBranchListStatusError,
     networkMessage: (cause) => `failed to look up branch: ${cause}`,
     statusMessage: (status, body) => {
       if (status === 401) return AUTHENTICATION_FAILED_STATUS_MESSAGE;
-      return status === 404
-        ? `Branch "${sanitizeInlineName(id)}" not found. Run \`supabase branches list\` to see available branches.`
-        : `unexpected get branch status ${status}: ${body}`;
+      return status === 404 ? notFoundMessage : `unexpected get branch status ${status}: ${body}`;
     },
   });
 
@@ -220,6 +259,11 @@ const resolveBranchById = Effect.fnUntraced(function* (id: string) {
   const detail = yield* api.v1.getABranchConfig({ branch_id_or_ref: id }).pipe(
     Effect.tapError(() => task?.fail() ?? Effect.void),
     Effect.catch(mapBranchGetError),
+    Effect.catchTag("SupabaseApiInputError", () =>
+      Effect.fail(
+        new LinkBranchListStatusError({ status: 404, body: "", message: notFoundMessage }),
+      ),
+    ),
   );
   yield* task?.clear ?? Effect.void;
 
@@ -247,7 +291,7 @@ export const resolveRemoteBranchRef = Effect.fn("Target.resolveRemoteBranch")(fu
   value: string,
 ) {
   const parent = yield* resolveLinkedParentRef();
-  if (parent.kind === "resolved") return yield* resolveInParent(value, parent.ref);
+  if (parent.kind === "resolved") return yield* resolveInParent(value, parent);
   if (BRANCH_UUID_PATTERN.test(value)) return yield* resolveBranchById(value);
   return yield* unresolvedParent(parent, value);
 });

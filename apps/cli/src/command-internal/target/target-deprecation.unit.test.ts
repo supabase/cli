@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  type DeprecationCommand,
-  deprecationMessages,
-  refFromDbUrl,
-  remoteFlagText,
-} from "./target-deprecation.ts";
+import { deprecationMessages, refFromDbUrl, remoteFlagText } from "./target-deprecation.ts";
 import type { TargetDeprecation } from "./target-selector.ts";
 
 const REF = "abcdefghijklmnopqrst";
@@ -41,31 +36,23 @@ describe("refFromDbUrl", () => {
 });
 
 describe("deprecationMessages", () => {
-  const dbPush: DeprecationCommand = { path: "db push", operands: [] };
-  const secretsSet: DeprecationCommand = { path: "secrets set", operands: ["<NAME=VALUE>..."] };
+  const messages = (deprecations: ReadonlyArray<TargetDeprecation>) =>
+    deprecationMessages(deprecations, HOST);
 
-  const messages = (
-    deprecations: ReadonlyArray<TargetDeprecation>,
-    command: DeprecationCommand | undefined = dbPush,
-  ) => deprecationMessages(deprecations, { command, projectHost: HOST });
-
-  it("shows the command path, its operand placeholders and the replacement last", () => {
+  it("points a deprecated --project-ref at --remote=<ref>", () => {
     expect(
-      messages(
-        [{ kind: "remote-alias", flags: ["--project-ref"], remote: { _tag: "Ref", ref: REF } }],
-        secretsSet,
-      ),
+      messages([
+        { kind: "remote-alias", flags: ["--project-ref"], remote: { _tag: "Ref", ref: REF } },
+      ]),
     ).toEqual([
-      `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase secrets set <NAME=VALUE>... --remote=${REF}`,
+      "--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead",
     ]);
   });
 
   it("points a deprecated --linked at a bare --remote", () => {
     expect(
       messages([{ kind: "remote-alias", flags: ["--linked"], remote: { _tag: "Linked" } }]),
-    ).toEqual([
-      "--linked is deprecated and will be removed in v4. Use --remote instead: supabase db push --remote",
-    ]);
+    ).toEqual(["--linked is deprecated and will be removed in v4. Use --remote instead"]);
   });
 
   it("joins every alias the run used into one warning", () => {
@@ -78,11 +65,11 @@ describe("deprecationMessages", () => {
         },
       ]),
     ).toEqual([
-      `--linked and --project-ref are deprecated and will be removed in v4. Use --remote=<ref> instead: supabase db push --remote=${REF}`,
+      `--linked and --project-ref are deprecated and will be removed in v4. Use --remote=<ref> instead`,
     ]);
   });
 
-  it("shows the branch an alias value names, without its userinfo", () => {
+  it("points a deprecated --project-ref branch name at --remote=<branch>", () => {
     expect(
       messages([
         {
@@ -92,7 +79,7 @@ describe("deprecationMessages", () => {
         },
       ]),
     ).toEqual([
-      "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead: supabase db push --remote=staging",
+      "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead",
     ]);
   });
 
@@ -102,7 +89,7 @@ describe("deprecationMessages", () => {
       { kind: "remote-alias", flags: ["--db-url"], remote: { _tag: "DbUrl", url } },
     ]);
     expect(message).toBe(
-      `--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead: supabase db push --remote=<db-url>, or --remote=${REF} with an access token set`,
+      `--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead, or --remote=${REF} with an access token set`,
     );
     expect(message).not.toContain("hunter2");
   });
@@ -116,7 +103,7 @@ describe("deprecationMessages", () => {
       },
     ]);
     expect(message).toBe(
-      "--db-url is deprecated and will be removed in v4. Convert the connection string to a postgresql:// URL and pass it as --remote=<url> instead: supabase db push --remote=<url>",
+      "--db-url is deprecated and will be removed in v4. Convert the connection string to a postgresql:// URL and pass it as --remote=<url> instead",
     );
     expect(message).not.toContain("hunter2");
   });
@@ -129,23 +116,14 @@ describe("deprecationMessages", () => {
           { kind: "remote-alias", flags: ["--project-ref"], remote: { _tag: "Branch", name } },
         ]),
       ).toEqual([
-        `--project-ref is deprecated and will be removed in v4. Reach a branch named "${name}" with --remote=<its ref or UUID> instead: supabase db push --remote=<its ref or UUID>`,
+        `--project-ref is deprecated and will be removed in v4. Reach a branch named "${name}" with --remote=<its ref or UUID> instead`,
       ]);
     },
   );
 
-  it("drops the example when the command is unknown", () => {
-    expect(
-      deprecationMessages(
-        [{ kind: "remote-alias", flags: ["--project-id"], remote: { _tag: "Ref", ref: REF } }],
-        { command: undefined, projectHost: HOST },
-      ),
-    ).toEqual(["--project-id is deprecated and will be removed in v4. Use --remote=<ref> instead"]);
-  });
-
-  it("says --local is not needed and shows the command without it", () => {
-    expect(messages([{ kind: "local" }], secretsSet)).toEqual([
-      "--local isn't needed (local is the default) and will be removed in v4: supabase secrets set <NAME=VALUE>...",
+  it("says --local is not needed", () => {
+    expect(messages([{ kind: "local" }])).toEqual([
+      "--local isn't needed (local is the default) and will be removed in v4",
     ]);
   });
 });

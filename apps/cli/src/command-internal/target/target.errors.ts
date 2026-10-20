@@ -7,7 +7,7 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-/** More than one of `--remote`, `--linked`, `--db-url` and `--local` was set. */
+/** More than one of `--remote`, `--linked`, `--db-url` and `--local` was set, or `--remote` was given twice with different values. */
 export class TargetSelectorConflictError extends Data.TaggedError("TargetSelectorConflictError")<{
   readonly flags: ReadonlyArray<string>;
   readonly message: string;
@@ -53,7 +53,7 @@ export class TargetInvalidValueError extends Data.TaggedError("TargetInvalidValu
   }
 }
 
-/** A command that acts on a project was given a database URL. */
+/** A command that acts on a parent project was given a branch name. */
 export class TargetNeedsProjectError extends Data.TaggedError("TargetNeedsProjectError")<{
   readonly message: string;
 }> {
@@ -76,9 +76,9 @@ export class TargetRemoteAmbiguousError extends Data.TaggedError("TargetRemoteAm
   readonly cause?: unknown;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.authFailure === "token") return actionability.authToken;
     if (this.status === 401 || this.status === 403) return statusCodeActionability(this.status);
     if (this.authFailure === "login") return actionability.authLogin;
-    if (this.authFailure === "token") return actionability.authToken;
     return actionability.provideFlags;
   }
 }
@@ -97,5 +97,4 @@ export type TargetSelectorError =
   | TargetSelectorConflictError
   | TargetProjectRefConflictError
   | TargetEmptyValueError
-  | TargetInvalidValueError
-  | TargetNeedsProjectError;
+  | TargetInvalidValueError;

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { rootCommandForFeatures } from "../../cli/root.ts";
-import { bareRemoteOperand, joinRemoteOperands, type RemoteArgvLeaf } from "./remote-argv.ts";
+import {
+  bareRemoteOperand,
+  hasConflictingRemotes,
+  joinRemoteOperands,
+  type RemoteArgvLeaf,
+} from "./remote-argv.ts";
 import { prepareCliArgs } from "./run.ts";
 
 const REF = "abcdefghijklmnopqrst";
@@ -29,10 +34,28 @@ describe("joinRemoteOperands", () => {
       expected: ["db", "push", `--remote=feature-x`],
     },
     {
-      name: "joins a project ref",
+      name: "joins a project ref for a command with no operands",
+      leaf: noOperands,
+      args: ["db", "push", "--remote", REF],
+      expected: ["db", "push", `--remote=${REF}`],
+    },
+    {
+      name: "keeps a project ref as the operand when the command takes one",
       leaf: oneOperand,
       args: ["storage", "ls", "--remote", REF],
-      expected: ["storage", "ls", `--remote=${REF}`],
+      expected: ["storage", "ls", "--remote", REF],
+    },
+    {
+      name: "joins a project ref once the command has more operands than it takes",
+      leaf: oneOperand,
+      args: ["storage", "ls", "ss:///bucket", "--remote", REF],
+      expected: ["storage", "ls", "ss:///bucket", `--remote=${REF}`],
+    },
+    {
+      name: "never joins a project ref for a command with a variable number of operands",
+      leaf: variadic,
+      args: ["functions", "deploy", "--remote", REF, "hello"],
+      expected: ["functions", "deploy", "--remote", REF, "hello"],
     },
     {
       name: "joins a database URL",
@@ -145,6 +168,12 @@ describe("bareRemoteOperand", () => {
       expected: "feature-x",
     },
     {
+      name: "returns a project-ref-shaped word the command took as its operand",
+      leaf: oneOperand,
+      args: ["db", "pull", "--remote", REF],
+      expected: REF,
+    },
+    {
       name: "skips a word that is a command-path segment",
       leaf: noOperands,
       args: ["seed", "--remote", "buckets"],
@@ -199,6 +228,92 @@ describe("bareRemoteOperand", () => {
   });
 });
 
+describe("hasConflictingRemotes", () => {
+  const cases: ReadonlyArray<{
+    readonly name: string;
+    readonly leaf: RemoteArgvLeaf;
+    readonly args: ReadonlyArray<string>;
+    readonly expected: boolean;
+  }> = [
+    {
+      name: "is false for a single --remote",
+      leaf: noOperands,
+      args: ["db", "push", "--remote=feature-x"],
+      expected: false,
+    },
+    {
+      name: "is false for identical values",
+      leaf: noOperands,
+      args: ["db", "push", "--remote=feature-x", "--remote=feature-x"],
+      expected: false,
+    },
+    {
+      name: "is false for a repeated bare --remote",
+      leaf: noOperands,
+      args: ["db", "push", "--remote", "--remote"],
+      expected: false,
+    },
+    {
+      name: "is true for two different branch names",
+      leaf: noOperands,
+      args: ["db", "push", "--remote=feature-x", "--remote=feature-y"],
+      expected: true,
+    },
+    {
+      name: "is true for a project ref and a database URL",
+      leaf: noOperands,
+      args: ["db", "push", `--remote=${REF}`, `--remote=${URL}`],
+      expected: true,
+    },
+    {
+      name: "is true for a bare --remote and a value",
+      leaf: noOperands,
+      args: ["db", "push", "--remote", `--remote=${REF}`],
+      expected: true,
+    },
+    {
+      name: "reads a linked boolean literal as the bare --remote",
+      leaf: variadic,
+      args: ["functions", "deploy", "--remote=YES", "--remote", "--remote=on"],
+      expected: false,
+    },
+    {
+      name: "reads a space-form word joined to --remote against a bare --remote",
+      leaf: noOperands,
+      args: ["db", "push", "--remote", "feature-x", "--remote"],
+      expected: true,
+    },
+    {
+      name: "counts a bare --remote followed by an operand as the linked project",
+      leaf: oneOperand,
+      args: ["storage", "ls", "--remote", "feature-x", "--remote=feature-x"],
+      expected: true,
+    },
+    {
+      name: "ignores a value --remote rejects, which its parser reports",
+      leaf: noOperands,
+      args: ["db", "push", "--remote=false", "--remote=feature-x"],
+      expected: false,
+    },
+    {
+      name: "ignores a --remote after --",
+      leaf: variadic,
+      args: ["functions", "deploy", "--remote=feature-x", "--", "--remote=feature-y"],
+      expected: false,
+    },
+    {
+      name: "ignores a --remote another flag takes as its value",
+      leaf: noOperands,
+      args: ["db", "push", "--password", "--remote=feature-y", "--remote=feature-x"],
+      expected: false,
+    },
+  ];
+
+  it.each(cases)("$name", ({ leaf, args, expected }) => {
+    expect(hasConflictingRemotes(joinRemoteOperands(args, leaf), leaf)).toBe(expected);
+  });
+});
+
 describe("prepareCliArgs argv", () => {
   const root = rootCommandForFeatures();
   const cases: ReadonlyArray<{
@@ -227,9 +342,19 @@ describe("prepareCliArgs argv", () => {
       expected: ["storage", "ls", "--remote", "ss:///bucket"],
     },
     {
-      name: "joins a branch for functions deploy only when it is a ref or URL",
+      name: "joins a database URL for functions deploy, whose operands are variable",
+      args: ["functions", "deploy", "--remote", URL, "hello"],
+      expected: ["functions", "deploy", `--remote=${URL}`, "hello"],
+    },
+    {
+      name: "leaves a project-ref-shaped word for functions deploy, which may be a function name",
       args: ["functions", "deploy", "--remote", REF, "hello"],
-      expected: ["functions", "deploy", `--remote=${REF}`, "hello"],
+      expected: ["functions", "deploy", "--remote", REF, "hello"],
+    },
+    {
+      name: "leaves a project-ref-shaped word for db pull, which may be a migration name",
+      args: ["db", "pull", "--remote", REF],
+      expected: ["db", "pull", "--remote", REF],
     },
     {
       name: "joins for seed's persistent --remote after the subcommand",
@@ -298,15 +423,42 @@ describe("prepareCliArgs bareRemoteOperand on the real command tree", () => {
     expect(operandOf(["db", "pull", "--remote", "feature-x"])).toBe("feature-x");
   });
 
+  it("reads a project-ref-shaped word as db pull's operand rather than joining it", () => {
+    expect(operandOf(["db", "pull", "--remote", REF])).toBe(REF);
+  });
+
   it("reads no operand from gen types, whose legacy language operand is hidden", () => {
     expect(operandOf(["gen", "types", "--remote", "feature-x"])).toBeUndefined();
   });
 
-  it("leaves gen types's hidden legacy language operand out of its placeholders", () => {
-    expect(prepareCliArgs(root, ["gen", "types", "--remote"]).operandPlaceholders?.()).toEqual([]);
-  });
-
   it("finds nothing once every word is joined into --remote=<word>", () => {
     expect(operandOf(["db", "push", "--remote", "feature-x"])).toBeUndefined();
+  });
+});
+
+describe("prepareCliArgs remoteConflict on the real command tree", () => {
+  const root = rootCommandForFeatures();
+  const conflictOf = (raw: ReadonlyArray<string>) => prepareCliArgs(root, raw).remoteConflict;
+
+  it.each([
+    { name: "a leaf's own --remote", args: ["db", "push", "--remote=feature-x", "--remote"] },
+    {
+      name: "seed's persistent --remote",
+      args: ["seed", "buckets", `--remote=${REF}`, "--remote=feature-x"],
+    },
+    {
+      name: "a space-form word joined into --remote",
+      args: ["db", "push", "--remote", "feature-x", "--remote=feature-y"],
+    },
+  ])("is set for $name given twice with different values", ({ args }) => {
+    expect(conflictOf(args)).toBe(true);
+  });
+
+  it("is not set when the repeated values are the same", () => {
+    expect(conflictOf(["db", "push", "--remote=feature-x", "--remote=feature-x"])).toBe(false);
+  });
+
+  it("is not set when db pull's operand follows a bare --remote that is repeated bare", () => {
+    expect(conflictOf(["db", "pull", "--remote", "feature-x", "--remote"])).toBe(false);
   });
 });

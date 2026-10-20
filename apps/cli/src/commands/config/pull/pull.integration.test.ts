@@ -47,7 +47,6 @@ import { realLinkedProjectCache } from "../../../../tests/helpers/permission-rea
 import { configPullRun } from "../../../command-internal/config-pull-run.ts";
 import { GLOBAL_OUTPUT_FORMATS, YesFlag } from "../../../command-internal/global-flags.ts";
 import type { RemoteValue } from "../../../command-internal/target/remote-value.ts";
-import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   configPull,
@@ -1781,35 +1780,10 @@ describe("config pull integration", () => {
     return Effect.gen(function* () {
       yield* configPull({ ...noFlags, projectRef: Option.some("staging") });
       expect(warningsOf(out)).toEqual([
-        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead: supabase config pull --remote=staging",
+        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead",
       ]);
       expect(out.stderrText).toContain(`Pulling config from 'staging' (branch ${BRANCH_REF})`);
     }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--remote=<url> is rejected before any request", () => {
-    const { layer, api } = setup({ toml: 'project_id = "test"\n', yes: true });
-    return Effect.gen(function* () {
-      const error = yield* configPull({
-        ...noFlags,
-        remote: Option.some<RemoteValue>({
-          _tag: "DbUrl",
-          url: "postgresql://postgres:pw@db.example.com:5432/postgres",
-        }),
-      }).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "TargetNeedsProjectError",
-        message: "`supabase config pull` needs a project, not a database URL.",
-      });
-      expect(api.requests).toEqual([]);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layer,
-          commandRuntimeLayer(["config", "pull"]).pipe(Layer.provide(BunServices.layer)),
-        ),
-      ),
-    );
   });
 
   it.effect("a branch-named target resolves via the linked parent project", () => {

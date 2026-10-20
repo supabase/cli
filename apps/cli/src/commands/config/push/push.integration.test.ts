@@ -225,6 +225,14 @@ const BRANCH_BY_NAME = {
   with_data: false,
 };
 
+/** The production branch's list row: its project is the project itself, so its ref is the parent's. */
+const DEFAULT_BRANCH = {
+  ...BRANCH_BY_NAME,
+  name: "main",
+  project_ref: REF,
+  is_default: true,
+};
+
 /** `V1GetABranchConfig` body for a UUID `--remote` lookup. */
 const BRANCH_CONFIG = {
   ref: UUID_TARGET_REF,
@@ -3528,6 +3536,66 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect.each([
+    { label: "name", value: DEFAULT_BRANCH.name },
+    { label: "UUID", value: DEFAULT_BRANCH.id },
+  ])(
+    "--remote=<default-branch $label> reports the production project, not a branch",
+    ({ value }) => {
+      const { layer, out, api } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: true,
+        format: "json",
+        branchList: { status: 200, body: [DEFAULT_BRANCH] },
+        v2: { status: 200, body: v2Response({ ref: REF }) },
+      });
+      return Effect.gen(function* () {
+        yield* configPush(pushRemoteBranch(value));
+        const data = yield* decodeJsonRecord(out.messages.find((m) => m.type === "success")?.data);
+        expect(data["is_branch"]).toBe(false);
+        expect("branch" in data).toBe(false);
+        expect("parent_project_ref" in data).toBe(false);
+        expect(data["target"]).toEqual({
+          kind: "linked",
+          project_ref: REF,
+          environment: "production",
+        });
+        expect(api.requests.some((r) => new URL(r.url).pathname === `/v1/projects/${REF}`)).toBe(
+          false,
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "--remote=<uuid> with no linked project reports an unverified target, not a branch",
+    () => {
+      const { layer, out, api } = setup({
+        toml: BRANCH_PUSH_TOML,
+        yes: true,
+        format: "json",
+        projectId: Option.none(),
+        project: { status: 404, body: {} },
+        branchById: { status: 200, body: BRANCH_CONFIG },
+        v2: { status: 200, body: v2Response({ ref: UUID_TARGET_REF }) },
+      });
+      return Effect.gen(function* () {
+        yield* configPush(pushRemoteBranch(BRANCH_UUID));
+        const data = yield* decodeJsonRecord(out.messages.find((m) => m.type === "success")?.data);
+        expect(data["project_ref"]).toBe(UUID_TARGET_REF);
+        expect("is_branch" in data).toBe(false);
+        expect(data["target"]).toEqual({
+          kind: "linked",
+          project_ref: UUID_TARGET_REF,
+          environment: "unverified",
+        });
+        expect(
+          api.requests.some((r) => new URL(r.url).pathname === `/v1/projects/${UUID_TARGET_REF}`),
+        ).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("--project-ref still resolves a branch name and warns to use --remote", () => {
     const { layer, out } = setup({
       toml: BRANCH_PUSH_TOML,
@@ -3539,7 +3607,7 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
     return Effect.gen(function* () {
       yield* configPush({ remote: Option.none(), projectRef: Option.some("staging") });
       expect(warningsOf(out)).toEqual([
-        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead: supabase config push --remote=staging",
+        "--project-ref is deprecated and will be removed in v4. Use --remote=<branch> instead",
       ]);
       expect(out.stderrText).toContain(`Target: project ${REF} · branch staging (${BRANCH_REF})\n`);
     }).pipe(Effect.provide(layer));
@@ -3562,31 +3630,6 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
         true,
       );
     }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--remote=<url> is rejected before any request", () => {
-    const { layer, api } = setup({ toml: BRANCH_PUSH_TOML, yes: true });
-    return Effect.gen(function* () {
-      const error = yield* configPush({
-        remote: Option.some<RemoteValue>({
-          _tag: "DbUrl",
-          url: "postgresql://postgres:pw@db.example.com:5432/postgres",
-        }),
-        projectRef: Option.none(),
-      }).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "TargetNeedsProjectError",
-        message: "`supabase config push` needs a project, not a database URL.",
-      });
-      expect(api.requests).toEqual([]);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layer,
-          commandRuntimeLayer(["config", "push"]).pipe(Layer.provide(BunServices.layer)),
-        ),
-      ),
-    );
   });
 
   it.effect("--remote=<unknown-branch-name> fails listing the available branches", () => {

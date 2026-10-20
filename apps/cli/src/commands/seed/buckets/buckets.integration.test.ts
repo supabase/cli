@@ -310,7 +310,6 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
 });
 
 const FLAG_REF = "flagflagflagflagflag";
-const DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 
 const VECTOR_LIST = "/storage/v1/vector/ListVectorBuckets";
 const VECTOR_CREATE = "/storage/v1/vector/CreateVectorBucket";
@@ -2343,25 +2342,6 @@ describe("seed buckets", () => {
     }).pipe(seedScenario),
   );
 
-  it.effect("rejects --remote=<url> because seeding buckets needs a project, not a database", () =>
-    Effect.gen(function* () {
-      const { layer, requests, linkedCache } = yield* setupSeedBuckets(tmp.current, {
-        toml: "[storage.buckets.test]\npublic = true\n",
-      });
-      const error = yield* seedBuckets({
-        ...DEFAULT_FLAGS,
-        remote: Option.some({ _tag: "DbUrl", url: DB_URL } as const),
-        local: false,
-      }).pipe(Effect.provide(layer), Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "TargetNeedsProjectError",
-        message: expect.stringContaining("needs a project, not a database URL"),
-      });
-      expect(requests).toEqual([]);
-      expect(linkedCache.cached).toBe(false);
-    }).pipe(seedScenario),
-  );
-
   describe("deprecated selectors", () => {
     const cases = [
       {
@@ -2369,23 +2349,21 @@ describe("seed buckets", () => {
         cliArgs: ["seed", "buckets", "--linked"],
         flags: { linked: true, local: false },
         host: `https://${VALID_REF}.supabase.co`,
-        warning:
-          "--linked is deprecated and will be removed in v4. Use --remote instead: supabase seed buckets --remote",
+        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
       },
       {
         alias: "--project-ref",
         cliArgs: ["seed", "buckets", "--project-ref", FLAG_REF],
         flags: { projectRef: Option.some(FLAG_REF), local: false },
         host: `https://${FLAG_REF}.supabase.co`,
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase seed buckets --remote=${FLAG_REF}`,
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
       },
       {
         alias: "--local",
         cliArgs: ["seed", "buckets", "--local"],
         flags: { local: true },
         host: "http://",
-        warning:
-          "--local isn't needed (local is the default) and will be removed in v4: supabase seed buckets",
+        warning: "--local isn't needed (local is the default) and will be removed in v4",
       },
     ] as const;
 

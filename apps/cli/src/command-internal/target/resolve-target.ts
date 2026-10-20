@@ -6,10 +6,9 @@ import { readProjectRefFile } from "../../shared/config/temp-paths.ts";
 import { CommandTarget } from "../../shared/output/command-target.service.ts";
 import { readCachedLinkedProject } from "../parent-project-ref.ts";
 import { resolveHostedRemote, selectTarget } from "./remote-resolution.ts";
-import type { TargetFlagValuesWithDbUrl, TargetFlagValuesWithoutDbUrl } from "./target-flags.ts";
+import type { TargetFlagValues } from "./target-flags.ts";
 import { linkedAlternativeHint } from "./target-identity.ts";
 import { TargetPolicy } from "./target-policy.ts";
-import type { TargetSelectorInput } from "./target-selector.ts";
 
 export type ResolvedTarget =
   | { readonly kind: "local" }
@@ -22,6 +21,8 @@ export type ResolvedTarget =
       readonly branch?: string | undefined;
       /** The linked project the branch was found under, when it was looked up through one. */
       readonly parentRef?: string | undefined;
+      /** Whether the branch is the production branch, when its lookup said so. */
+      readonly isDefault?: boolean | undefined;
     }
   | { readonly kind: "db-url"; readonly url: Redacted.Redacted<string> };
 
@@ -47,7 +48,11 @@ const hintLinkedAlternative = Effect.fnUntraced(function* () {
   yield* cell.value.hintLocal(linkedAlternativeHint({ ref: linkedRef.value, cache }));
 });
 
-const resolveSelected = Effect.fn("Target.resolve")(function* (flags: TargetSelectorInput) {
+/**
+ * Resolves the target a `selectable` command acts on: `--remote` (or a deprecated alias) picks a
+ * linked project, a branch or a database URL, and no selector means the local stack.
+ */
+export const resolveTarget = Effect.fn("Target.resolve")(function* (flags: TargetFlagValues) {
   const policy = yield* TargetPolicy;
   if (policy.group !== "selectable") {
     return yield* Effect.die(
@@ -78,16 +83,3 @@ const resolveSelected = Effect.fn("Target.resolve")(function* (flags: TargetSele
       return yield* finish(yield* resolveHostedRemote(selection), "flag");
   }
 });
-
-/**
- * Resolves the target a `selectable` command acts on: `--remote` (or a deprecated alias) picks a
- * linked project, a branch or a database URL, and no selector means the local stack. A command
- * whose flags came from `targetFlags({ dbUrl: false })` cannot pass a database URL here.
- */
-export function resolveTarget(flags: TargetFlagValuesWithDbUrl): ReturnType<typeof resolveSelected>;
-export function resolveTarget(
-  flags: TargetFlagValuesWithoutDbUrl,
-): ReturnType<typeof resolveSelected>;
-export function resolveTarget(flags: TargetSelectorInput) {
-  return resolveSelected(flags);
-}

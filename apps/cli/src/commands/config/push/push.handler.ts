@@ -225,7 +225,9 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // the resolved config load before its one schema decode, so a base document that's invalid without its
     // overlay must never be decoded on its own — this can cost a network round trip before a
     // malformed `config.toml` is caught.
-    const { ref, branch, parentRef } = yield* resolveProjectTarget(flags, { detail: true });
+    const { ref, branch, parentRef, isDefault } = yield* resolveProjectTarget(flags, {
+      detail: true,
+    });
     yield* Ref.set(resolvedRef, Option.some(ref));
     yield* Effect.annotateCurrentSpan({
       "project.ref": ref,
@@ -265,14 +267,20 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // silently push empty content over a real hosted customization.
     const authEmailContent = yield* loadAuthEmailContent(cliSettings.workdir, config.auth.email);
 
-    // 5. Determine the push target for the echo and the payload. A UUID carries no display name,
-    // so only a branch looked up by name under its parent is known well enough to skip the probe.
+    // 5. Determine the push target for the echo and the payload. The production branch is the
+    // project itself and a UUID looked up with no link says nothing about what it is, so neither
+    // is probed. Any other UUID carries no display name, so only a name lookup is fully known.
+    const isUuid = branch !== undefined && BRANCH_UUID_PATTERN.test(branch);
     const knownBranch: ConfigPushKnownBranch | undefined =
       branch === undefined
         ? undefined
-        : !BRANCH_UUID_PATTERN.test(branch) && parentRef !== undefined
-          ? { kind: "name", branchName: branch, parentRef }
-          : { kind: "uuid" };
+        : isDefault === true
+          ? { kind: "production" }
+          : isUuid && isDefault === undefined
+            ? { kind: "unverified" }
+            : !isUuid && parentRef !== undefined
+              ? { kind: "name", branchName: branch, parentRef }
+              : { kind: "uuid" };
     const target = yield* resolveConfigPushTarget(ref, { knownBranch }).pipe(
       Effect.withSpan("config.push.probeTarget"),
     );

@@ -636,7 +636,6 @@ describe.each(commands)("notebooks %s command wiring", (command) => {
 
 describe.each(commands)("notebooks %s project selection", (command) => {
   const BRANCH_REF = "branchprojectrefabcd";
-  const DB_URL = "postgresql://postgres:pw@db.example.com:5432/postgres";
   const none = { remote: Option.none(), projectRef: Option.none() } satisfies Selector;
   const branchesRoute = `GET /v1/projects/${NOTEBOOKS_PROJECT_REF}/branches`;
   const branchRow = {
@@ -677,23 +676,6 @@ describe.each(commands)("notebooks %s project selection", (command) => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --remote=<url> before any request", () => {
-    const { layer, http } = setup(command, {
-      args: ["notebooks", command, `--remote=${DB_URL}`],
-    });
-    return Effect.gen(function* () {
-      const error = yield* runWith(command, {
-        ...none,
-        remote: Option.some({ _tag: "DbUrl", url: DB_URL }),
-      }).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "TargetNeedsProjectError",
-        message: `\`supabase notebooks ${command}\` needs a project, not a database URL.`,
-      });
-      expect(http.requests).toEqual([]);
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("keeps --project-ref working and points at --remote=<ref>", () => {
     const argv = ["notebooks", command, "--project-ref", NOTEBOOKS_PROJECT_REF];
     const { layer, out, http } = setup(command, { args: argv });
@@ -701,7 +683,7 @@ describe.each(commands)("notebooks %s project selection", (command) => {
       yield* runWith(command, { ...none, projectRef: Option.some(NOTEBOOKS_PROJECT_REF) });
       expect(http.routeKeys).toEqual([`GET ${notebooksRoute()}`]);
       expect(warningsOf(out)).toEqual([
-        `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase notebooks ${command} --remote=${NOTEBOOKS_PROJECT_REF}`,
+        `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
       ]);
     }).pipe(Effect.provide(Layer.mergeAll(layer, Layer.succeed(CliArgs, { args: argv }))));
   });

@@ -20,7 +20,6 @@ import type { StorageCpFlags } from "./cp.command.ts";
 import { warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
 const FLAG_REF = "flagflagflagflagflag";
-const DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 const BUCKET = "/storage/v1/bucket";
 const OBJECT = (p: string) => `/storage/v1/object/${p}`;
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
@@ -634,26 +633,6 @@ describe("storage cp", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --remote=<url> because storage needs a project, not a database", () => {
-    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
-      toml: 'project_id = "test"\n',
-      yes: true,
-    });
-    return Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const error = yield* storageCp({
-        ...cpFlags({ src: "ss:///private/readme.md", dst: path.join(tmp.current, "out.md") }),
-        remote: Option.some({ _tag: "DbUrl", url: DB_URL } as const),
-      }).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "TargetNeedsProjectError",
-        message: expect.stringContaining("needs a project, not a database URL"),
-      });
-      expect(requests).toHaveLength(0);
-      expect(linkedCache.cached).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
-
   describe("deprecated selectors", () => {
     const cases = [
       {
@@ -661,23 +640,21 @@ describe("storage cp", () => {
         cliArgs: ["storage", "cp", "--linked"],
         flags: { linked: true },
         host: `https://${VALID_REF}.supabase.co`,
-        warning:
-          "--linked is deprecated and will be removed in v4. Use --remote instead: supabase storage cp --remote",
+        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
       },
       {
         alias: "--project-ref",
         cliArgs: ["storage", "cp", "--project-ref", FLAG_REF],
         flags: { projectRef: Option.some(FLAG_REF) },
         host: `https://${FLAG_REF}.supabase.co`,
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase storage cp --remote=${FLAG_REF}`,
+        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
       },
       {
         alias: "--local",
         cliArgs: ["storage", "cp", "--local"],
         flags: { local: true },
         host: "http://127.0.0.1:65432",
-        warning:
-          "--local isn't needed (local is the default) and will be removed in v4: supabase storage cp",
+        warning: "--local isn't needed (local is the default) and will be removed in v4",
       },
     ] as const;
 

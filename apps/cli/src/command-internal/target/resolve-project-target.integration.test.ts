@@ -190,6 +190,27 @@ describe("resolveProjectTarget", () => {
     }),
   );
 
+  it.effect("fails before any lookup when --remote is given twice with different values", () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        { remote: { _tag: "Branch", name: "feature-x" } },
+        {
+          savedRef: FILE_REF,
+          args: ["functions", "deploy", "--remote=feature-x", `--remote=${FLAG_REF}`],
+          branches: [branchRow("feature-x")],
+        },
+      );
+      expect(failureOf(result.exit)).toMatchObject({
+        _tag: "TargetSelectorConflictError",
+        flags: ["--remote"],
+        message: "--remote is given more than once with different values; pass it once.",
+        suggestion: "Pass --remote once, as --remote or --remote=<ref|branch>.",
+      });
+      expect(result.branchRequests).toBe(0);
+      expect(result.refFlags).toEqual([]);
+    }),
+  );
+
   it.effect("uses the project --remote=<ref> names, with no deprecation warning", () =>
     Effect.gen(function* () {
       const result = yield* run({ remote: { _tag: "Ref", ref: FLAG_REF } });
@@ -207,7 +228,7 @@ describe("resolveProjectTarget", () => {
       );
       expect(refOf(result.exit)).toBe(FLAG_REF);
       expect(result.warnings).toEqual([
-        `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead: supabase functions deploy <Function name>... --remote=${FLAG_REF}`,
+        `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
       ]);
       expect(result.outputWarnCalls).toEqual([]);
       expect(result.stdout).toBe("");
@@ -263,14 +284,15 @@ describe("resolveProjectTarget", () => {
     }),
   );
 
-  it.effect("rejects a database URL, naming the command", () =>
+  it.effect("rejects a database URL given to --project-ref, since a project has no database", () =>
     Effect.gen(function* () {
       const result = yield* run({
-        remote: { _tag: "DbUrl", url: "postgresql://postgres:pw@db.example.com:5432/postgres" },
+        projectRef: "postgresql://postgres:pw@db.example.com:5432/postgres",
       });
       expect(failureOf(result.exit)).toMatchObject({
-        _tag: "TargetNeedsProjectError",
-        message: "`supabase functions deploy` needs a project, not a database URL.",
+        _tag: "TargetInvalidValueError",
+        flag: "--project-ref",
+        message: "--project-ref takes a project ref or a branch name, not a URL.",
       });
       expect(result.refFlags).toEqual([]);
     }),
@@ -347,6 +369,19 @@ describe("resolveProjectTarget", () => {
     }),
   );
 
+  it.effect("reports a UUID-shaped value the API would reject as an unknown branch", () =>
+    Effect.gen(function* () {
+      const name = "11111111-2222-3333-4444-555555555555";
+      const result = yield* run({ remote: { _tag: "Branch", name } });
+      expect(failureOf(result.exit)).toMatchObject({
+        _tag: "LinkBranchListStatusError",
+        status: 404,
+        message: `Branch "${name}" not found. Run \`supabase branches list\` to see available branches.`,
+      });
+      expect(result.requestedUrls).toEqual([]);
+    }),
+  );
+
   it.effect("reports a branch UUID whose project is still provisioning", () =>
     Effect.gen(function* () {
       const result = yield* run(
@@ -402,7 +437,21 @@ describe("resolveProjectTarget with detail", () => {
         matchesLinkedRef: false,
         branch: "feature-x",
         parentRef: FILE_REF,
+        isDefault: false,
       });
+    }),
+  );
+
+  it.effect("marks the production branch as the default", () =>
+    Effect.gen(function* () {
+      const result = yield* runDetailed(
+        { remote: { _tag: "Branch", name: "main" } },
+        {
+          savedRef: FILE_REF,
+          branches: [{ ...branchRow("main"), project_ref: FILE_REF, is_default: true }],
+        },
+      );
+      expect(successOf(result.exit)).toMatchObject({ ref: FILE_REF, isDefault: true });
     }),
   );
 
