@@ -62,10 +62,8 @@ export const SUGGEST_ENV_VAR =
  */
 export const SUGGEST_LOCAL_STACK = "Make sure Docker is running, then run: supabase start";
 
-/** Appended to the local-stack hint when the checkout is linked to a hosted project. */
 export const SUGGEST_LINKED_PROJECT = "To use the linked project instead, pass --remote.";
 
-/** The local-stack hint, plus the `--remote` pointer when the checkout is linked. */
 export function localStackSuggestion(linkedCheckout: boolean | undefined): string {
   return linkedCheckout === true
     ? `${SUGGEST_LOCAL_STACK}\n${SUGGEST_LINKED_PROJECT}`

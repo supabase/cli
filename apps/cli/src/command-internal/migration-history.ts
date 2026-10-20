@@ -228,7 +228,6 @@ export function reconcileMigrations(
 export const withTargetFlags = (command: string, targetFlags: string): string =>
   targetFlags === "" ? command : `${command} ${targetFlags}`;
 
-/** `targetFlags` are the flags that select the resolved target (see `flagsForTarget`), appended last. */
 export function suggestMigrationRepair(
   extraRemote: ReadonlyArray<string>,
   extraLocal: ReadonlyArray<string>,

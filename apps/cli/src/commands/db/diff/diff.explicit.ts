@@ -15,11 +15,9 @@ export type ExplicitRef =
   | NamedRemoteValue;
 
 /**
- * `local`, `migrations` and `remote` (the linked project) are keywords; `linked` is the
- * deprecated spelling of `remote`. Anything else is classified like a `--remote` value, so a
- * branch that shares a keyword's name is reached by its ref or UUID. A value `--remote` rejects (a
- * non-postgres URL, a keyword connection string) is returned as that rejection, never as a branch
- * name, so it is not echoed.
+ * `local`, `migrations` and `remote` (the linked project) are keywords and `linked` is the deprecated spelling of `remote`;
+ * anything else is classified like a `--remote` value, so a branch sharing a keyword's name is reached by its ref or UUID.
+ * A value `--remote` rejects is returned as that rejection, never as a branch name, so it is not echoed.
  */
 export function classifyExplicitRef(ref: string): ExplicitRef {
   switch (ref) {

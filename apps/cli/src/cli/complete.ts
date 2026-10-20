@@ -84,7 +84,6 @@ export interface ClassifyCompletionInput {
   readonly trimmedArgs: ReadonlyArray<string>;
   readonly toComplete: string;
   readonly inScopeFlags: ReadonlyArray<FlagDescriptor>;
-  /** How the argv rewrite reads this command's operands; absent when the command takes no `--remote`. */
   readonly remoteLeaf?: RemoteArgvLeaf | undefined;
 }
 
@@ -134,10 +133,8 @@ function flattenSubcommands(command: Command.Command.Any): ReadonlyArray<Command
 }
 
 /**
- * `choiceKeys` (a `Choice` primitive's valid value set) is attached via
- * `Object.assign` at runtime and isn't part of the public `Primitive<A>`
- * type, so this narrows through the same runtime-guard idiom as
- * `CommandInternal`.
+ * `choiceKeys` (a `Choice` primitive's valid value set) is attached via `Object.assign` at runtime and
+ * isn't part of the public `Primitive<A>` type, so it narrows through the same guard as `CommandInternal`.
  */
 interface ChoicePrimitive {
   readonly choiceKeys: ReadonlyArray<string>;
@@ -354,10 +351,8 @@ const COMPLETION_NO_FILE_COMP_PATHS: ReadonlySet<string> = new Set([
   "completion powershell",
 ]);
 
-/** Offered instead of a bare `--remote`, so the next word is typed as its value rather than read as an operand. */
 const REMOTE_FLAG_CANDIDATE = `--${REMOTE_FLAG_NAME}=`;
 
-/** `--remote=` takes its value right after the `=`, so no space follows it; any other candidate in the list keeps the space. */
 function flagNameDirective(candidates: ReadonlyArray<CompletionCandidate>): number {
   return candidates.length > 0 && candidates.every((candidate) => candidate.name.endsWith("="))
     ? CompletionDirective.NoFileComp | CompletionDirective.NoSpace
@@ -666,10 +661,6 @@ function outputFlagChoiceKeys(matchedPath: ReadonlyArray<string>): ReadonlyArray
     : RESOURCE_OUTPUT_FORMATS;
 }
 
-/**
- * Whether the word being typed after a bare `--remote` would be joined into `--remote=<word>` by
- * the argv rewrite, so it completes as the flag's value rather than as an operand.
- */
 function remoteTakesWord(
   remoteLeaf: RemoteArgvLeaf | undefined,
   trimmedArgs: ReadonlyArray<string>,
