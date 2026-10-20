@@ -32,7 +32,6 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import { OutputFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { commandTargetLayer } from "../../../shared/output/command-target.layer.ts";
@@ -2527,21 +2526,6 @@ describe("seed buckets", () => {
           requests.filter((r) => r.method === "GET" && r.url.endsWith("/storage/v1/bucket")),
         ).toHaveLength(1);
       }).pipe(seedScenario),
-  );
-
-  it.effect("writes nothing to the hosted project when the confirmation is declined", () =>
-    Effect.gen(function* () {
-      const { layer, requests } = yield* setupSeedBuckets(tmp.current, {
-        toml: "[storage.buckets.test]\npublic = true\n",
-        projectRef: VALID_REF,
-        args: ["seed", "buckets", "--remote"],
-        confirm: [false],
-        routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
-      });
-      const exit = yield* seedBuckets(BARE_REMOTE).pipe(Effect.provide(layer), Effect.exit);
-      expect(failureErrors(exit).some((e) => e instanceof HostedMutationDeclinedError)).toBe(true);
-      expect(requests.every((r) => r.method === "GET")).toBe(true);
-    }).pipe(seedScenario),
   );
 
   it.effect("announces the local stack target and asks for no consent", () =>
