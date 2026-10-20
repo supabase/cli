@@ -240,7 +240,7 @@ interface SetupOpts {
   readonly interactive?: boolean;
   readonly yes?: boolean;
   readonly confirm?: boolean;
-  /** Overrides whether the resolved connection counts as local (a `--db-url` can point either way). */
+  /** Whether the resolved connection counts as local; a `--db-url` can point either way. */
   readonly isLocal?: boolean;
   readonly failResolve?: boolean;
   readonly failSql?: string;

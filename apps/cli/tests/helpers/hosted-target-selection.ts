@@ -40,7 +40,7 @@ interface TargetSelectionHarness<R> {
   readonly layer: Layer.Layer<R, unknown>;
   readonly requests: () => ReadonlyArray<RecordedCall>;
   readonly warnings: () => ReadonlyArray<string>;
-  /** For a leaf whose requests never name its project (`sso info`, `snippets list`): the ref it cached as its target. */
+  /** The ref the leaf cached as its target, for one whose requests never name its project. */
   readonly cachedRef?: () => string | undefined;
 }
 
@@ -92,7 +92,7 @@ export function describeTargetSelectionMatrix<R>(
   const commandName = `\`supabase ${path}\``;
   const extraFlags = matrix.activeFlags ?? {};
   const driftVariant = matrix.variant === undefined ? {} : { variant: matrix.variant };
-  // A parent-scoped command goes on to touch the branch's own project, so only the first project it reaches is the parent.
+  // A parent-scoped command goes on to touch the branch's project, so only its first ref counts.
   const expectActedOn = (run: TargetSelectionHarness<R>, ref: string) => {
     const refs = projectRefsOf(run.requests());
     if (run.cachedRef !== undefined) expect(run.cachedRef()).toBe(ref);
@@ -256,7 +256,7 @@ const writeFiles = (workdir: string, files: Readonly<Record<string, string>>) =>
     }
   }).pipe(Effect.provide(BunServices.layer));
 
-/** `describeTargetSelectionMatrix` for a hosted leaf whose runtime is `buildTestRuntime` over a mocked Management API. */
+/** `describeTargetSelectionMatrix` for a hosted leaf run through `buildTestRuntime`. */
 export function describeHostedTargetSelection(
   path: string,
   scenario: HostedTargetSelectionScenario,

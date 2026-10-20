@@ -20,7 +20,7 @@ export const branchRow = (name: string) => ({
   with_data: true,
 });
 
-/** A platform API that only answers the linked project's branch list, with one branch named `name`. */
+/** A platform API that only answers the linked project's branch list, with one branch `name`. */
 export const branchListApi = (name = "feature-x") =>
   mockCommandPlatformApi({
     handler: (request) =>

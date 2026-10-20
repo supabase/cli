@@ -18,13 +18,7 @@ const makeProjectDir = Effect.fnUntraced(function* (prefix: string) {
   return projectDir;
 });
 
-/**
- * Golden-path e2e: exercises the real compiled-binary boundary for the two
- * network-free paths of `seed buckets`:
- *  - an empty `[storage]` config is a no-op (exit 0, no stdout);
- *  - `--remote` combined with a deprecated selector alias is rejected by the shared target selector.
- * Bucket/object seeding is covered by the integration and unit suites.
- */
+/** Network-free golden paths only; the integration and unit suites cover seeding itself. */
 describe("supabase seed buckets", () => {
   it.live(
     "is a no-op with exit 0 when no buckets are configured",

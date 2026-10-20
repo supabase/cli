@@ -274,7 +274,7 @@ export interface NotebooksSetupOptions {
   readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
   readonly command?: "pull" | "push";
   readonly args?: ReadonlyArray<string>;
-  /** The global `--yes` flag; on by default so push tests are not blocked by the hosted-mutation consent. */
+  /** `--yes`; on by default so hosted-mutation consent does not block push tests. */
   readonly yes?: boolean;
   /**
    * Runs the real `projectRefLayer` (an unlinked workdir reaches its picker) and the real

@@ -43,7 +43,7 @@ interface HostedConsentEnv {
 
 interface HostedConsentInvocation {
   readonly run: Effect.Effect<unknown, unknown, HostedConsentServices>;
-  /** Persistent writes made so far; defaults to the non-GET requests the mocked platform API recorded. */
+  /** Persistent writes so far; defaults to the non-GET requests the mocked API recorded. */
   readonly mutations?: () => number;
 }
 
@@ -54,7 +54,7 @@ export interface HostedConsentScenario {
   readonly typed?: boolean;
   readonly api?: MockCommandPlatformApiOpts;
   readonly setup?: (workdir: string) => Effect.Effect<void, unknown, FileSystem.FileSystem>;
-  /** Builds the leaf's handler call; runs once per case, so per-case state can live in its closure. */
+  /** Builds the handler call; runs once per case, so per-case state can live in its closure. */
   readonly invoke: (env: HostedConsentEnv) => HostedConsentInvocation;
 }
 

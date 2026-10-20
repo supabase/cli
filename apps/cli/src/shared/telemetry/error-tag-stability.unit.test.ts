@@ -68,7 +68,7 @@ function isProductionSourceFile(filePath: string): boolean {
   return !TEST_FILE_SUFFIXES.some((suffix) => filePath.endsWith(suffix));
 }
 
-/** Regexes every `Data.TaggedError("...")` string-literal declaration out of the given production files. */
+/** The `Data.TaggedError("...")` declarations in the given production files. */
 const collectDeclarations = (filePaths: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

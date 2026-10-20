@@ -257,7 +257,7 @@ function v2Response(
   };
 }
 
-/** A branch row of the linked project's branch list, which every branch `--remote` is looked up in. */
+/** A branch row of the linked project's branch list. */
 const BRANCH_BY_NAME = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "staging",

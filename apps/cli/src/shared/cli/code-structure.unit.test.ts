@@ -215,7 +215,7 @@ function findConfigLoaderBypasses(source: string): Array<string> {
 const RAW_TARGET_FLAG =
   /\bFlag\.(?:Boolean|String)\(\s*["'](?:local|linked|db-url|project-id)["']/g;
 
-/** Raw declarations of the target selector flags, which `command-internal/target/target-flags.ts` owns. */
+/** Raw declarations of the target selector flags, which `target-flags.ts` owns. */
 export function findRawTargetFlags(source: string): Array<string> {
   return Array.from(stripComments(source).matchAll(RAW_TARGET_FLAG), (m) => m[0]);
 }

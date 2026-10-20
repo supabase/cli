@@ -224,7 +224,7 @@ const BRANCH_BY_NAME = {
   with_data: false,
 };
 
-/** The production branch's list row: its project is the project itself, so its ref is the parent's. */
+/** The production branch's list row; its project_ref is the parent's own. */
 const DEFAULT_BRANCH = {
   ...BRANCH_BY_NAME,
   name: "main",
@@ -3084,12 +3084,7 @@ secrets = "v1,whsec_abc"
 // the branch/project target-detection scenarios below to prove a push actually proceeded.
 const BRANCH_PUSH_TOML = `project_id = "test"\n[api]\nmax_rows = 2000\n`;
 
-/**
- * The realistic "already ran `supabase link <branch>`" state: `.temp/project-ref` holds the
- * branch's own ref, `.temp/linked-project.json` caches the parent (name "My App"), the live probe
- * 404s, and the parent's branch list confirms it — so the probed target is `{ kind: "branch",
- * ref: BRANCH_REF, parentRef: PARENT_REF, branch: "feat-x" }` while the banner stays `project <ref>`.
- */
+/** Mirrors `supabase link <branch>`: `project-ref` holds the branch, the cache its parent. */
 function setupLinkedBranchPush(
   opts: {
     readonly format?: "text" | "json" | "stream-json";

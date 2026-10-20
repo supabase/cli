@@ -37,7 +37,7 @@ export interface FixtureLeafOptions {
   readonly description?: string;
 }
 
-/** A leaf declaring `group`'s target policy, with the `--remote` flag that group takes unless `withRemote` is false. */
+/** A leaf with `group`'s target policy and its `--remote` flag, unless `withRemote` is false. */
 export const fixtureLeaf = (
   name: string,
   group: FixtureGroup,
