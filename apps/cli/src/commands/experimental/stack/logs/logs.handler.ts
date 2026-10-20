@@ -13,7 +13,7 @@ import { CommandSettings } from "../../../../config/command-settings.service.ts"
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
   StackApi,
-  StackTargetError,
+  mapTargetError,
   StackTargetResolver,
   rejectStackOutput,
   validateStackTarget,
@@ -30,13 +30,7 @@ import {
 } from "./logs.format.ts";
 import { logEvent, type LogSource } from "../../../../command-internal/stack-log-events.ts";
 
-const targetError = (cause: StackTargetError) =>
-  new StackCommandLogsError({
-    reason: cause.reason,
-    message: cause.message,
-    ...(cause.suggestion === undefined ? {} : { suggestion: cause.suggestion }),
-    cause,
-  });
+const targetError = mapTargetError((props) => new StackCommandLogsError(props));
 const logsError = (cause: { readonly message: string }) =>
   new StackCommandLogsError({
     reason: "stack",

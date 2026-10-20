@@ -228,7 +228,7 @@ describe("stack target resolver", () => {
       const failure = yield* resolve({ projectRoot: root, runtime: "auto" }).pipe(Effect.flip);
 
       expect(failure).toBeInstanceOf(StackTargetError);
-      expect(failure.reason).toBe("invalid-config");
+      expect(failure).toMatchObject({ reason: "invalid-config", targetIssue: "stack-lookup" });
       expect(failure.message).toContain(id);
     }).pipe(Effect.provide(BunServices.layer)),
   );
@@ -255,6 +255,8 @@ describe("stack target resolver", () => {
           runtime: "auto",
         }).pipe(Effect.flip);
 
+        expect(byProject.targetIssue).toBe("stack-lookup");
+        expect(byPrefix.targetIssue).toBe("unreadable-stack");
         for (const failure of [byProject, byPrefix]) {
           expect(failure.reason).toBe("invalid-config");
           expect(failure.message).toContain(`Stack ${id} could not be read`);
@@ -263,6 +265,36 @@ describe("stack target resolver", () => {
           );
         }
       }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("reports a stack registry that cannot be listed for an id prefix", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, home, resolve } = yield* workspace;
+      yield* fs.makeDirectory(home);
+      yield* fs.writeFileString(path.join(home, "stacks"), "not a directory");
+
+      const failure = yield* resolve({ projectRoot: root, id: "abcd", runtime: "auto" }).pipe(
+        Effect.flip,
+      );
+
+      expect(failure).toMatchObject({ reason: "invalid-config", targetIssue: "stack-discovery" });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("reports a missing project root as the project root, not as a stack lookup", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const { root, resolve } = yield* workspace;
+
+      const failure = yield* resolve({
+        projectRoot: path.join(root, "missing-project"),
+        runtime: "auto",
+      }).pipe(Effect.flip);
+
+      expect(failure).toMatchObject({ reason: "invalid-config", targetIssue: "project-root" });
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("surfaces an unreadable saved stack that an id prefix selects", () =>
@@ -279,7 +311,7 @@ describe("stack target resolver", () => {
         runtime: "auto",
       }).pipe(Effect.flip);
 
-      expect(failure.reason).toBe("invalid-config");
+      expect(failure).toMatchObject({ reason: "invalid-config", targetIssue: "unreadable-stack" });
       expect(failure.message).toContain(`Stack ${id} could not be read`);
     }).pipe(Effect.provide(BunServices.layer)),
   );

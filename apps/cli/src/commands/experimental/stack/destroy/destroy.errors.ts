@@ -6,6 +6,7 @@ import {
   ErrorActionabilityId,
   unclassifiedStackFailureActionability,
 } from "../../../../shared/telemetry/error-actionability.ts";
+import { type StackTargetIssue, stackTargetInvalidConfigActionability } from "../stack.shared.ts";
 
 export class StackCommandDestroyError extends Data.TaggedError("ExperimentalStackDestroyError")<{
   readonly reason:
@@ -16,6 +17,7 @@ export class StackCommandDestroyError extends Data.TaggedError("ExperimentalStac
     | "runtime"
     | "stack"
     | "uploads";
+  readonly targetIssue?: StackTargetIssue;
   readonly message: string;
   readonly detail?: string;
   readonly suggestion?: string;
@@ -30,7 +32,7 @@ export class StackCommandDestroyError extends Data.TaggedError("ExperimentalStac
       case "cancelled":
         return { ...actionability.cancelled, fingerprint_suffix: "cancelled" };
       case "invalid-config":
-        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
+        return stackTargetInvalidConfigActionability(this.targetIssue);
       case "runtime":
         return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
       case "uploads":

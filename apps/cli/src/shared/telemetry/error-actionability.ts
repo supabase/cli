@@ -148,6 +148,7 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "process_spawn",
   "process_stop",
   "project_config",
+  "project_root",
   "query",
   "registry_pull",
   "release_mismatch",
@@ -161,6 +162,8 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "seed_buckets",
   "service_config",
   "stack_configuration",
+  "stack_discovery",
+  "stack_lookup",
   "state_file",
   "unclassified",
   "unclassified_configure_composition",
@@ -180,6 +183,7 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "unclassified_start_composition",
   "unclassified_start_service",
   "unclassified_status",
+  "unreadable_stack",
 ] as const;
 
 type CliErrorFingerprintSuffix = (typeof CLI_ERROR_FINGERPRINT_SUFFIXES)[number];

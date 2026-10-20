@@ -9,6 +9,8 @@ import { DeclarativeApplyError } from "../../db/schema/declarative/declarative.e
 import { FunctionsServeStackError } from "../../functions/serve/serve.errors.ts";
 import { classifyCliErrorActionability } from "../../../shared/telemetry/error-actionability.ts";
 import { StackCommandDestroyError } from "./destroy/destroy.errors.ts";
+import { StackCommandLogsError } from "./logs/logs.errors.ts";
+import { mapTargetError, StackTargetError } from "./stack.shared.ts";
 import { StackCommandStartError } from "./start/start.errors.ts";
 import { StackCommandStatusError } from "./status/status.errors.ts";
 
@@ -133,6 +135,34 @@ describe("new stack error telemetry", () => {
       error_fingerprint: "tag:ExperimentalStackStartError:filesystem_io",
       error_kind: "internal_bug",
       error_category: "runtime_crash",
+    });
+  });
+
+  it("keeps the failed target-resolution step in the fingerprint of the command that wraps it", () => {
+    const targetError = (targetIssue?: "stack-lookup" | "project-root") =>
+      new StackTargetError({
+        reason: "invalid-config",
+        message: "x",
+        ...(targetIssue === undefined ? {} : { targetIssue }),
+      });
+    const asStart = mapTargetError((props) => new StackCommandStartError(props));
+    const asLogs = mapTargetError((props) => new StackCommandLogsError(props));
+
+    expect(classify(targetError("stack-lookup"))).toEqual({
+      error_fingerprint: "tag:ExperimentalStackTargetError:stack_lookup",
+      error_kind: "user_actionable",
+      error_category: "invalid_config",
+    });
+    expect(classify(asStart(targetError("stack-lookup")))).toEqual({
+      error_fingerprint: "tag:ExperimentalStackStartError:stack_lookup",
+      error_kind: "user_actionable",
+      error_category: "invalid_config",
+    });
+    expect(classify(asLogs(targetError("project-root")))).toMatchObject({
+      error_fingerprint: "tag:ExperimentalStackLogsError:project_root",
+    });
+    expect(classify(asStart(targetError()))).toMatchObject({
+      error_fingerprint: "tag:ExperimentalStackStartError:invalid_config",
     });
   });
 
