@@ -1,4 +1,4 @@
-import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
+import { unusedGateway, unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -13,11 +13,14 @@ import {
   Layer,
   Option,
   Path,
+  Redacted,
   Schema,
+  Stream,
 } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import type { DatabaseInstance, Stack } from "@supabase/stack/effect";
 import { vi } from "vitest";
 
 vi.mock("node:net", (importOriginal) =>
@@ -73,6 +76,8 @@ import {
   NetworkIdFlag,
   YesFlag,
 } from "../../../command-internal/global-flags.ts";
+import { commandTargetLayer } from "../../../shared/output/command-target.layer.ts";
+import { CommandTarget } from "../../../shared/output/command-target.service.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import {
@@ -85,6 +90,7 @@ import type {
   DbConnectionInput,
   ResolvedDbConnection,
 } from "../../../command-internal/db-config.types.ts";
+import { describeLinkedTarget } from "../../../command-internal/target/target-identity.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import {
   TargetProjectRefConflictError,
@@ -114,6 +120,7 @@ import { RemovedSurfaceError } from "../../../command-internal/removed-command.t
 import type { DbDiffFlags } from "./diff.command.ts";
 import { dbDiff } from "./diff.handler.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
+import { StackApi } from "../../../command-internal/stack-api.ts";
 import { StackNativeEngineError } from "../../../command-internal/stack-local-database.ts";
 import { PGADMIN_DESKTOP_NOTE_PREFIX, PGADMIN_DIFF_HEADER } from "./pgadmin-diff.ts";
 
@@ -230,6 +237,91 @@ function fakeShadowDbConnection(opts: { readonly neverConnectableShadow?: boolea
   });
   return { layer, connectedDatabases, execCalls, shadowConnectRefused };
 }
+
+const STACK_SQL_PORT = 54329;
+
+/** A registered project stack whose healthy database serves SQL on `STACK_SQL_PORT`. */
+const runningStackApi = (projectRoot: string) => {
+  const unused = Effect.die("unused by db diff");
+  const database: DatabaseInstance = {
+    id: "database-primary",
+    service: "database",
+    start: unused,
+    ready: unused,
+    stop: unused,
+    restart: () => unused,
+    destroy: unused,
+    prepare: unused,
+    status: Effect.succeed({
+      id: "database-primary",
+      endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: STACK_SQL_PORT }],
+      config: {
+        service: "database",
+        config: {
+          version: "17.6.1.173",
+          databasePassword: Redacted.make("stack-password"),
+          jwtSecret: Redacted.make("secret"),
+          jwtExpiry: 3600,
+        },
+        endpoints: {},
+      },
+      lifecycle: "running",
+      health: "healthy",
+      error: undefined,
+      exit: undefined,
+      currentOperation: undefined,
+      wakeEnabled: true,
+    }),
+    followStatus: Stream.empty,
+    readLogs: () => Stream.empty,
+    credentials: () => unused,
+    saveSnapshot: () => unused,
+    restoreSnapshot: () => unused,
+    resetData: unused,
+  };
+  const stack: Stack = {
+    id: "b".repeat(64),
+    services: { create: () => unused, get: () => Effect.succeed(database), list: unused },
+    credentials: { get: unused },
+    composition: {
+      plan: () => unused,
+      describe: Effect.succeed({
+        members: [{ id: database.id, activation: "eager" }],
+        dependencies: [],
+      }),
+      supabase: () => unused,
+      configure: () => unused,
+      start: unused,
+      stop: unused,
+      restart: unused,
+    },
+    startupEndpointChanges: unused,
+    stop: unused,
+    destroy: unused,
+    gateway: unusedGateway,
+    commands: { run: () => unused },
+  };
+  return Layer.succeed(StackApi, {
+    create: () => unused,
+    open: () => Effect.succeed(stack),
+    discover: () => unused,
+    find: () =>
+      Effect.succeed(
+        Option.some({
+          definition: {
+            id: stack.id,
+            identity: { projectRoot, branchContext: "main", stackName: "default" },
+            runtime: "native" as const,
+            instances: [],
+            lifetime: "detached" as const,
+            composition: { members: [], dependencies: [] },
+          },
+          host: undefined,
+        }),
+      ),
+    findDeleted: () => unused,
+  });
+};
 
 function setup(workdir: string, opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
@@ -432,22 +524,36 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 
-  const projectRefResolver = Layer.succeed(ProjectRefResolver, {
-    resolve: () => Effect.die("resolve is not used by this test"),
-    resolveForLink: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
-    resolveRef: (flagValue: Option.Option<string>) =>
-      Option.isSome(flagValue) && flagValue.value.length > 0
-        ? Effect.succeed({ ref: flagValue.value, source: "flag", matchesLinkedRef: false })
-        : opts.linkedFails === true
-          ? Effect.fail(new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
-          : Effect.succeed({
-              ref: opts.linkedRef ?? VALID_REF,
-              source: "file",
-              matchesLinkedRef: true,
-            }),
-    resolveOptional: () => Effect.succeed(Option.some(opts.linkedRef ?? VALID_REF)),
-    promptProjectRef: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
-  });
+  const commandTarget = commandTargetLayer.pipe(Layer.provide(out.layer));
+  const projectRefResolver = Layer.effect(
+    ProjectRefResolver,
+    Effect.gen(function* () {
+      const target = yield* CommandTarget;
+      return ProjectRefResolver.of({
+        resolve: () => Effect.die("resolve is not used by this test"),
+        resolveForLink: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
+        resolveRef: (flagValue: Option.Option<string>) =>
+          Effect.gen(function* () {
+            const resolved =
+              Option.isSome(flagValue) && flagValue.value.length > 0
+                ? { ref: flagValue.value, source: "flag" as const, matchesLinkedRef: false }
+                : opts.linkedFails === true
+                  ? yield* new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE })
+                  : {
+                      ref: opts.linkedRef ?? VALID_REF,
+                      source: "file" as const,
+                      matchesLinkedRef: true,
+                    };
+            yield* target.announce(
+              describeLinkedTarget({ ref: resolved.ref, cache: Option.none() }),
+            );
+            return resolved;
+          }),
+        resolveOptional: () => Effect.succeed(Option.some(opts.linkedRef ?? VALID_REF)),
+        promptProjectRef: () => Effect.succeed(opts.linkedRef ?? VALID_REF),
+      });
+    }),
+  ).pipe(Layer.provide(commandTarget));
 
   const workdirFiles = Layer.effectDiscard(
     Effect.gen(function* () {
@@ -500,6 +606,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         })
       : resolver,
     projectRefResolver,
+    commandTarget,
     mockCommandSettings({
       workdir,
       projectId: opts.projectId ?? Option.some("test"),
@@ -591,6 +698,11 @@ const stderr = (out: ReturnType<typeof mockOutput>) =>
       .map((c) => c.text)
       .join(""),
   );
+
+const targetLines = (out: ReturnType<typeof mockOutput>) =>
+  stderr(out)
+    .split("\n")
+    .filter((line) => line.startsWith("Target: "));
 
 const readFileText = (file: string) =>
   Effect.gen(function* () {
@@ -1385,6 +1497,10 @@ describe("db diff", () => {
   describe("explicit --from and --to values", () => {
     const FLAG_PROJECT_REF = "flagflagflagflagflag";
     const DB_URL = "postgresql://postgres:pw@db.example.com/db";
+    const CREDENTIALED_URL = "postgresql://u:secret@db.example.com:6543/postgres";
+    const LOCAL_LINE = "Target: local stack (127.0.0.1:54322)";
+    const PROJECT_LINE = `Target: project ${VALID_REF}`;
+    const DB_URL_LINE = "Target: custom Postgres (db.example.com:6543)";
 
     const sides = (["from", "to"] as const).flatMap((side) =>
       [
@@ -1453,12 +1569,112 @@ describe("db diff", () => {
           expect(endpoint).toEqual({
             kind: "database",
             ref: DB_URL,
+            connection: expect.objectContaining({
+              host: "db.example.com",
+              user: "postgres",
+              password: "pw",
+              database: "db",
+            }),
             connectOptions: { isLocal: false, dnsResolver: "native" },
           });
           expect(s.resolverCalls).toEqual([]);
         });
       },
     );
+
+    it.effect.each([
+      {
+        label: "--from <db-url> --to remote",
+        from: CREDENTIALED_URL,
+        to: "remote",
+        lines: [DB_URL_LINE, PROJECT_LINE],
+        first: { kind: "db-url", host: "db.example.com", port: 6543 },
+      },
+      {
+        label: "--from remote --to <db-url>",
+        from: "remote",
+        to: CREDENTIALED_URL,
+        lines: [PROJECT_LINE, DB_URL_LINE],
+        first: { kind: "linked", project_ref: VALID_REF, environment: "unverified" },
+      },
+      {
+        label: "--from local --to remote",
+        from: "local",
+        to: "remote",
+        lines: [LOCAL_LINE, PROJECT_LINE],
+        first: { kind: "local", host: "127.0.0.1", port: 54322 },
+      },
+      {
+        label: "--from local --to <db-url>",
+        from: "local",
+        to: CREDENTIALED_URL,
+        lines: [LOCAL_LINE, DB_URL_LINE],
+        first: { kind: "local", host: "127.0.0.1", port: 54322 },
+      },
+    ])("$label announces each database in resolution order, without credentials", (row) => {
+      const s = setup(tmp.current, { isLocal: false, diffSql: "create table o ();\n" });
+      return Effect.gen(function* () {
+        yield* dbDiff(flags({ from: Option.some(row.from), to: Option.some(row.to) }));
+        expect(targetLines(s.out)).toEqual(row.lines);
+        expect(yield* CommandTarget.use((cell) => cell.json)).toEqual(Option.some(row.first));
+        expect(`${s.out.stdoutText}${s.out.stderrText}`).not.toContain("secret");
+      }).pipe(Effect.provide(s.layer));
+    });
+
+    it.effect.each([
+      { label: "--from local --to local", value: "local", line: LOCAL_LINE },
+      {
+        label: "--from <db-url> --to <the same db-url>",
+        value: CREDENTIALED_URL,
+        line: DB_URL_LINE,
+      },
+    ])("$label announces the database once", ({ value, line }) => {
+      const s = setup(tmp.current, { diffSql: "create table o ();\n" });
+      return Effect.gen(function* () {
+        yield* dbDiff(flags({ from: Option.some(value), to: Option.some(value) }));
+        expect(targetLines(s.out)).toEqual([line]);
+      }).pipe(Effect.provide(s.layer));
+    });
+
+    it.effect("--from local on the stack backend announces the stack's database", () => {
+      const s = setup(tmp.current, { diffSql: "create table k ();\n" });
+      return Effect.gen(function* () {
+        yield* dbDiff(flags({ from: Option.some("local"), to: Option.some("migrations") }));
+        expect(targetLines(s.out)).toEqual([`Target: local stack (127.0.0.1:${STACK_SQL_PORT})`]);
+        expect(yield* CommandTarget.use((cell) => cell.json)).toEqual(
+          Option.some({ kind: "local", host: "127.0.0.1", port: STACK_SQL_PORT }),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(s.layer, stackBackendLayer("stack"), runningStackApi(tmp.current)),
+        ),
+      );
+    });
+
+    it.effect("--from <malformed db-url> fails before the hosted side resolves, unechoed", () => {
+      const s = setup(tmp.current, { isLocal: false });
+      return Effect.gen(function* () {
+        const exit = yield* dbDiff(
+          flags({
+            from: Option.some(`${CREDENTIALED_URL}?sslmode=bogus`),
+            to: Option.some("remote"),
+          }),
+        ).pipe(Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.squash(exit.cause)).toMatchObject({
+            _tag: "PgDeltaEngineError",
+            message: "failed to parse Postgres connection string for pg-delta",
+          });
+          expect(Cause.pretty(exit.cause)).not.toContain("secret");
+        }
+        expect(`${s.out.stdoutText}${s.out.stderrText}`).not.toContain("secret");
+        expect(targetLines(s.out)).toEqual([]);
+        expect(s.resolverCalls).toEqual([]);
+        expect(s.explicitDiffCalls).toEqual([]);
+      }).pipe(Effect.provide(s.layer));
+    });
 
     it.effect("--from local --to migrations reaches no hosted project", () => {
       const s = setup(tmp.current, { diffSql: "create table l ();\n" });
@@ -2161,11 +2377,13 @@ describe("db diff", () => {
       expect(s.explicitDiffCalls[0]?.source).toEqual({
         kind: "database",
         ref: "postgresql://source.example/postgres",
+        connection: expect.objectContaining({ host: "source.example", database: "postgres" }),
         connectOptions: { isLocal: false, dnsResolver: "native" },
       });
       expect(s.explicitDiffCalls[0]?.desired).toEqual({
         kind: "database",
         ref: "postgresql://desired.example/postgres",
+        connection: expect.objectContaining({ host: "desired.example", database: "postgres" }),
         connectOptions: { isLocal: false, dnsResolver: "native" },
       });
     }).pipe(Effect.provide(s.layer));

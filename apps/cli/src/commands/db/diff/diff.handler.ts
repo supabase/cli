@@ -8,6 +8,7 @@ import {
 } from "../../../command-internal/global-flags.ts";
 import { removedFlag } from "../../../command-internal/removed-command.ts";
 import { branchClause, detectGitBranch } from "../../../shared/git/git-branch.ts";
+import { announceTarget } from "../../../shared/output/command-target.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -30,6 +31,10 @@ import {
   resolveRemoteTarget,
   warnTarget,
 } from "../../../command-internal/target/remote-resolution.ts";
+import {
+  renderDbUrlTarget,
+  renderLocalTarget,
+} from "../../../command-internal/target/target-identity.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import { makeDir } from "../../../command-internal/make-dir.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
@@ -77,6 +82,7 @@ import {
   type PgDeltaEndpoint,
   type PgDeltaRenderedFile,
 } from "../shared/pgdelta-engine.service.ts";
+import { parsePgDeltaNextEndpoint } from "../shared/pgdelta-engine.next.layer.ts";
 import { LoadPgDeltaSqlFiles } from "../shared/pgdelta-files.ts";
 import { writePgDeltaMigrations } from "../shared/pgdelta-migrations.write.ts";
 import { type PgDeltaContext, isPgDeltaDebugEnabled } from "../../../command-internal/pgdelta.ts";
@@ -285,6 +291,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                   password: cfg.password,
                   database: "postgres",
                 };
+                yield* announceTarget(renderLocalTarget(connection.host, connection.port));
                 return {
                   kind: "database",
                   ref: toPostgresURL(connection),
@@ -310,6 +317,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                     }),
                 ),
               );
+              yield* announceTarget(renderLocalTarget(connection.host, connection.port));
               return {
                 kind: "database",
                 ref: toPostgresURL(connection),
@@ -347,14 +355,21 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                 kind: "migrations",
                 ...(mergedLinkedRef !== undefined ? { projectRef: mergedLinkedRef } : {}),
               } satisfies PgDeltaEndpoint;
-            case "DbUrl":
-              return {
+            case "DbUrl": {
+              const { projectEnvValues } = yield* configValues.load({
+                workdir: cliSettings.workdir,
+                projectRef: Option.fromNullishOr(mergedLinkedRef),
+              });
+              const endpoint = {
                 kind: "database",
                 ref: explicit.url,
-                // The next engine parses arbitrary explicit URLs itself; they connect as remote
-                // by default, so TLS is used.
+                // Explicit URLs connect as remote, so TLS is used.
                 connectOptions: { isLocal: false, dnsResolver },
               } satisfies PgDeltaDatabaseEndpoint;
+              const connection = yield* parsePgDeltaNextEndpoint(endpoint, projectEnvValues);
+              yield* announceTarget(renderDbUrlTarget(connection.host, connection.port));
+              return { ...endpoint, connection } satisfies PgDeltaDatabaseEndpoint;
+            }
           }
         });
       const source = yield* resolveRef(from, "--from");
