@@ -817,7 +817,7 @@ describeDbTargetSelection("db advisors", {
   attempt: ({ target }) => {
     const ctx = setup({ rows: [], securityLints: [], performanceLints: [] });
     return {
-      layer: Layer.merge(ctx.layer, ctx.api.layer),
+      layer: ctx.layer,
       out: ctx.out,
       run: dbAdvisors(flags(target)),
       target: () => ctx.resolver.resolveInputs[0]?.target,

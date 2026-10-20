@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option, Predicate } from "effect";
+import { Effect, Exit, Layer, Option, Predicate, type Scope } from "effect";
 import { CliOutput, Command } from "effect/cli";
 
 import type { RemoteValue } from "../../src/command-internal/target/remote-value.ts";
@@ -18,6 +18,7 @@ import { textCliOutputFormatter } from "../../src/shared/output/text-formatter.t
 import { stripAnsi } from "./ansi.ts";
 import { VALID_REF } from "./command-mocks.ts";
 import { assertPermissionDrift } from "./permission-drift.ts";
+import type { ActiveFlags } from "./permission-registry.ts";
 import {
   mockAnalytics,
   mockOutput,
@@ -87,7 +88,7 @@ export const storageTargetOf = (
 interface DbTargetAttempt<R> {
   readonly layer: Layer.Layer<R, unknown>;
   readonly out: ReturnType<typeof mockOutput>;
-  readonly run: Effect.Effect<unknown, unknown, R>;
+  readonly run: Effect.Effect<unknown, unknown, R | Scope.Scope>;
   /** The target the leaf opened its connection or requests for; `undefined` until it reached one. */
   readonly target: () => ObservedTarget | undefined;
   readonly cachedRef?: () => string | undefined;
@@ -124,6 +125,8 @@ interface DbTargetSelectionScenario<R> {
   }) => DbTargetAttempt<R> | Effect.Effect<DbTargetAttempt<R>, unknown, BunServices.BunServices>;
   /** Wraps each row, for a leaf whose tests pin ambient environment variables around their body. */
   readonly around?: (row: Effect.Effect<void, unknown>) => Effect.Effect<void, unknown>;
+  /** The flags besides `--remote` that the run sets and the leaf's permission map branches on. */
+  readonly activeFlags?: ActiveFlags;
   /** Rows the leaf cannot express, each with why. */
   readonly optOut?: Partial<Record<Row, string>>;
 }
@@ -159,7 +162,9 @@ export function describeDbTargetSelection<R>(
       readonly args: ReadonlyArray<string>;
       readonly target: TargetFlagValuesWithDbUrl;
       readonly linked?: true;
-      readonly check: (ctx: DbTargetAttempt<R>) => Effect.Effect<void, unknown, R | CommandTarget>;
+      readonly check: (
+        ctx: DbTargetAttempt<R>,
+      ) => Effect.Effect<void, unknown, R | CommandTarget | Scope.Scope>;
     },
   ) => {
     if (optedOut(row)) return;
@@ -182,6 +187,7 @@ export function describeDbTargetSelection<R>(
               Effect.provide(
                 Layer.mergeAll(ctx.layer, commandTargetLayer.pipe(Layer.provide(ctx.out.layer))),
               ),
+              Effect.scoped,
             ),
       );
       return scenario.around === undefined ? row : scenario.around(row);
@@ -246,6 +252,7 @@ export function describeDbTargetSelection<R>(
     rowTest("remote-branch", "targets the project of the branch --remote=<branch> names", {
       args: ["--remote=feature-x"],
       target: selecting({ _tag: "Branch", name: "feature-x" }),
+      linked: true,
       check: (ctx) =>
         Effect.gen(function* () {
           yield* ctx.run;
@@ -257,7 +264,7 @@ export function describeDbTargetSelection<R>(
             expect(lookups.map(({ method, url }) => `${method} ${url}`)).toEqual([BRANCH_LOOKUP]);
             assertPermissionDrift({
               command: path,
-              activeFlags: { remote: "feature-x" },
+              activeFlags: { ...scenario.activeFlags, remote: "feature-x" },
               requests: lookups,
             });
           }
@@ -270,6 +277,7 @@ export function describeDbTargetSelection<R>(
       {
         args: ["--remote=feature-y"],
         target: selecting({ _tag: "Branch", name: "feature-y" }),
+        linked: true,
         check: (ctx) =>
           Effect.gen(function* () {
             const error = yield* Effect.flip(ctx.run);
