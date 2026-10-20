@@ -2706,7 +2706,9 @@ describe("db diff", () => {
             projectRef: Option.some(FLAG_PROJECT_REF),
           }),
         );
-        expect(s.resolverCalls).toHaveLength(1);
+        expect(s.resolverCalls.map((call) => call.target)).toEqual([
+          expect.objectContaining({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" }),
+        ]);
         expect(targetLines(s.out)).toEqual([`Target: project ${FLAG_PROJECT_REF}`]);
         expect(warningsOf(s.out)).toEqual([PROJECT_REF_WARNING]);
       }).pipe(Effect.provide(s.layer));
