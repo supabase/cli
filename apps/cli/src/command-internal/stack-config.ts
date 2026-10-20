@@ -282,22 +282,21 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         config: validatedConfig,
         projectEnvValues,
         document,
-      } =
-        opts?.context === undefined
-          ? yield* loadResolvedConfigContext(
-              projectRoot,
-              Option.fromNullishOr(opts?.projectRef),
-            ).pipe(
-              Effect.mapError(
-                (cause) => new StackConfigError({ message: describeConfigLoadFailure(cause) }),
-              ),
-            )
-          : {
-              resolvedConfig: opts.context.resolvedConfig,
-              config: opts.context.config,
-              projectEnvValues: opts.context.projectEnvValues,
-              document: opts.context.resolvedConfig.loaded.document,
-            };
+      } = opts?.context === undefined
+        ? yield* loadResolvedConfigContext(
+            projectRoot,
+            Option.fromNullishOr(opts?.projectRef),
+          ).pipe(
+            Effect.mapError(
+              (cause) => new StackConfigError({ message: describeConfigLoadFailure(cause) }),
+            ),
+          )
+        : {
+            resolvedConfig: opts.context.resolvedConfig,
+            config: opts.context.config,
+            projectEnvValues: opts.context.projectEnvValues,
+            document: opts.context.resolvedConfig.loaded.document,
+          };
       const { originAt } = resolvedConfig.materialized;
       yield* recordOrioleDbTelemetry(
         validatedConfig.db.orioledb_version,
@@ -358,7 +357,10 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             const secretKey = configured(auth.secret_key);
             const configuredAnonKey = configured(auth.anon_key);
             const configuredServiceRoleKey = configured(auth.service_role_key);
-            const configuredSigningKeys = resolveConfiguredSigningKeys(validatedConfig, projectRoot);
+            const configuredSigningKeys = resolveConfiguredSigningKeys(
+              validatedConfig,
+              projectRoot,
+            );
             const signingKeys =
               configuredSigningKeys ??
               (auth.signing_keys_path === undefined || auth.signing_keys_path.length === 0
