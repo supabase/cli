@@ -92,6 +92,8 @@ A command's own `SIDE_EFFECTS.md` records where else its password can come from 
 
 A warning never repeats an operand, a flag value or a database URL, because a CI log would keep them, and it carries no example command. Two values have their own wording: a branch whose name is a boolean literal (`true`, `false`, `yes`, `no`, `on`, `off`, `y`, `n`, `1`, `0`) is reached with `--remote=<its ref or UUID>`, and a keyword `--db-url` connection string is converted to a `postgresql://` URL for `--remote=<url>`.
 
+`db diff --from`/`--to` accepts the same flags and warns the same way, but names the `--from`/`--to` value that replaces each: `Use --from=remote or --to=remote instead` for `--linked`, `Use --from=<ref> or --to=<ref> instead` for `--project-ref` (`<branch>` for a branch name) and `Use --from=<url> or --to=<url> instead` for `--db-url`. `--project-ref` also points a `remote` side, or the deprecated `linked`, at the project it names, and fails when neither side is `remote`; `--linked`, `--db-url` and `--local` change nothing. `--remote` stays an error there.
+
 ## Hosted-mutation consent
 
 Every persistent mutation of a hosted resource asks for consent first, including a write through a non-local `--remote=<url>`. A loopback host on the local or shadow database ports, or the local stack's endpoint, counts as local.

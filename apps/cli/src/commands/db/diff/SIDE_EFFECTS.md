@@ -141,12 +141,12 @@ migra/pg-delta-engine-specific).
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                                                                            |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`  | success; empty diff ("No schema changes found")                                                                                                                                                                                                                                      |
-| `1`  | `--from` without `--to`; `--remote` or an alias combined with `--from`/`--to`; engine-flag mutex; unknown explicit target; connection/shadow/engine failure; file IO error; local db not running (`--use-pgadmin`); differ container non-zero exit; unparseable `--json-diff` output |
-| `1`  | a `--from`/`--to` branch naming no branch of the parent project                                                                                                                                                                                                                      |
-| `1`  | `--use-pg-schema` passed at all (any value, including `=false`) — removed, see Notes                                                                                                                                                                                                 |
+| Code | Condition                                                                                                                                                                                                                                                                                                                                                   |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success; empty diff ("No schema changes found")                                                                                                                                                                                                                                                                                                             |
+| `1`  | `--from` without `--to`; `--remote` combined with `--from`/`--to`; `--project-ref` with no `remote` side or naming a URL; conflicting selector flags; engine-flag mutex; unknown explicit target; connection/shadow/engine failure; file IO error; local db not running (`--use-pgadmin`); differ container non-zero exit; unparseable `--json-diff` output |
+| `1`  | a `--from`/`--to` branch naming no branch of the parent project                                                                                                                                                                                                                                                                                             |
+| `1`  | `--use-pg-schema` passed at all (any value, including `=false`) — removed, see Notes                                                                                                                                                                                                                                                                        |
 
 ## Output
 
@@ -247,18 +247,36 @@ announces one.
   (`host=… password=…`) with `--from takes local, migrations, remote, a project ref, a branch name or
 a postgresql:// URL; convert a connection string to a postgresql:// URL and pass --from=<url>.`, and
   a non-postgres URL with the same first sentence (naming `--from=<ref>` for a project's own
-  `https://<ref>.supabase.co` URL); `--to` likewise. In `--from`/`--to`, `remote` is always the linked project. `--from linked` / `--to linked`
-  still work and warn `--from linked is deprecated and will
-be removed in v4. Use --from=remote instead` (and `--to=remote` for `--to`). A `--remote` selector (or an alias: `--linked`,
-  `--project-ref`, `--db-url`, `--local`) given alongside fails with `--remote doesn't apply with
---from/--to; use --from=remote or --to=remote.` (the flag named is the one passed; `--db-url`
-  suggests `<db-url>` and `--local` suggests `local`), before any target resolves, and the default
-  `Target:` hint is not printed. The linked project resolves once, so `--from remote
---to remote` announces it once, and a branch or ref used on both sides shares one connection. A branch
-  endpoint looks the name up in the branch list of `SUPABASE_PROJECT_ID`, else the linked
-  project. `--use-pgadmin` honors the same selection (CLI-1968 — same target resolve);
+  `https://<ref>.supabase.co` URL); `--to` likewise. In `--from`/`--to`, `remote` is the linked
+  project, or the one `--project-ref` names. `--from linked` / `--to linked` still work and warn
+  `--from linked is deprecated and will be removed in v4. Use --from=remote instead` (and
+  `--to=remote` for `--to`). A `--remote` selector given alongside fails with
+  `--remote doesn't apply with --from/--to; use --from=remote or --to=remote.` before any target
+  resolves, and the default `Target:` hint is not printed. The linked project resolves once, so
+  `--from remote --to remote` announces it once, and a branch or ref used on both sides shares
+  one connection. A branch endpoint looks the name up in the branch list of
+  `SUPABASE_PROJECT_ID`, else the linked project. `--use-pgadmin` honors the same selection
+  (CLI-1968 — same target resolve);
   `--use-pg-schema` is removed and rejects before any target resolution happens (see Notes
   below).
+- **Explicit `--from`/`--to` with a deprecated selector flag.** `--local`, `--linked`, `--db-url`
+  and `--project-ref` are accepted. Each warns on stderr before any target resolves, names the
+  value that replaces it, and never repeats a URL:
+  - `--local`: `--local isn't needed (local is the default) and will be removed in v4`.
+  - `--linked`: `--linked is deprecated and will be removed in v4. Use --from=remote or --to=remote instead`.
+  - `--db-url`: `--db-url is deprecated and will be removed in v4. Use --from=<url> or --to=<url> instead`.
+  - `--project-ref=<ref|branch>`: `--project-ref is deprecated and will be removed in v4. Use --from=<ref> or --to=<ref> instead`
+    (`<branch>` for a branch name). With `--linked` the two share one warning:
+    `--linked and --project-ref are deprecated and will be removed in v4. Use --from=<ref> or --to=<ref> instead`.
+
+  `--local`, `--linked` and `--db-url` change nothing. `--project-ref` resolves every `remote` (or
+  deprecated `linked`) side to the project it names, read like a `--from` value, so the `Target:`
+  lines and the JSON `target` show that project. With no `remote` side it fails with
+  `--project-ref only applies when --from or --to is remote; to diff another project, use --from=<ref> or --to=<ref>.`
+  and a URL value fails with `--project-ref takes a project ref or a branch name, not a URL.`
+  Selector flags that conflict (`--linked` with `--local`, `--project-ref` with `--db-url`) fail as
+  they do without `--from`/`--to`.
+
 - **Explicit `--from`/`--to` config and URLs.** The config is read when the first endpoint that
   needs it resolves, not before. A hosted endpoint resolved first merges its `[remotes.<ref>]`
   block into that read, before validation and before its temporary login role is minted, so

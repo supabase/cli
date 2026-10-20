@@ -2567,39 +2567,230 @@ describe("db diff", () => {
   });
 
   describe.each([
-    { flag: "--remote", side: "remote", selector: { remote: REMOTE_LINKED } },
+    { selector: { remote: REMOTE_LINKED } },
     {
-      flag: "--remote",
-      side: "remote",
       selector: { remote: Option.some({ _tag: "Ref", ref: "flagflagflagflagflag" } as const) },
     },
     {
-      flag: "--remote",
-      side: "remote",
       selector: { remote: Option.some({ _tag: "DbUrl", url: "postgresql://x" } as const) },
     },
-    { flag: "--linked", side: "remote", selector: { linked: true } },
-    {
-      flag: "--project-ref",
-      side: "remote",
-      selector: { projectRef: Option.some("flagflagflagflagflag") },
+  ] satisfies ReadonlyArray<{ selector: Partial<DbDiffFlags> }>)(
+    "explicit --from/--to with --remote",
+    ({ selector }) => {
+      it.effect("is rejected before any target resolves", () => {
+        const s = setup(tmp.current);
+        return Effect.gen(function* () {
+          const error = yield* dbDiff(
+            flags({ from: Option.some("local"), to: Option.some("migrations"), ...selector }),
+          ).pipe(Effect.flip);
+          expect(error).toMatchObject({
+            _tag: "DbDiffExplicitFlagsError",
+            message: "--remote doesn't apply with --from/--to; use --from=remote or --to=remote.",
+          });
+          expect(s.resolverCalls).toEqual([]);
+          expect(s.explicitDiffCalls).toEqual([]);
+          expect(s.cache.cached).toBe(false);
+          expect(warningsOf(s.out)).toEqual([]);
+        }).pipe(Effect.provide(s.layer));
+      });
     },
-    { flag: "--db-url", side: "<db-url>", selector: { dbUrl: Option.some("postgresql://x") } },
-    { flag: "--local", side: "local", selector: { local: true } },
-  ] satisfies ReadonlyArray<{
-    flag: string;
-    side: string;
-    selector: Partial<DbDiffFlags>;
-  }>)("explicit --from/--to with $flag", ({ flag, side, selector }) => {
-    it.effect("is rejected before any target resolves", () => {
-      const s = setup(tmp.current);
+  );
+
+  describe("explicit --from/--to with the deprecated selector flags", () => {
+    const FLAG_PROJECT_REF = "flagflagflagflagflag";
+    const CREDENTIALED_URL = "postgresql://u:secret@db.example.com:6543/postgres";
+    const PROJECT_REF_WARNING =
+      "--project-ref is deprecated and will be removed in v4. Use --from=<ref> or --to=<ref> instead";
+
+    const hostedSetup = () =>
+      setup(tmp.current, {
+        isLocal: false,
+        projectId: Option.some(VALID_REF),
+        diffSql: "create table r ();\n",
+      });
+
+    it.effect.each([
+      {
+        flag: "--local",
+        selector: { local: true },
+        warning: "--local isn't needed (local is the default) and will be removed in v4",
+      },
+      {
+        flag: "--linked",
+        selector: { linked: true },
+        warning:
+          "--linked is deprecated and will be removed in v4. Use --from=remote or --to=remote instead",
+      },
+      {
+        flag: "--db-url",
+        selector: { dbUrl: Option.some(CREDENTIALED_URL) },
+        warning:
+          "--db-url is deprecated and will be removed in v4. Use --from=<url> or --to=<url> instead",
+      },
+    ] satisfies ReadonlyArray<{ flag: string; selector: Partial<DbDiffFlags>; warning: string }>)(
+      "$flag warns and leaves --from local --to migrations as they are",
+      ({ selector, warning }) => {
+        const s = setup(tmp.current, { diffSql: "create table c ();\n" });
+        return Effect.gen(function* () {
+          yield* dbDiff(
+            flags({ from: Option.some("local"), to: Option.some("migrations"), ...selector }),
+          );
+          expect(warningsOf(s.out)).toEqual([warning]);
+          expect(s.explicitDiffCalls[0]?.source).toMatchObject({
+            kind: "database",
+            connectOptions: { isLocal: true },
+          });
+          expect(s.explicitDiffCalls[0]?.desired).toEqual({ kind: "migrations" });
+          expect(s.resolverCalls).toEqual([]);
+          expect(s.cache.cached).toBe(false);
+          expect(`${s.out.stdoutText}${s.out.stderrText}`).not.toContain("secret");
+        }).pipe(Effect.provide(s.layer));
+      },
+    );
+
+    it.effect("--linked with --from remote resolves the linked project once", () => {
+      const s = hostedSetup();
+      return Effect.gen(function* () {
+        yield* dbDiff(
+          flags({ from: Option.some("remote"), to: Option.some("local"), linked: true }),
+        );
+        expect(s.resolverCalls.map((call) => call.target)).toEqual([
+          expect.objectContaining({ kind: "linked", ref: VALID_REF, source: "file" }),
+        ]);
+        expect(warningsOf(s.out)).toEqual([
+          "--linked is deprecated and will be removed in v4. Use --from=remote or --to=remote instead",
+        ]);
+      }).pipe(Effect.provide(s.layer));
+    });
+
+    it.effect.each(
+      (["from", "to"] as const).flatMap((side) =>
+        (["remote", "linked"] as const).map((keyword) => ({ side, keyword })),
+      ),
+    )("--project-ref redirects --$side $keyword to the project it names", ({ side, keyword }) => {
+      const s = hostedSetup();
+      const other = side === "from" ? "to" : "from";
+      return Effect.gen(function* () {
+        yield* dbDiff(
+          flags({
+            [side]: Option.some(keyword),
+            [other]: Option.some("migrations"),
+            projectRef: Option.some(FLAG_PROJECT_REF),
+          }),
+        );
+        expect(s.resolverCalls.map((call) => call.target)).toEqual([
+          expect.objectContaining({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" }),
+        ]);
+        expect(targetLines(s.out)).toEqual([`Target: project ${FLAG_PROJECT_REF}`]);
+        expect(yield* CommandTarget.use((cell) => cell.json)).toEqual(
+          Option.some({ kind: "linked", project_ref: FLAG_PROJECT_REF, environment: "unverified" }),
+        );
+        expect(warningsOf(s.out)).toEqual([
+          PROJECT_REF_WARNING,
+          ...(keyword === "linked"
+            ? [
+                `--${side} linked is deprecated and will be removed in v4. Use --${side}=remote instead`,
+              ]
+            : []),
+        ]);
+      }).pipe(Effect.provide(s.layer));
+    });
+
+    it.effect("--project-ref redirects both remote sides to one shared connection", () => {
+      const s = hostedSetup();
+      return Effect.gen(function* () {
+        yield* dbDiff(
+          flags({
+            from: Option.some("remote"),
+            to: Option.some("remote"),
+            projectRef: Option.some(FLAG_PROJECT_REF),
+          }),
+        );
+        expect(s.resolverCalls).toHaveLength(1);
+        expect(targetLines(s.out)).toEqual([`Target: project ${FLAG_PROJECT_REF}`]);
+        expect(warningsOf(s.out)).toEqual([PROJECT_REF_WARNING]);
+      }).pipe(Effect.provide(s.layer));
+    });
+
+    it.effect("--project-ref=<branch> redirects the remote side to the branch's project", () => {
+      const branchApi = branchListApi();
+      const s = hostedSetup();
+      return Effect.gen(function* () {
+        yield* dbDiff(
+          flags({
+            from: Option.some("remote"),
+            to: Option.some("migrations"),
+            projectRef: Option.some("feature-x"),
+          }),
+        ).pipe(Effect.provide(Layer.merge(s.layer, branchApi.layer)));
+        expect(s.resolverCalls.map((call) => call.target)).toEqual([
+          expect.objectContaining({ kind: "linked", ref: BRANCH_PROJECT_REF, source: "flag" }),
+        ]);
+        expect(warningsOf(s.out)).toEqual([
+          "--project-ref is deprecated and will be removed in v4. Use --from=<branch> or --to=<branch> instead",
+        ]);
+        assertPermissionDrift({
+          command: "db diff",
+          activeFlags: { "project-ref": "feature-x", from: "remote", to: "migrations" },
+          requests: branchApi.requests,
+        });
+      });
+    });
+
+    it.effect("--linked with --project-ref redirects the remote side under one warning", () => {
+      const s = hostedSetup();
+      return Effect.gen(function* () {
+        yield* dbDiff(
+          flags({
+            from: Option.some("remote"),
+            to: Option.some("migrations"),
+            linked: true,
+            projectRef: Option.some(FLAG_PROJECT_REF),
+          }),
+        );
+        expect(s.resolverCalls.map((call) => call.target)).toEqual([
+          expect.objectContaining({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" }),
+        ]);
+        expect(warningsOf(s.out)).toEqual([
+          "--linked and --project-ref are deprecated and will be removed in v4. Use --from=<ref> or --to=<ref> instead",
+        ]);
+      }).pipe(Effect.provide(s.layer));
+    });
+
+    it.effect.each([
+      {
+        label: "--project-ref",
+        selector: { projectRef: Option.some(FLAG_PROJECT_REF) },
+        from: "local",
+        to: "migrations",
+      },
+      {
+        label: "--project-ref with a ref on the other side",
+        selector: { projectRef: Option.some(FLAG_PROJECT_REF) },
+        from: "abcdefghijklmnopqrst",
+        to: "migrations",
+      },
+      {
+        label: "--linked --project-ref",
+        selector: { linked: true, projectRef: Option.some(FLAG_PROJECT_REF) },
+        from: "local",
+        to: "migrations",
+      },
+    ] satisfies ReadonlyArray<{
+      label: string;
+      selector: Partial<DbDiffFlags>;
+      from: string;
+      to: string;
+    }>)("fails $label when neither side is remote", ({ selector, from, to }) => {
+      const s = hostedSetup();
       return Effect.gen(function* () {
         const error = yield* dbDiff(
-          flags({ from: Option.some("local"), to: Option.some("migrations"), ...selector }),
+          flags({ from: Option.some(from), to: Option.some(to), ...selector }),
         ).pipe(Effect.flip);
         expect(error).toMatchObject({
           _tag: "DbDiffExplicitFlagsError",
-          message: `${flag} doesn't apply with --from/--to; use --from=${side} or --to=${side}.`,
+          message:
+            "--project-ref only applies when --from or --to is remote; to diff another project, use --from=<ref> or --to=<ref>.",
         });
         expect(s.resolverCalls).toEqual([]);
         expect(s.explicitDiffCalls).toEqual([]);
@@ -2607,6 +2798,60 @@ describe("db diff", () => {
         expect(warningsOf(s.out)).toEqual([]);
       }).pipe(Effect.provide(s.layer));
     });
+
+    it.effect.each([
+      { value: `https://${FLAG_PROJECT_REF}.supabase.co`, tag: "TargetInvalidValueError" },
+      { value: CREDENTIALED_URL, tag: "DbDiffExplicitFlagsError" },
+    ])("rejects --project-ref=<url> without echoing it ($tag)", ({ value, tag }) => {
+      const s = hostedSetup();
+      return Effect.gen(function* () {
+        const error = yield* dbDiff(
+          flags({
+            from: Option.some("remote"),
+            to: Option.some("migrations"),
+            projectRef: Option.some(value),
+          }),
+        ).pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: tag,
+          message: "--project-ref takes a project ref or a branch name, not a URL.",
+        });
+        expect(error.message).not.toContain("secret");
+        expect(s.resolverCalls).toEqual([]);
+        expect(s.explicitDiffCalls).toEqual([]);
+        expect(warningsOf(s.out)).toEqual([]);
+      }).pipe(Effect.provide(s.layer));
+    });
+
+    it.effect.each([
+      {
+        label: "--linked with --local",
+        selector: { linked: true, local: true },
+        tag: "TargetSelectorConflictError",
+      },
+      {
+        label: "--project-ref with --db-url",
+        selector: {
+          projectRef: Option.some(FLAG_PROJECT_REF),
+          dbUrl: Option.some(CREDENTIALED_URL),
+        },
+        tag: "TargetProjectRefConflictError",
+      },
+    ] satisfies ReadonlyArray<{ label: string; selector: Partial<DbDiffFlags>; tag: string }>)(
+      "still rejects $label",
+      ({ selector, tag }) => {
+        const s = hostedSetup();
+        return Effect.gen(function* () {
+          const error = yield* dbDiff(
+            flags({ from: Option.some("remote"), to: Option.some("migrations"), ...selector }),
+          ).pipe(Effect.flip);
+          expect(error).toMatchObject({ _tag: tag });
+          expect(s.resolverCalls).toEqual([]);
+          expect(s.explicitDiffCalls).toEqual([]);
+          expect(warningsOf(s.out)).toEqual([]);
+        }).pipe(Effect.provide(s.layer));
+      },
+    );
   });
 
   it.effect("fails when --from is set without --to", () => {
@@ -3479,6 +3724,33 @@ describe("db diff permissions through the real resolver and cache", () => {
       );
     });
   }
+
+  it.effect("resolves the project --project-ref names for a remote side", () => {
+    const s = setup(tmp.current, { realLayers: true, diffSql: "create table e ();\n" });
+    const requests: Array<StubbedRequest> = [];
+    return Effect.gen(function* () {
+      yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
+      yield* dbDiff(
+        flags({
+          from: Option.some("remote"),
+          to: Option.some("migrations"),
+          projectRef: Option.some(VALID_REF),
+        }),
+      ).pipe(Effect.provide(s.layer));
+      expect(asLines(requests)).toEqual([poolerRequest, loginRoleRequest]);
+      expect(cacheCalls(s.projectHttp.calls)).toEqual([cacheRequest]);
+      assertPermissionDrift({
+        command: "db diff",
+        activeFlags: { "project-ref": VALID_REF, from: "remote", to: "migrations" },
+        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        exact: true,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+      provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+    );
+  });
 
   it.effect("makes no Management API request for --from local --to migrations", () => {
     const s = setup(tmp.current, { realLayers: true, diffSql: "create table e ();\n" });

@@ -21,8 +21,8 @@ export class DbDiffEngineConflictError extends Data.TaggedError("DbDiffEngineCon
 
 /**
  * Explicit diff mode got only one of `--from` / `--to`, a non-postgres URL or keyword connection
- * string for one of them, or a target selector (`--remote` and its aliases), which it doesn't take; message text is
- * an established output contract.
+ * string for one of them, `--remote`, which it doesn't take, or a `--project-ref` that names a URL
+ * or has no `remote` side to apply to; message text is an established output contract.
  */
 export class DbDiffExplicitFlagsError extends Data.TaggedError("DbDiffExplicitFlagsError")<{
   readonly message: string;

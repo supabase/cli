@@ -35,6 +35,7 @@ import {
   renderDbUrlTarget,
   renderLocalTarget,
 } from "../../../command-internal/target/target-identity.ts";
+import { parseTargetSelector } from "../../../command-internal/target/target-selector.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import { makeDir } from "../../../command-internal/make-dir.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
@@ -88,7 +89,7 @@ import { writePgDeltaMigrations } from "../shared/pgdelta-migrations.write.ts";
 import { type PgDeltaContext, isPgDeltaDebugEnabled } from "../../../command-internal/pgdelta.ts";
 import { prepareShadowSource } from "../shared/shadow-source.ts";
 import type { DbDiffFlags } from "./diff.command.ts";
-import { classifyExplicitRef } from "./diff.explicit.ts";
+import { classifyExplicitRef, explicitDeprecationMessages } from "./diff.explicit.ts";
 import {
   DbDiffDbNotRunningError,
   DbDiffEngineConflictError,
@@ -122,25 +123,6 @@ const declarativeFilesIgnoredNote = (displayPath: string, nextSteps: string) =>
 
 const EXPLICIT_REF_VALUES_MESSAGE = (flag: "--from" | "--to") =>
   `${flag} takes local, migrations, remote, a project ref, a branch name or a postgresql:// URL`;
-
-const EXPLICIT_SIDE_FOR_SELECTOR = {
-  "--remote": "remote",
-  "--linked": "remote",
-  "--project-ref": "remote",
-  "--db-url": "<db-url>",
-  "--local": "local",
-} as const;
-
-const givenSelectorFlag = (
-  flags: DbDiffFlags,
-): keyof typeof EXPLICIT_SIDE_FOR_SELECTOR | undefined => {
-  if (Option.isSome(flags.remote)) return "--remote";
-  if (flags.linked) return "--linked";
-  if (Option.isSome(flags.projectRef)) return "--project-ref";
-  if (Option.isSome(flags.dbUrl)) return "--db-url";
-  if (flags.local) return "--local";
-  return undefined;
-};
 
 export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   if (Option.isSome(flags.usePgSchema)) {
@@ -202,12 +184,32 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           message: "must set both --from and --to when using explicit diff mode",
         });
       }
-      const selectorFlag = givenSelectorFlag(flags);
-      if (selectorFlag !== undefined) {
-        const side = EXPLICIT_SIDE_FOR_SELECTOR[selectorFlag];
+      if (Option.isSome(flags.remote)) {
         return yield* new DbDiffExplicitFlagsError({
-          message: `${selectorFlag} doesn't apply with --from/--to; use --from=${side} or --to=${side}.`,
+          message: "--remote doesn't apply with --from/--to; use --from=remote or --to=remote.",
         });
+      }
+      const { selection, deprecations } = yield* Effect.fromResult(parseTargetSelector(flags));
+      const projectRefTarget =
+        selection._tag === "Ref" || selection._tag === "Branch" ? selection : undefined;
+      if (Option.isSome(flags.projectRef)) {
+        if (projectRefTarget === undefined) {
+          return yield* new DbDiffExplicitFlagsError({
+            message: "--project-ref takes a project ref or a branch name, not a URL.",
+          });
+        }
+        if (
+          classifyExplicitRef(from)._tag !== "Remote" &&
+          classifyExplicitRef(to)._tag !== "Remote"
+        ) {
+          return yield* new DbDiffExplicitFlagsError({
+            message:
+              "--project-ref only applies when --from or --to is remote; to diff another project, use --from=<ref> or --to=<ref>.",
+          });
+        }
+      }
+      for (const message of explicitDeprecationMessages(deprecations)) {
+        yield* warnTarget(message);
       }
       // The linked ref resolved so far: later config reads and `migrations` catalog exports merge
       // its `[remotes.<ref>]` override; endpoints resolved before any linked ref use the base.
@@ -329,7 +331,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                   `${flag} linked is deprecated and will be removed in v4. Use ${flag}=remote instead`,
                 );
               }
-              return yield* hostedEndpoint({ _tag: "Linked" });
+              return yield* hostedEndpoint(projectRefTarget ?? { _tag: "Linked" });
             case "Ref":
             case "Branch":
               return yield* hostedEndpoint(explicit);

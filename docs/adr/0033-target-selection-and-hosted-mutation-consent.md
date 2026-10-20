@@ -122,8 +122,11 @@ onto `--remote`:
   bare `--remote` counting as the linked project, and an error before anything runs when they differ.
 - A bare `--remote` together with `--project-ref=<x>` is accepted, as `--linked --project-ref=<x>`
   is: the alias's value wins and its warning prints.
-- `db diff` with `--remote` or an alias together with `--from` or `--to` is an error. In `--from`
-  and `--to`, `remote` always means the linked project.
+- `db diff` with `--remote` together with `--from` or `--to` is an error. The aliases are accepted
+  there with a warning that names the `--from`/`--to` value: `--project-ref` points a `remote` side
+  at the project it names, and is an error when neither side is `remote`; `--linked`, `--db-url`
+  and `--local` change nothing. In `--from` and `--to`, `remote` means the linked project, or the
+  one `--project-ref` names.
 - `--no-remote` and `--remote=false` fail and tell the user to leave `--remote` out.
   `--remote yes`, `--remote y`, `--remote 1`, `--remote true` and `--remote on` mean bare `--remote`. An empty
   `--remote=` value is rejected, and the message names the values that command accepts. Neither
