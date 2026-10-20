@@ -1585,8 +1585,9 @@ describe("link permissions", () => {
 
   const managementCalls = (api: { requests: ReadonlyArray<{ method: string; url: string }> }) =>
     api.requests
-      .filter(({ url }) => url.startsWith(API))
-      .map(({ method, url }) => `${method} ${url.slice(API.length)}`);
+      .map(({ method, url }) => ({ method, url: new URL(url) }))
+      .filter(({ url }) => url.origin === API)
+      .map(({ method, url }) => `${method} ${url.pathname}${url.search}`);
 
   it.effect("links by --project-ref, reading the project, its keys, storage and the pooler", () => {
     const { layer, api, workdir } = setupRecording();
