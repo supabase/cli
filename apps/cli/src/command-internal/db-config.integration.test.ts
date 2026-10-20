@@ -2239,6 +2239,19 @@ describe("resolveLinkedConn libpq TLS", () => {
     }).pipe(Effect.scoped, Effect.provide(linkedConnLayer)),
   );
 
+  it.effect("still reports the IPv6 error for a malformed saved pooler URL with a valid env", () =>
+    Effect.gen(function* () {
+      const error = yield* linkedConn(
+        { PGSSLMODE: "verify-full" },
+        {
+          reachable: false,
+          poolerUrl: `postgres://postgres.${ref}@${poolerHost}:notaport/postgres`,
+        },
+      ).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(DbConfigIpv6Error);
+    }).pipe(Effect.scoped, Effect.provide(linkedConnLayer)),
+  );
+
   it.effect("ignores project .env TLS on the direct host and the saved pooler URL", () =>
     Effect.gen(function* () {
       const savedUrl = `postgres://postgres.${ref}:[YOUR-PASSWORD]@${poolerHost}:6543/postgres`;
