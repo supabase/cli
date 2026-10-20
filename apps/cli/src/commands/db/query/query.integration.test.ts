@@ -1218,6 +1218,7 @@ describe("db query integration", () => {
         },
         cachedRef: () => ctx.cache.cachedRef,
         branchLookups: () => branchApi.requests,
+        apiRequests: () => [...ctx.platformApi.requests, ...branchApi.requests],
       };
     },
   });

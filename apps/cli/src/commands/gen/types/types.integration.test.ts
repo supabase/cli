@@ -1112,6 +1112,7 @@ describe("gen types", () => {
             },
             cachedRef: () => ctx.linkedProjectCache.cachedRef,
             branchLookups: () => branchLookupsOf(ctx.api.requests),
+            apiRequests: () => ctx.api.requests,
           })),
         ),
     });

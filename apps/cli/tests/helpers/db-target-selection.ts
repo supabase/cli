@@ -97,6 +97,8 @@ interface DbTargetAttempt<R> {
   readonly cachedRef?: () => string | undefined;
   /** The branch-list requests the leaf sent, for a leaf that records them. */
   readonly branchLookups?: () => ReadonlyArray<RecordedLookup>;
+  /** Every Management API request the leaf sent, for a leaf that records them. */
+  readonly apiRequests?: () => ReadonlyArray<unknown>;
 }
 
 type Row =
@@ -307,6 +309,7 @@ export function describeDbTargetSelection<R>(
               expect(ctx.target()).toMatchObject({ kind: "db-url" });
               expect(warningsOf(ctx.out)).toEqual([]);
               expectCachedRef(ctx, undefined);
+              if (ctx.apiRequests !== undefined) expect(ctx.apiRequests()).toEqual([]);
             }),
         },
       );

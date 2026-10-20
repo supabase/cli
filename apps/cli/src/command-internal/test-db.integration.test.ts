@@ -865,6 +865,7 @@ describe("test db integration", () => {
         run: testDb(flags(target)),
         target: () => ctx.resolver.inputs[0]?.target,
         branchLookups: () => branchApi.requests,
+        apiRequests: () => branchApi.requests,
       };
     },
   });

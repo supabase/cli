@@ -454,6 +454,7 @@ describeDbTargetSelection("migration up", {
       target: () => ctx.resolverCalls[0]?.target,
       cachedRef: () => ctx.cache.cachedRef,
       branchLookups: () => ctx.branchRequests,
+      apiRequests: () => ctx.branchRequests,
     };
   },
 });

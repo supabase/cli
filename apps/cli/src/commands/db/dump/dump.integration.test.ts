@@ -968,6 +968,7 @@ describe("db dump integration", () => {
         target: () => ctx.resolver.calls[0]?.target,
         cachedRef: () => ctx.cache.cachedRef,
         branchLookups: () => branchApi.requests,
+        apiRequests: () => branchApi.requests,
       };
     },
   });

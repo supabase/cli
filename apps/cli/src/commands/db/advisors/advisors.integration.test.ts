@@ -823,6 +823,7 @@ describeDbTargetSelection("db advisors", {
       target: () => ctx.resolver.resolveInputs[0]?.target,
       cachedRef: () => ctx.cache.cachedRef,
       branchLookups: () => ctx.api.requests.filter(({ url }) => url.endsWith("/branches")),
+      apiRequests: () => ctx.api.requests,
     };
   },
 });

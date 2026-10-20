@@ -1505,6 +1505,7 @@ describeDbTargetSelection("migration squash", {
       target: () => s.resolverCalls[0]?.target,
       cachedRef: () => s.cache.cachedRef,
       branchLookups: () => s.branchRequests,
+      apiRequests: () => s.branchRequests,
     };
   },
 });
