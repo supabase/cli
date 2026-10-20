@@ -33,7 +33,7 @@ test("runs SQL against the remote database and returns its rows", ({
     { signal },
   ));
 
-test("rejects a write against the remote database under --read-only", ({
+test("the database rejects a write that passes the keyword check under --read-only", ({
   cliEffect,
   project,
   signal,
@@ -44,7 +44,7 @@ test("rejects a write against the remote database under --read-only", ({
       const result = yield* cliEffect([
         "db",
         "query",
-        `create table ${table} (id int)`,
+        `select 1 as id into ${table}`,
         "--read-only",
         `--remote=${project.dbUrl}`,
       ]);
