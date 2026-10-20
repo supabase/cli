@@ -2,11 +2,7 @@ import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
-import {
-  compose,
-  withCondition,
-  withDbTarget,
-} from "../../../command-internal/command-permissions/model.ts";
+import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
@@ -49,14 +45,11 @@ export const dbResetCommand = Command.make("reset", config).pipe(
   Command.withDescription("Resets a database to current migrations."),
   Command.withShortDescription("Resets a database to current migrations"),
   withPermissions(
-    withDbTarget(
-      compose(
-        { operations: [], noApiEffectFlags: ["no-seed", "sql-paths", "version", "last"] },
-        dbConfig,
-        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-        branchResolution,
-      ),
-      { default: "local" },
+    compose(
+      { operations: [], noApiEffectFlags: ["no-seed", "sql-paths", "version", "last"] },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>

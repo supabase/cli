@@ -5,7 +5,6 @@ import {
   compose,
   withCondition,
   withContext,
-  withDbTarget,
   type EntryCondition,
 } from "../../../command-internal/command-permissions/model.ts";
 import {
@@ -143,48 +142,45 @@ export const genTypesCommand = Command.make("types", commandConfig).pipe(
     },
   ]),
   withPermissions(
-    withDbTarget(
-      remoteTarget.reduce(
-        (fragment, condition) => withCondition(fragment, condition),
-        compose(
-          {
-            operations: [
-              {
-                operationId: "v1-generate-typescript-types",
-                kind: "required",
-                when: [{ flag: "lang", oneOf: ["typescript"] }],
-              },
-              { operationId: "v1-get-project", kind: "required", when: [nonTypescript] },
-              {
-                operationId: "v1-get-a-branch-config",
-                kind: "required",
-                when: [nonTypescript],
-                context: "the project lookup returns 404, so the ref names a preview branch",
-              },
-              {
-                operationId: "v1-get-pooler-config",
-                kind: "required",
-                when: [nonTypescript],
-                context: `${notBranch}, the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url (--remote=<ref>, --project-ref and --project-id ignore the saved file)`,
-              },
-              {
-                operationId: "v1-get-pooler-config",
-                kind: "required",
-                when: [nonTypescript],
-                context:
-                  "the ref names a preview branch and generating against its direct host fails with an IPv6 connectivity error",
-              },
-            ],
-            noApiEffectFlags: ["schema", "query-timeout", ...GEN_TYPES_LANGUAGE_FLAG_NAMES],
-          },
-          withCondition(withContext(dbConfigLinked, notBranch), nonTypescript),
-          withCondition(withContext(dbConfigPoolerFallbackLinked, notBranch), nonTypescript),
-          projectRefPicker,
-          linkedProjectCache,
-          branchResolution,
-        ),
+    remoteTarget.reduce(
+      (fragment, condition) => withCondition(fragment, condition),
+      compose(
+        {
+          operations: [
+            {
+              operationId: "v1-generate-typescript-types",
+              kind: "required",
+              when: [{ flag: "lang", oneOf: ["typescript"] }],
+            },
+            { operationId: "v1-get-project", kind: "required", when: [nonTypescript] },
+            {
+              operationId: "v1-get-a-branch-config",
+              kind: "required",
+              when: [nonTypescript],
+              context: "the project lookup returns 404, so the ref names a preview branch",
+            },
+            {
+              operationId: "v1-get-pooler-config",
+              kind: "required",
+              when: [nonTypescript],
+              context: `${notBranch}, the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url (--remote=<ref>, --project-ref and --project-id ignore the saved file)`,
+            },
+            {
+              operationId: "v1-get-pooler-config",
+              kind: "required",
+              when: [nonTypescript],
+              context:
+                "the ref names a preview branch and generating against its direct host fails with an IPv6 connectivity error",
+            },
+          ],
+          noApiEffectFlags: ["schema", "query-timeout", ...GEN_TYPES_LANGUAGE_FLAG_NAMES],
+        },
+        withCondition(withContext(dbConfigLinked, notBranch), nonTypescript),
+        withCondition(withContext(dbConfigPoolerFallbackLinked, notBranch), nonTypescript),
+        projectRefPicker,
+        linkedProjectCache,
+        branchResolution,
       ),
-      { default: "local" },
     ),
   ),
   Command.withHandler(genTypesHandler),

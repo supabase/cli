@@ -11,6 +11,7 @@ import { GLOBAL_NO_API_EFFECT_FLAGS } from "../../../tests/helpers/permission-gl
 import type { CommandPermissions, EntryCondition, OperationEntry } from "./model.ts";
 import { DB_TARGET_FLAGS, SELECTOR_FLAGS } from "../../../tests/helpers/permission-registry.ts";
 import type { PermissionVariant } from "../../../tests/helpers/permission-registry.ts";
+import { readTargetPolicy } from "../target/target-policy.ts";
 
 /**
  * Whole-command Go delegation, per `docs/go-cli-porting-status.md`. Flag-gated delegation
@@ -121,13 +122,13 @@ describe("command permission mapping completeness", () => {
               if (cond.dbTarget !== undefined) {
                 const where = `"${path}"'s \`when\` condition on "${entry.operationId}"`;
                 expect(
-                  permissions.dbTargetDefault,
-                  `${where} checks the database target, but the declaration sets no default — wrap it in withDbTarget`,
-                ).toBeDefined();
+                  Option.getOrUndefined(readTargetPolicy(node.command))?.group,
+                  `${where} checks the database target, which only a selectable leaf can choose between`,
+                ).toBe("selectable");
                 // A block's condition may name a target the command can't select; a command's own must be reachable.
                 for (const target of cond.source === undefined ? cond.dbTarget : []) {
                   expect(
-                    target === permissions.dbTargetDefault || node.flags.has(target),
+                    target === "local" || node.flags.has(target),
                     `${where} names the "${target}" target, which --${target} can't select and isn't the default`,
                   ).toBe(true);
                 }

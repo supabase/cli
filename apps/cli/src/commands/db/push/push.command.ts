@@ -2,11 +2,7 @@ import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
-import {
-  compose,
-  withCondition,
-  withDbTarget,
-} from "../../../command-internal/command-permissions/model.ts";
+import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
@@ -60,23 +56,14 @@ export const dbPushCommand = Command.make("push", config).pipe(
   ),
   Command.withShortDescription("Push new migrations to a database"),
   withPermissions(
-    withDbTarget(
-      compose(
-        {
-          operations: [],
-          noApiEffectFlags: [
-            "include-all",
-            "include-roles",
-            "include-seed",
-            "skip-vault",
-            "dry-run",
-          ],
-        },
-        dbConfig,
-        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-        branchResolution,
-      ),
-      { default: "local" },
+    compose(
+      {
+        operations: [],
+        noApiEffectFlags: ["include-all", "include-roles", "include-seed", "skip-vault", "dry-run"],
+      },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>

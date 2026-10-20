@@ -6,7 +6,6 @@ import {
   compose,
   withCondition,
   withContext,
-  withDbTarget,
 } from "../../../command-internal/command-permissions/model.ts";
 import {
   dbConfig,
@@ -121,30 +120,27 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
   ),
   Command.withShortDescription("Diffs a database for schema changes"),
   withPermissions(
-    withDbTarget(
-      compose(
-        {
-          operations: [explicitBranchSide("from"), explicitBranchSide("to")],
-          noApiEffectFlags: [
-            "use-migra",
-            "use-pgadmin",
-            "use-pg-schema",
-            "use-pg-delta",
-            "strict-coverage",
-            "output",
-            "file",
-            "schema",
-          ],
-        },
-        dbConfig,
-        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-        explicitLinkedSide("from"),
-        explicitLinkedSide("to"),
-        explicitNamedProjectSide("from"),
-        explicitNamedProjectSide("to"),
-        branchResolution,
-      ),
-      { default: "local" },
+    compose(
+      {
+        operations: [explicitBranchSide("from"), explicitBranchSide("to")],
+        noApiEffectFlags: [
+          "use-migra",
+          "use-pgadmin",
+          "use-pg-schema",
+          "use-pg-delta",
+          "strict-coverage",
+          "output",
+          "file",
+          "schema",
+        ],
+      },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      explicitLinkedSide("from"),
+      explicitLinkedSide("to"),
+      explicitNamedProjectSide("from"),
+      explicitNamedProjectSide("to"),
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>

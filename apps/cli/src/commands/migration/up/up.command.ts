@@ -2,11 +2,7 @@ import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
-import {
-  compose,
-  withCondition,
-  withDbTarget,
-} from "../../../command-internal/command-permissions/model.ts";
+import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -33,14 +29,11 @@ export const migrationUpCommand = Command.make("up", config).pipe(
   Command.withDescription("Apply pending migrations to a database."),
   Command.withShortDescription("Apply pending migrations to a database"),
   withPermissions(
-    withDbTarget(
-      compose(
-        { operations: [], noApiEffectFlags: ["include-all"] },
-        dbConfig,
-        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-        branchResolution,
-      ),
-      { default: "local" },
+    compose(
+      { operations: [], noApiEffectFlags: ["include-all"] },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>

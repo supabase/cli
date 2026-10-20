@@ -83,11 +83,8 @@ function selectorShapeOf(activeFlags: ActiveFlags): SelectorShape {
   }
 }
 
-/** The target `activeFlags` selects (`db-url`, `local`, `linked`, `remote`, or `project-ref`, which imply linked unless `remote` is a database URL), else `fallback`. */
-function dbTargetOf(
-  activeFlags: ActiveFlags,
-  fallback: DbTarget | undefined,
-): DbTarget | undefined {
+/** The target `activeFlags` selects (`db-url`, `local`, `linked`, `remote`, or `project-ref`, which imply linked unless `remote` is a database URL), else the local stack. */
+function dbTargetOf(activeFlags: ActiveFlags): DbTarget {
   for (const flag of ["db-url", "local", "linked"] as const satisfies ReadonlyArray<DbTarget>) {
     if (Object.hasOwn(activeFlags, flag)) return flag;
   }
@@ -96,15 +93,15 @@ function dbTargetOf(
     return typeof remote === "string" && DB_URL_PATTERN.test(remote) ? "db-url" : "linked";
   }
   if (Object.hasOwn(activeFlags, "project-ref")) return "linked";
-  return fallback;
+  return "local";
 }
 
 function conditionHolds(
   condition: EntryCondition,
   activeFlags: ActiveFlags,
-  dbTarget: () => DbTarget,
+  dbTarget: DbTarget,
 ): boolean {
-  if (condition.dbTarget !== undefined) return condition.dbTarget.includes(dbTarget());
+  if (condition.dbTarget !== undefined) return condition.dbTarget.includes(dbTarget);
   if (condition.selector !== undefined) {
     return condition.selector.includes(selectorShapeOf(activeFlags));
   }
@@ -145,15 +142,7 @@ export function applicableEntries(
   permissions: MappedCommandPermissions,
   activeFlags: ActiveFlags,
 ): ReadonlyArray<OperationEntry> {
-  const dbTarget = (): DbTarget => {
-    const target = dbTargetOf(activeFlags, permissions.dbTargetDefault);
-    if (target === undefined) {
-      throw new Error(
-        "an entry checks the database target, but activeFlags names none of --remote, --db-url, --local, --linked and the declaration sets no default (withDbTarget)",
-      );
-    }
-    return target;
-  };
+  const dbTarget = dbTargetOf(activeFlags);
   return permissions.operations.filter(
     (entry) =>
       entry.when === undefined ||

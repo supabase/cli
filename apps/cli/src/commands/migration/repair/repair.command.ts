@@ -1,11 +1,7 @@
 import { Argument, Command, Flag } from "effect/cli";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
-import {
-  compose,
-  withCondition,
-  withDbTarget,
-} from "../../../command-internal/command-permissions/model.ts";
+import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
@@ -40,14 +36,11 @@ export const migrationRepairCommand = Command.make("repair", config).pipe(
   Command.withDescription("Repair the migration history table."),
   Command.withShortDescription("Repair the migration history table"),
   withPermissions(
-    withDbTarget(
-      compose(
-        { operations: [], noApiEffectFlags: ["status"] },
-        dbConfig,
-        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-        branchResolution,
-      ),
-      { default: "local" },
+    compose(
+      { operations: [], noApiEffectFlags: ["status"] },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>

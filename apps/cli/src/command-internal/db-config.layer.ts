@@ -103,9 +103,8 @@ export const dbConfigNamedProject = block("db-config", [
 ]);
 
 /**
- * `DbConfigResolver` on the linked path; `--local` and `--db-url` make no API calls. Commands
- * include it with `withDbTarget`. The container retry that `db dump` and `db pull` run is
- * {@link dbConfigPoolerFallback}.
+ * `DbConfigResolver` on the linked path; `--local` and `--db-url` make no API calls. The container
+ * retry that `db dump` and `db pull` run is {@link dbConfigPoolerFallback}.
  */
 export const dbConfig = block(
   "db-config",

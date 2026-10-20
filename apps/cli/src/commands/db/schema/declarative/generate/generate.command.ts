@@ -6,7 +6,6 @@ import { withPermissions } from "../../../../../command-internal/command-permiss
 import {
   compose,
   withCondition,
-  withDbTarget,
 } from "../../../../../command-internal/command-permissions/model.ts";
 import { dbConfig } from "../../../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../../../telemetry/linked-project-cache.layer.ts";
@@ -76,24 +75,21 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
   ),
   Command.withShortDescription("Generate declarative schema from a database"),
   withPermissions(
-    withDbTarget(
-      compose(
-        {
-          operations: [],
-          noApiEffectFlags: [
-            "overwrite",
-            "output-dir",
-            "reset",
-            "schema",
-            "no-cache",
-            "strict-coverage",
-          ],
-        },
-        dbConfig,
-        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-        branchResolution,
-      ),
-      { default: "local" },
+    compose(
+      {
+        operations: [],
+        noApiEffectFlags: [
+          "overwrite",
+          "output-dir",
+          "reset",
+          "schema",
+          "no-cache",
+          "strict-coverage",
+        ],
+      },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>

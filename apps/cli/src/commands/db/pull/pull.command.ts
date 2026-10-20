@@ -3,11 +3,7 @@ import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
-import {
-  compose,
-  withCondition,
-  withDbTarget,
-} from "../../../command-internal/command-permissions/model.ts";
+import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
 import { dbConfig, dbConfigPoolerFallback } from "../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
@@ -110,24 +106,21 @@ export const dbPullCommand = Command.make("pull", config).pipe(
   ),
   Command.withShortDescription("Pull schema from a database"),
   withPermissions(
-    withDbTarget(
-      compose(
-        {
-          operations: [],
-          noApiEffectFlags: [
-            "declarative",
-            "use-pg-delta",
-            "diff-engine",
-            "strict-coverage",
-            "schema",
-          ],
-        },
-        dbConfig,
-        dbConfigPoolerFallback,
-        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-        branchResolution,
-      ),
-      { default: "local" },
+    compose(
+      {
+        operations: [],
+        noApiEffectFlags: [
+          "declarative",
+          "use-pg-delta",
+          "diff-engine",
+          "strict-coverage",
+          "schema",
+        ],
+      },
+      dbConfig,
+      dbConfigPoolerFallback,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) => {

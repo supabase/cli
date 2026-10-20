@@ -93,30 +93,19 @@ describe("applicableOperations", () => {
         when: [{ dbTarget: ["local", "db-url"] }],
       },
     ] as const;
-    const applied = (
-      activeFlags: Parameters<typeof applicableOperations>[1],
-      dbTargetDefault?: "local" | "linked",
-    ) =>
-      applicableOperations(
-        { ...mapped(entries), ...(dbTargetDefault === undefined ? {} : { dbTargetDefault }) },
-        activeFlags,
-      ).map((e) => e.operationId);
+    const applied = (activeFlags: Parameters<typeof applicableOperations>[1]) =>
+      applicableOperations(mapped(entries), activeFlags).map((e) => e.operationId);
 
     it("takes --db-url over --local over --linked", () => {
       expect(applied({ linked: true, local: true, "db-url": true })).toEqual([
         "v1-get-pooler-config",
       ]);
       expect(applied({ linked: true, local: true })).toEqual(["v1-get-pooler-config"]);
-      expect(applied({ linked: true }, "local")).toEqual(["v1-run-a-query"]);
+      expect(applied({ linked: true })).toEqual(["v1-run-a-query"]);
     });
 
-    it("falls back to the declared default when no target flag is given", () => {
-      expect(applied({}, "linked")).toEqual(["v1-run-a-query"]);
-      expect(applied({}, "local")).toEqual(["v1-get-pooler-config"]);
-    });
-
-    it("rejects a run with no target flag and no default", () => {
-      expect(() => applied({})).toThrow(/sets no default/);
+    it("reads a run with no target flag as the local stack", () => {
+      expect(applied({})).toEqual(["v1-get-pooler-config"]);
     });
   });
 
