@@ -1,7 +1,16 @@
+import { Option, Result } from "effect";
 import { describe, expect, it } from "vitest";
 
-import type { TargetDeprecation } from "../../../command-internal/target/target-selector.ts";
-import { classifyExplicitRef, explicitDeprecationMessages } from "./diff.explicit.ts";
+import type { TargetFlagValues } from "../../../command-internal/target/target-flags.ts";
+import {
+  parseTargetSelector,
+  type TargetDeprecation,
+} from "../../../command-internal/target/target-selector.ts";
+import {
+  classifyExplicitRef,
+  explicitDeprecationMessages,
+  explicitSelectorError,
+} from "./diff.explicit.ts";
 
 const REF = "abcdefghijklmnopqrst";
 const UUID = "11111111-2222-4333-8444-555555555555";
@@ -133,5 +142,101 @@ describe("explicitDeprecationMessages", () => {
     expect(messages([{ kind: "local" }])).toEqual([
       "--local isn't needed (local is the default) and will be removed in v4",
     ]);
+  });
+});
+
+describe("explicitSelectorError", () => {
+  const none: TargetFlagValues = {
+    remote: Option.none(),
+    local: false,
+    linked: false,
+    dbUrl: Option.none(),
+    projectRef: Option.none(),
+  };
+
+  const selectorFailure = (overrides: Partial<TargetFlagValues>) => {
+    const result = parseTargetSelector({ ...none, ...overrides });
+    if (Result.isSuccess(result)) throw new Error("expected the selector to be rejected");
+    return result.failure;
+  };
+
+  it.each([
+    {
+      label: "an empty --project-ref",
+      overrides: { projectRef: Option.some("") },
+      expected: {
+        _tag: "TargetEmptyValueError",
+        flag: "--project-ref",
+        message: "--project-ref cannot be empty.",
+        suggestion: "Pass a project ref as --from=<ref> or --to=<ref>.",
+      },
+    },
+    {
+      label: "an empty --db-url",
+      overrides: { dbUrl: Option.some("") },
+      expected: {
+        _tag: "TargetEmptyValueError",
+        flag: "--db-url",
+        message: "--db-url cannot be empty.",
+        suggestion: "Pass a postgresql:// URL as --from=<url> or --to=<url>.",
+      },
+    },
+    {
+      label: "a --project-ref URL",
+      overrides: { projectRef: Option.some(`https://${REF}.supabase.co`) },
+      expected: {
+        _tag: "TargetInvalidValueError",
+        flag: "--project-ref",
+        message: "--project-ref takes a project ref or a branch name, not a URL.",
+        suggestion: "Pass a project ref as --from=<ref> or --to=<ref>.",
+      },
+    },
+    {
+      label: "--project-ref with --local",
+      overrides: { projectRef: Option.some(REF), local: true },
+      expected: {
+        _tag: "TargetProjectRefConflictError",
+        conflictsWith: "--local",
+        message: "--project-ref selects a remote project and cannot be combined with --local.",
+        suggestion: "Use --from=<ref> or --to=<ref> instead of --project-ref, and drop --local.",
+      },
+    },
+    {
+      label: "--project-ref with --db-url",
+      overrides: { projectRef: Option.some(REF), dbUrl: Option.some("postgresql://u@h/db") },
+      expected: {
+        _tag: "TargetProjectRefConflictError",
+        conflictsWith: "--db-url",
+        message: "--project-ref selects a remote project and cannot be combined with --db-url.",
+        suggestion:
+          "Use --from=<ref> or --to=<ref> instead of --project-ref, and --from=<url> or --to=<url> instead of --db-url.",
+      },
+    },
+    {
+      label: "--linked with --local",
+      overrides: { linked: true, local: true },
+      expected: {
+        _tag: "TargetSelectorConflictError",
+        flags: ["--linked", "--local"],
+        message:
+          "Only one of --remote, --linked, --db-url and --local can be set; got --linked and --local.",
+        suggestion:
+          "Use --from=remote or --to=remote instead of --linked, --from=<url> or --to=<url> instead of --db-url, and drop --local.",
+      },
+    },
+  ])("points $label at --from/--to and keeps the rest of the error", ({ overrides, expected }) => {
+    const rewritten = explicitSelectorError(selectorFailure(overrides));
+    expect(rewritten).toMatchObject(expected);
+    expect(rewritten.suggestion).not.toContain("--remote");
+  });
+
+  it("never echoes the connection string a conflict was raised for", () => {
+    const rewritten = explicitSelectorError(
+      selectorFailure({
+        projectRef: Option.some(REF),
+        dbUrl: Option.some("postgresql://u:hunter2@db.example.com:5432/postgres"),
+      }),
+    );
+    expect(`${rewritten.message} ${rewritten.suggestion}`).not.toContain("hunter2");
   });
 });

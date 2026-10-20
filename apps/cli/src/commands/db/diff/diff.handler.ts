@@ -89,7 +89,11 @@ import { writePgDeltaMigrations } from "../shared/pgdelta-migrations.write.ts";
 import { type PgDeltaContext, isPgDeltaDebugEnabled } from "../../../command-internal/pgdelta.ts";
 import { prepareShadowSource } from "../shared/shadow-source.ts";
 import type { DbDiffFlags } from "./diff.command.ts";
-import { classifyExplicitRef, explicitDeprecationMessages } from "./diff.explicit.ts";
+import {
+  classifyExplicitRef,
+  explicitDeprecationMessages,
+  explicitSelectorError,
+} from "./diff.explicit.ts";
 import {
   DbDiffDbNotRunningError,
   DbDiffEngineConflictError,
@@ -189,7 +193,9 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           message: "--remote doesn't apply with --from/--to; use --from=remote or --to=remote.",
         });
       }
-      const { selection, deprecations } = yield* Effect.fromResult(parseTargetSelector(flags));
+      const { selection, deprecations } = yield* Effect.fromResult(parseTargetSelector(flags)).pipe(
+        Effect.mapError(explicitSelectorError),
+      );
       const projectRefTarget =
         selection._tag === "Ref" || selection._tag === "Branch" ? selection : undefined;
       if (Option.isSome(flags.projectRef)) {

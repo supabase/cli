@@ -12,6 +12,13 @@ import {
   LOCAL_NOT_NEEDED_MESSAGE,
 } from "../../../command-internal/target/target-deprecation.ts";
 import type { TargetDeprecation } from "../../../command-internal/target/target-selector.ts";
+import {
+  TargetEmptyValueError,
+  TargetInvalidValueError,
+  TargetProjectRefConflictError,
+  TargetSelectorConflictError,
+  type TargetSelectorError,
+} from "../../../command-internal/target/target.errors.ts";
 
 /** What an explicit `--from`/`--to` value names. */
 export type ExplicitRef =
@@ -72,3 +79,40 @@ export const explicitDeprecationMessages = (
     }
     return `${lead} Use ${replacementOf(remote)} instead`;
   });
+
+/** A selector error with its suggestion pointing at `--from`/`--to`, since explicit mode rejects `--remote`. */
+export const explicitSelectorError = (error: TargetSelectorError): TargetSelectorError => {
+  switch (error._tag) {
+    case "TargetEmptyValueError":
+      return new TargetEmptyValueError({
+        flag: error.flag,
+        message: error.message,
+        suggestion:
+          error.flag === "--db-url"
+            ? "Pass a postgresql:// URL as --from=<url> or --to=<url>."
+            : "Pass a project ref as --from=<ref> or --to=<ref>.",
+      });
+    case "TargetInvalidValueError":
+      return new TargetInvalidValueError({
+        flag: error.flag,
+        message: error.message,
+        suggestion: "Pass a project ref as --from=<ref> or --to=<ref>.",
+      });
+    case "TargetProjectRefConflictError":
+      return new TargetProjectRefConflictError({
+        conflictsWith: error.conflictsWith,
+        message: error.message,
+        suggestion:
+          error.conflictsWith === "--db-url"
+            ? "Use --from=<ref> or --to=<ref> instead of --project-ref, and --from=<url> or --to=<url> instead of --db-url."
+            : "Use --from=<ref> or --to=<ref> instead of --project-ref, and drop --local.",
+      });
+    case "TargetSelectorConflictError":
+      return new TargetSelectorConflictError({
+        flags: error.flags,
+        message: error.message,
+        suggestion:
+          "Use --from=remote or --to=remote instead of --linked, --from=<url> or --to=<url> instead of --db-url, and drop --local.",
+      });
+  }
+};
