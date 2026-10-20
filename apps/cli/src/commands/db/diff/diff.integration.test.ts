@@ -1521,7 +1521,7 @@ describe("db diff", () => {
         {
           value: "linked",
           expected: { kind: "linked", source: "file" },
-          warning: `--${side} linked is deprecated and will be removed in v4. Use --${side} remote instead.`,
+          warning: `--${side} linked is deprecated and will be removed in v4. Use --${side}=remote instead`,
         },
       ].map((row) => ({ side, ...row })),
     );

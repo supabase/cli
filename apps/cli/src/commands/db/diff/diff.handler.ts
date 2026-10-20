@@ -326,7 +326,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
             case "Remote":
               if (explicit.viaDeprecatedLinked) {
                 yield* warnTarget(
-                  `${flag} linked is deprecated and will be removed in v4. Use ${flag} remote instead.`,
+                  `${flag} linked is deprecated and will be removed in v4. Use ${flag}=remote instead`,
                 );
               }
               return yield* hostedEndpoint({ _tag: "Linked" });

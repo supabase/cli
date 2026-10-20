@@ -249,7 +249,7 @@ a postgresql:// URL; convert a connection string to a postgresql:// URL and pass
   a non-postgres URL with the same first sentence (naming `--from=<ref>` for a project's own
   `https://<ref>.supabase.co` URL); `--to` likewise. In `--from`/`--to`, `remote` is always the linked project. `--from linked` / `--to linked`
   still work and warn `--from linked is deprecated and will
-be removed in v4. Use --from remote instead.` A `--remote` selector (or an alias: `--linked`,
+be removed in v4. Use --from=remote instead` (and `--to=remote` for `--to`). A `--remote` selector (or an alias: `--linked`,
   `--project-ref`, `--db-url`, `--local`) given alongside fails with `--remote doesn't apply with
 --from/--to; use --from=remote or --to=remote.` (the flag named is the one passed; `--db-url`
   suggests `<db-url>` and `--local` suggests `local`), before any target resolves, and the default
