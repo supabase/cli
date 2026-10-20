@@ -160,7 +160,6 @@ interface SetupOpts {
   // Simulates an unlinked workdir: the project-ref resolver fails with
   // `ProjectRefNotLinkedError` absent an explicit `--remote=<ref>`.
   readonly linkedFails?: boolean;
-  // Makes every hosted connection resolve fail with this error.
   readonly resolveFailsWith?: DbConfigIpv6Error;
   // Per-differ-run `--json-diff` stdout, indexed by run order; falls back to `""`
   // once exhausted, so a single-run test only needs one element.

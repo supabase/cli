@@ -125,6 +125,9 @@ export class DbConfigIpv6Error extends Data.TaggedError("DbConfigIpv6Error")<{
     if (this.remedy === "pooler-url") {
       return { ...actionability.dbConnection, suggestion_type: CliSuggestionType.ProvideFlags };
     }
+    // The rendered remediation is "Run supabase link --project-ref <ref> to
+    // setup IPv4 connection", so the suggestion is link-shaped even though the
+    // category stays db_connection.
     return {
       ...actionability.dbConnection,
       suggestion_type: CliSuggestionType.LinkProject,
