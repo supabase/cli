@@ -28,7 +28,10 @@ vi.mock("node:net", (importOriginal) =>
 const reachableDirectHost = withReachableDirectHost(fixtureNet);
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
-import { assertTargetDefaultWarning } from "../../../../tests/helpers/target-default-warning.ts";
+import {
+  assertTargetDefaultWarning,
+  setLinkedRefFile,
+} from "../../../../tests/helpers/target-default-warning.ts";
 import { withReachableDirectHost } from "../../../../tests/helpers/refuse-invalid-db-hosts.ts";
 import {
   assertBlockDrift,
@@ -2454,27 +2457,34 @@ describe("db pull target default warning", () => {
     { label: "--project-ref", over: { projectRef: Option.some("flagflagflagflagflag") } },
   ] as const;
 
-  it.effect("warns on a bare run and stays silent with every selector", () =>
-    assertTargetDefaultWarning({
-      command: "db pull",
-      sameTarget: selectors[0],
-      selectors,
-      run: (selector) => {
-        const s = setup(tmp.current, {
-          migrations: ["20240101000000"],
-          remoteVersions: ["20240101000000"],
-          edgeStdout: "",
-        });
-        return dbPull(flags(selector?.over)).pipe(
-          Effect.exit,
-          Effect.provide(s.layer),
-          Effect.map(() => ({
-            stdout: streamText(s.out, "stdout"),
-            stderr: streamText(s.out, "stderr"),
-          })),
-        );
-      },
-    }),
+  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) => {
+    setLinkedRefFile(tmp.current, linked);
+    const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
+      remoteVersions: ["20240101000000"],
+      edgeStdout: "",
+      projectId: Option.none(),
+    });
+    return dbPull(flags(selector?.over)).pipe(
+      Effect.exit,
+      Effect.provide(s.layer),
+      Effect.map(() => ({
+        stdout: streamText(s.out, "stdout"),
+        stderr: streamText(s.out, "stderr"),
+      })),
+    );
+  };
+
+  it.effect(
+    "warns on a bare run in a linked workdir and stays silent with every selector or when unlinked",
+    () =>
+      assertTargetDefaultWarning({
+        command: "db pull",
+        sameTarget: selectors[0],
+        selectors,
+        run: runWith(true),
+        runUnlinked: runWith(false),
+      }),
   );
 });
 

@@ -23,7 +23,10 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
-import { assertTargetDefaultWarning } from "../../../../tests/helpers/target-default-warning.ts";
+import {
+  assertTargetDefaultWarning,
+  setLinkedRefFile,
+} from "../../../../tests/helpers/target-default-warning.ts";
 import {
   asRecordedRequests,
   provideEnv,
@@ -63,6 +66,7 @@ interface SetupOpts {
   readonly args?: ReadonlyArray<string>;
   readonly failSql?: string;
   readonly failResolve?: boolean;
+  readonly noProjectId?: boolean;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -157,7 +161,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       : resolver,
     connection,
     projectRef,
-    mockCommandSettings({ workdir }),
+    mockCommandSettings({
+      workdir,
+      ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
+    }),
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
@@ -611,20 +618,29 @@ describe("migration repair target default warning", () => {
     },
   ] as const;
 
-  it.effect("warns on a bare run and stays silent with every selector", () =>
-    assertTargetDefaultWarning({
-      command: "migration repair",
-      sameTarget: selectors[0],
-      selectors,
-      run: (selector) => {
-        const { layer, out } = setup(tmp.current, { args: selector?.args ?? [] });
-        return migrationRepair(
-          input({ versions: ["20240101000000"], status: "reverted", ...selector?.over }),
-        ).pipe(
-          Effect.provide(layer),
-          Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
-        );
-      },
-    }),
+  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) => {
+    setLinkedRefFile(tmp.current, linked);
+    const { layer, out } = setup(tmp.current, {
+      args: selector?.args ?? [],
+      noProjectId: true,
+    });
+    return migrationRepair(
+      input({ versions: ["20240101000000"], status: "reverted", ...selector?.over }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
+    );
+  };
+
+  it.effect(
+    "warns on a bare run in a linked workdir and stays silent with every selector or when unlinked",
+    () =>
+      assertTargetDefaultWarning({
+        command: "migration repair",
+        sameTarget: selectors[0],
+        selectors,
+        run: runWith(true),
+        runUnlinked: runWith(false),
+      }),
   );
 });

@@ -734,6 +734,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     yield* warnLinkedTargetDefault({
       command: "gen types",
       targetSelected: occurrences.has("linked") || occurrences.has("local"),
+      linkedRefResolved: true,
     });
     const loaded = schemas.length > 0 ? null : yield* loadConfig(resolvedRef);
     yield* runProjectTypes(

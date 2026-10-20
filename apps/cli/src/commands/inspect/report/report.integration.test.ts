@@ -31,7 +31,10 @@ import {
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
-import { assertTargetDefaultWarning } from "../../../../tests/helpers/target-default-warning.ts";
+import {
+  assertTargetDefaultWarning,
+  setLinkedRefFile,
+} from "../../../../tests/helpers/target-default-warning.ts";
 import {
   asRecordedRequests,
   realDbConfigResolver,
@@ -152,6 +155,7 @@ interface SetupOpts {
   stdoutIsTty?: boolean;
   cwd?: string;
   workdir?: string;
+  noProjectId?: boolean;
   /** Raw CLI args slice, used to detect which flags were explicitly passed. */
   cliArgs?: ReadonlyArray<string>;
   /** Runs the real `DbConfigResolver` against `workdir`. */
@@ -171,6 +175,11 @@ function setupReport(opts: SetupOpts = {}) {
     copyFails: opts.copyFails,
   });
   const telemetry = mockTelemetryStateTracked();
+  const settings = (workdir: string) =>
+    mockCommandSettings({
+      workdir,
+      ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
+    });
   const layer = Layer.mergeAll(
     out.layer,
     opts.realLayers !== true || opts.workdir === undefined
@@ -185,8 +194,8 @@ function setupReport(opts: SetupOpts = {}) {
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
     opts.workdir === undefined
-      ? tempDirLayer("supabase-report-workdir-", (workdir) => mockCommandSettings({ workdir }))
-      : mockCommandSettings({ workdir: opts.workdir }),
+      ? tempDirLayer("supabase-report-workdir-", settings)
+      : settings(opts.workdir),
     opts.cwd === undefined
       ? tempDirLayer("supabase-report-cwd-", (cwd) => mockRuntimeInfo({ cwd }))
       : mockRuntimeInfo({ cwd: opts.cwd }),
@@ -771,6 +780,7 @@ describe("inspect report through the real database-config resolver", () => {
 });
 
 describe("inspect report target default warning", () => {
+  const tempRoot = useTempWorkdir("supabase-inspect-report-warning-");
   const selectors = [
     { label: "--linked", args: ["--linked"], over: { linked: true } },
     { label: "--linked=false", args: ["--linked=false"], over: {} },
@@ -787,24 +797,31 @@ describe("inspect report target default warning", () => {
     },
   ] as const;
 
-  it.effect("warns on a bare run and stays silent with every selector", () =>
-    Effect.gen(function* () {
-      const base = yield* tempDir("supabase-report-out-");
-      yield* assertTargetDefaultWarning({
-        command: "inspect report",
-        sameTarget: selectors[0],
-        selectors,
-        run: (selector) => {
+  it.effect(
+    "warns on a bare run in a linked workdir and stays silent with every selector or when unlinked",
+    () =>
+      Effect.gen(function* () {
+        const base = yield* tempDir("supabase-report-out-");
+        const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) => {
+          setLinkedRefFile(tempRoot.current, linked);
           const { layer, out } = setupReport({
             csvs: DEFAULT_RULE_CSVS,
             cliArgs: selector?.args ?? [],
+            workdir: tempRoot.current,
+            noProjectId: true,
           });
           return inspectReport(flags({ outputDir: base, ...selector?.over })).pipe(
             Effect.provide(layer),
             Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
           );
-        },
-      });
-    }).pipe(Effect.provide(BunServices.layer)),
+        };
+        yield* assertTargetDefaultWarning({
+          command: "inspect report",
+          sameTarget: selectors[0],
+          selectors,
+          run: runWith(true),
+          runUnlinked: runWith(false),
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 });

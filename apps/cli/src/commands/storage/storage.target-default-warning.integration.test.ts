@@ -1,4 +1,4 @@
-import { describe, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
 import { CliOutput, Command } from "effect/cli";
@@ -18,7 +18,13 @@ import {
   isolatedHomeLayer,
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
-import { assertTargetDefaultWarning } from "../../../tests/helpers/target-default-warning.ts";
+import { stripAnsi } from "../../../tests/helpers/ansi.ts";
+import {
+  assertTargetDefaultWarning,
+  describeFailure,
+  setLinkedRefFile,
+  targetDefaultWarning,
+} from "../../../tests/helpers/target-default-warning.ts";
 import { storageCommand } from "./storage.command.ts";
 
 const tempRoot = useTempWorkdir("supabase-storage-warning-int-");
@@ -28,14 +34,18 @@ const testRoot = Command.make("supabase").pipe(
   Command.withGlobalFlags(GLOBAL_FLAGS),
 );
 
-function setup(args: ReadonlyArray<string>) {
+function setup(args: ReadonlyArray<string>, env: Readonly<Record<string, string>> = {}) {
   const out = mockOutput({ format: "text" });
   const layer = Layer.mergeAll(
     BunServices.layer,
     CliOutput.layer(textCliOutputFormatter()),
     out.layer,
     Layer.succeed(CliArgs, { args }),
-    isolatedHomeLayer(tempRoot.current, { SUPABASE_NO_KEYRING: "1" }),
+    isolatedHomeLayer(tempRoot.current, {
+      SUPABASE_NO_KEYRING: "1",
+      SUPABASE_WORKDIR: tempRoot.current,
+      ...env,
+    }),
     mockProcessControl().layer,
     mockTty({ stdinIsTty: false, stdoutIsTty: false }),
     mockAnalytics().layer,
@@ -60,22 +70,50 @@ describe("storage target default warning", () => {
   ];
 
   for (const { name, args } of leaves) {
-    it.effect(`${name} warns on a bare run and stays silent with every selector`, () =>
-      assertTargetDefaultWarning({
-        command: `storage ${name}`,
-        localTarget: "the local Storage API",
-        sameTarget: selectors[0],
-        selectors,
-        run: (selector) => {
-          const argv = [...args, "--experimental", ...(selector?.args ?? [])];
-          const { layer, out } = setup(argv);
-          return Command.runWith(testRoot, { version: "0.0.0-test" })(argv).pipe(
-            Effect.exit,
-            Effect.provide(layer),
-            Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
-          );
-        },
-      }),
+    const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) => {
+      setLinkedRefFile(tempRoot.current, linked);
+      const argv = [...args, "--experimental", ...(selector?.args ?? [])];
+      const { layer, out } = setup(argv);
+      return Command.runWith(testRoot, { version: "0.0.0-test" })(argv).pipe(
+        Effect.exit,
+        Effect.provide(layer),
+        Effect.map((exit) => ({
+          stdout: out.stdoutText,
+          stderr: out.stderrText,
+          failure: describeFailure(exit),
+        })),
+      );
+    };
+
+    it.effect(
+      `${name} warns on a bare run in a linked workdir and stays silent with every selector or when unlinked`,
+      () =>
+        assertTargetDefaultWarning({
+          command: `storage ${name}`,
+          localTarget: "the local Storage API",
+          sameTarget: selectors[0],
+          selectors,
+          run: runWith(true),
+          runUnlinked: runWith(false),
+          unlinkedFailure: "Cannot find project ref. Have you run supabase link?",
+        }),
     );
   }
+
+  it.effect(
+    "warns on a bare run when only SUPABASE_PROJECT_ID configures the linked project",
+    () => {
+      const argv = ["storage", "ls", "ss:///bucket", "--experimental"];
+      const { layer, out } = setup(argv, { SUPABASE_PROJECT_ID: VALID_REF });
+      return Command.runWith(testRoot, { version: "0.0.0-test" })(argv).pipe(
+        Effect.exit,
+        Effect.provide(layer),
+        Effect.map(() => {
+          expect(stripAnsi(out.stderrText)).toBe(
+            `${targetDefaultWarning("storage ls", "the local Storage API")}\n`,
+          );
+        }),
+      );
+    },
+  );
 });

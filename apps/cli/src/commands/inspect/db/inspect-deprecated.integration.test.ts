@@ -1,10 +1,15 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { targetDefaultWarning } from "../../../../tests/helpers/target-default-warning.ts";
-import { mockTelemetryStateTracked } from "../../../../tests/helpers/command-mocks.ts";
+import {
+  mockCommandSettings,
+  mockTelemetryStateTracked,
+  useTempWorkdir,
+} from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
@@ -36,13 +41,18 @@ const LOCAL_CONN: PgConnInput = {
   database: "postgres",
 };
 
-function setup() {
+function setup(opts: { workdir?: string; noProjectId?: boolean } = {}) {
   const out = mockOutput({ format: "text" });
   const telemetry = mockTelemetryStateTracked();
   let querySql: string | undefined;
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
+    mockCommandSettings({
+      workdir: opts.workdir ?? "/work/project",
+      ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
+    }),
+    BunServices.layer,
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: [] }),
     Layer.succeed(DbConfigResolver, {
@@ -174,6 +184,8 @@ const cases: ReadonlyArray<AliasCase> = [
 ];
 
 describe("inspect db deprecated aliases", () => {
+  const tempRoot = useTempWorkdir("supabase-inspect-deprecated-");
+
   it("covers all 12 deprecated aliases", () => {
     expect(cases).toHaveLength(12);
   });
@@ -195,4 +207,15 @@ describe("inspect db deprecated aliases", () => {
       }).pipe(Effect.provide(ctx.layer));
     });
   }
+
+  it.effect("prints only the deprecation notice when no linked project is configured", () => {
+    const ctx = setup({ workdir: tempRoot.current, noProjectId: true });
+    return Effect.gen(function* () {
+      yield* inspectDbCacheHit(flags);
+      expect(ctx.out.stderrText).toBe(
+        'Command "cache-hit" is deprecated, use "db-stats" instead.\nConnecting to local database...\n',
+      );
+      expect(ctx.querySql).toBe(dbStatsSpec.sql);
+    }).pipe(Effect.provide(ctx.layer));
+  });
 });

@@ -101,13 +101,11 @@ Requires `--yes`/`SUPABASE_YES` on the same terms as `json`.
 
 ### Target default warning
 
-A run that passes none of `--local`, `--linked` or `--project-ref` (in any form, including `--linked=false`) writes one line to **stderr** after the experimental gate and the `--linked`/`--local` exclusivity check, before any credential lookup or request, in every `--output-format`. stdout is unchanged. The next major version targets the local Storage API by default.
+A run that passes none of `--local`, `--linked` or `--project-ref` (in any form, including `--linked=false`) writes one line to **stderr** after the experimental gate and the `--linked`/`--local` exclusivity check, before any credential lookup or request, in every `--output-format`, when a linked project ref is configured (from `SUPABASE_PROJECT_ID` or the link file). An unlinked run prints only the existing not-linked error. stdout is unchanged. The next major version targets the local Storage API by default.
 
 ```
 Warning: supabase storage rm will target the local Storage API by default in the next major version. Pass --linked to keep targeting the linked project.
 ```
-
-`SUPABASE_PROJECT_ID` does not suppress it.
 
 ## Telemetry Events Fired
 

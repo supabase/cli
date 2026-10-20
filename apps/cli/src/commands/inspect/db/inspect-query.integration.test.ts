@@ -15,11 +15,15 @@ import { commandTreeFor } from "../../../../tests/helpers/command-flags.ts";
 import {
   VALID_REF,
   VALID_TOKEN,
+  mockCommandSettings,
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
-import { assertTargetDefaultWarning } from "../../../../tests/helpers/target-default-warning.ts";
+import {
+  assertTargetDefaultWarning,
+  setLinkedRefFile,
+} from "../../../../tests/helpers/target-default-warning.ts";
 import {
   asRecordedRequests,
   provideEnv,
@@ -33,6 +37,7 @@ import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
+import { PROJECT_NOT_LINKED_MESSAGE } from "../../../config/project-ref.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConnectError, DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
@@ -166,6 +171,8 @@ interface SetupOpts {
   dnsResolver?: "native" | "https";
   /** Raw CLI args slice; drives explicitly-passed flag detection. */
   cliArgs?: ReadonlyArray<string>;
+  workdir?: string;
+  noProjectId?: boolean;
   /** Runs the real `DbConfigResolver` against the temp `workdir`. */
   realLayers?: { readonly workdir: string };
 }
@@ -196,6 +203,11 @@ function setup(opts: SetupOpts = {}) {
     telemetry.layer,
     Layer.succeed(DnsResolverFlag, opts.dnsResolver ?? "native"),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
+    mockCommandSettings({
+      workdir: opts.realLayers?.workdir ?? opts.workdir ?? "/work/project",
+      ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
+    }),
+    BunServices.layer,
   );
   return { layer, out, resolver, connection, telemetry };
 }
@@ -571,6 +583,30 @@ describe("inspect db through the real database-config resolver", () => {
     },
   );
 
+  it.effect(
+    "a bare run in an unlinked workdir fails as not linked without the default warning",
+    () => {
+      const { layer, out } = setup({
+        rows: [DB_STATS_ROW],
+        cliArgs: ["inspect", "db", "db-stats"],
+        realLayers: { workdir: tempRoot.current },
+        noProjectId: true,
+      });
+      const requests: Array<StubbedRequest> = [];
+      return Effect.gen(function* () {
+        yield* stubManagementApi(requests, () => undefined);
+        const error = yield* inspectDbDbStats(flags()).pipe(Effect.flip);
+        expect(error.message).toBe(PROJECT_NOT_LINKED_MESSAGE);
+        expect(out.stderrText).not.toContain("by default in the next major version");
+        expect(requests).toEqual([]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
+        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
+      );
+    },
+  );
+
   it.effect("makes no Management API request for --local", () => {
     const { layer, connection } = setup({
       rows: [DB_STATS_ROW],
@@ -624,6 +660,7 @@ describe("inspect db through the real database-config resolver", () => {
 });
 
 describe("inspect db target default warning", () => {
+  const tempRoot = useTempWorkdir("supabase-inspect-db-warning-");
   const selectors = [
     { label: "--linked", args: ["--linked"], over: { linked: true } },
     { label: "--linked=false", args: ["--linked=false"], over: {} },
@@ -640,18 +677,29 @@ describe("inspect db target default warning", () => {
     },
   ] as const;
 
-  it.effect("warns on a bare run and stays silent with every selector", () =>
-    assertTargetDefaultWarning({
-      command: "inspect db db-stats",
-      sameTarget: selectors[0],
-      selectors,
-      run: (selector) => {
-        const { layer, out } = setup({ rows: [DB_STATS_ROW], cliArgs: selector?.args ?? [] });
-        return inspectDbDbStats(flags(selector?.over)).pipe(
-          Effect.provide(layer),
-          Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
-        );
-      },
-    }),
+  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) => {
+    setLinkedRefFile(tempRoot.current, linked);
+    const { layer, out } = setup({
+      rows: [DB_STATS_ROW],
+      cliArgs: selector?.args ?? [],
+      workdir: tempRoot.current,
+      noProjectId: true,
+    });
+    return inspectDbDbStats(flags(selector?.over)).pipe(
+      Effect.provide(layer),
+      Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
+    );
+  };
+
+  it.effect(
+    "warns on a bare run in a linked workdir and stays silent with every selector or when unlinked",
+    () =>
+      assertTargetDefaultWarning({
+        command: "inspect db db-stats",
+        sameTarget: selectors[0],
+        selectors,
+        run: runWith(true),
+        runUnlinked: runWith(false),
+      }),
   );
 });
