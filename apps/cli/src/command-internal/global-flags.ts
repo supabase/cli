@@ -177,6 +177,9 @@ export const globalFlagValues = Effect.gen(function* () {
 
 const FALSE_VALUES = new Set(["0", "f", "F", "false", "FALSE", "False"]);
 
+// The false spellings of the CLI's boolean flag parser, which also reads one after a bare flag.
+const BOOLEAN_FALSE_VALUES = new Set(["false", "no", "off", "0", "n"]);
+
 /**
  * Raw argv truncated at the first bare `--` operand terminator. This CLI's own lexer stops parsing
  * flags there too, so everything after is a positional operand, e.g. a migration name literally
@@ -217,27 +220,39 @@ const nonValueConsumedTokens = (args: ReadonlyArray<string>): ReadonlyArray<stri
 };
 
 /**
- * True when the raw argv contains an explicit `--yes=<false>`. A plain boolean flag can't
- * distinguish an explicit `--yes=false` from the omitted default, so this scans the raw argv up to
- * the first `--` operand terminator (see {@link argsBeforeOperandTerminator}), skipping tokens
- * consumed as another flag's value (see {@link nonValueConsumedTokens}).
+ * Resolves the raw argv's *last* `--yes`/`--yes=<bool>` occurrence to a boolean, or `undefined` if
+ * it never appears before the first `--` operand terminator. The flag parser keeps the *first* of
+ * a repeated `--yes` and can't tell an explicit `--yes=false` from the omitted default, so a caller
+ * must reread raw argv rather than trust the parsed flag. A bare `--yes` reads a boolean literal
+ * that follows it (`--yes false`), as the parser does. Tokens consumed as another flag's value are
+ * skipped (see {@link nonValueConsumedTokens}).
  */
-const yesFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean =>
-  nonValueConsumedTokens(argsBeforeOperandTerminator(args)).some(
-    (arg) => arg.startsWith("--yes=") && FALSE_VALUES.has(arg.slice("--yes=".length)),
-  );
+const yesFlagFromArgs = (args: ReadonlyArray<string>): boolean | undefined => {
+  const tokens = nonValueConsumedTokens(argsBeforeOperandTerminator(args));
+  let result: boolean | undefined;
+  for (const [index, arg] of tokens.entries()) {
+    if (arg === "--yes") {
+      result = !BOOLEAN_FALSE_VALUES.has(tokens[index + 1] ?? "");
+    } else if (arg.startsWith("--yes=")) {
+      const value = arg.slice("--yes=".length);
+      result = !(FALSE_VALUES.has(value) || BOOLEAN_FALSE_VALUES.has(value));
+    }
+  }
+  return result;
+};
 
 /** `raw` is the `SUPABASE_YES` value the process sees, which may come from a dotenv file Bun autoloaded. */
 export type YesSource = { readonly via: "flag" } | { readonly via: "env"; readonly raw: string };
 
-/** The origin of a granted `--yes`, or `None`; an explicit `--yes=false` wins over the env. */
+/** The origin of a granted `--yes`, or `None`; the last `--yes`/`--yes=<bool>` decides, and an explicit false wins over the env. */
 export const resolveYesSource = Effect.gen(function* () {
   const flag = yield* YesFlag;
   const cliArgs = yield* CliArgs;
-  if (yesFlagExplicitlyFalse(cliArgs.args)) {
+  const explicit = yesFlagFromArgs(cliArgs.args);
+  if (explicit === false) {
     return Option.none<YesSource>();
   }
-  if (flag) return Option.some<YesSource>({ via: "flag" });
+  if (explicit ?? flag) return Option.some<YesSource>({ via: "flag" });
   const raw = yield* envValue("SUPABASE_YES");
   return raw !== undefined && parseEnvBool(raw)
     ? Option.some<YesSource>({ via: "env", raw })
@@ -246,8 +261,8 @@ export const resolveYesSource = Effect.gen(function* () {
 
 /**
  * `--yes` resolved with an env fallback: when the flag isn't passed, `SUPABASE_YES` is honored. An
- * explicit `--yes` (including `--yes=false`) wins over the env. Prefer this over reading
- * {@link YesFlag} directly anywhere a command auto-confirms a prompt.
+ * explicit `--yes` (including `--yes=false`, and the last of a repeated flag) wins over the env.
+ * Prefer this over reading {@link YesFlag} directly anywhere a command auto-confirms a prompt.
  */
 export const resolveYes = Effect.map(resolveYesSource, Option.isSome);
 
@@ -262,8 +277,9 @@ export const resolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {
     const flag = yield* YesFlag;
     const cliArgs = yield* CliArgs;
-    if (yesFlagExplicitlyFalse(cliArgs.args)) {
-      return false;
+    const explicit = yesFlagFromArgs(cliArgs.args);
+    if (explicit !== undefined) {
+      return explicit;
     }
     return flag || (yield* supabaseEnvBoolWithProjectFallback("SUPABASE_YES", projectEnv));
   });
@@ -319,10 +335,9 @@ export const resolveExperimentalWithProjectEnv = (projectEnv: Record<string, str
 
 /**
  * True when the LAST `--debug`/`--debug=<value>` occurrence in argv resolves to false. Tracks the
- * last occurrence (unlike {@link yesFlagExplicitlyFalse}'s "any occurrence" check), since a
- * trailing bare `--debug` after an earlier `--debug=false` must win. Scans only the flag-parsing
- * region (see {@link argsBeforeOperandTerminator}) and skips tokens consumed as another flag's
- * value (see {@link nonValueConsumedTokens}).
+ * last occurrence, since a trailing bare `--debug` after an earlier `--debug=false` must win.
+ * Scans only the flag-parsing region (see {@link argsBeforeOperandTerminator}) and skips tokens
+ * consumed as another flag's value (see {@link nonValueConsumedTokens}).
  */
 const debugFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean => {
   let lastExplicitlyFalse = false;
