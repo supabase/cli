@@ -385,7 +385,7 @@ const STORAGE_TEST_API_KEYS = [
   },
 ];
 
-export const STORAGE_TEST_BRANCH_REF = "branchprojectrefabcd";
+const STORAGE_TEST_BRANCH_REF = "branchprojectrefabcd";
 
 /** A linked-project branch row for the `branches` option. */
 export const storageTestBranch = (name: string): Record<string, unknown> => ({

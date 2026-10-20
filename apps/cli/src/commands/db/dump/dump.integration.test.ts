@@ -27,11 +27,8 @@ vi.mock("node:net", (importOriginal) =>
 
 const reachableDirectHost = withReachableDirectHost(fixtureNet);
 
-import {
-  BRANCH_PROJECT_REF,
-  branchListApi,
-  warningsOf,
-} from "../../../../tests/helpers/remote-selection.ts";
+import { describeDbTargetSelection } from "../../../../tests/helpers/db-target-selection.ts";
+import { branchListApi } from "../../../../tests/helpers/remote-selection.ts";
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import { withReachableDirectHost } from "../../../../tests/helpers/refuse-invalid-db-hosts.ts";
@@ -61,10 +58,6 @@ import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-value
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag, NetworkIdFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
-import {
-  TargetProjectRefConflictError,
-  TargetSelectorConflictError,
-} from "../../../command-internal/target/target.errors.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import {
   InvalidProjectRefError,
@@ -641,15 +634,6 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects combining --linked and --local", () => {
-    const { layer, resolver } = setup();
-    return Effect.gen(function* () {
-      const error = yield* dbDump(flags({ linked: true, local: true })).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(TargetSelectorConflictError);
-      expect(resolver.calls).toEqual([]);
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("hands --password to the resolver, which rejects it for a non-linked target", () => {
     const { layer, resolver } = setup();
     return Effect.gen(function* () {
@@ -678,14 +662,6 @@ describe("db dump integration", () => {
       expect(failMessage(exit)).toBe(
         "if any flags in the group [role-only data-only] are set none of the others can be; [data-only role-only] were all set",
       );
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("treats --local=false as absent and dumps the local database by default", () => {
-    const { layer, resolver } = setup({ isLocal: true });
-    return Effect.gen(function* () {
-      yield* dbDump(flags({ local: false, dryRun: true }));
-      expect(resolver.calls[0]?.target.kind).toBe("local");
     }).pipe(Effect.provide(layer));
   });
 
@@ -847,22 +823,6 @@ describe("db dump integration", () => {
     },
   );
 
-  it.effect("defaults to the local database when no selector flag is given", () => {
-    const { layer, resolver } = setup({ isLocal: true });
-    return Effect.gen(function* () {
-      yield* dbDump(flags({ dryRun: true }));
-      expect(resolver.calls[0]?.target.kind).toBe("local");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("targets the linked project for a bare --remote", () => {
-    const { layer, resolver } = setup({ conn: REMOTE_CONN, isLocal: false });
-    return Effect.gen(function* () {
-      yield* dbDump(flags({ dryRun: true, remote: Option.some({ _tag: "Linked" }) }));
-      expect(resolver.calls[0]?.target.kind).toBe("linked");
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("keeps an explicit local db-url on the bundled client path", () => {
     const { layer, bundled } = setup({
       conn: {
@@ -994,191 +954,22 @@ describe("db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("caches the linked project from the resolved ref on a successful dump", () => {
-    const { layer, cache } = setup({
-      conn: REMOTE_CONN,
-      isLocal: false,
-      ref: "abcdefghijklmnopqrst",
-      stdout: "CREATE SCHEMA public;\n",
-    });
-    return Effect.gen(function* () {
-      yield* dbDump(flags({ remote: REMOTE_LINKED }));
-      expect(cache.cached).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("dumps the project given via --remote=<ref> without a linked workdir", () => {
-    // No fixed `opts.ref`; only the flag can resolve a ref here.
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, cache, resolver } = setup({
-      conn: REMOTE_CONN,
-      isLocal: false,
-      stdout: "CREATE SCHEMA public;\n",
-    });
-    return Effect.gen(function* () {
-      yield* dbDump(flags({ remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const) }));
-      expect(resolver.calls[0]?.target).toMatchObject({ kind: "linked", ref: FLAG_REF });
-      expect(cache.cached).toBe(true);
-      expect(cache.cachedRef).toBe(FLAG_REF);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--remote=<ref> overrides an already-linked workdir's project ref", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    // A distinct fixed ref proves the flag, not the workdir's own ref, wins.
-    const { layer, cache } = setup({
-      conn: REMOTE_CONN,
-      isLocal: false,
-      ref: "abcdefghijklmnopqrst",
-      stdout: "CREATE SCHEMA public;\n",
-    });
-    return Effect.gen(function* () {
-      yield* dbDump(flags({ remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const) }));
-      expect(cache.cached).toBe(true);
-      expect(cache.cachedRef).toBe(FLAG_REF);
-      expect(cache.cachedRef).not.toBe("abcdefghijklmnopqrst");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("fails before resolving or caching when --remote=<branch> names no branch", () => {
-    const { layer, cache, resolver } = setup({ projectId: Option.some(VALID_REF) });
-    return Effect.gen(function* () {
-      const exit = yield* dbDump(
-        flags({ remote: Option.some({ _tag: "Branch", name: "BADREF" }) }),
-      ).pipe(Effect.exit, Effect.provide(Layer.merge(layer, branchListApi().layer)));
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(failMessage(exit)).toContain('Branch "BADREF" not found');
-      expect(resolver.calls).toEqual([]);
-      expect(cache.cached).toBe(false);
-    });
-  });
-
-  it.effect("rejects --project-ref combined with an explicit --local target", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, resolver, cache } = setup({ isLocal: true });
-    return Effect.gen(function* () {
-      const error = yield* dbDump(flags({ local: true, projectRef: Option.some(FLAG_REF) })).pipe(
-        Effect.flip,
-      );
-      expect(error).toBeInstanceOf(TargetProjectRefConflictError);
-      expect(resolver.calls).toEqual([]);
-      expect(cache.cached).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
-
-  describe("target selection", () => {
-    const FLAG_PROJECT_REF = "flagflagflagflagflag";
-
-    const resolvedTarget = (
-      selector: Partial<DbDumpFlags>,
-      options: { readonly branchApi?: ReturnType<typeof branchListApi> } = {},
-    ) => {
-      const { layer, out, resolver } = setup({
-        isLocal: true,
-        projectId: Option.some(VALID_REF),
-      });
-      const provided =
-        options.branchApi === undefined ? layer : Layer.merge(layer, options.branchApi.layer);
-      return Effect.gen(function* () {
-        yield* dbDump(flags({ dryRun: true, ...selector })).pipe(Effect.provide(provided));
-        return { target: resolver.calls[0]?.target, warnings: warningsOf(out) };
-      });
-    };
-
-    it.effect("targets the local database, with no warning, when nothing selects one", () =>
-      Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget({});
-        expect(target).toEqual({ kind: "local" });
-        expect(warnings).toEqual([]);
-      }),
-    );
-
-    it.effect("targets the linked project for a bare --remote, with no warning", () =>
-      Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget({ remote: REMOTE_LINKED });
-        expect(target).toMatchObject({ kind: "linked" });
-        expect(warnings).toEqual([]);
-      }),
-    );
-
-    it.effect("targets the project --remote=<ref> names, with no warning", () =>
-      Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget({
-          remote: Option.some({ _tag: "Ref", ref: FLAG_PROJECT_REF } as const),
-        });
-        expect(target).toMatchObject({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" });
-        expect(warnings).toEqual([]);
-      }),
-    );
-
-    it.effect("targets the database --remote=<db-url> names, with no warning", () =>
-      Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget({
-          remote: Option.some({
-            _tag: "DbUrl",
-            url: "postgresql://postgres:pw@db.example.com/db",
-          } as const),
-        });
-        expect(target?.kind).toBe("db-url");
-        expect(warnings).toEqual([]);
-      }),
-    );
-
-    it.effect("targets the project of the branch --remote=<branch> names", () => {
+  describeDbTargetSelection("db dump", {
+    dbUrl: true,
+    workdir: () => tmp.current,
+    activeFlags: { "dry-run": true },
+    attempt: ({ workdir, target }) => {
+      const ctx = setup({ isLocal: true, workdir });
       const branchApi = branchListApi();
-      return Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget(
-          { remote: Option.some({ _tag: "Branch", name: "feature-x" }) },
-          { branchApi },
-        );
-        expect(target).toMatchObject({ kind: "linked", ref: BRANCH_PROJECT_REF, source: "flag" });
-        expect(warnings).toEqual([]);
-        assertPermissionDrift({
-          command: "db dump",
-          activeFlags: { "dry-run": true, remote: "feature-x" },
-          requests: branchApi.requests,
-        });
-      });
-    });
-
-    it.effect.each([
-      {
-        alias: "--linked",
-        flags: { linked: true },
-        kind: "linked",
-        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
-      },
-      {
-        alias: "--project-ref",
-        flags: { projectRef: Option.some(FLAG_PROJECT_REF) },
-        kind: "linked",
-        warning:
-          "--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead",
-      },
-      {
-        alias: "--db-url",
-        flags: { dbUrl: Option.some("postgresql://postgres:pw@db.example.com/db") },
-        kind: "db-url",
-        warning: "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead",
-      },
-      {
-        alias: "--local",
-        flags: { local: true },
-        kind: "local",
-        warning: "--local isn't needed (local is the default) and will be removed in v4",
-      },
-    ] satisfies ReadonlyArray<{
-      alias: string;
-      flags: Partial<DbDumpFlags>;
-      kind: string;
-      warning: string;
-    }>)("keeps $alias working and warns that it is deprecated", ({ flags, kind, warning }) =>
-      Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget(flags);
-        expect(target?.kind).toBe(kind);
-        expect(warnings).toEqual([expect.stringContaining(warning)]);
-      }),
-    );
+      return {
+        layer: Layer.merge(ctx.layer, branchApi.layer),
+        out: ctx.out,
+        run: dbDump(flags({ dryRun: true, ...target })),
+        target: () => ctx.resolver.calls[0]?.target,
+        cachedRef: () => ctx.cache.cachedRef,
+        branchLookups: () => branchApi.requests,
+      };
+    },
   });
 
   it.effect("writes the dump to --file and reports the absolute path on stderr", () => {

@@ -11,11 +11,8 @@ vi.mock("node:net", (importOriginal) =>
 );
 
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
-import {
-  BRANCH_PROJECT_REF,
-  branchListApi,
-  warningsOf,
-} from "../../../../tests/helpers/remote-selection.ts";
+import { describeDbTargetSelection } from "../../../../tests/helpers/db-target-selection.ts";
+import { branchRow } from "../../../../tests/helpers/remote-selection.ts";
 import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -53,10 +50,6 @@ import type {
   ResolvedDbConnection,
 } from "../../../command-internal/db-config.types.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
-import {
-  TargetProjectRefConflictError,
-  TargetSelectorConflictError,
-} from "../../../command-internal/target/target.errors.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
   DbConnection,
@@ -282,6 +275,9 @@ function setup(opts: SetupOpts = {}) {
       if (request.method === "GET" && url.endsWith(`/v1/projects/${VALID_REF}`)) {
         return Effect.succeed(jsonResponse(request, 200, projectResponse(VALID_REF)));
       }
+      if (request.method === "GET" && url.endsWith(`/v1/projects/${VALID_REF}/branches`)) {
+        return Effect.succeed(jsonResponse(request, 200, [branchRow("feature-x")]));
+      }
       return Effect.succeed(jsonResponse(request, 404, {}));
     },
   });
@@ -432,17 +428,6 @@ describe("db advisors — local", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --db-url together with --local", () => {
-    const { layer, connection } = setup();
-    return Effect.gen(function* () {
-      const error = yield* dbAdvisors(
-        flags({ dbUrl: Option.some("postgres://x"), local: true }),
-      ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(TargetSelectorConflictError);
-      expect(connection.execs).toEqual([]);
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("emits a success envelope in json mode and writes nothing raw to stdout", () => {
     const { layer, out } = setup({ format: "json", rows: [lintRow()] });
     return Effect.gen(function* () {
@@ -473,24 +458,6 @@ describe("db advisors — local", () => {
     return Effect.gen(function* () {
       yield* dbAdvisors(flags());
       expect(telemetry.flushed).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("treats --linked=false as absent and queries the local database", () => {
-    const { layer, resolver, cache } = setup({ rows: [] });
-    return Effect.gen(function* () {
-      yield* dbAdvisors(flags({ linked: false }));
-      expect(resolver.resolveInputs.map((input) => input.target.kind)).toEqual(["local"]);
-      expect(cache.cached).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("targets the linked project for a bare --remote", () => {
-    const { layer, resolver, cache } = setup({ securityLints: [], performanceLints: [] });
-    return Effect.gen(function* () {
-      yield* dbAdvisors(flags({ remote: Option.some({ _tag: "Linked" } as const) }));
-      expect(resolver.resolveInputs.map((input) => input.target.kind)).toEqual(["linked"]);
-      expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 });
@@ -663,20 +630,6 @@ describe("db advisors — linked", () => {
       }).pipe(Effect.provide(layer));
     },
   );
-
-  it.effect("rejects --project-ref together with --local", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, connection, api, cache } = setup({ rows: [] });
-    return Effect.gen(function* () {
-      const error = yield* dbAdvisors(
-        flags({ local: true, projectRef: Option.some(FLAG_REF) }),
-      ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(TargetProjectRefConflictError);
-      expect(connection.execs).toEqual([]);
-      expect(api.requests).toEqual([]);
-      expect(cache.cached).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
 
   it.effect("resolves the linked DB config before fetching advisors", () => {
     // Resolved even though the linked lint-gathering path discards the connection.
@@ -858,109 +811,18 @@ describe("db advisors — linked", () => {
   });
 });
 
-describe("db advisors — target selection", () => {
-  const FLAG_PROJECT_REF = "flagflagflagflagflag";
-
-  const resolvedTarget = (
-    selector: Partial<DbAdvisorsFlags>,
-    options: { readonly branchApi?: ReturnType<typeof branchListApi> } = {},
-  ) => {
-    const { layer, out, resolver } = setup({
-      rows: [],
-      securityLints: [],
-      performanceLints: [],
-    });
-    const provided =
-      options.branchApi === undefined ? layer : Layer.merge(layer, options.branchApi.layer);
-    return Effect.gen(function* () {
-      yield* dbAdvisors(flags(selector)).pipe(Effect.provide(provided));
-      return { target: resolver.resolveInputs[0]?.target, warnings: warningsOf(out) };
-    });
-  };
-
-  it.effect("targets the local database, with no warning, when nothing selects one", () =>
-    Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget({});
-      expect(target).toEqual({ kind: "local" });
-      expect(warnings).toEqual([]);
-    }),
-  );
-
-  it.effect("targets the project --remote=<ref> names, with no warning", () =>
-    Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget({
-        remote: Option.some({ _tag: "Ref", ref: FLAG_PROJECT_REF } as const),
-      });
-      expect(target).toMatchObject({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" });
-      expect(warnings).toEqual([]);
-    }),
-  );
-
-  it.effect("targets the database --remote=<db-url> names, with no warning", () =>
-    Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget({
-        remote: Option.some({
-          _tag: "DbUrl",
-          url: "postgresql://postgres:pw@db.example.com/db",
-        } as const),
-      });
-      expect(target?.kind).toBe("db-url");
-      expect(warnings).toEqual([]);
-    }),
-  );
-
-  it.effect("targets the project of the branch --remote=<branch> names", () => {
-    const branchApi = branchListApi();
-    return Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget(
-        { remote: Option.some({ _tag: "Branch", name: "feature-x" }) },
-        { branchApi },
-      );
-      expect(target).toMatchObject({ kind: "linked", ref: BRANCH_PROJECT_REF, source: "flag" });
-      expect(warnings).toEqual([]);
-      assertPermissionDrift({
-        command: "db advisors",
-        activeFlags: { remote: "feature-x" },
-        requests: branchApi.requests,
-      });
-    });
-  });
-
-  it.effect.each([
-    {
-      alias: "--linked",
-      flags: { linked: true },
-      kind: "linked",
-      warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
-    },
-    {
-      alias: "--project-ref",
-      flags: { projectRef: Option.some(FLAG_PROJECT_REF) },
-      kind: "linked",
-      warning: "--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead",
-    },
-    {
-      alias: "--db-url",
-      flags: { dbUrl: Option.some("postgresql://postgres:pw@db.example.com/db") },
-      kind: "db-url",
-      warning: "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead",
-    },
-    {
-      alias: "--local",
-      flags: { local: true },
-      kind: "local",
-      warning: "--local isn't needed (local is the default) and will be removed in v4",
-    },
-  ] satisfies ReadonlyArray<{
-    alias: string;
-    flags: Partial<DbAdvisorsFlags>;
-    kind: string;
-    warning: string;
-  }>)("keeps $alias working and warns that it is deprecated", ({ flags, kind, warning }) =>
-    Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget(flags);
-      expect(target?.kind).toBe(kind);
-      expect(warnings).toEqual([expect.stringContaining(warning)]);
-    }),
-  );
+describeDbTargetSelection("db advisors", {
+  dbUrl: true,
+  workdir: () => tempRoot.current,
+  attempt: ({ target }) => {
+    const ctx = setup({ rows: [], securityLints: [], performanceLints: [] });
+    return {
+      layer: ctx.layer,
+      out: ctx.out,
+      run: dbAdvisors(flags(target)),
+      target: () => ctx.resolver.resolveInputs[0]?.target,
+      cachedRef: () => ctx.cache.cachedRef,
+      branchLookups: () => ctx.api.requests.filter(({ url }) => url.endsWith("/branches")),
+    };
+  },
 });

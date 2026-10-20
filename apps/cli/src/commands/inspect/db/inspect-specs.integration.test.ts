@@ -8,6 +8,7 @@ import {
   mockCommandSettings,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { NO_TARGET } from "../../../../tests/helpers/db-target-selection.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type {
@@ -85,14 +86,6 @@ function setup(rows: ReadonlyArray<Record<string, unknown>>) {
     },
   };
 }
-
-const localFlags = {
-  remote: Option.none(),
-  dbUrl: Option.none<string>(),
-  linked: false,
-  local: false,
-  projectRef: Option.none<string>(),
-};
 
 type ParamKind = "none" | "schemas1" | "schemas2";
 
@@ -276,7 +269,7 @@ describe("inspect db specs (per-subcommand correctness)", () => {
     it.effect(`runs the ${testCase.spec.name} query and renders its cells`, () => {
       const ctx = setup([testCase.row]);
       return Effect.gen(function* () {
-        yield* runInspectQuery(testCase.spec, localFlags, "native");
+        yield* runInspectQuery(testCase.spec, NO_TARGET, "native");
 
         expect(ctx.querySql).toBe(testCase.spec.sql);
 

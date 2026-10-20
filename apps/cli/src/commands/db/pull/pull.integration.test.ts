@@ -28,11 +28,8 @@ vi.mock("node:net", (importOriginal) =>
 const reachableDirectHost = withReachableDirectHost(fixtureNet);
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
-import {
-  BRANCH_PROJECT_REF,
-  branchListApi,
-  warningsOf,
-} from "../../../../tests/helpers/remote-selection.ts";
+import { describeDbTargetSelection } from "../../../../tests/helpers/db-target-selection.ts";
+import { branchListApi } from "../../../../tests/helpers/remote-selection.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { withReachableDirectHost } from "../../../../tests/helpers/refuse-invalid-db-hosts.ts";
 import {
@@ -78,12 +75,8 @@ import {
   OutputFlag,
   YesFlag,
 } from "../../../command-internal/global-flags.ts";
-import {
-  HostedMutationConsentRequiredError,
-  HostedMutationDeclinedError,
-} from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
+import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
-import { TargetProjectRefConflictError } from "../../../command-internal/target/target.errors.ts";
 import type {
   DbConnectionInput,
   ResolvedDbConnection,
@@ -162,8 +155,6 @@ interface SetupOpts {
   readonly remoteVersions?: ReadonlyArray<string>;
   readonly edgeStdout?: string; // diff SQL or declarative export JSON
   readonly stdinIsTty?: boolean;
-  // Piped (non-TTY) stdin answers, one consumed per confirmation prompt.
-  readonly pipedAnswers?: ReadonlyArray<string>;
   readonly yes?: boolean;
   readonly experimental?: boolean;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
@@ -542,10 +533,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       ...(opts.realLayers === true ? { projectHost: "invalid" } : {}),
     }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
-    mockStdin(
-      opts.stdinIsTty ?? false,
-      opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined,
-    ),
+    mockStdin(opts.stdinIsTty ?? false),
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(OutputFlag, Option.none()),
     Layer.succeed(TargetPolicy, { group: "selectable", consent: "no" }),
@@ -670,65 +658,6 @@ describe("db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("pulls from the project given via --remote=<ref> without a linked workdir", () => {
-    // `linkedFails: true` simulates an unlinked workdir; only the flag can resolve a ref.
-    const FLAG_REF = "flagflagflagflagflag";
-    const s = setup(tmp.current, {
-      migrations: ["20240101000000"],
-      remoteVersions: ["20240101000000"],
-      edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
-      yes: true,
-      projectId: Option.none(),
-      linkedFails: true,
-    });
-    return Effect.gen(function* () {
-      yield* dbPull(
-        flags({
-          diffEngine: Option.some("pg-delta"),
-          remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const),
-        }),
-      );
-      expect(s.cache.cached).toBe(true);
-      expect(s.cache.cachedRef).toBe(FLAG_REF);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("--remote=<ref> overrides an already-linked workdir's project ref", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const s = setup(tmp.current, {
-      migrations: ["20240101000000"],
-      remoteVersions: ["20240101000000"],
-      edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
-      yes: true,
-      // A distinct fixed ref proves the flag, not the workdir's own ref, wins.
-      resolvedRef: "abcdefghijklmnopqrst",
-    });
-    return Effect.gen(function* () {
-      yield* dbPull(
-        flags({
-          diffEngine: Option.some("pg-delta"),
-          remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const),
-        }),
-      );
-      expect(s.cache.cached).toBe(true);
-      expect(s.cache.cachedRef).toBe(FLAG_REF);
-      expect(s.cache.cachedRef).not.toBe("abcdefghijklmnopqrst");
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("rejects the deprecated --project-ref combined with --local", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const s = setup(tmp.current, {});
-    return Effect.gen(function* () {
-      const error = yield* dbPull(flags({ local: true, projectRef: Option.some(FLAG_REF) })).pipe(
-        Effect.flip,
-      );
-      expect(error).toBeInstanceOf(TargetProjectRefConflictError);
-      expect(s.resolveCalls).toEqual([]);
-      expect(s.cache.cached).toBe(false);
-    }).pipe(Effect.provide(s.layer));
-  });
-
   it.effect("honors --remote=<ref> on the declarative export", () => {
     const FLAG_REF = "flagflagflagflagflag";
     const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
@@ -744,129 +673,22 @@ describe("db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  describe("target selection", () => {
-    const FLAG_PROJECT_REF = "flagflagflagflagflag";
-
-    const resolvedTarget = (
-      selector: Partial<DbPullFlags>,
-      options: { readonly branchApi?: ReturnType<typeof branchListApi> } = {},
-    ) => {
-      const s = setup(tmp.current, { edgeStdout: EXPORT_JSON, projectId: Option.some(VALID_REF) });
-      const provided =
-        options.branchApi === undefined ? s.layer : Layer.merge(s.layer, options.branchApi.layer);
-      return Effect.gen(function* () {
-        yield* dbPull(flags({ declarative: Option.some(true), ...selector })).pipe(
-          Effect.provide(provided),
-        );
-        return { target: s.resolveCalls[0]?.target, warnings: warningsOf(s.out) };
-      });
-    };
-
-    it.effect("targets the local database, with no warning, when nothing selects one", () =>
-      Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget({});
-        expect(target).toEqual({ kind: "local" });
-        expect(warnings).toEqual([]);
-      }),
-    );
-
-    it.effect("targets the linked project for a bare --remote, with no warning", () =>
-      Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget({ remote: REMOTE_LINKED });
-        expect(target).toMatchObject({ kind: "linked", ref: VALID_REF, source: "file" });
-        expect(warnings).toEqual([]);
-      }),
-    );
-
-    it.effect("targets the project --remote=<ref> names, with no warning", () =>
-      Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget({
-          remote: Option.some({ _tag: "Ref", ref: FLAG_PROJECT_REF } as const),
-        });
-        expect(target).toMatchObject({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" });
-        expect(warnings).toEqual([]);
-      }),
-    );
-
-    it.effect("targets the database --remote=<db-url> names, with no warning", () =>
-      Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget({
-          remote: Option.some({
-            _tag: "DbUrl",
-            url: "postgresql://postgres:pw@db.example.com/db",
-          } as const),
-        });
-        expect(target?.kind).toBe("db-url");
-        expect(warnings).toEqual([]);
-      }),
-    );
-
-    it.effect("targets the project of the branch --remote=<branch> names", () => {
+  describeDbTargetSelection("db pull", {
+    dbUrl: true,
+    workdir: () => tmp.current,
+    activeFlags: { declarative: true },
+    attempt: ({ workdir, target }) => {
+      const s = setup(workdir, { edgeStdout: EXPORT_JSON, projectId: Option.some(VALID_REF) });
       const branchApi = branchListApi();
-      return Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget(
-          { remote: Option.some({ _tag: "Branch", name: "feature-x" }) },
-          { branchApi },
-        );
-        expect(target).toMatchObject({ kind: "linked", ref: BRANCH_PROJECT_REF, source: "flag" });
-        expect(warnings).toEqual([]);
-        assertPermissionDrift({
-          command: "db pull",
-          activeFlags: { declarative: true, remote: "feature-x" },
-          requests: branchApi.requests,
-        });
-      });
-    });
-
-    it.effect("rejects --remote combined with --local", () => {
-      const s = setup(tmp.current, {});
-      return Effect.gen(function* () {
-        const error = yield* dbPull(flags({ remote: REMOTE_LINKED, local: true })).pipe(
-          Effect.flip,
-        );
-        expect(error).toMatchObject({ _tag: "TargetSelectorConflictError" });
-        expect(s.resolveCalls).toEqual([]);
-      }).pipe(Effect.provide(s.layer));
-    });
-
-    it.effect.each([
-      {
-        alias: "--linked",
-        flags: { linked: true },
-        kind: "linked",
-        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
-      },
-      {
-        alias: "--project-ref",
-        flags: { projectRef: Option.some(FLAG_PROJECT_REF) },
-        kind: "linked",
-        warning:
-          "--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead",
-      },
-      {
-        alias: "--db-url",
-        flags: { dbUrl: Option.some("postgresql://postgres:pw@db.example.com/db") },
-        kind: "db-url",
-        warning: "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead",
-      },
-      {
-        alias: "--local",
-        flags: { local: true },
-        kind: "local",
-        warning: "--local isn't needed (local is the default) and will be removed in v4",
-      },
-    ] satisfies ReadonlyArray<{
-      alias: string;
-      flags: Partial<DbPullFlags>;
-      kind: string;
-      warning: string;
-    }>)("keeps $alias working and warns that it is deprecated", ({ flags, kind, warning }) =>
-      Effect.gen(function* () {
-        const { target, warnings } = yield* resolvedTarget(flags);
-        expect(target?.kind).toBe(kind);
-        expect(warnings).toEqual([expect.stringContaining(warning)]);
-      }),
-    );
+      return {
+        layer: Layer.merge(s.layer, branchApi.layer),
+        out: s.out,
+        run: dbPull(flags({ declarative: Option.some(true), ...target })),
+        target: () => s.resolveCalls[0]?.target,
+        cachedRef: () => s.cache.cachedRef,
+        branchLookups: () => branchApi.requests,
+      };
+    },
   });
 
   it.effect(
@@ -1636,28 +1458,6 @@ describe("db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect(
-    "declining the history update aborts before any migration file is written (tty)",
-    () => {
-      const s = setup(tmp.current, {
-        migrations: ["20240101000000"],
-        remoteVersions: ["20240101000000"],
-        edgeStdout: "create table remote ();\n",
-        stdinIsTty: true,
-        promptConfirmResponses: [false],
-      });
-      return Effect.gen(function* () {
-        const error = yield* dbPull(
-          flags({ remote: REMOTE_LINKED, diffEngine: Option.some("migra") }),
-        ).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(HostedMutationDeclinedError);
-        expect(yield* migrationFiles(tmp.current)).toEqual(["20240101000000_local.sql"]);
-        expect(s.historyUpserts.length).toBe(0);
-        expect(streamText(s.out, "stderr")).not.toContain("Schema written to");
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
-
   it.effect("an initial migra pull asks before the dump writes anything", () => {
     const s = setup(tmp.current, {
       remoteVersions: [],
@@ -1713,24 +1513,6 @@ describe("db pull", () => {
       ).pipe(Effect.flip);
       expect(error).toMatchObject({ _tag: "DbPullInSyncError" });
       expect(s.out.promptConfirmCalls).toHaveLength(0);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("a non-interactive run without --yes writes no migration file", () => {
-    const s = setup(tmp.current, {
-      migrations: ["20240101000000"],
-      remoteVersions: ["20240101000000"],
-      edgeStdout: "create table remote ();\n",
-      stdinIsTty: false,
-      pipedAnswers: ["y"],
-    });
-    return Effect.gen(function* () {
-      const error = yield* dbPull(
-        flags({ remote: REMOTE_LINKED, diffEngine: Option.some("migra") }),
-      ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
-      expect(yield* migrationFiles(tmp.current)).toEqual(["20240101000000_local.sql"]);
-      expect(s.historyUpserts.length).toBe(0);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -2101,24 +1883,6 @@ describe("db pull", () => {
       }).pipe(Effect.provide(s.layer));
     },
   );
-
-  it.effect("machine output without --yes refuses the history update and emits no payload", () => {
-    const s = setup(tmp.current, {
-      migrations: ["20240101000000"],
-      format: "json",
-      remoteVersions: ["20240101000000"],
-      edgeStdout: "create table remote ();\n",
-      stdinIsTty: true,
-    });
-    return Effect.gen(function* () {
-      const error = yield* dbPull(
-        flags({ remote: REMOTE_LINKED, diffEngine: Option.some("migra") }),
-      ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
-      expect(s.historyUpserts.length).toBe(0);
-      expect(s.out.messages.find((m) => m.type === "success")).toBeUndefined();
-    }).pipe(Effect.provide(s.layer));
-  });
 
   it.effect("a linked [remotes.<ref>] block enabling pg-delta selects the pg-delta engine", () => {
     // The linked path merges the matching [remotes.<ref>] block before
@@ -2541,11 +2305,20 @@ describeHostedConsent("db pull", {
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
     });
+    let migrationsAfterRun: ReadonlyArray<string> = [];
     return {
       run: dbPull(flags({ remote: REMOTE_LINKED, diffEngine: Option.some("migra") })).pipe(
+        Effect.ensuring(
+          migrationFiles(workdir).pipe(
+            Effect.tap((files) => Effect.sync(() => void (migrationsAfterRun = files))),
+            Effect.orDie,
+          ),
+        ),
         Effect.provide(Layer.mergeAll(s.engineLayer, configValuesLayer({ output: out.layer }))),
       ),
-      mutations: () => s.historyUpserts.length,
+      mutations: () =>
+        s.historyUpserts.length +
+        migrationsAfterRun.filter((file) => file !== "20240101000000_local.sql").length,
     };
   },
 });

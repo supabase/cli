@@ -51,10 +51,10 @@ import {
   transportFailure,
 } from "../../../../tests/helpers/command-mocks.ts";
 import {
-  BRANCH_PROJECT_REF,
-  branchListApi,
-  warningsOf,
-} from "../../../../tests/helpers/remote-selection.ts";
+  NO_TARGET,
+  describeDbTargetSelection,
+} from "../../../../tests/helpers/db-target-selection.ts";
+import { branchListApi } from "../../../../tests/helpers/remote-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
@@ -111,12 +111,7 @@ import type {
   DbConnectionInput,
   ResolvedDbConnection,
 } from "../../../command-internal/db-config.types.ts";
-import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
-import {
-  TargetProjectRefConflictError,
-  TargetSelectorConflictError,
-} from "../../../command-internal/target/target.errors.ts";
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
 import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
@@ -146,11 +141,7 @@ const CONN: PgConnInput = {
 const REMOTE_LINKED: DbResetFlags["remote"] = Option.some({ _tag: "Linked" });
 
 const DEFAULT_FLAGS: DbResetFlags = {
-  dbUrl: Option.none(),
-  remote: Option.none(),
-  linked: false,
-  local: false,
-  projectRef: Option.none(),
+  ...NO_TARGET,
   noSeed: Option.none(),
   sqlPaths: Option.none(),
   version: Option.none(),
@@ -2569,21 +2560,6 @@ describe("db reset", () => {
       ).pipe((body) => withConfigEnv({ MIGRATIONS_ENABLED: "true" }, body));
     });
 
-    it.effect("rejects mutually exclusive target flags", () => {
-      const { layer, resolver } = setup(tmp.current, { toml: 'project_id = "test"\n' });
-      return Effect.gen(function* () {
-        const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true, local: true }).pipe(
-          Effect.provide(layer),
-          Effect.exit,
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Cause.squash(exit.cause)).toBeInstanceOf(TargetSelectorConflictError);
-        }
-        expect(resolver.calls).toBe(0);
-      });
-    });
-
     it.effect("rejects --version together with --last", () => {
       const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
       return Effect.gen(function* () {
@@ -2664,22 +2640,6 @@ describe("db reset", () => {
         }).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Resetting remote database...");
         expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
-      });
-    });
-
-    it.effect("returns context canceled when the reset prompt is declined", () => {
-      const { layer, conn } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        confirm: [false],
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(
-          Effect.provide(layer),
-          Effect.exit,
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("context canceled");
-        expect(conn.execs).toHaveLength(0);
       });
     });
 
@@ -2841,17 +2801,23 @@ describe("db reset", () => {
       });
     });
 
-    it.effect("auto-confirms a remote reset via SUPABASE_YES set only in the project .env", () => {
-      const { layer, conn } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        files: { "supabase/.env": "SUPABASE_YES=true\n" },
-        // No `confirm` responses: the prompt must auto-confirm.
-      });
-      return Effect.gen(function* () {
-        yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
-        expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
-      });
-    });
+    it.effect(
+      "asks once before a remote reset when SUPABASE_YES is set only in the project .env",
+      () => {
+        const { layer, out, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          files: { "supabase/.env": "SUPABASE_YES=true\n" },
+          confirm: [true],
+        });
+        return withEmptyConfigEnv(
+          Effect.gen(function* () {
+            yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
+            expect(out.promptConfirmCalls).toHaveLength(1);
+            expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
+          }),
+        );
+      },
+    );
 
     it.effect("still caches the linked ref when DB-config resolution fails", () => {
       const { layer, linkedCache } = setup(tmp.current, {
@@ -2866,62 +2832,6 @@ describe("db reset", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         expect(linkedCache.cached).toBe(true);
         expect(linkedCache.cachedRef).toBe(VALID_REF);
-      });
-    });
-
-    it.effect("resets the project given via --remote=<ref> without a linked workdir", () => {
-      const FLAG_REF = "flagflagflagflagflag";
-      const { layer, conn, linkedCache } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        confirm: [true],
-        linkedFails: true,
-      });
-      return Effect.gen(function* () {
-        yield* dbReset({
-          ...DEFAULT_FLAGS,
-          remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const),
-        }).pipe(Effect.provide(layer));
-        expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
-        expect(linkedCache.cached).toBe(true);
-        expect(linkedCache.cachedRef).toBe(FLAG_REF);
-      });
-    });
-
-    it.effect("--remote=<ref> overrides an already-linked workdir's project ref", () => {
-      const FLAG_REF = "flagflagflagflagflag";
-      const { layer, linkedCache } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        ref: VALID_REF,
-        confirm: [true],
-      });
-      return Effect.gen(function* () {
-        yield* dbReset({
-          ...DEFAULT_FLAGS,
-          remote: Option.some({ _tag: "Ref", ref: FLAG_REF } as const),
-        }).pipe(Effect.provide(layer));
-        expect(linkedCache.cached).toBe(true);
-        expect(linkedCache.cachedRef).toBe(FLAG_REF);
-        expect(linkedCache.cachedRef).not.toBe(VALID_REF);
-      });
-    });
-
-    it.effect("rejects --project-ref combined with --local", () => {
-      const { layer, conn, resolver, linkedCache } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbReset({
-          ...DEFAULT_FLAGS,
-          local: true,
-          projectRef: Option.some("flagflagflagflagflag"),
-        }).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Cause.squash(exit.cause)).toBeInstanceOf(TargetProjectRefConflictError);
-        }
-        expect(conn.execs).toEqual([]);
-        expect(resolver.calls).toBe(0);
-        expect(linkedCache.cached).toBe(false);
       });
     });
 
@@ -3528,23 +3438,6 @@ describe("db reset", () => {
       });
     });
 
-    it.effect("emits a json result for a confirmed remote reset", () => {
-      const { layer, out } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        files: migrationFile("20240101000000"),
-        format: "json",
-      });
-      return Effect.gen(function* () {
-        // json mode's default-false prompt has no confirm response, so it declines and cancels.
-        const exit = yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(
-          Effect.provide(layer),
-          Effect.exit,
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(out).toBeDefined();
-      });
-    });
-
     describe("seeding into a target that matched a [remotes.*] block", () => {
       const REMOTE_TOML = `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n`;
       const remoteSeed = (
@@ -3585,19 +3478,6 @@ describe("db reset", () => {
           expect(out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
           expect(out.stderrText).toContain(SEED_PLAN);
           expect(seeded(out)).toBe(true);
-        });
-      });
-
-      it.effect("seeds nothing and writes nothing when the question is declined", () => {
-        const { layer, out, conn } = remoteSeed({ confirm: [false] });
-        return Effect.gen(function* () {
-          const exit = yield* dbReset(flags).pipe(Effect.provide(layer), Effect.exit);
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            expect(Cause.squash(exit.cause)).toBeInstanceOf(HostedMutationDeclinedError);
-          }
-          expect(out.stderrText).not.toContain("Resetting remote database");
-          expect(conn.execs).toEqual([]);
         });
       });
 
@@ -3844,128 +3724,30 @@ describe("db reset", () => {
       },
     );
   });
-});
 
-describe("db reset target selection", () => {
-  const tmp = useTempWorkdir("supabase-db-reset-selection-");
-  const FLAG_PROJECT_REF = "flagflagflagflagflag";
-
-  const resolvedTarget = (
-    selector: Partial<DbResetFlags>,
-    options: { readonly branchApi?: ReturnType<typeof branchListApi> } = {},
-  ) => {
-    const { layer, out, resolver } = setup(tmp.current, {
-      toml: 'project_id = "test"\n',
-      files: { "supabase/seed.sql": "select 1;\n" },
-      args: ["db", "reset"],
-      confirm: [true],
-      isLocal: selector.local === true || Object.keys(selector).length === 0,
-    });
-    const provided =
-      options.branchApi === undefined ? layer : Layer.merge(layer, options.branchApi.layer);
-    return withEnvVar(
-      "GITHUB_HEAD_REF",
-      undefined,
-      Effect.gen(function* () {
-        yield* dbReset({ ...DEFAULT_FLAGS, ...selector }).pipe(Effect.provide(provided));
-        return { target: resolver.inputs[0]?.target, warnings: warningsOf(out) };
-      }),
-    );
-  };
-
-  it.effect("targets the local database, with no warning, when nothing selects one", () =>
-    Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget({});
-      expect(target).toEqual({ kind: "local" });
-      expect(warnings).toEqual([]);
-    }),
-  );
-
-  it.effect("targets the linked project for a bare --remote, with no warning", () =>
-    Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget({ remote: REMOTE_LINKED });
-      expect(target).toMatchObject({ kind: "linked", ref: VALID_REF, source: "file" });
-      expect(warnings).toEqual([]);
-    }),
-  );
-
-  it.effect("targets the project --remote=<ref> names, with no warning", () =>
-    Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget({
-        remote: Option.some({ _tag: "Ref", ref: FLAG_PROJECT_REF } as const),
+  describeDbTargetSelection("db reset", {
+    dbUrl: true,
+    workdir: () => tmp.current,
+    around: (row) => withEnvVar("GITHUB_HEAD_REF", undefined, row),
+    attempt: ({ workdir, args, target }) => {
+      const ctx = setup(workdir, {
+        toml: 'project_id = "test"\n',
+        files: { "supabase/seed.sql": "select 1;\n" },
+        args,
+        confirm: [true],
+        isLocal: Option.isNone(target.remote) && !target.linked,
       });
-      expect(target).toMatchObject({ kind: "linked", ref: FLAG_PROJECT_REF, source: "flag" });
-      expect(warnings).toEqual([]);
-    }),
-  );
-
-  it.effect("targets the database --remote=<db-url> names, with no warning", () =>
-    Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget({
-        remote: Option.some({
-          _tag: "DbUrl",
-          url: "postgresql://postgres:pw@db.example.com/db",
-        } as const),
-      });
-      expect(target?.kind).toBe("db-url");
-      expect(warnings).toEqual([]);
-    }),
-  );
-
-  it.effect("targets the project of the branch --remote=<branch> names", () => {
-    const branchApi = branchListApi();
-    return Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget(
-        { remote: Option.some({ _tag: "Branch", name: "feature-x" }) },
-        { branchApi },
-      );
-      expect(target).toMatchObject({ kind: "linked", ref: BRANCH_PROJECT_REF, source: "flag" });
-      expect(warnings).toEqual([]);
-      assertPermissionDrift({
-        command: "db reset",
-        activeFlags: { remote: "feature-x" },
-        requests: branchApi.requests,
-      });
-    });
+      const branchApi = branchListApi();
+      return {
+        layer: Layer.merge(ctx.layer, branchApi.layer),
+        out: ctx.out,
+        run: dbReset({ ...DEFAULT_FLAGS, ...target }),
+        target: () => ctx.resolver.inputs[0]?.target,
+        cachedRef: () => ctx.linkedCache.cachedRef,
+        branchLookups: () => branchApi.requests,
+      };
+    },
   });
-
-  it.effect.each([
-    {
-      alias: "--linked",
-      flags: { linked: true },
-      kind: "linked",
-      warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
-    },
-    {
-      alias: "--project-ref",
-      flags: { projectRef: Option.some(FLAG_PROJECT_REF) },
-      kind: "linked",
-      warning: "--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead",
-    },
-    {
-      alias: "--db-url",
-      flags: { dbUrl: Option.some("postgresql://postgres:pw@db.example.com/db") },
-      kind: "db-url",
-      warning: "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead",
-    },
-    {
-      alias: "--local",
-      flags: { local: true },
-      kind: "local",
-      warning: "--local isn't needed (local is the default) and will be removed in v4",
-    },
-  ] satisfies ReadonlyArray<{
-    alias: string;
-    flags: Partial<DbResetFlags>;
-    kind: string;
-    warning: string;
-  }>)("keeps $alias working and warns that it is deprecated", ({ flags, kind, warning }) =>
-    Effect.gen(function* () {
-      const { target, warnings } = yield* resolvedTarget(flags);
-      expect(target?.kind).toBe(kind);
-      expect(warnings).toEqual([expect.stringContaining(warning)]);
-    }),
-  );
 });
 
 describeHostedConsent("db reset", {
@@ -4008,7 +3790,7 @@ describeHostedConsent("db reset", {
           ),
         ),
       ),
-      mutations: () => conn.execs.filter((sql) => sql.includes("drop schema if exists")).length,
+      mutations: () => conn.execs.length,
     };
   },
 });

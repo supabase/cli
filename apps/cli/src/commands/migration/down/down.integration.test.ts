@@ -24,6 +24,7 @@ import {
   sequentialExecBatch,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { describeDbTargetSelection } from "../../../../tests/helpers/db-target-selection.ts";
 import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
@@ -53,22 +54,12 @@ import { type DbSession, DbConnection } from "../../../command-internal/db-conne
 import { MigrationDropError } from "../../../command-internal/drop-objects.ts";
 import { MigrationSeedError } from "../../../command-internal/seed.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
-import {
-  TargetProjectRefConflictError,
-  TargetSelectorConflictError,
-} from "../../../command-internal/target/target.errors.ts";
 import { MigrationLastTooLargeError, MigrationLastZeroError } from "./down.errors.ts";
 import { migrationDown } from "./down.handler.ts";
 import type { MigrationDownFlags } from "./down.command.ts";
-import {
-  BRANCH_PROJECT_REF,
-  branchRow,
-  warningsOf,
-} from "../../../../tests/helpers/remote-selection.ts";
+import { branchRow } from "../../../../tests/helpers/remote-selection.ts";
 
 const LIST_SQL = "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
-const FLAG_REF = "flagflagflagflagflag";
-const DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 
 interface SetupOpts {
   /** Runs the real `DbConfigResolver` and linked-project cache against `workdir`. */
@@ -225,7 +216,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     cache,
     resolverCalls,
     branchRequests: branchApi.requests,
-    warnings: () => warningsOf(out),
   };
 }
 
@@ -338,163 +328,6 @@ describe("migration down", () => {
       expect(droppedSchemas(execs)).toBe(1);
       expect(cache.cachedRef).toBe(VALID_REF);
     }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("reverts on the project given via --remote=<ref>", () => {
-    // VALID_REF is the fake resolver's fallback, representing whatever the
-    // workdir would resolve to without the flag override.
-    const ctx = setup(tmp.current, {
-      yes: true,
-      remote: ["20240101000000", "20240102000000"],
-    });
-    return Effect.gen(function* () {
-      yield* seed(tmp.current, "20240101000000_a.sql");
-      yield* migrationDown(flags({ last: 1, remote: Option.some({ _tag: "Ref", ref: FLAG_REF }) }));
-      expect(ctx.cache.cached).toBe(true);
-      expect(ctx.cache.cachedRef).toBe(FLAG_REF);
-      expect(ctx.cache.cachedRef).not.toBe(VALID_REF);
-      expect(ctx.warnings()).toEqual([]);
-    }).pipe(Effect.provide(ctx.layer));
-  });
-
-  it.effect("reverts on the project of the branch --remote=<branch> names", () => {
-    const ctx = setup(tmp.current, {
-      yes: true,
-      remote: ["20240101000000", "20240102000000"],
-    });
-    return Effect.gen(function* () {
-      yield* seed(tmp.current, "20240101000000_a.sql");
-      yield* migrationDown(
-        flags({ last: 1, remote: Option.some({ _tag: "Branch", name: "feature-x" }) }),
-      );
-      expect(ctx.branchRequests.map(({ method, url }) => `${method} ${url}`)).toEqual([
-        `GET https://api.supabase.com/v1/projects/${VALID_REF}/branches`,
-      ]);
-      expect(ctx.resolverCalls[0]?.target).toMatchObject({
-        kind: "linked",
-        ref: BRANCH_PROJECT_REF,
-      });
-      expect(ctx.cache.cachedRef).toBe(BRANCH_PROJECT_REF);
-      expect(ctx.warnings()).toEqual([]);
-    }).pipe(Effect.provide(ctx.layer));
-  });
-
-  it.effect("fails with the branches that exist when --remote=<branch> matches none", () => {
-    const ctx = setup(tmp.current, {
-      yes: true,
-      remote: ["20240101000000", "20240102000000"],
-    });
-    return Effect.gen(function* () {
-      const error = yield* migrationDown(
-        flags({ last: 1, remote: Option.some({ _tag: "Branch", name: "feature-y" }) }),
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "LinkBranchNotFoundError",
-        message: expect.stringContaining("Available branches: feature-x"),
-      });
-      expect(ctx.resolverCalls).toEqual([]);
-      expect(ctx.execs).toEqual([]);
-    }).pipe(Effect.provide(ctx.layer));
-  });
-
-  it.effect("reverts the database --remote=<url> names and never touches the linked cache", () => {
-    const ctx = setup(tmp.current, {
-      yes: true,
-      remote: ["20240101000000", "20240102000000"],
-    });
-    return Effect.gen(function* () {
-      yield* seed(tmp.current, "20240101000000_a.sql");
-      yield* migrationDown(flags({ last: 1, remote: Option.some({ _tag: "DbUrl", url: DB_URL }) }));
-      expect(ctx.resolverCalls[0]?.target).toMatchObject({ kind: "db-url" });
-      expect(droppedSchemas(ctx.execs)).toBe(1);
-      expect(ctx.cache.cached).toBe(false);
-      expect(ctx.warnings()).toEqual([]);
-    }).pipe(Effect.provide(ctx.layer));
-  });
-
-  it.effect("rejects --remote combined with --local before touching the database", () => {
-    const ctx = setup(tmp.current, {
-      remote: ["20240101000000", "20240102000000"],
-    });
-    return Effect.gen(function* () {
-      const error = yield* migrationDown(
-        flags({ last: 1, remote: Option.some({ _tag: "Linked" }), local: true }),
-      ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(TargetSelectorConflictError);
-      expect(ctx.execs).toEqual([]);
-      expect(ctx.queries).toEqual([]);
-      expect(ctx.cache.cached).toBe(false);
-    }).pipe(Effect.provide(ctx.layer));
-  });
-
-  describe("deprecated selectors", () => {
-    const cases = [
-      {
-        alias: "--linked",
-        args: ["migration", "down", "--linked"],
-        flags: { linked: true },
-        target: { kind: "linked", ref: VALID_REF },
-        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
-      },
-      {
-        alias: "--project-ref",
-        args: ["migration", "down", "--project-ref", FLAG_REF],
-        flags: { projectRef: Option.some(FLAG_REF) },
-        target: { kind: "linked", ref: FLAG_REF },
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
-      },
-      {
-        alias: "--db-url",
-        args: ["migration", "down", "--db-url", DB_URL],
-        flags: { dbUrl: Option.some(DB_URL) },
-        target: { kind: "db-url" },
-        warning: "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead",
-      },
-      {
-        alias: "--local",
-        args: ["migration", "down", "--local"],
-        flags: { local: true },
-        target: { kind: "local" },
-        warning: "--local isn't needed (local is the default) and will be removed in v4",
-      },
-    ] as const satisfies ReadonlyArray<{
-      readonly alias: string;
-      readonly args: ReadonlyArray<string>;
-      readonly flags: Partial<MigrationDownFlags>;
-      readonly target: Record<string, string>;
-      readonly warning: string;
-    }>;
-
-    for (const testCase of cases) {
-      it.effect(`${testCase.alias} still selects its target and warns`, () => {
-        const ctx = setup(tmp.current, {
-          yes: true,
-          remote: ["20240101000000", "20240102000000"],
-          args: testCase.args,
-        });
-        return Effect.gen(function* () {
-          yield* seed(tmp.current, "20240101000000_a.sql");
-          yield* migrationDown(flags({ last: 1, ...testCase.flags }));
-          expect(ctx.resolverCalls[0]?.target).toMatchObject(testCase.target);
-          expect(ctx.warnings()).toEqual([testCase.warning]);
-        }).pipe(Effect.provide(ctx.layer));
-      });
-    }
-
-    it.effect("rejects --project-ref combined with --local before touching the database", () => {
-      const { layer, execs, queries, cache } = setup(tmp.current, {
-        remote: ["20240101000000", "20240102000000"],
-      });
-      return Effect.gen(function* () {
-        const error = yield* migrationDown(
-          flags({ last: 1, local: true, projectRef: Option.some(FLAG_REF) }),
-        ).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(TargetProjectRefConflictError);
-        expect(execs).toEqual([]);
-        expect(queries).toEqual([]);
-        expect(cache.cached).toBe(false);
-      }).pipe(Effect.provide(layer));
-    });
   });
 
   it.effect("emits a structured result in json on the local database", () => {
@@ -673,6 +506,24 @@ describe("migration down", () => {
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
   });
+});
+
+describeDbTargetSelection("migration down", {
+  dbUrl: true,
+  workdir: () => tmp.current,
+  attempt: ({ workdir, args, target }) => {
+    const ctx = setup(workdir, { yes: true, remote: ["20240101000000", "20240102000000"], args });
+    return {
+      layer: ctx.layer,
+      out: ctx.out,
+      run: seed(workdir, "20240101000000_a.sql").pipe(
+        Effect.andThen(migrationDown(flags({ last: 1, ...target }))),
+      ),
+      target: () => ctx.resolverCalls[0]?.target,
+      cachedRef: () => ctx.cache.cachedRef,
+      branchLookups: () => ctx.branchRequests,
+    };
+  },
 });
 
 describeHostedConsent("migration down", {
