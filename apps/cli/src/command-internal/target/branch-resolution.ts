@@ -99,7 +99,7 @@ function branchNotFoundMessage(value: string, parentRef: string, branches: Branc
 export const isDefaultBranch = (branch: ParentBranch, parentRef: string): boolean =>
   branch.is_default || branch.project_ref === parentRef;
 
-/** UUIDs match case-insensitively, names exactly; the not-found hint covers near misses. */
+/** UUIDs match case-insensitively, names case-sensitively; the not-found hint covers typos. */
 export const findBranch = (branches: Branches, value: string): ParentBranch | undefined =>
   branches.find(
     (branch) => branch.name === value || branch.id.toLowerCase() === value.toLowerCase(),

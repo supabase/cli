@@ -90,8 +90,8 @@ const aliasRejection = (
 
 /**
  * A `false` switch counts as absent, so `--linked=false` and `--no-linked` select nothing.
- * `--linked`, `--project-ref`, `--project-id` and `--db-url` resolve exactly like the `--remote`
- * form they map to and are reported as deprecations; `--local` selects the default.
+ * `--linked`, `--project-ref`, `--project-id` and `--db-url` resolve like the `--remote` form
+ * they map to and are reported as deprecations; `--local` selects the default.
  */
 export const parseTargetSelector = (
   input: TargetFlagValues,
