@@ -12,8 +12,9 @@ SQL run and the columns rendered (see the per-subcommand `<name>.query.ts`).
 | -------------------------------- | ---------- | ----------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.toml` | TOML       | `--local` (db host/port/password); `--linked` (project ref)                         |
 | `~/.supabase/access-token`       | plain text | `--linked` only, lazily, when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
-| `.pgpass` / `pg_service.conf`    | libpq      | only if referenced by a `--db-url` connection string                                |
-| `$PGSSLROOTCERT` CA bundle       | PEM        | only if a `--db-url` sets `sslrootcert` / `PGSSLROOTCERT`                           |
+| `.pgpass` / `pg_service.conf`    | libpq      | if referenced by a `--db-url` connection string                                     |
+| `$PGSSLROOTCERT` CA bundle       | PEM        | if a `--db-url` sets `sslrootcert` / `PGSSLROOTCERT`                                |
+| `PGSSL*` PEM, `pg_service.conf`  | PEM, libpq | linked project, when set; see `db push`                                             |
 
 Connection resolution and all of the above are handled inside the already-ported
 `DbConfigResolver` (`command-internal/db-config.layer.ts`); this port adds
@@ -42,6 +43,7 @@ no new config reads.
 | `SUPABASE_ACCESS_TOKEN`                              | Management API auth (linked only)                                     | no (falls back to keyring / token file) |
 | `SUPABASE_PROJECT_ID`                                | project ref fallback (linked), superseded by `--project-ref` when set | no (config resolution fallback)         |
 | libpq vars (`PGSSLROOTCERT`, `PGCONNECT_TIMEOUT`, …) | honored when `--db-url` is used                                       | no                                      |
+| `PG*` libpq                                          | linked-project TLS, timeout, service; see `db push`                   | no                                      |
 
 ## Database Queries
 

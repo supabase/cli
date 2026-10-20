@@ -15,6 +15,7 @@ image), to stdout or `--file`.
 | `~/.supabase/access-token`        | plain text | `--linked` when `SUPABASE_ACCESS_TOKEN` unset                                                                                                |
 | `supabase/.temp/project-ref`      | plain text | `--linked` (and the default target) ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`/config.toml `project_id`) is set |
 | `supabase/.env*`                  | dotenv     | always (project env, feeds `SUPABASE_DB_PASSWORD` / `PG*`)                                                                                   |
+| `PGSSL*` PEM, `pg_service.conf`   | PEM, libpq | linked project, when set: `pg_service.conf`, plus the PEM files on the pooler temp-role probe or a native `pg_dump`; see `db push`           |
 
 ## Files Written
 
@@ -45,6 +46,7 @@ image), to stdout or `--file`.
 | `SUPABASE_USE_SLIM_IMAGES`                                                    | resolve the current Postgres pin from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB tags the catalog does not pin, and flag-off `15.8.1.085` stay on docker.io |
 | `DOCKER_HOST`                                                                 | docker daemon endpoint                                                                                                                                                                                                                                           |
 | `MSYSTEM`, `TERM_PROGRAM`                                                     | suppress the piped-stdout non-ASCII warning in MSYS/mintty sessions                                                                                                                                                                                              |
+| `PG*` libpq                                                                   | linked-project TLS, timeout, service; see `db push`. An invalid value fails before `pg_dump` runs; the compose `pg_dump` container gets none, a native `pg_dump` sees shell values only                                                                          |
 
 ## Exit Codes
 

@@ -11,6 +11,7 @@ Management API.
 | `<workdir>/supabase/config.toml`       | TOML       | local / `--db-url` — to resolve the DB connection config                                                     |
 | `~/.supabase/access-token`             | plain text | `--linked` only, when `SUPABASE_ACCESS_TOKEN` unset (keyring → file)                                         |
 | `<workdir>/supabase/.temp/project-ref` | plain text | `--linked` only — to resolve the project ref; skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set |
+| `PGSSL*` PEM, `pg_service.conf`        | PEM, libpq | linked: `pg_service.conf` if `PGSERVICE` is set; PEM files only on the pooler temp-role probe; see `db push` |
 
 ## Files Written
 
@@ -47,6 +48,7 @@ One connection. Within one transaction: `BEGIN` → `set local search_path = ''`
 | `SUPABASE_PROJECT_ID`   | linked project ref override (superseded by `--project-ref` when set) | no                                        |
 | `SUPABASE_PROFILE`      | API profile (built-in name or YAML path)                             | no                                        |
 | `PGHOST` / `PGPORT` / … | connection overrides (local / `--db-url`)                            | no                                        |
+| `PG*` libpq             | linked: validated; used only by the temp-role probe; see `db push`   | no                                        |
 
 The API base URL is derived from `SUPABASE_PROFILE`; `SUPABASE_API_URL` is **not**
 honored (see `command-settings.layer.unit.test.ts`).

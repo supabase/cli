@@ -30,6 +30,7 @@ initial-pull `pg_dump` container). See "Database writes" and "Docker" below.
 | `<workdir>/supabase/config.toml` or `config.json` (reload) | TOML/JSON  | re-loaded WITH the `[remotes.*]` overlay applied, only when the resolved target ref matches an existing `[remotes.*]` block — the config step's own conditional reload (`config/pull/SIDE_EFFECTS.md`)                                       |
 | `<workdir>/supabase/migrations` (directory listing)        | filenames  | once, in the preview phase, to decide whether the migration-history step auto-runs — skipped when `--with-migration-history` is already set (see Notes); a read failure other than "directory missing" fails the whole command at this point |
 | same config file, raw on-disk text (TOCTOU re-read)        | TOML/JSON  | immediately before the config step writes, once the aggregated confirmation is accepted — only reached when the config plan has work; see `config/pull/SIDE_EFFECTS.md`'s TOCTOU row                                                         |
+| `PGSSL*` PEM, `pg_service.conf`                            | PEM, libpq | linked project, when set; see `db push`                                                                                                                                                                                                      |
 
 Each executed sub-step also performs its own file reads exactly as documented in its own
 `SIDE_EFFECTS.md` (config, db, functions, and — when it runs — migration history), since `pull`
@@ -137,6 +138,7 @@ Docker-dependent.
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                    | no (falls back to keyring → `~/.supabase/access-token`)                                                                                                                             |
 | `SUPABASE_PROFILE`      | API profile selection                                                                                   | no                                                                                                                                                                                  |
 | `env(VAR)` references   | interpolated into `config.toml` values by the config step's loader                                      | no                                                                                                                                                                                  |
+| `PG*` libpq             | db step: linked-project TLS, timeout, service; see `db push`. Containers get no `PG*` TLS settings      | no                                                                                                                                                                                  |
 
 Once the db and functions steps run, they consume their own established environment variables
 exactly as documented in their own `SIDE_EFFECTS.md` files (e.g. `SUPABASE_DB_PASSWORD`,

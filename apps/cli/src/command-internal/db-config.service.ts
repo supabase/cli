@@ -14,6 +14,7 @@ import type { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import type {
   DbConfigConnectTempRoleError,
   DbConfigIpv6Error,
+  DbConfigLibpqEnvError,
   DbConfigListBansNetworkError,
   DbConfigListBansStatusError,
   DbConfigLoadError,
@@ -30,6 +31,7 @@ import type { DbConfigFlags, ResolvedDbConfig } from "./db-config.types.ts";
 export type DbConfigError =
   | Config.ConfigError
   | DbConfigParseUrlError
+  | DbConfigLibpqEnvError
   | DbConfigLoadError
   | LocalDbRunningError
   | ProjectRefNotLinkedError

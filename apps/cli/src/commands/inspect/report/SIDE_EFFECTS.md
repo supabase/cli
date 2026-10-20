@@ -14,6 +14,7 @@ validating those CSVs.
 | `<workdir>/supabase/.temp/project-ref`     | plain text | `--linked` path, without `--project-ref` or `SUPABASE_PROJECT_ID` (linked project ref) |
 | `~/.supabase/access-token`                 | plain text | `--linked` path, when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable            |
 | `<output-dir>/<YYYY-MM-DD>/<name>.csv` ×14 | CSV        | read back in-memory for rule evaluation                                                |
+| `PGSSL*` PEM, `pg_service.conf`            | PEM, libpq | linked project, when set; see `db push`                                                |
 
 A **missing** `config.toml` is fine (defaults apply); a
 **malformed** file aborts the command.
@@ -72,6 +73,7 @@ resolve the connection (via `DbConfigResolver`).
 | `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`) |
 | `SUPABASE_DB_*`         | override `[db]` port / shadow_port / password        | no                                                     |
 | `SUPABASE_ENV`          | selects which project `.env` files load              | no                                                     |
+| `PG*` libpq             | linked-project TLS, timeout, service; see `db push`  | no                                                     |
 
 ## Exit Codes
 

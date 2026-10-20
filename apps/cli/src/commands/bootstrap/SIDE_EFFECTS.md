@@ -20,6 +20,7 @@ command — see Notes).
 | `<workdir>/supabase/migrations/*.sql`                              | SQL        | native push step, for each pending migration applied                                                                                                                                                                                                                                                                                                                                                                         |
 | seed files from `[db.seed].sql_paths`                              | SQL        | native push step (`--include-seed` is always set; gated on `[db.seed].enabled`)                                                                                                                                                                                                                                                                                                                                              |
 | `<workdir>/supabase/roles.sql`                                     | SQL        | native push step (`--include-roles` is always set; existence check + apply)                                                                                                                                                                                                                                                                                                                                                  |
+| `PGSSL*` PEM, `pg_service.conf`                                    | PEM, libpq | native push step, linked project, when set; see `db push`                                                                                                                                                                                                                                                                                                                                                                    |
 
 ## Files Written
 
@@ -72,6 +73,7 @@ neither branch ever reaches the temp-login-role/Management-API path a passwordle
 | `SUPABASE_YES`                           | auto-confirm the native push step's prompts, read project-`.env`-aware like the standalone `db push`                                                                                                                                       | no        |
 | `SUPABASE_EXPERIMENTAL_STACK`            | blank/`scratch` path only; when `1`, persists `[experimental] stack = true` and omits Docker-era default ports. Empty is unset; other non-empty values fail closed                                                                         | no        |
 | `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.` | no        |
+| `PG*` libpq                              | native push step, linked-project TLS, timeout, service; see `db push`. An invalid value fails the push step, after project create, link, health poll, and `.env` write; the IPv6-error fallback takes none (see Notes)                     | no        |
 
 ## Exit Codes
 
@@ -170,6 +172,7 @@ the project lease. See `link`'s `SIDE_EFFECTS.md` for the format.
   its best-effort direct-host config rather than aborting — falling back to the same direct-host
   shape already computed for `.env` (step K's `dbConfig`) so the retry-wrapped push below still
   gets real reconnect attempts across the backoff window instead of failing bootstrap immediately.
+  That fallback config takes no `PG*` libpq setting, so it neither applies nor validates them.
 - **Password**: bootstrap never forwards a password to its internal push call on a separate
   channel — it always reuses the create-resolved password (`created.dbPassword`). There is no
   flag-vs-env distinction to preserve once the call is in-process (unlike the former subprocess

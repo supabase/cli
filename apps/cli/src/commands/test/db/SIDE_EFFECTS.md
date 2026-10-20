@@ -11,6 +11,8 @@
 | `~/.supabase/access-token`             | text   | `--linked` only, when `SUPABASE_ACCESS_TOKEN` unset                                                                                       |
 | `<workdir>/supabase/.temp/project-ref` | text   | `--linked` only, to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                      |
 | `<supabaseHome>/stacks/*/state.json`   | JSON   | managed `--local`: discover the project stack and open its saved definition                                                               |
+| `PGSSL*` PEM files                     | PEM    | linked project, when set; see `db push`                                                                                                   |
+| `pg_service.conf`                      | libpq  | linked project, when set; see `db push`                                                                                                   |
 
 ## Files Written
 
@@ -58,6 +60,7 @@ Managed stack `--local` prove runs the catalog `pg_prove` tool through the ownin
 | `BITBUCKET_CLONE_DIR`                    | when set, omit `--security-opt label:disable` (Bitbucket rejects it)                                                                                                                                                                       | no                                            |
 | `DEBUG` / `--debug`                      | append `--verbose` to `pg_prove`                                                                                                                                                                                                           | no                                            |
 | `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.` | no                                            |
+| `PG*` libpq                              | `--linked`, the CLI's own connection: linked-project TLS, timeout, service; see `db push`. A native `pg_prove` sees shell values only; `pg_prove` containers get none                                                                      | no                                            |
 
 ## Exit Codes
 

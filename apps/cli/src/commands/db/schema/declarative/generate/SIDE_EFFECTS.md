@@ -24,6 +24,7 @@ formatting without disabling safe compaction.
 | `<workdir>/supabase/.temp/postgres-version` | plain text | smart-mode Local flow — the local Postgres image-currency check's version-pin lookup |
 | `<workdir>/supabase/migrations/*.sql`       | SQL        | smart mode — detect whether migrations exist                                         |
 | `~/.supabase/access-token`                  | plain text | `--linked` (token resolution)                                                        |
+| `PGSSL*` PEM, `pg_service.conf`             | PEM, libpq | linked project, when set; see `db push`                                              |
 
 ## Files Written
 
@@ -51,6 +52,7 @@ formatting without disabling safe compaction.
 | `DOCKER_HOST`                            | tcp daemon host used as the local DB host fallback                                                                                                                                                                                                                                                   | no        |
 | `SUPABASE_USE_SLIM_IMAGES`               | resolves the expected local `db` image for the stale-container guard from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB tags the catalog does not pin, and flag-off `15.8.1.085` stay on docker.io | no        |
 | `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.`                                                           | no        |
+| `PG*` libpq                              | linked-project TLS, timeout, service; see `db push`                                                                                                                                                                                                                                                  | no        |
 
 ## Exit Codes
 
