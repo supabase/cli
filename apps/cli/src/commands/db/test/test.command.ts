@@ -1,7 +1,7 @@
 import { Command } from "effect/cli";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
-import { compose, withDbTarget } from "../../../command-internal/command-permissions/model.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import {
   TEST_DB_DESCRIPTION,
@@ -24,7 +24,7 @@ import { withTargetPolicy } from "../../../command-internal/target/target-policy
 export const dbTestCommand = Command.make("test", testDbConfig).pipe(
   Command.withDescription(TEST_DB_DESCRIPTION),
   Command.withShortDescription(TEST_DB_SHORT),
-  withPermissions(withDbTarget(compose(dbConfig, branchResolution), { default: "local" })),
+  withPermissions(compose(dbConfig, branchResolution)),
   Command.withHandler(runTestDbCommand),
   // `["db", "test"]`, not `["test", "db"]`: the `cli_command_executed`
   // telemetry records the actual invoked command path, which differs by

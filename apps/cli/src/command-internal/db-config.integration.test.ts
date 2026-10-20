@@ -2077,32 +2077,34 @@ describe("dbConfigResolver.resolveConnection", () => {
         return { fiber, advance };
       });
 
-    it.effect("reports the listed bans once the retries run out and removes nothing", () => {
-      const requests: Array<{ readonly method: string; readonly path: string }> = [];
-      const connection = failingConnect(Number.POSITIVE_INFINITY);
-      return Effect.gen(function* () {
-        yield* bannedRequests(requests, ["203.0.113.7", "198.51.100.2"]);
-        const { fiber, advance } = yield* forkResolve(
-          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false })),
-          connection.layer,
-        );
-        yield* advance(8);
-        const exit = yield* Fiber.await(fiber);
-        expect(failureText(exit)).toContain("LinkedDbNetworkBannedError");
-        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
-        expect(error).toEqual(
-          Option.some(
-            expect.objectContaining({
-              message: expect.stringContaining("203.0.113.7, 198.51.100.2"),
-              suggestion:
-                "Re-run with --yes to remove them, or run supabase network-bans remove --db-unban-ip 203.0.113.7,198.51.100.2 --experimental --yes.",
-            }),
-          ),
-        );
-        expect(connection.attempts.count).toBe(9);
-        expect(requests.some((request) => request.method === "DELETE")).toBe(false);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
-    });
+    it.effect.each([{ matchesLinkedRef: false }, { matchesLinkedRef: true }])(
+      "reports the listed bans and names the project once the retries run out and removes nothing (matchesLinkedRef: $matchesLinkedRef)",
+      ({ matchesLinkedRef }) => {
+        const requests: Array<{ readonly method: string; readonly path: string }> = [];
+        const connection = failingConnect(Number.POSITIVE_INFINITY);
+        return Effect.gen(function* () {
+          yield* bannedRequests(requests, ["203.0.113.7", "198.51.100.2"]);
+          const { fiber, advance } = yield* forkResolve(
+            inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef })),
+            connection.layer,
+          );
+          yield* advance(8);
+          const exit = yield* Fiber.await(fiber);
+          expect(failureText(exit)).toContain("LinkedDbNetworkBannedError");
+          const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+          expect(error).toEqual(
+            Option.some(
+              expect.objectContaining({
+                message: expect.stringContaining("203.0.113.7, 198.51.100.2"),
+                suggestion: `Re-run with --yes to remove them, or run supabase network-bans remove --remote=${ref} --db-unban-ip 203.0.113.7,198.51.100.2 --experimental --yes.`,
+              }),
+            ),
+          );
+          expect(connection.attempts.count).toBe(9);
+          expect(requests.some((request) => request.method === "DELETE")).toBe(false);
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+      },
+    );
 
     it.effect("connects without removing bans that are not blocking the caller", () => {
       const requests: Array<{ readonly method: string; readonly path: string }> = [];

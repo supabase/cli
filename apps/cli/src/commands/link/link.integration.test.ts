@@ -1,25 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunCrypto } from "@effect/platform-bun";
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
-import {
-  Cause,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-  Predicate,
-  Schema,
-  Stdio,
-} from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Predicate, Schema } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequestModule from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { TargetPolicy } from "../../command-internal/target/target-policy.ts";
-import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import {
   mockAnalytics,
   mockContextualAnalytics,
@@ -43,7 +29,6 @@ import {
 } from "../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
 import { link } from "./link.handler.ts";
-import { linkHandler } from "./link.command.ts";
 import type { LinkFlags } from "./link.command.ts";
 
 const HEALTHY_PROJECT = {
@@ -1461,76 +1446,6 @@ describe("link integration", () => {
             },
           ]);
           expect(yield* jsonText(analytics.captured)).not.toContain('"main"');
-        }).pipe(Effect.provide(layer));
-      },
-    );
-  });
-
-  describe("telemetry: --project-ref redaction (CLI-2167)", () => {
-    it.effect("does not redact --project-ref in cli_command_executed when it is ref-shaped", () => {
-      const out = mockOutput({ format: "text" });
-      const analytics = mockContextualAnalytics();
-      const apiMock = mockCommandPlatformApiService({
-        v1: {
-          getProject: () => Effect.succeed(HEALTHY_PROJECT),
-          getProjectApiKeys: () => Effect.succeed(SERVICE_KEYS),
-          getStorageConfig: () => Effect.succeed({ migrationVersion: "m" }),
-          getPoolerConfig: () => Effect.succeed(POOLER_PRIMARY),
-        },
-      });
-      const cliSettings = mockCommandSettings({
-        workdir: tempRoot.current,
-        projectId: Option.none(),
-      });
-      const layer = Layer.mergeAll(
-        buildTestRuntime({
-          out,
-          api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({}) },
-          cliSettings,
-          analytics,
-        }),
-        cliConfigValuesTestLayer,
-        commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
-        Stdio.layerTest({
-          args: Effect.succeed(["link", "--project-ref", VALID_REF]),
-        }),
-        Layer.succeed(TargetPolicy, { group: "hosted", consent: "none" }),
-      );
-      return Effect.gen(function* () {
-        yield* linkHandler(flags({ projectRef: Option.some(VALID_REF) }));
-        const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-        expect(event?.properties.flags).toEqual({ "project-ref": VALID_REF });
-      }).pipe(Effect.provide(layer));
-    });
-
-    it.effect(
-      "redacts --project-ref in cli_command_executed when it is a branch name, not a ref",
-      () => {
-        const out = mockOutput({ format: "text" });
-        const analytics = mockContextualAnalytics();
-        const apiMock = mockCommandPlatformApiService({ v1: {} });
-        const cliSettings = mockCommandSettings({
-          workdir: tempRoot.current,
-          projectId: Option.none(),
-        });
-        const layer = Layer.mergeAll(
-          buildTestRuntime({
-            out,
-            api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({}) },
-            cliSettings,
-            analytics,
-          }),
-          cliConfigValuesTestLayer,
-          commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
-          Stdio.layerTest({
-            args: Effect.succeed(["link", "--project-ref", "my-branch"]),
-          }),
-          Layer.succeed(TargetPolicy, { group: "hosted", consent: "none" }),
-        );
-        return Effect.gen(function* () {
-          yield* Effect.exit(linkHandler(flags({ projectRef: Option.some("my-branch") })));
-          const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-          expect(event?.properties.flags).toEqual({ "project-ref": "<redacted>" });
         }).pipe(Effect.provide(layer));
       },
     );

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
+import { withConfigEnv, withEmptyConfigEnv } from "../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import {
   GLOBAL_FLAGS,
@@ -15,6 +16,8 @@ import {
   YesFlag,
   globalFlagValues,
   resolveDebugWithProjectEnv,
+  resolveYesSource,
+  resolveYesWithProjectEnv,
 } from "./global-flags.ts";
 
 describe("globalFlagValues", () => {
@@ -118,5 +121,91 @@ describe("resolveDebugWithProjectEnv", () => {
         ),
       );
     },
+  );
+});
+
+// `parsed` is what the flag parser yields, which keeps the first occurrence of a repeated flag.
+describe("resolveYesSource", () => {
+  const resolve = (
+    args: ReadonlyArray<string>,
+    { parsed, shellYes }: { readonly parsed: boolean; readonly shellYes?: string },
+  ) =>
+    withEmptyConfigEnv(
+      withConfigEnv(shellYes === undefined ? {} : { SUPABASE_YES: shellYes }, resolveYesSource),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(Layer.succeed(YesFlag, parsed), Layer.succeed(CliArgs, { args })),
+      ),
+    );
+
+  it.effect.each([
+    { args: ["--yes=false", "--yes"], parsed: false },
+    { args: ["--yes=false", "--yes=true"], parsed: false },
+    { args: ["--yes", "false", "--yes"], parsed: false },
+    { args: ["--yes", "--", "--yes=false"], parsed: true },
+    { args: ["--yes", "--password", "--yes=false"], parsed: true },
+  ])("confirms $args because the last --yes is true", ({ args, parsed }) =>
+    Effect.gen(function* () {
+      expect(yield* resolve(args, { parsed })).toEqual(Option.some({ via: "flag" }));
+    }),
+  );
+
+  it.effect.each([
+    { args: ["--yes", "--yes=false"], parsed: true },
+    { args: ["--yes=true", "--yes=false"], parsed: true },
+    { args: ["--yes=false"], parsed: false },
+    { args: ["--yes", "false"], parsed: false },
+    { args: ["--yes=no"], parsed: false },
+    { args: ["--yes", "off"], parsed: false },
+  ])(
+    "denies $args because the last --yes is false, even with SUPABASE_YES set",
+    ({ args, parsed }) =>
+      Effect.gen(function* () {
+        expect(yield* resolve(args, { parsed, shellYes: "1" })).toEqual(Option.none());
+      }),
+  );
+
+  it.effect("falls back to a shell SUPABASE_YES when --yes never appears", () =>
+    Effect.gen(function* () {
+      expect(yield* resolve([], { parsed: false, shellYes: "1" })).toEqual(
+        Option.some({ via: "env", raw: "1" }),
+      );
+      expect(yield* resolve([], { parsed: false })).toEqual(Option.none());
+    }),
+  );
+});
+
+describe("resolveYesWithProjectEnv", () => {
+  const resolve = (
+    args: ReadonlyArray<string>,
+    {
+      parsed,
+      projectEnv,
+    }: { readonly parsed: boolean; readonly projectEnv: Record<string, string> },
+  ) =>
+    withEmptyConfigEnv(resolveYesWithProjectEnv(projectEnv)).pipe(
+      Effect.provide(
+        Layer.mergeAll(Layer.succeed(YesFlag, parsed), Layer.succeed(CliArgs, { args })),
+      ),
+    );
+
+  it.effect("lets the last --yes decide, in either order", () =>
+    Effect.gen(function* () {
+      expect(yield* resolve(["--yes=false", "--yes"], { parsed: false, projectEnv: {} })).toBe(
+        true,
+      );
+      expect(
+        yield* resolve(["--yes", "--yes=false"], {
+          parsed: true,
+          projectEnv: { SUPABASE_YES: "1" },
+        }),
+      ).toBe(false);
+    }),
+  );
+
+  it.effect("falls back to the project env when --yes never appears", () =>
+    Effect.gen(function* () {
+      expect(yield* resolve([], { parsed: false, projectEnv: { SUPABASE_YES: "1" } })).toBe(true);
+    }),
   );
 });

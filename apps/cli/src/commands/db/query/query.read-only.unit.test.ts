@@ -136,7 +136,9 @@ describe("findReadOnlyViolation", () => {
   it.each([
     "WITH begin AS (SELECT 1) SELECT * FROM begin atomic; COMMIT; DELETE FROM users; END",
     "WITH begin AS (SELECT 1) SELECT * FROM begin\n  ATOMIC; SET transaction_read_only = off; DELETE FROM users; END",
-    "SELECT 'begin atomic'",
+    "SELECT 1 FROM BEGIN \t\r\n ATOMIC; COMMIT; DELETE FROM users; END",
+    "SELECT 'begin atomic' FROM begin atomic; COMMIT; DELETE FROM users; END",
+    "SELECT 1 -- begin\natomic; COMMIT; DELETE FROM users; END",
   ])("rejects input containing BEGIN ATOMIC: %s", (sql) => {
     expect(findReadOnlyViolation(sql)).toBe("BEGIN ATOMIC");
   });
@@ -173,6 +175,16 @@ describe("findReadOnlyViolation", () => {
     ["a keyword inside a line comment", "SELECT 1 -- COMMIT\n; SELECT 2"],
     ["a keyword inside a block comment", "SELECT 1 /* ROLLBACK; */ ; SELECT 2"],
     ["a keyword as a quoted identifier", 'SELECT "commit", "begin" FROM t'],
+    ["BEGIN ATOMIC inside a string", "select 'begin atomic' as s"],
+    ["BEGIN ATOMIC with a newline inside a string", "SELECT 'begin\n  atomic'"],
+    ["BEGIN ATOMIC inside an escape string", String.raw`SELECT E'it\'s begin atomic'`],
+    ["BEGIN ATOMIC inside a Unicode escape string", "SELECT U&'begin atomic'"],
+    ["BEGIN ATOMIC inside a dollar quote", "SELECT $$begin atomic$$"],
+    ["BEGIN ATOMIC inside a tagged dollar quote", "SELECT $q$begin atomic$q$"],
+    ["BEGIN ATOMIC as a quoted identifier", 'select 1 as "begin atomic"'],
+    ["BEGIN ATOMIC inside a line comment", "SELECT 1 -- begin atomic"],
+    ["BEGIN ATOMIC inside a block comment", "select 1 /* begin atomic */"],
+    ["BEGIN ATOMIC inside a nested block comment", "SELECT 1 /* a /* begin atomic */ b */"],
     ["a keyword as a column", "SELECT begin, commit, rollback FROM t"],
     ["set_config", "SELECT set_config('default_transaction_read_only', 'off', false)"],
     ["current_setting", "SELECT current_setting('transaction_read_only')"],

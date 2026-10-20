@@ -334,6 +334,30 @@ describe("splitAndTrimChecked", () => {
   ])("does not flag %s", (_name, sql) => {
     expect(splitAndTrimChecked(sql).unterminated).toBe(false);
   });
+
+  it.each([
+    ["a function body", "CREATE FUNCTION f() BEGIN ATOMIC SELECT 1; END"],
+    ["a lowercase pair split by a newline", "SELECT 1 FROM begin\n  atomic; COMMIT; END"],
+    ["a pair inside parentheses", "SELECT (SELECT 1 FROM begin atomic; COMMIT; END)"],
+    ["a pair next to a string holding the same words", "SELECT 'begin atomic' FROM begin atomic"],
+  ])("reports %s as a BEGIN ATOMIC body", (_name, sql) => {
+    expect(splitAndTrimChecked(sql).beginAtomic).toBe(true);
+  });
+
+  it.each([
+    ["a string", "SELECT 'begin atomic'"],
+    ["a string with a newline between the words", "SELECT 'begin\natomic'"],
+    ["an escape string", String.raw`SELECT E'it\'s begin atomic'`],
+    ["a Unicode escape string", "SELECT U&'begin atomic'"],
+    ["a dollar quote", "SELECT $$begin atomic$$"],
+    ["a quoted identifier", 'SELECT 1 AS "begin atomic"'],
+    ["a line comment", "SELECT 1 -- begin atomic\n; SELECT 2"],
+    ["a block comment", "SELECT 1 /* begin atomic */"],
+    ["an identifier that merely ends in begin", "SELECT 1 xbegin atomic; SELECT 2"],
+    ["a plain statement", "SELECT 1"],
+  ])("does not report %s as a BEGIN ATOMIC body", (_name, sql) => {
+    expect(splitAndTrimChecked(sql).beginAtomic).toBe(false);
+  });
 });
 
 describe("splitSql", () => {

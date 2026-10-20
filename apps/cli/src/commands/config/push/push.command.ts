@@ -23,12 +23,8 @@ const config = {
 
 export type ConfigPushFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// Exported so integration tests can drive the exact wiring
-// `Command.withHandler` uses below (same precedent as `linkHandler`).
-export const configPushHandler = (flags: ConfigPushFlags) =>
+const configPushHandler = (flags: ConfigPushFlags) =>
   configPush(flags).pipe(
-    // --project-ref is only safe to log verbatim when ref-shaped; an arbitrary string (a typo,
-    // a bad paste) must reach PostHog as "<redacted>".
     withCommandTelemetry({
       flags,
     }),

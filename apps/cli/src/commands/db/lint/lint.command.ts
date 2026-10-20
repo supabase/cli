@@ -1,11 +1,7 @@
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
-import {
-  compose,
-  withCondition,
-  withDbTarget,
-} from "../../../command-internal/command-permissions/model.ts";
+import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -46,31 +42,23 @@ export const dbLintCommand = Command.make("lint", config).pipe(
   Command.withDescription("Checks a database for typing error."),
   Command.withShortDescription("Checks a database for typing error"),
   withPermissions(
-    withDbTarget(
-      compose(
-        { operations: [], noApiEffectFlags: ["schema", "level", "fail-on"] },
-        dbConfig,
-        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-        branchResolution,
-      ),
-      { default: "local" },
+    compose(
+      { operations: [], noApiEffectFlags: ["schema", "level", "fail-on"] },
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
     dbLint(flags).pipe(
       withCommandTelemetry({
         flags: {
-          remote: flags.remote,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
           schema: flags.schema,
           level: flags.level,
           "fail-on": flags.failOn,
         },
-        // level/fail-on are auto-detected as safe (Flag.Literals); --schema and
-        // --project-ref stay redacted (no established safelist).
+        // level/fail-on are auto-detected as safe (Flag.Literals); --schema stays redacted (no
+        // established safelist).
         config,
         aliases: { s: "schema" },
       }),

@@ -70,10 +70,6 @@ const UNTERMINATED_INPUT = "an unterminated comment, quote or dollar quote";
 // PostgreSQL treats every code point at or above 0x80 as an identifier character.
 const LEADING_WORD = /^[A-Za-z0-9_$\u{80}-\u{10FFFF}]+/u;
 
-// The splitter reads a `BEGIN ATOMIC` body as one statement, so `WITH begin AS (SELECT 1) SELECT *
-// FROM begin atomic; COMMIT; DELETE FROM t; END` hides its second and third statements from it.
-const BEGIN_ATOMIC = /begin\s+atomic/iu;
-
 const statementViolation = (statement: string): string | undefined => {
   const text = trimLeadingSqlComments(statement);
   if (text === "") return undefined;
@@ -89,15 +85,17 @@ const statementViolation = (statement: string): string | undefined => {
 
 /**
  * The first reason `--read-only` refuses `sql`, as a fixed label (never the SQL): a statement
- * that does not start with one of {@link READ_ONLY_STATEMENT_KEYWORDS}, or input the splitter
- * cannot read to the end.
+ * that does not start with one of {@link READ_ONLY_STATEMENT_KEYWORDS}, a `BEGIN ATOMIC` body, or
+ * input the splitter cannot read to the end.
  */
 export const findReadOnlyViolation = (sql: string): string | undefined => {
-  const { statements, unterminated } = splitAndTrimChecked(sql);
+  const { statements, unterminated, beginAtomic } = splitAndTrimChecked(sql);
   for (const statement of statements) {
     const violation = statementViolation(statement);
     if (violation !== undefined) return violation;
   }
-  if (BEGIN_ATOMIC.test(sql)) return "BEGIN ATOMIC";
+  // The splitter reads a `BEGIN ATOMIC` body as one statement, so `WITH begin AS (SELECT 1) SELECT *
+  // FROM begin atomic; COMMIT; DELETE FROM t; END` hides its second and third statements from it.
+  if (beginAtomic) return "BEGIN ATOMIC";
   return unterminated ? UNTERMINATED_INPUT : undefined;
 };

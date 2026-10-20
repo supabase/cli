@@ -12,6 +12,8 @@ interface State {
   next(char: string, data: string): State | null;
   /** `true` while inside a block comment, quoted string, quoted identifier or dollar quote. */
   readonly open?: boolean;
+  /** `true` while inside a `BEGIN ATOMIC` body, where `;` no longer ends a statement. */
+  readonly atomic?: boolean;
 }
 
 const BEGIN_ATOMIC = "ATOMIC";
@@ -257,6 +259,9 @@ class ParenState implements State {
   get open(): boolean {
     return this.prev.open === true;
   }
+  get atomic(): boolean {
+    return this.prev.atomic === true;
+  }
   next(char: string, data: string): State | null {
     const curr = this.prev.next(char, data);
     if (curr === null) {
@@ -270,6 +275,7 @@ class ParenState implements State {
 }
 
 class AtomicState implements State {
+  readonly atomic = true;
   private pendingEnd = false;
   private statementStart: number;
   private statementHasContent = false;
@@ -325,11 +331,14 @@ interface RawSplit {
   readonly tokens: RawToken[];
   /** The input ends inside a block comment, quoted string, quoted identifier or dollar quote. */
   readonly unterminated: boolean;
+  /** The input holds a `BEGIN ATOMIC` body, which the splitter reads as part of one statement. */
+  readonly beginAtomic: boolean;
 }
 
 /** The FSM traversal shared by every `splitSql*` entry point below. */
 function splitRaw(sql: string): RawSplit {
   let state: State = new ReadyState();
+  let beginAtomic = false;
   const tokens: RawToken[] = [];
   // Slice each token from `sql` instead of growing it with `+=`: states read the token's tail every
   // char, which would rebuild the whole string each time and go quadratic on large tokens. `data`
@@ -346,11 +355,12 @@ function splitRaw(sql: string): RawSplit {
       state = new ReadyState();
     } else {
       state = next;
+      beginAtomic ||= state.atomic === true;
     }
   }
   // Trailing non-terminated statement at EOF.
   if (end > start) tokens.push({ text: sql.slice(start), terminated: false });
-  return { tokens, unterminated: state.open === true };
+  return { tokens, unterminated: state.open === true, beginAtomic };
 }
 
 /**
@@ -378,14 +388,18 @@ export function splitAndTrim(sql: string): string[] {
   return splitSql(sql, trimStatement);
 }
 
-/** `splitAndTrim`, plus whether `sql` ends inside a block comment, quote or dollar quote. */
+/**
+ * `splitAndTrim`, plus whether `sql` ends inside a block comment, quote or dollar quote, and
+ * whether the splitter read a `BEGIN ATOMIC` body, which hides its inner statements from `statements`.
+ */
 export function splitAndTrimChecked(sql: string): {
   readonly statements: string[];
   readonly unterminated: boolean;
+  readonly beginAtomic: boolean;
 } {
-  const { tokens, unterminated } = splitRaw(sql);
+  const { tokens, unterminated, beginAtomic } = splitRaw(sql);
   const statements = tokens.map(({ text }) => trimStatement(text)).filter((s) => s.length > 0);
-  return { statements, unterminated };
+  return { statements, unterminated, beginAtomic };
 }
 
 /** One statement, paired with both its raw and trimmed forms. */

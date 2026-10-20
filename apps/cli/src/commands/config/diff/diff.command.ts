@@ -32,8 +32,6 @@ export type ConfigDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const configDiffHandler = (flags: ConfigDiffFlags) =>
   configDiff(flags).pipe(
-    // `--project-ref` can also carry a branch name, so its value is safe to log only when it's
-    // actually ref-shaped — a user-created branch name must never reach PostHog.
     withCommandTelemetry({
       flags,
       // This command rejects every `-o/--output` value itself with a message pointing at

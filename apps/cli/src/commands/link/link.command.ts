@@ -44,7 +44,7 @@ const config = {
 
 export type LinkFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const linkHandler = (flags: LinkFlags) =>
+const linkHandler = (flags: LinkFlags) =>
   link(flags).pipe(
     withCommandTelemetry({
       flags,

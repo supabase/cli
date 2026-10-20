@@ -45,9 +45,7 @@ const config = {
 
 export type FunctionsDownloadFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// Exported so integration tests can drive the exact wiring `Command.withHandler`
-// uses below, instead of re-asserting the generic instrumentation mechanism.
-export const functionsDownloadHandler = (flags: FunctionsDownloadFlags) =>
+const functionsDownloadHandler = (flags: FunctionsDownloadFlags) =>
   functionsDownload(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling);
 
 const COMMAND_PATH = ["functions", "download"];

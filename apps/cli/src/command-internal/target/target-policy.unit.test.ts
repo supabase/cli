@@ -126,22 +126,6 @@ describe.each(leavesByVariant)(
       expect(offenders).toEqual([]);
     });
 
-    it("matches a declared database-target default to the group", () => {
-      const expected: Partial<Record<TargetGroup, "linked" | "local">> = {
-        selectable: "local",
-      };
-      const offenders = withPolicy.flatMap(({ path, node, policy }) => {
-        const permissions = Option.getOrUndefined(readPermissions(node.command));
-        if (permissions?.status !== "mapped" || permissions.dbTargetDefault === undefined)
-          return [];
-        const want = expected[policy.group];
-        return want === undefined || permissions.dbTargetDefault === want
-          ? []
-          : [`${path}: ${policy.group} defaults to ${permissions.dbTargetDefault}`];
-      });
-      expect(offenders).toEqual([]);
-    });
-
     it("requires consent for every declared non-GET operation outside the consent-free map", () => {
       const offenders = withPolicy
         .filter(({ policy }) => policy.consent === "none")

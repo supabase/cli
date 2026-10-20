@@ -14,7 +14,10 @@ import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { spawnContainerCli } from "../../../command-internal/container-cli.ts";
-import { isIPv6ConnectivityErrorCause } from "../../../command-internal/connect-errors.ts";
+import {
+  isIPv6ConnectivityErrorCause,
+  SUGGEST_LINKED_PROJECT,
+} from "../../../command-internal/connect-errors.ts";
 import { isDockerDaemonUnreachable } from "../../../command-internal/docker-suggest.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
@@ -33,7 +36,7 @@ import { renderLocalTarget } from "../../../command-internal/target/target-ident
 import { parseTargetSelector } from "../../../command-internal/target/target-selector.ts";
 import type { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
-import { tempPaths } from "../../../shared/config/temp-paths.ts";
+import { isCheckoutLinked, tempPaths } from "../../../shared/config/temp-paths.ts";
 import {
   describeConfigParseError,
   missingProjectConfigMessageEffect,
@@ -533,9 +536,18 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         ]);
         if (exitCode !== 0) {
           const message = stderr.trim();
+          const suggestion = (yield* isCheckoutLinked(
+            fs,
+            path,
+            cliSettings.workdir,
+            cliSettings.projectId,
+          ))
+            ? SUGGEST_LINKED_PROJECT
+            : undefined;
           if (message.toLowerCase().includes("no such container")) {
             return yield* new GenTypesLocalDbNotRunningError({
               message: "supabase start is not running.",
+              suggestion,
             });
           }
           return yield* new GenTypesLocalDbInspectError({
@@ -544,6 +556,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
                 ? `failed to inspect service: ${message}`
                 : "failed to inspect service",
             daemonDown: isDockerDaemonUnreachable(message),
+            suggestion,
           });
         }
       }),

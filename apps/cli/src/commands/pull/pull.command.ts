@@ -58,8 +58,6 @@ export type PullFlags = CliCommand.Command.Config.Infer<typeof config>;
 // uses below, instead of re-implementing the `safeFlags`/telemetry wrapper inline.
 export const pullHandler = (flags: PullFlags) =>
   pull(flags).pipe(
-    // `--project-ref` can carry a branch name, so its value is only safe to log verbatim when it's
-    // actually ref-shaped — a user-created branch name must never reach PostHog.
     // `--remote-label` is a free-form, user-chosen string and is never safe to log verbatim.
     withCommandTelemetry({
       flags,

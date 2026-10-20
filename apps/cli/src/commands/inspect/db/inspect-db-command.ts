@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 
-import { compose, withDbTarget } from "../../../command-internal/command-permissions/model.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { targetFlags } from "../../../command-internal/target/target-flags.ts";
@@ -16,9 +16,7 @@ import type { InspectConnectionFlags } from "./inspect-query.ts";
 export const INSPECT_DB_FLAGS = targetFlags({ subject: "database", dbUrl: true });
 
 /** The Management API calls every `inspect db` subcommand makes, all through the database-config resolver. */
-export const INSPECT_DB_PERMISSIONS = withDbTarget(compose(dbConfig, branchResolution), {
-  default: "local",
-});
+export const INSPECT_DB_PERMISSIONS = compose(dbConfig, branchResolution);
 /** Target policy shared by every `inspect db` command. */
 export const withInspectDbTargetPolicy = withTargetPolicy({
   group: "selectable",
@@ -26,24 +24,10 @@ export const withInspectDbTargetPolicy = withTargetPolicy({
   consentExemptReason: "read-only",
 });
 
-/**
- * Wraps an `inspect db` handler with the standard command-level pipeline: telemetry
- * instrumentation with the three connection flags, and the machine-format JSON error envelope.
- */
+/** Wraps an `inspect db` handler with telemetry and the machine-format JSON error envelope. */
 export function inspectDbCommandHandler<E, R>(
   handler: (flags: InspectConnectionFlags) => Effect.Effect<void, E, R>,
 ) {
   return (flags: InspectConnectionFlags) =>
-    handler(flags).pipe(
-      withCommandTelemetry({
-        flags: {
-          remote: flags.remote,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          "project-ref": flags.projectRef,
-        },
-      }),
-      withJsonErrorHandling,
-    );
+    handler(flags).pipe(withCommandTelemetry(), withJsonErrorHandling);
 }
