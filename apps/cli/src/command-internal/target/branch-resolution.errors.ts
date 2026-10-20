@@ -6,11 +6,7 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-/**
- * A non-ref-shaped value was given (treated as a branch name) but no linked parent project
- * could be resolved to search for that branch — none of `SUPABASE_PROJECT_ID`,
- * `supabase/.temp/linked-project.json`, or `supabase/.temp/project-ref` yielded a candidate.
- */
+/** A branch name was given but no linked parent project could be resolved to search for it. */
 export class LinkBranchNotLinkedError extends Data.TaggedError("LinkBranchNotLinkedError")<{
   readonly message: string;
 }> {
@@ -19,10 +15,7 @@ export class LinkBranchNotLinkedError extends Data.TaggedError("LinkBranchNotLin
   }
 }
 
-/**
- * A parent-project candidate exists (`SUPABASE_PROJECT_ID`, `supabase/.temp/linked-project.json`,
- * or `supabase/.temp/project-ref`) but none of them is ref-shaped — corrupt or stale linked state.
- */
+/** A linked-parent candidate exists (`SUPABASE_PROJECT_ID`, `linked-project.json` or `project-ref`) but none is ref-shaped: corrupt or stale linked state. */
 export class LinkParentRefInvalidError extends Data.TaggedError("LinkParentRefInvalidError")<{
   readonly message: string;
 }> {
@@ -40,10 +33,7 @@ export class LinkBranchNotFoundError extends Data.TaggedError("LinkBranchNotFoun
   }
 }
 
-/**
- * The resolved branch has no `project_ref` yet (e.g. `status: CREATING_PROJECT`). Guards
- * against silently falling through to an unrelated ref elsewhere in the resolver chain.
- */
+/** The resolved branch has no `project_ref` yet (for example `CREATING_PROJECT`), so the lookup must not fall through to another ref. */
 export class LinkBranchNotReadyError extends Data.TaggedError("LinkBranchNotReadyError")<{
   readonly branch: string;
   readonly status: string;

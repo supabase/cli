@@ -13,18 +13,9 @@ import {
   supabaseEnvBoolWithProjectFallback,
 } from "./supabase-env.ts";
 
-// The CLI's global-flag registry is tree-wide, so `-o/--output` can't be redeclared per command to
-// vary its allowed values; this models it as the union of every command's accepted values, and
-// each handler honors only the subset it cares about (e.g. `db query` reads `table`/`csv`; other
-// commands ignore them and fall through to text).
-//
-// These flag description strings are user-visible in shell completion (`__complete` candidate
-// descriptions), so keep them accurate when changing a flag.
-/**
- * Every value the global `-o/--output` flag accepts. Per-command `outputFormats` overrides (e.g.
- * `config diff`'s handler-level rejection) widen against this list, so a value added here flows to
- * those commands and their tests automatically.
- */
+// `-o/--output` is tree-wide and can't vary per command, so it takes the union of every command's values and each handler honors its subset.
+// Flag descriptions are user-visible in shell completion (`__complete`), so keep them accurate.
+/** Every value the global `-o/--output` flag accepts; per-command `outputFormats` overrides widen against this list. */
 export const GLOBAL_OUTPUT_FORMATS = [
   "env",
   "pretty",
@@ -43,12 +34,7 @@ export const OutputFlag = GlobalFlag.Setting("output")({
   ),
 });
 
-/**
- * The TS-only `--output-format` global, accepted on any subcommand.
- *
- * A value-taking global flag must also be registered in `PERSISTENT_VALUE_FLAG_NAMES`
- * (`shared/cli/flag-groups.ts`), or the pre-parse argv scanners won't consume its value.
- */
+/** The TS-only `--output-format` global, accepted on any subcommand. */
 export const OutputFormatFlag = GlobalFlag.Setting("output-format")({
   flag: Flag.Literals("output-format", ["text", "json", "stream-json"]).pipe(
     Flag.withDescription("Output format: text (default), json, or stream-json (NDJSON)"),
@@ -127,12 +113,8 @@ export const AgentFlag = GlobalFlag.Setting("agent")({
 });
 
 /**
- * Every global/persistent flag declared above.
- *
- * A value-taking flag added here must also be added to `PERSISTENT_VALUE_FLAG_NAMES`
- * (`shared/cli/flag-groups.ts`), which the handler-side argv scans and pre-parse token
- * scanners both derive their token set from. A flag missed there fails silently: an unregistered
- * value flag won't consume its following token, so that token gets misread as positional.
+ * Every global flag declared above. A value-taking one must also join `PERSISTENT_VALUE_FLAG_NAMES`
+ * (`shared/cli/flag-groups.ts`), or its value token is silently misread as positional.
  */
 export const GLOBAL_FLAGS = [
   OutputFlag,
@@ -148,14 +130,8 @@ export const GLOBAL_FLAGS = [
 ] as const;
 
 /**
- * Resolves the current value of every global/persistent flag above, keyed by its own CLI flag
- * name. Used by `telemetry/command-telemetry.ts` as a fallback for a global flag not present in a
- * handler's own `flags` record.
- *
- * Reads via `Effect.serviceOption` so a caller without the global-flag context (e.g. a focused
- * unit test) gets an empty record instead of a missing-service defect. Reads each flag
- * individually, since each `Setting<Id, A>`'s distinct value type can't be looped over without an
- * `as` cast; `global-flags.unit.test.ts` keeps the resolved id set in sync with `GLOBAL_FLAGS`.
+ * Every global flag's current value keyed by flag name, as telemetry's fallback for a flag missing from a handler's `flags`.
+ * `serviceOption` gives a caller without the global-flag context an empty record, and each flag is read individually to avoid an `as` cast.
  */
 export const globalFlagValues = Effect.gen(function* () {
   const values: Record<string, unknown> = {};
@@ -180,25 +156,13 @@ const FALSE_VALUES = new Set(["0", "f", "F", "false", "FALSE", "False"]);
 // The false spellings of the CLI's boolean flag parser, which also reads one after a bare flag.
 const BOOLEAN_FALSE_VALUES = new Set(["false", "no", "off", "0", "n"]);
 
-/**
- * Raw argv truncated at the first bare `--` operand terminator. This CLI's own lexer stops parsing
- * flags there too, so everything after is a positional operand, e.g. a migration name literally
- * called `--experimental=false` passed as `db pull -- --experimental=false`. The argv-scanning
- * `*ExplicitlyFalse` heuristics below must only look at this region, or a positional operand that
- * merely looks like a flag gets mistaken for an explicit one.
- */
+/** Raw argv before the first bare `--`; everything after is an operand (`db pull -- --experimental=false`), so the scanners below must not read it. */
 const argsBeforeOperandTerminator = (args: ReadonlyArray<string>): ReadonlyArray<string> => {
   const terminatorIndex = args.indexOf("--");
   return terminatorIndex === -1 ? args : args.slice(0, terminatorIndex);
 };
 
-/**
- * Drops tokens consumed as a value-consuming flag's value in space-separated form
- * (`--flag value` / `-f value`), so the `--yes`/`--experimental`/`--debug` argv scanners below
- * don't mistake a consumed value token for an explicit occurrence of the global flag — e.g.
- * `db pull --password --experimental=false` treats `--experimental=false` as `--password`'s
- * value, not a changed `--experimental`.
- */
+/** Drops tokens consumed as a flag's space-separated value, so `db pull --password --experimental=false` isn't read as a changed `--experimental`. */
 const nonValueConsumedTokens = (args: ReadonlyArray<string>): ReadonlyArray<string> => {
   const kept: Array<string> = [];
   let skipNext = false;
@@ -220,12 +184,8 @@ const nonValueConsumedTokens = (args: ReadonlyArray<string>): ReadonlyArray<stri
 };
 
 /**
- * Resolves the raw argv's *last* `--yes`/`--yes=<bool>` occurrence to a boolean, or `undefined` if
- * it never appears before the first `--` operand terminator. The flag parser keeps the *first* of
- * a repeated `--yes` and can't tell an explicit `--yes=false` from the omitted default, so a caller
- * must reread raw argv rather than trust the parsed flag. A bare `--yes` reads a boolean literal
- * that follows it (`--yes false`), as the parser does. Tokens consumed as another flag's value are
- * skipped (see {@link nonValueConsumedTokens}).
+ * The last `--yes`/`--yes=<bool>` in argv as a boolean, or `undefined` if there is none. The parser keeps the first of a repeat and can't tell
+ * `--yes=false` from the default, so callers reread argv; a bare `--yes` reads a boolean literal that follows it, as the parser does.
  */
 const yesFlagFromArgs = (args: ReadonlyArray<string>): boolean | undefined => {
   const tokens = nonValueConsumedTokens(argsBeforeOperandTerminator(args));
@@ -259,19 +219,12 @@ export const resolveYesSource = Effect.gen(function* () {
     : Option.none<YesSource>();
 });
 
-/**
- * `--yes` resolved with an env fallback: when the flag isn't passed, `SUPABASE_YES` is honored. An
- * explicit `--yes` (including `--yes=false`, and the last of a repeated flag) wins over the env.
- * Prefer this over reading {@link YesFlag} directly anywhere a command auto-confirms a prompt.
- */
+/** `--yes` with a `SUPABASE_YES` fallback; an explicit flag (including `--yes=false`) wins over the env. Prefer it to reading {@link YesFlag} directly. */
 export const resolveYes = Effect.map(resolveYesSource, Option.isSome);
 
 /**
- * `--yes` resolved with the project `.env` consulted too, for commands that load the nested
- * project env before prompting (`migration down`, `migration repair --all`). Shell env
- * *presence* (any value) suppresses the file value entirely (see
- * {@link supabaseEnvBoolWithProjectFallback}); an explicit `--yes` wins over both. `projectEnv` is
- * the loaded map from `loadProjectEnvValues`.
+ * {@link resolveYes} that also consults the project `.env` (the `loadProjectEnvValues` map) for commands that load it before prompting;
+ * shell env presence suppresses the file value (see {@link supabaseEnvBoolWithProjectFallback}), and an explicit `--yes` wins over both.
  */
 export const resolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {
@@ -284,13 +237,7 @@ export const resolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
     return flag || (yield* supabaseEnvBoolWithProjectFallback("SUPABASE_YES", projectEnv));
   });
 
-/**
- * Resolves the raw argv's *last* explicit `--experimental` occurrence to a boolean, or `undefined`
- * if it never appears before the first `--` operand terminator. Repeated occurrences resolve to
- * the last one, the opposite of how this CLI's own flag parser resolves a repeat (first wins), so
- * a caller must reread raw argv rather than trust the parsed flag. Tokens consumed as another
- * flag's value are skipped (see {@link nonValueConsumedTokens}).
- */
+/** The last `--experimental`/`--experimental=<bool>` in argv as a boolean, or `undefined`; the parser keeps the first of a repeat, so callers reread argv. */
 const experimentalFlagFromArgs = (args: ReadonlyArray<string>): boolean | undefined => {
   let result: boolean | undefined;
   for (const arg of nonValueConsumedTokens(argsBeforeOperandTerminator(args))) {
@@ -303,11 +250,7 @@ const experimentalFlagFromArgs = (args: ReadonlyArray<string>): boolean | undefi
   return result;
 };
 
-/**
- * `--experimental` resolved with an env fallback: `SUPABASE_EXPERIMENTAL` enables experimental
- * commands when the flag isn't passed. An explicit `--experimental` (including
- * `--experimental=false`, and the last of a repeated flag) wins over the env.
- */
+/** `--experimental` with a `SUPABASE_EXPERIMENTAL` fallback; an explicit flag (including `--experimental=false`) wins over the env. */
 export const resolveExperimental = Effect.gen(function* () {
   const flag = yield* ExperimentalFlag;
   const cliArgs = yield* CliArgs;
@@ -318,10 +261,7 @@ export const resolveExperimental = Effect.gen(function* () {
   return flag || (yield* supabaseEnvBool("SUPABASE_EXPERIMENTAL"));
 });
 
-/**
- * `--experimental` with project `.env` fallback. Shell-env presence wins over the file;
- * an explicit flag wins over both. See {@link supabaseEnvBoolWithProjectFallback}.
- */
+/** {@link resolveExperimental} with the project `.env` fallback; shell env presence wins over the file and an explicit flag over both. */
 export const resolveExperimentalWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {
     const flag = yield* ExperimentalFlag;
@@ -333,12 +273,7 @@ export const resolveExperimentalWithProjectEnv = (projectEnv: Record<string, str
     return flag || (yield* supabaseEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv));
   });
 
-/**
- * True when the LAST `--debug`/`--debug=<value>` occurrence in argv resolves to false. Tracks the
- * last occurrence, since a trailing bare `--debug` after an earlier `--debug=false` must win.
- * Scans only the flag-parsing region (see {@link argsBeforeOperandTerminator}) and skips tokens
- * consumed as another flag's value (see {@link nonValueConsumedTokens}).
- */
+/** True when the last `--debug`/`--debug=<value>` in argv resolves to false, since a trailing bare `--debug` must beat an earlier `--debug=false`. */
 const debugFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean => {
   let lastExplicitlyFalse = false;
   for (const arg of nonValueConsumedTokens(argsBeforeOperandTerminator(args))) {
@@ -351,13 +286,7 @@ const debugFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean => {
   return lastExplicitlyFalse;
 };
 
-/**
- * `--debug` resolved with an env fallback, and the project `.env` consulted too, for debug-gated
- * behavior downstream of a command that already loaded the nested project env. `loadProjectEnvValues`
- * is pure, so callers pass the loaded map through explicitly — same shape as
- * {@link resolveYesWithProjectEnv}. Shell env *presence* suppresses the file value; an explicit
- * `--debug` wins over both.
- */
+/** `--debug` with env and project `.env` fallbacks, for debug-gated code downstream of a command that already loaded the project env; same shape as {@link resolveYesWithProjectEnv}. */
 export const resolveDebugWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {
     const flag = yield* DebugFlag;

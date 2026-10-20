@@ -9,10 +9,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import type { InspectConnectionFlags } from "./inspect-query.ts";
 
-/**
- * The `inspect` persistent flag set, inherited by every `inspect db` subcommand. Shared
- * verbatim across all 25 commands so flag names and descriptions live in one place.
- */
+/** The persistent flag set every `inspect db` subcommand inherits. */
 export const INSPECT_DB_FLAGS = targetFlags({ subject: "database", dbUrl: true });
 
 /** The Management API calls every `inspect db` subcommand makes, all through the database-config resolver. */

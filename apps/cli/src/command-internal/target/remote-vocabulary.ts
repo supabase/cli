@@ -5,7 +5,6 @@ export const DB_URL_PATTERN = /^postgres(ql)?:\/\//i;
 /** The spellings of a bare `--remote`, in any case. */
 export const LINKED_LITERAL = /^(true|yes|on|1)$/i;
 
-/** The spellings of an off switch, in any case. */
 export const OFF_LITERAL = /^(false|no|off|0)$/i;
 
 export const isBooleanLiteral = (word: string): boolean =>
