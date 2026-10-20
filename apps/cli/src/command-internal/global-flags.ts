@@ -13,9 +13,10 @@ import {
   supabaseEnvBoolWithProjectFallback,
 } from "./supabase-env.ts";
 
-// `-o/--output` is tree-wide and can't vary per command, so it takes the union of every command's values and each handler honors its subset.
+// `-o/--output` is tree-wide and can't vary per command, so it takes the union of every command's
+// values and each handler honors its subset.
 // Flag descriptions are user-visible in shell completion (`__complete`), so keep them accurate.
-/** Every value the global `-o/--output` flag accepts; per-command `outputFormats` overrides widen against this list. */
+/** Every value `-o/--output` accepts; per-command `outputFormats` overrides widen against it. */
 export const GLOBAL_OUTPUT_FORMATS = [
   "env",
   "pretty",
@@ -130,8 +131,8 @@ export const GLOBAL_FLAGS = [
 ] as const;
 
 /**
- * Every global flag's current value keyed by flag name, as telemetry's fallback for a flag missing from a handler's `flags`.
- * `serviceOption` gives a caller without the global-flag context an empty record, and each flag is read individually to avoid an `as` cast.
+ * Every global flag's current value by name, as telemetry's fallback for a flag missing from a
+ * handler's `flags`; empty when `serviceOption` finds no global-flag context.
  */
 export const globalFlagValues = Effect.gen(function* () {
   const values: Record<string, unknown> = {};
@@ -156,13 +157,14 @@ const FALSE_VALUES = new Set(["0", "f", "F", "false", "FALSE", "False"]);
 // The false spellings of the CLI's boolean flag parser, which also reads one after a bare flag.
 const BOOLEAN_FALSE_VALUES = new Set(["false", "no", "off", "0", "n"]);
 
-/** Raw argv before the first bare `--`; everything after is an operand (`db pull -- --experimental=false`), so the scanners below must not read it. */
+/** Argv before the first bare `--`; the rest is an operand (`db pull -- --experimental=false`). */
 const argsBeforeOperandTerminator = (args: ReadonlyArray<string>): ReadonlyArray<string> => {
   const terminatorIndex = args.indexOf("--");
   return terminatorIndex === -1 ? args : args.slice(0, terminatorIndex);
 };
 
-/** Drops tokens consumed as a flag's space-separated value, so `db pull --password --experimental=false` isn't read as a changed `--experimental`. */
+// Drops a flag's space-separated value, so `db pull --password --experimental=false` doesn't read
+// as a changed `--experimental`.
 const nonValueConsumedTokens = (args: ReadonlyArray<string>): ReadonlyArray<string> => {
   const kept: Array<string> = [];
   let skipNext = false;
@@ -184,8 +186,9 @@ const nonValueConsumedTokens = (args: ReadonlyArray<string>): ReadonlyArray<stri
 };
 
 /**
- * The last `--yes`/`--yes=<bool>` in argv as a boolean, or `undefined` if there is none. The parser keeps the first of a repeat and can't tell
- * `--yes=false` from the default, so callers reread argv; a bare `--yes` reads a boolean literal that follows it, as the parser does.
+ * The last `--yes`/`--yes=<bool>` in argv, or `undefined` if there is none. The parser keeps the
+ * first of a repeat and can't tell `--yes=false` from the default, so callers reread argv; a bare
+ * `--yes` reads a boolean literal that follows it, as the parser does.
  */
 const yesFlagFromArgs = (args: ReadonlyArray<string>): boolean | undefined => {
   const tokens = nonValueConsumedTokens(argsBeforeOperandTerminator(args));
@@ -201,10 +204,13 @@ const yesFlagFromArgs = (args: ReadonlyArray<string>): boolean | undefined => {
   return result;
 };
 
-/** `raw` is the `SUPABASE_YES` value the process sees, which may come from a dotenv file Bun autoloaded. */
+/**
+ * `raw` is the `SUPABASE_YES` value the process sees, which may come from a dotenv file Bun
+ * autoloaded.
+ */
 export type YesSource = { readonly via: "flag" } | { readonly via: "env"; readonly raw: string };
 
-/** The origin of a granted `--yes`, or `None`; the last `--yes`/`--yes=<bool>` decides, and an explicit false wins over the env. */
+/** The origin of a granted `--yes`, or `None`; an explicit `--yes=false` wins over the env. */
 export const resolveYesSource = Effect.gen(function* () {
   const flag = yield* YesFlag;
   const cliArgs = yield* CliArgs;
@@ -219,12 +225,16 @@ export const resolveYesSource = Effect.gen(function* () {
     : Option.none<YesSource>();
 });
 
-/** `--yes` with a `SUPABASE_YES` fallback; an explicit flag (including `--yes=false`) wins over the env. Prefer it to reading {@link YesFlag} directly. */
+/**
+ * `--yes` with a `SUPABASE_YES` fallback; an explicit flag (including `--yes=false`) wins over the
+ * env. Prefer it to reading {@link YesFlag} directly.
+ */
 export const resolveYes = Effect.map(resolveYesSource, Option.isSome);
 
 /**
- * {@link resolveYes} that also consults the project `.env` (the `loadProjectEnvValues` map) for commands that load it before prompting;
- * shell env presence suppresses the file value (see {@link supabaseEnvBoolWithProjectFallback}), and an explicit `--yes` wins over both.
+ * {@link resolveYes} that also consults the project `.env` (the `loadProjectEnvValues` map) for
+ * commands that load it before prompting; shell env presence suppresses the file value (see
+ * {@link supabaseEnvBoolWithProjectFallback}), and an explicit `--yes` wins over both.
  */
 export const resolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {
@@ -237,7 +247,8 @@ export const resolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
     return flag || (yield* supabaseEnvBoolWithProjectFallback("SUPABASE_YES", projectEnv));
   });
 
-/** The last `--experimental`/`--experimental=<bool>` in argv as a boolean, or `undefined`; the parser keeps the first of a repeat, so callers reread argv. */
+// The last `--experimental`/`--experimental=<bool>` in argv, or `undefined`; the parser keeps the
+// first of a repeat, so callers reread argv.
 const experimentalFlagFromArgs = (args: ReadonlyArray<string>): boolean | undefined => {
   let result: boolean | undefined;
   for (const arg of nonValueConsumedTokens(argsBeforeOperandTerminator(args))) {
@@ -250,7 +261,7 @@ const experimentalFlagFromArgs = (args: ReadonlyArray<string>): boolean | undefi
   return result;
 };
 
-/** `--experimental` with a `SUPABASE_EXPERIMENTAL` fallback; an explicit flag (including `--experimental=false`) wins over the env. */
+/** `--experimental` with a `SUPABASE_EXPERIMENTAL` fallback; an explicit flag, even false, wins. */
 export const resolveExperimental = Effect.gen(function* () {
   const flag = yield* ExperimentalFlag;
   const cliArgs = yield* CliArgs;
@@ -261,7 +272,7 @@ export const resolveExperimental = Effect.gen(function* () {
   return flag || (yield* supabaseEnvBool("SUPABASE_EXPERIMENTAL"));
 });
 
-/** {@link resolveExperimental} with the project `.env` fallback; shell env presence wins over the file and an explicit flag over both. */
+/** {@link resolveExperimental} plus project `.env`: shell env beats the file, a flag beats both. */
 export const resolveExperimentalWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {
     const flag = yield* ExperimentalFlag;
@@ -273,7 +284,8 @@ export const resolveExperimentalWithProjectEnv = (projectEnv: Record<string, str
     return flag || (yield* supabaseEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv));
   });
 
-/** True when the last `--debug`/`--debug=<value>` in argv resolves to false, since a trailing bare `--debug` must beat an earlier `--debug=false`. */
+// True when the last `--debug`/`--debug=<value>` in argv resolves to false: a trailing bare
+// `--debug` must beat an earlier `--debug=false`.
 const debugFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean => {
   let lastExplicitlyFalse = false;
   for (const arg of nonValueConsumedTokens(argsBeforeOperandTerminator(args))) {
@@ -286,7 +298,10 @@ const debugFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean => {
   return lastExplicitlyFalse;
 };
 
-/** `--debug` with env and project `.env` fallbacks, for debug-gated code downstream of a command that already loaded the project env; same shape as {@link resolveYesWithProjectEnv}. */
+/**
+ * `--debug` with env and project `.env` fallbacks, for debug-gated code downstream of a command
+ * that already loaded the project env.
+ */
 export const resolveDebugWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {
     const flag = yield* DebugFlag;

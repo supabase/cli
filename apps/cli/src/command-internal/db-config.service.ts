@@ -69,11 +69,11 @@ export type DbConfigError =
   // profile resolution can fail inside the resolver effect the same way.
   | ProfileLoadError;
 
-// The `--linked` path builds a lazy Management API runtime (so `--local`/`--db-url` never resolve an
+// The `--linked` path builds a lazy Management API runtime (so `--local`/`--db-url` never need an
 // access token) from the resolver's captured context, so `resolve`'s R stays `never` and the
 // auth-required error surfaces through the resolver effect, not a layer-build error channel.
 interface DbConfigResolverShape {
-  /** Connects to a resolved target (the local stack, a `--db-url` database or the linked project's temp-role connection) and announces it. */
+  /** Connects to a resolved target (local, `--db-url` or the linked temp role) and announces it. */
   readonly resolveConnection: (
     input: DbConnectionInput,
   ) => Effect.Effect<ResolvedDbConnection, DbConfigError>;

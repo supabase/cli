@@ -99,7 +99,7 @@ function branchNotFoundMessage(value: string, parentRef: string, branches: Branc
 export const isDefaultBranch = (branch: ParentBranch, parentRef: string): boolean =>
   branch.is_default || branch.project_ref === parentRef;
 
-/** UUID matching is case-insensitive; name matching is exact, with the not-found hint covering near misses. */
+/** UUIDs match case-insensitively, names exactly; the not-found hint covers near misses. */
 export const findBranch = (branches: Branches, value: string): ParentBranch | undefined =>
   branches.find(
     (branch) => branch.name === value || branch.id.toLowerCase() === value.toLowerCase(),
@@ -118,7 +118,7 @@ const unresolvedParent = Effect.fnUntraced(function* (
       });
 });
 
-/** The eager client when the command built one, else the lazy factory's, so a bare run never resolves a token. */
+/** The command's eager client, else the lazy factory's, so a bare run never resolves a token. */
 const acquireApi = Effect.fnUntraced(function* () {
   const direct = yield* Effect.serviceOption(CommandPlatformApi);
   if (Option.isSome(direct)) return direct.value;
@@ -131,7 +131,10 @@ const acquireApi = Effect.fnUntraced(function* () {
   return yield* factory.value.make;
 });
 
-/** A branch-lookup spinner, shown only on a terminal: a non-terminal text run writes task steps to stdout, which may carry the command's payload. */
+/**
+ * A branch-lookup spinner, shown only on a terminal: a non-terminal text run writes task steps to
+ * stdout, which may carry the command's payload.
+ */
 const startBranchLookupTask = Effect.fnUntraced(function* (label: string) {
   const output = yield* Output;
   return output.format === "text" && output.interactive ? yield* output.task(label) : undefined;
@@ -139,7 +142,7 @@ const startBranchLookupTask = Effect.fnUntraced(function* (label: string) {
 
 const LIST_BRANCHES_FAILED = "failed to list branches: ";
 
-/** The transport failure behind a branch-list error, without the `failed to list branches: ` lead the error message carries. */
+/** A branch-list error's transport failure, without its `failed to list branches: ` lead. */
 export const listBranchesFailureCause = (error: LinkBranchListNetworkError): string => {
   const [firstLine = ""] = error.message.split("\n");
   return firstLine.startsWith(LIST_BRANCHES_FAILED)
@@ -147,11 +150,11 @@ export const listBranchesFailureCause = (error: LinkBranchListNetworkError): str
     : firstLine;
 };
 
-/** What to try when the project whose branches were listed is itself a preview branch, which has none. */
+/** What to try when the listed project is itself a preview branch, which has no branches. */
 export const previewBranchHint = (ref: string): string =>
   `If ${ref} is itself a preview branch, link its parent project first: supabase link --project-ref <parent-ref>`;
 
-/** `GET /v1/projects/{ref}/branches`, shared by every branch-name lookup; no `label` means no spinner. */
+/** `GET /v1/projects/{ref}/branches` for every branch-name lookup; no `label` means no spinner. */
 const listParentBranches = Effect.fnUntraced(function* (parentRef: string, label?: string) {
   const api = yield* acquireApi();
 

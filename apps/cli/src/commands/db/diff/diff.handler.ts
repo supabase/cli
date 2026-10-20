@@ -277,7 +277,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         return endpoint;
       });
       // Each ref resolves in order; the first hosted project's `[remotes.<ref>]` block applies to
-      // every config read after it, so a later `local` ref and the trailing context see the override.
+      // every config read after it, so a later `local` ref and the trailing context see it.
       const resolveRef = (ref: string, flag: "--from" | "--to") =>
         Effect.gen(function* () {
           const explicit = classifyExplicitRef(ref);

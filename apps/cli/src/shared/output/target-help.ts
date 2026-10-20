@@ -50,7 +50,7 @@ const kindOf = (annotations: Context.Context<never>): TargetKind | undefined =>
 const remoteFlagOf = (doc: HelpDoc.HelpDoc): HelpDoc.FlagDoc | undefined =>
   [...doc.flags, ...(doc.globalFlags ?? [])].find((flag) => flag.name === REMOTE_FLAG_NAME);
 
-/** What a leaf's help says about its target; `undefined` for account, removed and group commands. */
+/** What a leaf's help says of its target; `undefined` for account, removed and group commands. */
 export function targetHelpFor(doc: HelpDoc.HelpDoc): TargetHelp | undefined {
   const kind = kindOf(doc.annotations);
   if (kind === undefined) return undefined;

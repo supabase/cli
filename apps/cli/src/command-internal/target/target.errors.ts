@@ -7,7 +7,7 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-/** More than one of `--remote`, `--linked`, `--db-url` and `--local` was set, or `--remote` was given twice with different values. */
+/** Several of `--remote`, `--linked`, `--db-url`, `--local`, or two different `--remote` values. */
 export class TargetSelectorConflictError extends Data.TaggedError("TargetSelectorConflictError")<{
   readonly flags: ReadonlyArray<string>;
   readonly message: string;
@@ -18,7 +18,7 @@ export class TargetSelectorConflictError extends Data.TaggedError("TargetSelecto
   }
 }
 
-/** `--project-ref` names a project, so it cannot be combined with `--remote=<value>`, `--local` or `--db-url`. */
+/** `--project-ref` cannot be combined with `--remote=<value>`, `--local` or `--db-url`. */
 export class TargetProjectRefConflictError extends Data.TaggedError(
   "TargetProjectRefConflictError",
 )<{
@@ -42,7 +42,7 @@ export class TargetEmptyValueError extends Data.TaggedError("TargetEmptyValueErr
   }
 }
 
-/** `--project-ref` or `--project-id` was given a URL, which names neither a project ref nor a branch. */
+/** `--project-ref` or `--project-id` was given a URL, not a project ref or branch name. */
 export class TargetInvalidValueError extends Data.TaggedError("TargetInvalidValueError")<{
   readonly flag: "--project-ref" | "--project-id";
   readonly message: string;

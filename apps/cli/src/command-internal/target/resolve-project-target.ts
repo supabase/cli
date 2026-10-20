@@ -6,12 +6,12 @@ import type { ProjectTargetFlagValues } from "./target-flags.ts";
 import { TargetNeedsProjectError } from "./target.errors.ts";
 
 interface ParentProjectTargetOptions {
-  /** A command that acts on a parent project, such as `branches *`: its `--remote` takes a ref, never a branch name. */
+  /** For a parent-project command such as `branches *`: `--remote` takes a ref, not a branch. */
   readonly parent: true;
 }
 
 interface DetailedProjectTargetOptions {
-  /** Returns the resolved linked target, with the branch it was found through, instead of just its ref. */
+  /** Returns the resolved linked target, with the branch it was found through, not just its ref. */
   readonly detail: true;
 }
 

@@ -123,7 +123,7 @@ export const requireHostedMutationConsent = Effect.fn("HostedConsent.require")(f
   return grant(request.action, "prompt");
 });
 
-/** `None` for a local target (a local `ResolvedTarget` or a connection with `isLocal`); otherwise {@link requireHostedMutationConsent}. */
+/** `None` for a local target or connection; otherwise {@link requireHostedMutationConsent}. */
 export const requireTargetMutationConsent = Effect.fn("HostedConsent.requireForTarget")(function* (
   target: ResolvedTarget | ResolvedDbConfig,
   request: HostedMutationRequest,
@@ -133,7 +133,10 @@ export const requireTargetMutationConsent = Effect.fn("HostedConsent.requireForT
   return Option.some(yield* requireHostedMutationConsent(request));
 });
 
-/** `Some` only under `--yes` or a shell `SUPABASE_YES`; never prompts, so a read can hand it to a connection that may clear a network ban. */
+/**
+ * `Some` only under `--yes` or a shell `SUPABASE_YES`; never prompts, so a read can hand it to a
+ * connection that may clear a network ban.
+ */
 export const hostedMutationPreapproval = Effect.map(resolveHostedYes, (approvedBy) =>
   Option.isSome(approvedBy)
     ? Option.some(grant("Remove network bans", "yes"))

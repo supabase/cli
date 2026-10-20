@@ -315,7 +315,7 @@ export const actionability = {
     has_suggestion: false,
     suggestion_type: CliSuggestionType.None,
   },
-  /** A hosted mutation needs confirmation this run cannot ask for; `--yes` or a terminal supplies it. */
+  /** A hosted mutation needs confirmation this run cannot ask for; `--yes` or a TTY supplies it. */
   consentRequired: {
     error_kind: CliErrorKind.UserActionable,
     error_category: CliErrorCategory.ConsentRequired,

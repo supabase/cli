@@ -17,7 +17,7 @@ export type RemoteValue =
 
 export type NamedRemoteValue = Exclude<RemoteValue, { readonly _tag: "Linked" }>;
 
-/** A value with `://` that is not a postgres URL; `ref` is the project it points at when it is a project's own URL. */
+/** A `://` value that is not a postgres URL; `ref` is set when it is a project's own URL. */
 interface ForeignUrlRejection {
   readonly _tag: "ForeignUrl";
   readonly ref: string | undefined;
@@ -40,7 +40,7 @@ const PROJECT_URL_REF = /^[a-z][a-z0-9+.-]*:\/\/([a-z]{20})\.supabase\.[a-z]+(?:
 const refOfProjectUrl = (value: string): string | undefined =>
   PROJECT_URL_REF.exec(value.toLowerCase())?.[1];
 
-/** 20 lowercase letters is a project ref, a postgres URL is a database, any other URL or a keyword connection string is rejected, anything else names a branch. */
+/** A project ref, a postgres URL or a branch name; any other URL or keyword string is rejected. */
 export const parseNamedRemote = (
   raw: string,
 ): Result.Result<NamedRemoteValue, NamedRemoteRejection> => {
@@ -59,7 +59,7 @@ export const parseNamedRemote = (
   return Result.succeed({ _tag: "Branch", name: value });
 };
 
-/** Classifies a `--remote` value, or says why it is rejected: empty, an off switch (`false|no|off|0`) or a URL that is not a postgres URL. */
+/** Classifies a `--remote` value, or why it is rejected: empty, off, a foreign URL or a DSN. */
 export const parseRemoteValue = (raw: string): Result.Result<RemoteValue, RemoteValueRejection> => {
   const value = raw.trim();
   if (LINKED_LITERAL.test(value)) return Result.succeed({ _tag: "Linked" });
@@ -68,14 +68,14 @@ export const parseRemoteValue = (raw: string): Result.Result<RemoteValue, Remote
   return parseNamedRemote(value);
 };
 
-/** {@link parseNamedRemote} for a caller that reads a value the flag's own parser already accepted: a rejected value falls back to a branch name. */
+/** {@link parseNamedRemote} for an accepted flag value; a rejection reads as a branch. */
 const classifyNamedRemote = (raw: string): NamedRemoteValue =>
   Result.getOrElse(parseNamedRemote(raw), (): NamedRemoteValue => ({
     _tag: "Branch",
     name: raw.trim(),
   }));
 
-/** {@link parseRemoteValue} for the same caller; `undefined` for an empty value or an off switch. */
+/** {@link parseRemoteValue} for the same caller; `undefined` for an empty or off value. */
 export const classifyRemoteValue = (raw: string): RemoteValue | undefined => {
   const value = raw.trim();
   if (value === "" || OFF_LITERAL.test(value)) return undefined;

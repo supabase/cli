@@ -197,7 +197,7 @@ function valueTakingFlagTokenPredicateForArgv(
   return (token) => isGlobalValueFlagToken(token) || leafPredicate(token);
 }
 
-/** How the command `args` resolves to reads its operands, or `undefined` without `--remote` or when the command takes no `--remote`. */
+/** How the resolved command reads operands; `undefined` unless `--remote` is given and accepted. */
 export function remoteArgvLeafFor(
   rootCommand: Command.Command.Any,
   args: ReadonlyArray<string>,
@@ -239,7 +239,7 @@ export function prepareCliArgs(
   };
 }
 
-/** `CliArgs` and a `Stdio` whose `args` is the same argv, so every reader of either sees the rewritten command line. */
+/** `CliArgs` and a `Stdio` sharing one argv, so every reader sees the rewritten command line. */
 export const cliArgsLayer = (cliArgs: CliArgsShape) =>
   Layer.mergeAll(
     Layer.succeed(CliArgs, cliArgs),

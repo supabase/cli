@@ -95,7 +95,10 @@ const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
  */
 export const dbConfigLinked = block("db-config", linkedEntries);
 
-/** The calls {@link dbConfigLinked} makes for a project a non-selector flag names, such as `db diff --from=<ref>`. */
+/**
+ * The calls {@link dbConfigLinked} makes for a project a non-selector flag names, such as
+ * `db diff --from=<ref>`.
+ */
 export const dbConfigNamedProject = block("db-config", [
   loginRoleEntry,
   poolerConfigEntry,
@@ -163,7 +166,10 @@ export const dbConfigPoolerFallback = block(
   })),
 );
 
-/** Only a `--yes`-sourced approval may clear bans; a prompt answer never does, since removal clears every listed address. */
+/**
+ * Only a `--yes`-sourced approval may clear bans; a prompt answer never does, since removal clears
+ * every listed address.
+ */
 const canRemoveNetworkBans = (input: DbConnectionInput): boolean =>
   Option.exists(input.networkBanRemoval, (approval) => approval.via === "yes");
 
@@ -512,14 +518,14 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
   dnsResolver: "native" | "https",
   explicitPassword: Option.Option<string>,
   options: {
-    /** Whether the temp-role retry may clear listed network bans; only a `--yes`-sourced approval sets it. */
+    /** Whether the temp-role retry may clear listed bans; only a `--yes` approval sets it. */
     readonly removeNetworkBans: boolean;
     readonly adHocProjectRef?: boolean;
     readonly resolveVaultSecrets?: boolean;
     /**
      * Requests the Management API pooler-config fetch on an IPv4-only network independent of
      * `adHocProjectRef`'s saved-URL semantics, so a workdir with no usable saved pooler URL still
-     * reaches the primary pooler config instead of dead-ending in the "run supabase link" IPv6 error.
+     * reaches the primary pooler config instead of ending in the "run supabase link" IPv6 error.
      */
     readonly fetchPoolerFromApi?: boolean;
     /** Whether the calling command binds `--password`, so the withheld-password notice can name it. */
@@ -593,8 +599,8 @@ export const dbConfigResolverLayer = Layer.effect(
     // `resolveLinkedConn`/`resolvePoolerConn` (etc.) are standalone functions that yield their
     // own `FileSystem`/`Path`/`DebugLogger`/`Output`/`DbConnection` (so bootstrap can call them
     // directly from its own ambient context). Calling them from here would otherwise leak those
-    // services into `resolveConnection`/`resolvePoolerFallback`'s R (the interface promises `never`), so
-    // every call site below re-closes the gap by additionally providing this layer of
+    // services into `resolveConnection`/`resolvePoolerFallback`'s R (the interface promises
+    // `never`), so every call site below re-closes the gap by additionally providing this layer of
     // already-resolved values alongside `linkedDbResolverRuntimeLayer`.
     const localAmbientServices = Layer.mergeAll(
       Layer.succeed(FileSystem.FileSystem, fs),
@@ -666,7 +672,7 @@ export const dbConfigResolverLayer = Layer.effect(
     );
 
     // Honors `SUPABASE_SERVICES_HOSTNAME` / a tcp `DOCKER_HOST` in dev-container or remote-Docker
-    // setups, defaulting to 127.0.0.1. Only env feeds the hostname, so the config file stays unread.
+    // setups, defaulting to 127.0.0.1. Only env feeds the hostname; the config file stays unread.
     const resolveLocalHost = Effect.gen(function* () {
       const hostConfig = yield* configValues
         .load({

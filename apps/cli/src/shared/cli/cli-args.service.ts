@@ -1,7 +1,7 @@
 import { Context } from "effect";
 
 export interface CliArgsShape {
-  /** The argv the command parses, with a bare `--remote <word>` already joined where that is the only reading. */
+  /** The parsed argv, with a bare `--remote <word>` joined where that is the only reading. */
   readonly args: ReadonlyArray<string>;
   readonly bareRemoteOperand?: string | undefined;
   readonly remoteConflict?: boolean;

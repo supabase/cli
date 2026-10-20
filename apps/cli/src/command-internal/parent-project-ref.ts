@@ -8,13 +8,13 @@ export type ParentRefResolution =
   | {
       readonly kind: "resolved";
       readonly ref: string;
-      /** The project the `project-ref` file links when a cached parent differs from it; the cache stands only while that parent lists it as a branch. */
+      /** The `project-ref` ref when it differs from the cached parent; the parent must list it. */
       readonly linkedRef?: string;
     }
   | { readonly kind: "invalid" }
   | { readonly kind: "absent" };
 
-/** The fields of `supabase/.temp/linked-project.json` callers read; all but `ref` are present only when non-empty. */
+/** The `linked-project.json` fields callers read; all but `ref` are present only when non-empty. */
 export interface CachedLinkedProject {
   readonly ref: string;
   readonly name?: string;
@@ -107,8 +107,8 @@ export const resolveLinkedParentRef = Effect.fnUntraced(function* () {
       )
     : Option.none<string>();
 
-  // An env candidate restating the file's own valid value carries no parent information; drop it
-  // so the cache can win. Pattern-valid only, so a garbage env equal to a garbage file stays invalid.
+  // An env ref equal to the file's valid ref adds no parent information; drop it so the cache wins.
+  // Pattern-valid only, so a garbage env equal to a garbage file stays invalid.
   const envRef =
     Option.isSome(cliSettings.projectId) &&
     Option.isSome(fileRef) &&
@@ -138,7 +138,7 @@ export function parentRefTypoHint(value: string): string {
   return "";
 }
 
-/** The error for a branch name looked up with no linked project, shared by `link` and `config diff`. */
+/** The branch-name lookup error when no project is linked, shared by `link` and `config diff`. */
 export function parentNotLinkedMessage(value: string): string {
   return (
     `Cannot resolve "${value}": it is not a project ref (refs are exactly 20 lowercase letters, ` +
@@ -149,7 +149,7 @@ export function parentNotLinkedMessage(value: string): string {
   );
 }
 
-/** The error for a branch name looked up when the linked project ref is invalid, shared by `link` and `config diff`. */
+/** The branch-name lookup error for an invalid linked ref, shared by `link` and `config diff`. */
 export function parentRefInvalidMessage(value: string): string {
   return `Cannot resolve branch "${value}": the linked project ref is invalid (checked SUPABASE_PROJECT_ID, supabase/.temp/linked-project.json, supabase/.temp/project-ref). Relink the parent project first: supabase link --project-ref <parent-ref>`;
 }

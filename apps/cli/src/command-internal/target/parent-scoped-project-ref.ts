@@ -7,7 +7,7 @@ import { readCachedLinkedProject, resolveLinkedParentRef } from "../parent-proje
 import { listLinkedParentBranches, type ResolvedParent } from "./branch-resolution.ts";
 import { describeLinkedTarget } from "./target-identity.ts";
 
-/** The cache outlives a re-link, so it stands only while it lists the linked project; a check that fails keeps it. */
+/** The cache outlives a re-link, so it stands only while it lists the linked project. */
 const checkedParentRef = Effect.fnUntraced(function* (parent: ResolvedParent) {
   if (parent.linkedRef === undefined) return parent.ref;
   const { parentRef } = yield* listLinkedParentBranches(parent).pipe(
@@ -17,7 +17,10 @@ const checkedParentRef = Effect.fnUntraced(function* (parent: ResolvedParent) {
   return parentRef;
 });
 
-/** The project a `branches` command acts on: an explicit ref, else the linked parent, since a branch's own ref gets a 403 from branch-management endpoints. */
+/**
+ * The project a `branches` command acts on: the flag, else the linked parent, because branch
+ * management endpoints answer 403 for a branch's own ref.
+ */
 export const resolveParentScopedProjectRef = Effect.fn("ParentProjectRef.resolve")(function* (
   flagValue: Option.Option<string>,
 ) {

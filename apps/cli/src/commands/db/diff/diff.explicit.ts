@@ -29,9 +29,8 @@ export type ExplicitRef =
   | NamedRemoteValue;
 
 /**
- * `local`, `migrations` and `remote` (the linked project) are keywords and `linked` is the deprecated spelling of `remote`;
- * anything else is classified like a `--remote` value, so a branch sharing a keyword's name is reached by its ref or UUID.
- * A value `--remote` rejects is returned as that rejection, never as a branch name, so it is not echoed.
+ * `local`, `migrations` and `remote` (`linked` is its deprecated spelling) are keywords; anything
+ * else is classified like a `--remote` value, and a rejected value comes back as that rejection.
  */
 export function classifyExplicitRef(ref: string): ExplicitRef {
   switch (ref) {
@@ -63,7 +62,7 @@ const replacementOf = (remote: RemoteValue): string => {
   }
 };
 
-/** The warning for each deprecated selector flag an explicit run used, naming the `--from`/`--to` value that replaces it; a database URL is never echoed. */
+/** The warning per deprecated flag, naming its `--from`/`--to` replacement; no URL is echoed. */
 export const explicitDeprecationMessages = (
   deprecations: ReadonlyArray<TargetDeprecation>,
 ): ReadonlyArray<string> =>
@@ -80,7 +79,7 @@ export const explicitDeprecationMessages = (
     return `${lead} Use ${replacementOf(remote)} instead`;
   });
 
-/** A selector error with its suggestion pointing at `--from`/`--to`, since explicit mode rejects `--remote`. */
+/** A selector error whose suggestion names `--from`/`--to`, as explicit mode rejects `--remote`. */
 export const explicitSelectorError = (error: TargetSelectorError): TargetSelectorError => {
   switch (error._tag) {
     case "TargetEmptyValueError":

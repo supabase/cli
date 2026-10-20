@@ -60,7 +60,7 @@ export interface ProjectCreateInput {
    * `bootstrap` suppresses it since it emits its own top-level result instead.
    */
   readonly emitStructuredResult: boolean;
-  /** Proof that the caller already confirmed the create; without it the core asks before the POST. */
+  /** Proof the caller already confirmed the create; without it the core asks before the POST. */
   readonly consent?: HostedMutationConsent;
 }
 

@@ -2,7 +2,7 @@ export const REMOTE_FLAG_NAME = "remote";
 
 export const DB_URL_PATTERN = /^postgres(ql)?:\/\//i;
 
-/** The spellings of a bare `--remote`, in any case: the words the flag parser reads as a boolean. */
+/** The spellings of a bare `--remote`, in any case: the words the flag parser reads as true. */
 export const LINKED_LITERAL = /^(true|yes|on|1|y)$/i;
 
 export const OFF_LITERAL = /^(false|no|off|0|n)$/i;
@@ -10,7 +10,7 @@ export const OFF_LITERAL = /^(false|no|off|0|n)$/i;
 export const isBooleanLiteral = (word: string): boolean =>
   LINKED_LITERAL.test(word) || OFF_LITERAL.test(word);
 
-/** Whitespace or `=`: a `host=… user=…` connection string or a `NAME=value` pair, never a branch name. */
+/** Whitespace or `=`: a keyword connection string or `NAME=value` pair, never a branch name. */
 export const KEYWORD_DSN_PATTERN = /[\s=]/;
 
 const NOT_A_BRANCH_NAME: ReadonlyArray<RegExp> = [
@@ -20,7 +20,7 @@ const NOT_A_BRANCH_NAME: ReadonlyArray<RegExp> = [
   /^[./~]/,
 ];
 
-/** Whether a word reads as a branch name rather than a path, URL, number, sentence or `NAME=value` pair. */
+/** Whether a word reads as a branch name, not a path, URL, number, sentence or `NAME=value`. */
 export const couldNameBranch = (word: string): boolean =>
   word !== "" && !NOT_A_BRANCH_NAME.some((pattern) => pattern.test(word));
 

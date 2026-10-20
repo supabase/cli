@@ -37,7 +37,7 @@ const remoteDeclaresSeedEnabled = (resolvedConfig: ResolvedCliConfig, remote: st
   return CliConfigKeys.db.seed.enabled.codec.fromConfig(declared) === true;
 };
 
-/** Reads `[db.seed]` through the resolved config; the caller's single consent carries {@link DbSeedPlan.detail}. */
+/** Reads `[db.seed]` from the resolved config; one consent carries {@link DbSeedPlan.detail}. */
 export const planDbSeed = Effect.fn("DbSeedPlan.plan")(function* (
   resolvedConfig: ResolvedCliConfig,
   target: { readonly workdir: string; readonly ref: string },

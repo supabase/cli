@@ -18,7 +18,7 @@ export interface ResolvedDbConfig {
   readonly ref?: Option.Option<string>;
 }
 
-/** What {@link DbConfigResolver.resolveConnection} needs: the resolved target plus how to authenticate. */
+/** What {@link DbConfigResolver.resolveConnection} needs: the target and how to authenticate. */
 export interface DbConnectionInput {
   readonly target: ResolvedTarget;
   readonly dnsResolver: "native" | "https";
@@ -27,7 +27,7 @@ export interface DbConnectionInput {
   readonly resolveVaultSecrets?: boolean;
   /** Set when the command binds `--password`, so the withheld-password notice can name it. */
   readonly hasPasswordFlag?: boolean;
-  /** A `--yes`-sourced `Some` lets the temp-role retry clear network bans; otherwise a ban surfaces as `LinkedDbNetworkBannedError`. */
+  /** A `--yes`-sourced `Some` lets the retry clear bans; else `LinkedDbNetworkBannedError`. */
   readonly networkBanRemoval: Option.Option<HostedMutationConsent>;
 }
 

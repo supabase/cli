@@ -15,7 +15,7 @@ import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
-/** Hidden alias of `test db`; the shared implementation lives in `command-internal/` because command families may not import each other's internals. */
+/** Hidden alias of `test db`; the shared implementation lives in `command-internal/`. */
 export const dbTestCommand = Command.make("test", testDbConfig).pipe(
   Command.withDescription(TEST_DB_DESCRIPTION),
   Command.withShortDescription(TEST_DB_SHORT),

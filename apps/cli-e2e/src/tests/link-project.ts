@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** Writes `project-ref` and a stub `pooler-url` so `--remote` commands reach their handler without a live Postgres probe. */
+/** Writes `project-ref` and a stub `pooler-url` so `--remote` skips the live Postgres probe. */
 export function linkProject(dir: string, ref: string): void {
   const tempDir = join(dir, "supabase", ".temp");
   mkdirSync(tempDir, { recursive: true });

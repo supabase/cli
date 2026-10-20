@@ -9,8 +9,8 @@ import { REMOTE_FLAG_NAME } from "../../command-internal/target/remote-vocabular
 // TODO(CLI-1898): remove once https://github.com/Effect-TS/effect/issues/6312 is fixed upstream.
 const EXPECTED_PREFIX = "Expected ";
 
-// Some flags already fail with their own byte-exact diagnostic (malformed CSV in a string-slice flag, any `--remote` value),
-// which the stderr contract reproduces verbatim; wrapping it in `CliError.InvalidValue`'s template would double-frame it.
+// A flag's own byte-exact diagnostic (malformed string-slice CSV, any `--remote` value) is printed
+// verbatim; wrapping it in `CliError.InvalidValue`'s template would double-frame it.
 const INVALID_ARGUMENT_PREFIX = "invalid argument ";
 
 export interface InvalidValueMessageFields {

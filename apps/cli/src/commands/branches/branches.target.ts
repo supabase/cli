@@ -1,6 +1,6 @@
 import { block } from "../../command-internal/command-permissions/model.ts";
 
-/** `--remote=<ref>` names the parent outright; otherwise a cached parent is checked against its own branches. */
+/** `--remote=<ref>` names the parent; otherwise a cached parent is checked against its branches. */
 export const branchesParentTarget = block("branches-parent-target", [
   {
     operationId: "v1-list-all-branches",

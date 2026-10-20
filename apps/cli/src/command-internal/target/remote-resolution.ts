@@ -46,7 +46,7 @@ export const warnTarget = Effect.fnUntraced(function* (message: string) {
   yield* output.raw(`${yellow(`Warning: ${message}`)}\n`, "stderr");
 });
 
-/** Prints one warning per deprecated selector flag the run used, naming its `--remote` replacement. */
+/** Prints one warning per deprecated selector flag, naming its `--remote` replacement. */
 export const warnTargetDeprecations = Effect.fnUntraced(function* (
   deprecations: ReadonlyArray<TargetDeprecation>,
 ) {
@@ -215,7 +215,7 @@ const bareRemoteWord = Effect.fnUntraced(function* () {
   return Option.getOrUndefined(cliArgs)?.bareRemoteOperand;
 });
 
-/** Fails a bare `--remote` whose next word is a project ref, before the command prompts, connects or writes. */
+/** Fails a bare `--remote` followed by a project ref, before any prompt, connection or write. */
 export const rejectRefShapedRemote = Effect.fnUntraced(function* () {
   const operand = yield* bareRemoteWord();
   if (operand !== undefined && BRANCH_PROJECT_REF_PATTERN.test(operand)) {
@@ -265,7 +265,7 @@ const resolveRemoteBranch = Effect.fnUntraced(function* (name: string) {
   return found;
 });
 
-/** The linked target for one hosted `--remote` value; announces it, as a branch when the value names one. */
+/** The linked target for one hosted `--remote` value, announced as a branch when it names one. */
 export const resolveRemoteTarget = Effect.fn("Target.resolveRemote")(function* (
   remote: HostedRemote,
 ) {

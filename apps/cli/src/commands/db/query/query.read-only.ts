@@ -94,8 +94,8 @@ export const findReadOnlyViolation = (sql: string): string | undefined => {
     const violation = statementViolation(statement);
     if (violation !== undefined) return violation;
   }
-  // The splitter reads a `BEGIN ATOMIC` body as one statement, so `WITH begin AS (SELECT 1) SELECT *
-  // FROM begin atomic; COMMIT; DELETE FROM t; END` hides its second and third statements from it.
+  // The splitter reads a `BEGIN ATOMIC` body as one statement, so `WITH begin AS (SELECT 1)
+  // SELECT * FROM begin atomic; COMMIT; DELETE FROM t; END` hides its second and third statements.
   if (beginAtomic) return "BEGIN ATOMIC";
   return unterminated ? UNTERMINATED_INPUT : undefined;
 };

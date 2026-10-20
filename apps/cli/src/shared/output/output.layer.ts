@@ -56,7 +56,7 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   return prototype === Object.prototype || prototype === null;
 };
 
-/** Adds the announced target to a plain-object result; arrays, scalars and a payload's own `target` are left alone. */
+/** Adds the announced target to a plain-object result; arrays, scalars and an own `target` stay. */
 const withCommandTarget = Effect.fnUntraced(function* (data: unknown) {
   if (!isPlainObject(data) || data.target !== undefined) return data;
   const cell = yield* Effect.serviceOption(CommandTarget);

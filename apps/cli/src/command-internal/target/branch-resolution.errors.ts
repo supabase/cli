@@ -15,7 +15,7 @@ export class LinkBranchNotLinkedError extends Data.TaggedError("LinkBranchNotLin
   }
 }
 
-/** A linked-parent candidate exists (`SUPABASE_PROJECT_ID`, `linked-project.json` or `project-ref`) but none is ref-shaped: corrupt or stale linked state. */
+/** A linked-parent candidate (env, cache or `project-ref` file) exists but none is ref-shaped. */
 export class LinkParentRefInvalidError extends Data.TaggedError("LinkParentRefInvalidError")<{
   readonly message: string;
 }> {
@@ -33,7 +33,7 @@ export class LinkBranchNotFoundError extends Data.TaggedError("LinkBranchNotFoun
   }
 }
 
-/** The resolved branch has no `project_ref` yet (for example `CREATING_PROJECT`), so the lookup must not fall through to another ref. */
+/** The branch has no `project_ref` yet (e.g. `CREATING_PROJECT`), so the lookup stops there. */
 export class LinkBranchNotReadyError extends Data.TaggedError("LinkBranchNotReadyError")<{
   readonly branch: string;
   readonly status: string;
@@ -44,7 +44,7 @@ export class LinkBranchNotReadyError extends Data.TaggedError("LinkBranchNotRead
   }
 }
 
-/** Transport (or response-decode) failure while listing branches, or fetching one by UUID, for a branch lookup. */
+/** Transport or response-decode failure while listing branches or fetching one by UUID. */
 export class LinkBranchListNetworkError extends Data.TaggedError("LinkBranchListNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
@@ -56,7 +56,7 @@ export class LinkBranchListNetworkError extends Data.TaggedError("LinkBranchList
   }
 }
 
-/** `GET /v1/projects/{ref}/branches` or `GET /v1/branches/{id}` returned a non-200 status during a branch lookup. */
+/** `GET /v1/projects/{ref}/branches` or `GET /v1/branches/{id}` returned a non-200 status. */
 export class LinkBranchListStatusError extends Data.TaggedError("LinkBranchListStatusError")<{
   readonly status: number;
   readonly body: string;

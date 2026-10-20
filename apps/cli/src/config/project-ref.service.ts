@@ -20,7 +20,7 @@ export interface ResolvedProjectRef {
 interface ProjectRefResolverShape {
   /**
    * The single resolution chain: `--project-ref` → `SUPABASE_PROJECT_ID` → `.temp/project-ref`
-   * → project picker (stdin TTY and interactive output only), otherwise `ProjectRefNotLinkedError`.
+   * → project picker (interactive stdin and output only), otherwise `ProjectRefNotLinkedError`.
    * Announces the resolved target.
    */
   readonly resolveRef: (

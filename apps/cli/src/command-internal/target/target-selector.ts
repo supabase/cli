@@ -44,7 +44,7 @@ export interface ParsedTargetSelector {
 }
 
 export interface TargetSelectorOptions {
-  /** What `--remote` takes on this command, for the suggestions; a command with no `dbUrl` input defaults to `<ref|branch>`. */
+  /** What `--remote` takes here, for suggestions; defaults to `<ref|branch>` without `dbUrl`. */
   readonly valueHint?: string;
   /** `--remote` is given more than once with values that differ. */
   readonly remoteConflict?: boolean;
@@ -76,7 +76,7 @@ const PROJECT_REF_CONFLICT_SUGGESTION: Readonly<
 
 const trimmed = (value: string): string => value.trim();
 
-/** Why an alias value cannot be used: a foreign URL or keyword connection string, or a database URL on a command with no database. */
+/** Why an alias value is unusable: a foreign URL, a keyword DSN, or a URL with no database. */
 const aliasRejection = (
   parsed: Result.Result<NamedRemoteValue, NamedRemoteRejection> | undefined,
   hasDatabase: boolean,

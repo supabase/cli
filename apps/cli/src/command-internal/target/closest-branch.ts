@@ -1,4 +1,4 @@
-/** The optimal string alignment distance: an insertion, deletion, substitution or adjacent swap is one edit. */
+/** Optimal string alignment distance: an insertion, deletion, substitution or swap is one edit. */
 const editDistance = (a: string, b: string): number => {
   let beforePrevious: ReadonlyArray<number> = [];
   let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
@@ -28,7 +28,7 @@ const allowedEdits = (a: string, b: string): number =>
 const byName = (a: { readonly name: string }, b: { readonly name: string }): number =>
   a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 
-/** The item whose name matches `word` ignoring case or within two edits of it; the nearest wins and a tie goes to the first name alphabetically. */
+/** The item named `word` ignoring case or within two edits, nearest first, then by name. */
 export const closestByName = <T extends { readonly name: string }>(
   items: ReadonlyArray<T>,
   word: string,
