@@ -34,15 +34,15 @@ const parsePort = (raw: string) =>
 
 const integerFromString = (parse: (raw: string) => number | undefined) =>
   Schema.String.pipe(
-    Schema.decodeTo(Schema.Number, {
+    Schema.decodeTo(Schema.Finite, {
       decode: parsed(parse),
       encode: SchemaGetter.transform((value: number) => String(value)),
     }),
   );
 
 const integerFromNumber = (max: number) =>
-  Schema.Number.pipe(
-    Schema.decodeTo(Schema.Number, {
+  Schema.Finite.pipe(
+    Schema.decodeTo(Schema.Finite, {
       decode: parsed(integerUpTo(max)),
       encode: SchemaGetter.passthrough(),
     }),
@@ -66,10 +66,11 @@ const boolFromString = Schema.String.pipe(
   }),
 );
 
-const boolFromNumber = Schema.Number.pipe(
+/** Any number, `NaN` and the infinities included, is true unless it is zero. */
+const boolFromNumber = Schema.Unknown.pipe(
   Schema.decodeTo(Schema.Boolean, {
-    decode: SchemaGetter.transform((value: number) => value !== 0),
-    encode: SchemaGetter.transform((value: boolean) => (value ? 1 : 0)),
+    decode: parsed((value: unknown) => (typeof value === "number" ? value !== 0 : undefined)),
+    encode: SchemaGetter.transform((value: boolean): unknown => (value ? 1 : 0)),
   }),
 );
 

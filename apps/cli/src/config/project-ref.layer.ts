@@ -163,11 +163,9 @@ export const projectRefLayer = Layer.effect(
               ...(picked.name === undefined ? {} : { name: picked.name }),
             };
           } else {
-            return yield* Effect.fail(
-              new ProjectRefRequiredError({
-                message: `required flag(s) "project-ref" not set`,
-              }),
-            );
+            return yield* new ProjectRefRequiredError({
+              message: `required flag(s) "project-ref" not set`,
+            });
           }
           yield* announceLinked(
             resolved.ref,

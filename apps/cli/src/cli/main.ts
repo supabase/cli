@@ -37,8 +37,10 @@ const { rootCommand: selectedRoot, agentDefaultOutputFormat } = cliEntrypointFor
 const selectionCause = Exit.isFailure(selectionExit) ? selectionExit.cause : undefined;
 
 if (
-  !(await tryComplete(
-    defaultCompleteDeps(Exit.isSuccess(selectionExit) ? selectedRoot : undefined, selectionCause),
+  !(await Effect.runPromise(
+    tryComplete(
+      defaultCompleteDeps(Exit.isSuccess(selectionExit) ? selectedRoot : undefined, selectionCause),
+    ),
   ))
 ) {
   await Effect.runPromise(

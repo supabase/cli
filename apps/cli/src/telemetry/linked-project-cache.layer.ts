@@ -1,5 +1,5 @@
 import { makeApiClient } from "@supabase/api/effect";
-import { Effect, FileSystem, Layer, Option, Path, type Redacted } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, type Redacted, Schema } from "effect";
 import * as HttpClient from "effect/http/HttpClient";
 
 import { CommandCredentials } from "../auth/command-credentials.service.ts";
@@ -20,6 +20,17 @@ export const linkedProjectCache = block("linked-project-cache", [
       "an access token, no cached supabase/.temp/linked-project.json, and no supabase/.temp/project-ref naming a different project",
   },
 ]);
+
+const encodeLinkedProjectCache = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      ref: Schema.String,
+      name: Schema.String,
+      organization_id: Schema.String,
+      organization_slug: Schema.String,
+    }),
+  ),
+);
 
 /**
  * Writes `<workdir>/supabase/.temp/linked-project.json` after a `--project-ref` has been
@@ -113,7 +124,7 @@ export const linkedProjectCacheLayer = Layer.effect(
           };
 
           yield* fs.makeDirectory(path.dirname(cachePath), { recursive: true });
-          yield* fs.writeFileString(cachePath, JSON.stringify(linked));
+          yield* fs.writeFileString(cachePath, yield* encodeLinkedProjectCache(linked));
 
           // On the same cache miss, also publish the org/project group metadata via
           // `groupIdentify` (same payload shape as the link handler) before the post-run

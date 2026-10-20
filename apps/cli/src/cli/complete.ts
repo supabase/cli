@@ -1,8 +1,9 @@
-import { BunServices } from "@effect/platform-bun";
-import { Cause, Effect, Layer, Option } from "effect";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { Cause, Clock, Crypto, DateTime, Effect, Layer, Option } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { GlobalFlag } from "effect/cli";
 import type { Command, Param, Primitive } from "effect/cli";
+import type { PlatformError } from "effect/PlatformError";
 import process from "node:process";
 import {
   QUERY_OUTPUT_FORMATS,
@@ -97,7 +98,7 @@ export interface CompleteDeps {
   readonly stderrWrite: (message: string) => void;
   readonly exit: (code: number) => void;
   /** Fires the `cli_command_executed` telemetry capture for this request. */
-  readonly captureTelemetry: (exitCode: number, durationMs: number) => Promise<void>;
+  readonly captureTelemetry: (exitCode: number, durationMs: number) => Effect.Effect<void>;
 }
 
 /**
@@ -611,7 +612,7 @@ function isValidDuration(value: string): boolean {
  * Matches RFC 3339 (`2006-01-02T15:04:05Z07:00`): fractional seconds may use either `.` or
  * `,`, and the offset's own hour/minute are independently capped at 24/60 (not the 0-23/0-59
  * bounds used for the time fields themselves). Calendar validity is checked by round-tripping
- * through `Date#setUTCFullYear`, which — unlike the `Date` constructor — doesn't special-case
+ * through `DateTime.makeUnsafe`, which — unlike the `Date` constructor — doesn't special-case
  * a 0-99 year into 1900+year.
  */
 const RFC3339_PATTERN =
@@ -628,13 +629,8 @@ function isValidRfc3339(value: string): boolean {
   if (offsetHour !== undefined && (Number(offsetHour) > 24 || Number(offsetMinute) > 60))
     return false;
 
-  const roundTrip = new Date(0);
-  roundTrip.setUTCFullYear(y, mo - 1, d);
-  return (
-    roundTrip.getUTCFullYear() === y &&
-    roundTrip.getUTCMonth() === mo - 1 &&
-    roundTrip.getUTCDate() === d
-  );
+  const roundTrip = DateTime.toPartsUtc(DateTime.makeUnsafe({ year: y, month: mo, day: d }));
+  return roundTrip.year === y && roundTrip.month === mo && roundTrip.day === d;
 }
 
 /**
@@ -1134,21 +1130,25 @@ export function formatCompletionResponse(
 export function captureCompleteTelemetryEffect(
   exitCode: number,
   durationMs: number,
-): Effect.Effect<void, never, Analytics> {
+): Effect.Effect<void, PlatformError, Analytics | Crypto.Crypto> {
   return Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
+    const commandRunId = yield* crypto.randomUUIDv4;
     const analytics = yield* Analytics;
-    yield* analytics.capture(EventCommandExecuted, {
-      [PropExitCode]: exitCode,
-      [PropDurationMs]: durationMs,
-      [PropOutputFormat]: "text",
-    });
-  }).pipe(
-    withAnalyticsContext({
-      command_run_id: crypto.randomUUID(),
-      command: "__complete",
-      flags: undefined,
-    }),
-  );
+    yield* analytics
+      .capture(EventCommandExecuted, {
+        [PropExitCode]: exitCode,
+        [PropDurationMs]: durationMs,
+        [PropOutputFormat]: "text",
+      })
+      .pipe(
+        withAnalyticsContext({
+          command_run_id: commandRunId,
+          command: "__complete",
+          flags: undefined,
+        }),
+      );
+  });
 }
 
 const COMPLETE_TELEMETRY_TIMEOUT = "2 seconds";
@@ -1166,34 +1166,33 @@ const completeAnalyticsLayer = analyticsLayer.pipe(
   Layer.provide(FetchHttpClient.layer),
   Layer.provide(cliConfigProviderLayer),
   Layer.provide(BunServices.layer),
+  Layer.merge(BunCrypto.layer),
 );
 
 /**
  * Production default for `CompleteDeps.captureTelemetry`. Best-effort and bounded: a missing
  * consent, network hiccup, or DNS failure must never hang or fail a user's tab press. Callers
- * must `await` this before exiting, since `process.exit` kills the process without waiting
- * for pending async work.
+ * must run this to completion before exiting, since `process.exit` kills the process without
+ * waiting for pending async work.
  */
-function captureCompleteTelemetry(exitCode: number, durationMs: number): Promise<void> {
-  return Effect.runPromise(
-    captureCompleteTelemetryEffect(exitCode, durationMs).pipe(
-      Effect.provide(completeAnalyticsLayer),
-      Effect.timeout(COMPLETE_TELEMETRY_TIMEOUT),
-      Effect.ignore,
-    ),
+function captureCompleteTelemetry(exitCode: number, durationMs: number): Effect.Effect<void> {
+  return captureCompleteTelemetryEffect(exitCode, durationMs).pipe(
+    Effect.provide(completeAnalyticsLayer),
+    Effect.timeout(COMPLETE_TELEMETRY_TIMEOUT),
+    Effect.ignore,
   );
 }
 
 /**
  * Runs before Effect's CLI argv parser, returning `false` immediately when `deps.argv[0]`
- * isn't a completion request, otherwise fully handling it and returning `true`. Async only
- * because it awaits `deps.captureTelemetry` before `deps.exit(...)`, so the capture actually
+ * isn't a completion request, otherwise fully handling it and returning `true`. Runs
+ * `deps.captureTelemetry` to completion before `deps.exit(...)`, so the capture actually
  * reaches PostHog before the process exits.
  */
-export async function tryComplete(deps: CompleteDeps): Promise<boolean> {
+export const tryComplete = Effect.fn("cli.complete")(function* (deps: CompleteDeps) {
   if (deps.argv[0] !== "__complete" && deps.argv[0] !== "__completeNoDesc") return false;
 
-  const startedAt = Date.now();
+  const startedAt = yield* Clock.currentTimeMillis;
   const response = respondToComplete(deps.root, deps.argv);
   if (response === undefined) {
     if (deps.routingFailure !== undefined) {
@@ -1203,17 +1202,17 @@ export async function tryComplete(deps: CompleteDeps): Promise<boolean> {
         : Cause.pretty(deps.routingFailure);
       deps.stderrWrite(`${message}\n`);
     }
-    await deps.captureTelemetry(1, Date.now() - startedAt);
+    yield* deps.captureTelemetry(1, (yield* Clock.currentTimeMillis) - startedAt);
     deps.exit(1);
     return true;
   }
 
   const includeDescriptions = resolveIncludeDescriptions(deps.argv[0], deps.env);
   deps.stdoutWrite(formatCompletionResponse(response, includeDescriptions));
-  await deps.captureTelemetry(0, Date.now() - startedAt);
+  yield* deps.captureTelemetry(0, (yield* Clock.currentTimeMillis) - startedAt);
   deps.exit(0);
   return true;
-}
+});
 
 export function defaultCompleteDeps(
   root?: Command.Command.Any,

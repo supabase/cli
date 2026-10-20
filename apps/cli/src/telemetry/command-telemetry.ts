@@ -109,11 +109,9 @@ export const validateOutputFormat = (allowed: ReadonlyArray<string>) =>
     if (Option.isNone(flag) || Option.isNone(flag.value)) return;
     const value = flag.value.value;
     if (allowed.includes(value)) return;
-    return yield* Effect.fail(
-      new InvalidOutputFormatError({
-        message: invalidOutputFormatMessage(value, allowed),
-      }),
-    );
+    return yield* new InvalidOutputFormatError({
+      message: invalidOutputFormatMessage(value, allowed),
+    });
   });
 
 const REDACTED_VALUE = "<redacted>";

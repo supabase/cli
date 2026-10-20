@@ -20,11 +20,7 @@ import {
 import { CLI_CONFIG_FAMILIES } from "./cli-config-key-annotations.ts";
 import { cliConfigFamilyKey, cliConfigRegistry, type AnyCliConfigKey } from "./cli-config-keys.ts";
 
-const pathService = Effect.runSync(
-  Effect.gen(function* () {
-    return yield* Path.Path;
-  }).pipe(Effect.provide(Path.layer)),
-);
+const pathService = Effect.runSync(Effect.provide(Path.Path, Path.layer));
 
 interface SourceParts {
   readonly flags?: Readonly<Record<string, unknown>>;

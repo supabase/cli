@@ -7,8 +7,16 @@
   "ignorePatterns": [
     "**",
     "!packages/stack/**",
+    "!apps/cli/src/auth/**",
+    "!apps/cli/src/cli/**",
     "!apps/cli/src/commands/**",
+    "!apps/cli/src/config/**",
+    "!apps/cli/src/docs/**",
+    "!apps/cli/src/globals.d.ts",
+    "!apps/cli/src/main.ts",
+    "!apps/cli/src/output/**",
     "!apps/cli/src/shared/**",
+    "!apps/cli/src/telemetry/**",
     // Last match wins across the whole list: keep bare re-exclusions after every
     // `!` entry that would otherwise re-include them.
     "apps/cli/src/shared/cli/bin.ts",

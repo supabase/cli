@@ -1,15 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import type { ApiClient } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit, Layer, Option } from "effect";
-import { afterEach, beforeEach } from "vitest";
+import { Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";
+import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockTty } from "../../tests/helpers/mocks.ts";
 import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
 import { CommandSettings } from "./command-settings.service.ts";
@@ -18,6 +14,8 @@ import { projectRefLayer } from "./project-ref.layer.ts";
 
 const VALID_REF = "abcdefghijklmnopqrst";
 const ANOTHER_REF = "qrstuvwxyzabcdefghij";
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function mockCliSettings(opts: { workdir: string; projectId?: string }) {
   return Layer.succeed(CommandSettings, {
@@ -81,32 +79,26 @@ function makeLayer(opts: {
         make: CommandPlatformApi.pipe(Effect.provide(mockPlatformApi(opts.projects ?? []))),
       }),
     ),
-    Layer.provide(BunServices.layer),
+    Layer.provideMerge(BunServices.layer),
   );
   return { layer, out };
 }
 
-let tempRoot: string;
+const tempRoot = useTempWorkdir("supabase-project-ref-");
 
-beforeEach(() => {
-  tempRoot = mkdtempSync(join(tmpdir(), "supabase-project-ref-"));
+const writeRefFile = Effect.fnUntraced(function* (workdir: string, content: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const tempDir = path.join(workdir, "supabase", ".temp");
+  yield* fs.makeDirectory(tempDir, { recursive: true });
+  yield* fs.writeFileString(path.join(tempDir, "project-ref"), content);
 });
-
-afterEach(() => {
-  rmSync(tempRoot, { recursive: true, force: true });
-});
-
-function writeRefFile(workdir: string, content: string) {
-  const tempDir = join(workdir, "supabase", ".temp");
-  mkdirSync(tempDir, { recursive: true });
-  writeFileSync(join(tempDir, "project-ref"), content);
-}
 
 describe("projectRefLayer", () => {
   it.effect("prefers --project-ref flag over env and file", () => {
-    writeRefFile(tempRoot, ANOTHER_REF);
-    const { layer } = makeLayer({ workdir: tempRoot, projectId: ANOTHER_REF });
+    const { layer } = makeLayer({ workdir: tempRoot.current, projectId: ANOTHER_REF });
     return Effect.gen(function* () {
+      yield* writeRefFile(tempRoot.current, ANOTHER_REF);
       const { resolve } = yield* ProjectRefResolver;
       const ref = yield* resolve(Option.some(VALID_REF));
       expect(ref).toBe(VALID_REF);
@@ -114,9 +106,9 @@ describe("projectRefLayer", () => {
   });
 
   it.effect("uses SUPABASE_PROJECT_ID when flag is unset", () => {
-    writeRefFile(tempRoot, ANOTHER_REF);
-    const { layer } = makeLayer({ workdir: tempRoot, projectId: VALID_REF });
+    const { layer } = makeLayer({ workdir: tempRoot.current, projectId: VALID_REF });
     return Effect.gen(function* () {
+      yield* writeRefFile(tempRoot.current, ANOTHER_REF);
       const { resolve } = yield* ProjectRefResolver;
       const ref = yield* resolve(Option.none());
       expect(ref).toBe(VALID_REF);
@@ -124,9 +116,9 @@ describe("projectRefLayer", () => {
   });
 
   it.effect("reads <workdir>/supabase/.temp/project-ref when env and flag are unset", () => {
-    writeRefFile(tempRoot, VALID_REF);
-    const { layer } = makeLayer({ workdir: tempRoot });
+    const { layer } = makeLayer({ workdir: tempRoot.current });
     return Effect.gen(function* () {
+      yield* writeRefFile(tempRoot.current, VALID_REF);
       const { resolve } = yield* ProjectRefResolver;
       const ref = yield* resolve(Option.none());
       expect(ref).toBe(VALID_REF);
@@ -134,9 +126,9 @@ describe("projectRefLayer", () => {
   });
 
   it.effect("trims whitespace from the temp/project-ref file content", () => {
-    writeRefFile(tempRoot, `  ${VALID_REF}\n\n`);
-    const { layer } = makeLayer({ workdir: tempRoot });
+    const { layer } = makeLayer({ workdir: tempRoot.current });
     return Effect.gen(function* () {
+      yield* writeRefFile(tempRoot.current, `  ${VALID_REF}\n\n`);
       const { resolve } = yield* ProjectRefResolver;
       const ref = yield* resolve(Option.none());
       expect(ref).toBe(VALID_REF);
@@ -149,7 +141,7 @@ describe("projectRefLayer", () => {
       { id: ANOTHER_REF, name: "beta", organization_slug: "acme", region: "eu-west-1" },
     ];
     const { layer, out } = makeLayer({
-      workdir: tempRoot,
+      workdir: tempRoot.current,
       stdinIsTty: true,
       projects,
       promptSelectResponses: [ANOTHER_REF],
@@ -175,28 +167,30 @@ describe("projectRefLayer", () => {
     const projects = [
       { id: VALID_REF, name: "alpha", organization_slug: "acme", region: "us-east-1" },
     ];
-    const refPath = join(tempRoot, "supabase", ".temp", "project-ref");
     const { layer } = makeLayer({
-      workdir: tempRoot,
+      workdir: tempRoot.current,
       stdinIsTty: true,
       projects,
       promptSelectResponses: [VALID_REF],
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const refPath = path.join(tempRoot.current, "supabase", ".temp", "project-ref");
       const { resolve } = yield* ProjectRefResolver;
       yield* resolve(Option.none());
-      expect(existsSync(refPath)).toBe(false);
+      expect(yield* fs.exists(refPath)).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("fails with ProjectRefNotLinkedError on non-TTY with no source", () => {
-    const { layer } = makeLayer({ workdir: tempRoot });
+    const { layer } = makeLayer({ workdir: tempRoot.current });
     return Effect.gen(function* () {
       const { resolve } = yield* ProjectRefResolver;
       const exit = yield* Effect.exit(resolve(Option.none()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = yield* encodeJson(exit.cause);
         expect(errorJson).toContain("ProjectRefNotLinkedError");
         expect(errorJson).toContain("supabase link");
       }
@@ -204,13 +198,13 @@ describe("projectRefLayer", () => {
   });
 
   it.effect("fails with InvalidProjectRefError when the resolved ref is malformed", () => {
-    const { layer } = makeLayer({ workdir: tempRoot, projectId: "not-a-valid-ref" });
+    const { layer } = makeLayer({ workdir: tempRoot.current, projectId: "not-a-valid-ref" });
     return Effect.gen(function* () {
       const { resolve } = yield* ProjectRefResolver;
       const exit = yield* Effect.exit(resolve(Option.none()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = yield* encodeJson(exit.cause);
         expect(errorJson).toContain("InvalidProjectRefError");
         expect(errorJson).toContain("Invalid project ref format");
       }
@@ -218,7 +212,7 @@ describe("projectRefLayer", () => {
   });
 
   it.effect("rejects invalid ref from --project-ref flag", () => {
-    const { layer } = makeLayer({ workdir: tempRoot });
+    const { layer } = makeLayer({ workdir: tempRoot.current });
     return Effect.gen(function* () {
       const { resolve } = yield* ProjectRefResolver;
       const exit = yield* Effect.exit(resolve(Option.some("BADREF")));
@@ -227,9 +221,9 @@ describe("projectRefLayer", () => {
   });
 
   it.effect("rejects invalid ref from temp/project-ref file", () => {
-    writeRefFile(tempRoot, "BADREF");
-    const { layer } = makeLayer({ workdir: tempRoot });
+    const { layer } = makeLayer({ workdir: tempRoot.current });
     return Effect.gen(function* () {
+      yield* writeRefFile(tempRoot.current, "BADREF");
       const { resolve } = yield* ProjectRefResolver;
       const exit = yield* Effect.exit(resolve(Option.none()));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -238,9 +232,9 @@ describe("projectRefLayer", () => {
 
   describe("resolveOptional", () => {
     it.effect("prefers the flag value", () => {
-      writeRefFile(tempRoot, ANOTHER_REF);
-      const { layer } = makeLayer({ workdir: tempRoot, projectId: ANOTHER_REF });
+      const { layer } = makeLayer({ workdir: tempRoot.current, projectId: ANOTHER_REF });
       return Effect.gen(function* () {
+        yield* writeRefFile(tempRoot.current, ANOTHER_REF);
         const { resolveOptional } = yield* ProjectRefResolver;
         const ref = yield* resolveOptional(Option.some(VALID_REF));
         expect(ref).toEqual(Option.some(VALID_REF));
@@ -248,7 +242,7 @@ describe("projectRefLayer", () => {
     });
 
     it.effect("falls back to projectId then the ref file", () => {
-      const { layer } = makeLayer({ workdir: tempRoot, projectId: VALID_REF });
+      const { layer } = makeLayer({ workdir: tempRoot.current, projectId: VALID_REF });
       return Effect.gen(function* () {
         const { resolveOptional } = yield* ProjectRefResolver;
         const ref = yield* resolveOptional(Option.none());
@@ -257,9 +251,9 @@ describe("projectRefLayer", () => {
     });
 
     it.effect("reads the ref file when flag and projectId are unset", () => {
-      writeRefFile(tempRoot, VALID_REF);
-      const { layer } = makeLayer({ workdir: tempRoot });
+      const { layer } = makeLayer({ workdir: tempRoot.current });
       return Effect.gen(function* () {
+        yield* writeRefFile(tempRoot.current, VALID_REF);
         const { resolveOptional } = yield* ProjectRefResolver;
         const ref = yield* resolveOptional(Option.none());
         expect(ref).toEqual(Option.some(VALID_REF));
@@ -267,7 +261,7 @@ describe("projectRefLayer", () => {
     });
 
     it.effect("returns None and never fails when nothing resolves", () => {
-      const { layer } = makeLayer({ workdir: tempRoot });
+      const { layer } = makeLayer({ workdir: tempRoot.current });
       return Effect.gen(function* () {
         const { resolveOptional } = yield* ProjectRefResolver;
         const ref = yield* resolveOptional(Option.none());
@@ -278,7 +272,7 @@ describe("projectRefLayer", () => {
 
   describe("resolveForLink", () => {
     it.effect("prefers the --project-ref flag", () => {
-      const { layer } = makeLayer({ workdir: tempRoot, projectId: ANOTHER_REF });
+      const { layer } = makeLayer({ workdir: tempRoot.current, projectId: ANOTHER_REF });
       return Effect.gen(function* () {
         const { resolveForLink } = yield* ProjectRefResolver;
         const ref = yield* resolveForLink(Option.some(VALID_REF));
@@ -287,7 +281,7 @@ describe("projectRefLayer", () => {
     });
 
     it.effect("uses SUPABASE_PROJECT_ID when the flag is unset", () => {
-      const { layer } = makeLayer({ workdir: tempRoot, projectId: VALID_REF });
+      const { layer } = makeLayer({ workdir: tempRoot.current, projectId: VALID_REF });
       return Effect.gen(function* () {
         const { resolveForLink } = yield* ProjectRefResolver;
         const ref = yield* resolveForLink(Option.none());
@@ -296,14 +290,14 @@ describe("projectRefLayer", () => {
     });
 
     it.effect("skips the ref file and fails off-TTY with no flag/projectId", () => {
-      writeRefFile(tempRoot, VALID_REF);
-      const { layer } = makeLayer({ workdir: tempRoot });
+      const { layer } = makeLayer({ workdir: tempRoot.current });
       return Effect.gen(function* () {
+        yield* writeRefFile(tempRoot.current, VALID_REF);
         const { resolveForLink } = yield* ProjectRefResolver;
         const exit = yield* Effect.exit(resolveForLink(Option.none()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const errorJson = JSON.stringify(exit.cause);
+          const errorJson = yield* encodeJson(exit.cause);
           expect(errorJson).toContain("ProjectRefRequiredError");
           expect(errorJson).toContain(`required flag(s) \\"project-ref\\" not set`);
         }
@@ -315,7 +309,7 @@ describe("projectRefLayer", () => {
         { id: VALID_REF, name: "alpha", organization_slug: "acme", region: "us-east-1" },
       ];
       const { layer, out } = makeLayer({
-        workdir: tempRoot,
+        workdir: tempRoot.current,
         stdinIsTty: true,
         projects,
         promptSelectResponses: [VALID_REF],
@@ -329,13 +323,13 @@ describe("projectRefLayer", () => {
     });
 
     it.effect("rejects an invalid --project-ref flag", () => {
-      const { layer } = makeLayer({ workdir: tempRoot });
+      const { layer } = makeLayer({ workdir: tempRoot.current });
       return Effect.gen(function* () {
         const { resolveForLink } = yield* ProjectRefResolver;
         const exit = yield* Effect.exit(resolveForLink(Option.some("BADREF")));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("InvalidProjectRefError");
+          expect(yield* encodeJson(exit.cause)).toContain("InvalidProjectRefError");
         }
       }).pipe(Effect.provide(layer));
     });
@@ -510,7 +504,7 @@ describe("projectRefLayer", () => {
         { id: ANOTHER_REF, name: "beta", organization_slug: "acme", region: "eu-west-1" },
       ];
       const { layer, out } = makeLayer({
-        workdir: tempRoot,
+        workdir: tempRoot.current,
         stdinIsTty: true,
         projects,
         promptSelectResponses: [ANOTHER_REF],

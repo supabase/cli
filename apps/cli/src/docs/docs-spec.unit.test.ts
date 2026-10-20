@@ -1,14 +1,14 @@
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { beforeAll, describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 import { Command, Flag } from "effect/cli";
-import { describe, expect, it } from "vitest";
+import type { PlatformError } from "effect/PlatformError";
 
 import { ExperimentalFlag } from "../command-internal/global-flags.ts";
 import { hostedRemoteFlag, remoteFlag } from "../../tests/helpers/remote-flag-fixture.ts";
 
 import { rootCommand } from "../cli/root.ts";
-import { readDocsContent } from "./docs-spec.content.ts";
+import { DocsExamplesError, readDocsContent, type DocsContent } from "./docs-spec.content.ts";
 import {
   buildDocsSpec,
   docsFlagDoc,
@@ -20,17 +20,27 @@ import type { DocsCommand } from "./docs-spec.ts";
 import { DOCS_EXCLUDED, DOCS_EXPERIMENTAL } from "./docs-spec.tables.ts";
 
 interface BuiltSpecFixture {
-  readonly content: ReturnType<typeof readDocsContent>;
+  readonly content: DocsContent;
   readonly spec: ReturnType<typeof buildDocsSpec>;
   readonly byId: ReadonlyMap<string, DocsCommand>;
 }
 
 let builtSpecCache: BuiltSpecFixture | undefined;
+let docsContentCache: DocsContent | undefined;
+
+const loadDocsContent = Effect.gen(function* () {
+  if (docsContentCache === undefined) {
+    const path = yield* Path.Path;
+    docsContentCache = yield* readDocsContent(path.resolve(import.meta.dirname, "../../docs"));
+  }
+  return docsContentCache;
+}).pipe(Effect.provide(BunServices.layer));
 
 /** Lazily built once, so runs filtered to the pure helpers skip the tree walk and disk reads. */
 function builtSpec(): BuiltSpecFixture {
   if (builtSpecCache === undefined) {
-    const content = readDocsContent(path.resolve(import.meta.dirname, "../../docs"));
+    const content = docsContentCache;
+    if (content === undefined) throw new Error("builtSpec() needs loadDocsContent to run first");
     const spec = buildDocsSpec({
       root: rootCommand,
       version: "1.2.3",
@@ -94,6 +104,8 @@ describe("docsFlagDoc", () => {
 });
 
 describe("buildDocsSpec", () => {
+  beforeAll(() => Effect.runPromise(Effect.asVoid(loadDocsContent)));
+
   it("never publishes an unlisted command subtree", () => {
     // Walks the tree rather than matching a `supabase-experimental*` prefix, so it also
     // catches any other unlisted subtree, present or future.
@@ -201,6 +213,10 @@ describe("buildDocsSpec", () => {
     expect(link?.flags.map((flag) => flag.id)).toEqual(["project-ref", "skip-pooler"]);
     expect(link?.description).toBe(
       docsStripOverlayHeading(content.overlays.get("supabase/link.md") ?? ""),
+    );
+    expect(content.overlays.has("supabase/db/diff.md")).toBe(true);
+    expect(byId.get("supabase-db-diff")?.description).toBe(
+      docsStripOverlayHeading(content.overlays.get("supabase/db/diff.md") ?? ""),
     );
   });
 
@@ -343,6 +359,8 @@ describe("review fixes stay fixed", () => {
     expect(yaml).not.toMatch(/&a\d+/);
     expect(yaml).not.toMatch(/\*a\d+/);
   });
+
+  beforeAll(() => Effect.runPromise(Effect.asVoid(loadDocsContent)));
 });
 
 function byIdDescription(id: string): string {
@@ -391,97 +409,143 @@ describe("build guards fail loudly", () => {
     );
   });
 
-  it("throws for orphaned overlays and examples keys", () => {
-    const root = Command.make("supabase").pipe(
-      Command.withSubcommands([Command.make("link")]),
-      Command.withGlobalFlags([ExperimentalFlag]),
-    );
-    const overlays = new Map([["supabase/lonk.md", "## x\n\nBody.\n"]]);
-    const build = () =>
-      buildDocsSpec({
-        root,
-        version: "0",
-        overlays,
-        examples: { "supabase-lonk": [{ id: "a", code: "x" }] },
-      });
-    // The synthetic tree fails table validation before it reaches content validation; the
-    // content guard is asserted separately below against the real tree.
-    expect(build).toThrow(/stale static-table entries/);
-    const { content } = builtSpec();
-    const badExamples = { ...content.examples, "supabase-not-a-command": [{ id: "a" }] };
-    expect(() =>
-      buildDocsSpec({
-        root: rootCommand,
-        version: "0",
-        overlays: content.overlays,
-        examples: badExamples,
-      }),
-    ).toThrow(/content inputs match no command[^]*supabase-not-a-command/);
-    const badOverlays = new Map(content.overlays);
-    badOverlays.set("supabase/not-a-real-command.md", "## x\n\nBody.\n");
-    expect(() =>
-      buildDocsSpec({
-        root: rootCommand,
-        version: "0",
-        overlays: badOverlays,
-        examples: content.examples,
-      }),
-    ).toThrow(/content inputs match no command[^]*overlay: "supabase\/not-a-real-command\.md"/);
-  });
+  it.effect("throws for orphaned overlays and examples keys", () =>
+    Effect.gen(function* () {
+      yield* loadDocsContent;
+      const root = Command.make("supabase").pipe(
+        Command.withSubcommands([Command.make("link")]),
+        Command.withGlobalFlags([ExperimentalFlag]),
+      );
+      const overlays = new Map([["supabase/lonk.md", "## x\n\nBody.\n"]]);
+      const build = () =>
+        buildDocsSpec({
+          root,
+          version: "0",
+          overlays,
+          examples: { "supabase-lonk": [{ id: "a", code: "x" }] },
+        });
+      // The synthetic tree fails table validation before it reaches content validation; the
+      // content guard is asserted separately below against the real tree.
+      expect(build).toThrow(/stale static-table entries/);
+      const { content } = builtSpec();
+      const badExamples = { ...content.examples, "supabase-not-a-command": [{ id: "a" }] };
+      expect(() =>
+        buildDocsSpec({
+          root: rootCommand,
+          version: "0",
+          overlays: content.overlays,
+          examples: badExamples,
+        }),
+      ).toThrow(/content inputs match no command[^]*supabase-not-a-command/);
+      const badOverlays = new Map(content.overlays);
+      badOverlays.set("supabase/not-a-real-command.md", "## x\n\nBody.\n");
+      expect(() =>
+        buildDocsSpec({
+          root: rootCommand,
+          version: "0",
+          overlays: badOverlays,
+          examples: content.examples,
+        }),
+      ).toThrow(/content inputs match no command[^]*overlay: "supabase\/not-a-real-command\.md"/);
+    }),
+  );
 });
 
 describe("readDocsContent rejects malformed examples.yaml", () => {
-  function withTempDocs(examplesYaml: string): () => void {
-    const dir = mkdtempSync(path.join(tmpdir(), "docs-spec-test-"));
-    mkdirSync(path.join(dir, "supabase"), { recursive: true });
-    mkdirSync(path.join(dir, "templates"), { recursive: true });
-    writeFileSync(path.join(dir, "supabase", "link.md"), "## supabase-link\n\nBody.\n");
-    writeFileSync(path.join(dir, "templates", "examples.yaml"), examplesYaml);
-    return () => {
-      try {
-        readDocsContent(dir);
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    };
-  }
+  const readTempDocsError = (examplesYaml: string) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "docs-spec-test-" });
+      yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
+      yield* fs.makeDirectory(path.join(dir, "templates"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(dir, "supabase", "link.md"),
+        "## supabase-link\n\nBody.\n",
+      );
+      yield* fs.writeFileString(path.join(dir, "templates", "examples.yaml"), examplesYaml);
+      const error = yield* Effect.flip(readDocsContent(dir));
+      expect(error).toBeInstanceOf(DocsExamplesError);
+      expect(error.cause).toBeInstanceOf(Error);
+      return error;
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
 
-  it("rejects a non-mapping document", () => {
-    expect(withTempDocs("- just\n- a list\n")).toThrow(/must be a mapping of doc ids/);
-  });
+  it.effect("rejects a non-mapping document", () =>
+    Effect.map(readTempDocsError("- just\n- a list\n"), (error) =>
+      expect(error.message).toMatch(/must be a mapping of doc ids/),
+    ),
+  );
 
-  it("rejects a nested-array entry (mis-indented list)", () => {
-    expect(withTempDocs("supabase-link:\n  - - id: oops\n")).toThrow(/must be a mapping/);
-  });
+  it.effect("rejects a nested-array entry (mis-indented list)", () =>
+    Effect.map(readTempDocsError("supabase-link:\n  - - id: oops\n"), (error) =>
+      expect(error.message).toMatch(/must be a mapping/),
+    ),
+  );
 
-  it("rejects unknown fields (typo'd keys)", () => {
-    expect(withTempDocs("supabase-link:\n  - titel: typo\n    code: x\n")).toThrow(
-      /unknown field "titel"/,
-    );
-  });
+  it.effect("rejects unknown fields (typo'd keys)", () =>
+    Effect.map(readTempDocsError("supabase-link:\n  - titel: typo\n    code: x\n"), (error) =>
+      expect(error.message).toMatch(/unknown field "titel"/),
+    ),
+  );
 
-  it("rejects non-string field values", () => {
-    expect(withTempDocs("supabase-link:\n  - id: 5\n")).toThrow(/id must be a string/);
-  });
+  it.effect("rejects non-string field values", () =>
+    Effect.map(readTempDocsError("supabase-link:\n  - id: 5\n"), (error) =>
+      expect(error.message).toMatch(/id must be a string/),
+    ),
+  );
+});
+
+describe("readDocsContent walk", () => {
+  it.effect("does not walk symlinked directories or link loops", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "docs-spec-test-" });
+      const outside = yield* fs.makeTempDirectoryScoped({ prefix: "docs-spec-test-" });
+      yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
+      yield* fs.makeDirectory(path.join(dir, "templates"), { recursive: true });
+      yield* fs.writeFileString(path.join(dir, "supabase", "link.md"), "## supabase-link\n");
+      yield* fs.writeFileString(path.join(outside, "outside.md"), "## outside\n");
+      yield* fs.symlink(outside, path.join(dir, "supabase", "linked"));
+      yield* fs.symlink("..", path.join(dir, "supabase", "up"));
+      yield* fs.writeFileString(path.join(dir, "templates", "examples.yaml"), "{}\n");
+      const content = yield* readDocsContent(dir);
+      expect([...content.overlays.keys()]).toEqual(["supabase/link.md"]);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 });
 
 describe("DOCS_EXPERIMENTAL mirrors the runtime gate", () => {
-  it("matches the requireExperimental call sites exactly", () => {
-    const commandsDir = path.resolve(import.meta.dirname, "../commands");
-    const gated = new Set<string>();
-    const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const entryPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) walk(entryPath);
-        else if (entry.name.endsWith(".command.ts")) {
-          if (readFileSync(entryPath, "utf8").includes("yield* requireExperimental")) {
-            const relative = path.relative(commandsDir, path.dirname(entryPath));
-            gated.add(`supabase-${relative.split(path.sep).join("-")}`);
+  it.effect("matches the requireExperimental call sites exactly", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const commandsDir = path.resolve(import.meta.dirname, "../commands");
+      const gated = new Set<string>();
+      const isSymlinkOrDenied = (entryPath: string) =>
+        fs.readLink(entryPath).pipe(
+          Effect.catchReason("PlatformError", "PermissionDenied", () => Effect.void),
+          Effect.isSuccess,
+        );
+      const walk = (dir: string): Effect.Effect<void, PlatformError> =>
+        Effect.gen(function* () {
+          for (const name of yield* fs.readDirectory(dir)) {
+            const entryPath = path.join(dir, name);
+            if (
+              !(yield* isSymlinkOrDenied(entryPath)) &&
+              (yield* fs.stat(entryPath)).type === "Directory"
+            )
+              yield* walk(entryPath);
+            else if (name.endsWith(".command.ts")) {
+              if ((yield* fs.readFileString(entryPath)).includes("yield* requireExperimental")) {
+                const relative = path.relative(commandsDir, path.dirname(entryPath));
+                gated.add(`supabase-${relative.split(path.sep).join("-")}`);
+              }
+            }
           }
-        }
-      }
-    };
-    walk(commandsDir);
-    expect([...gated].sort()).toEqual([...DOCS_EXPERIMENTAL].sort());
-  });
+        });
+      yield* walk(commandsDir);
+      expect([...gated].sort()).toEqual([...DOCS_EXPERIMENTAL].sort());
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });

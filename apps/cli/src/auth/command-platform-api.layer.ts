@@ -50,13 +50,13 @@ export const makeCommandPlatformApi = Effect.gen(function* () {
 
   const authGateToken = yield* resolveAccessToken;
   if (Option.isNone(authGateToken)) {
-    return yield* Effect.fail(new AccessTokenRequiredError({ message: MISSING_TOKEN_MESSAGE }));
+    return yield* new AccessTokenRequiredError({ message: MISSING_TOKEN_MESSAGE });
   }
   yield* debugLogger.debug(`Supabase CLI ${CLI_VERSION}`);
   yield* debugLogger.debug(`Using profile: ${cliSettings.profile} (${cliSettings.projectHost})`);
   const storedToken = yield* resolveAccessToken;
   if (Option.isNone(storedToken)) {
-    return yield* Effect.fail(new AccessTokenRequiredError({ message: MISSING_TOKEN_MESSAGE }));
+    return yield* new AccessTokenRequiredError({ message: MISSING_TOKEN_MESSAGE });
   }
 
   return yield* makeApiClient(
