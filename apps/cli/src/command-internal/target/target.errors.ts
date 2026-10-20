@@ -47,6 +47,8 @@ export class TargetInvalidValueError extends Data.TaggedError("TargetInvalidValu
   readonly flag: "--project-ref" | "--project-id";
   readonly message: string;
   readonly suggestion: string;
+  /** The project ref the rejected URL names, when it names one. */
+  readonly ref?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;

@@ -6,6 +6,7 @@ import {
   parseTargetSelector,
   type TargetDeprecation,
 } from "../../../command-internal/target/target-selector.ts";
+import { TargetSelectorConflictError } from "../../../command-internal/target/target.errors.ts";
 import {
   classifyExplicitRef,
   explicitDeprecationMessages,
@@ -182,8 +183,19 @@ describe("explicitSelectorError", () => {
       },
     },
     {
-      label: "a --project-ref URL",
+      label: "a --project-ref URL naming a project",
       overrides: { projectRef: Option.some(`https://${REF}.supabase.co`) },
+      expected: {
+        _tag: "TargetInvalidValueError",
+        flag: "--project-ref",
+        message: "--project-ref takes a project ref or a branch name, not a URL.",
+        suggestion: `Use --from=${REF} or --to=${REF}.`,
+        ref: REF,
+      },
+    },
+    {
+      label: "a --project-ref URL naming no project",
+      overrides: { projectRef: Option.some("https://db.example.com/x") },
       expected: {
         _tag: "TargetInvalidValueError",
         flag: "--project-ref",
@@ -218,8 +230,40 @@ describe("explicitSelectorError", () => {
       expected: {
         _tag: "TargetSelectorConflictError",
         flags: ["--linked", "--local"],
+        message: "Only one of --linked, --db-url and --local can be set; got --linked and --local.",
+        suggestion: "Use --from=remote or --to=remote instead of --linked, and drop --local.",
+      },
+    },
+    {
+      label: "--linked with --db-url",
+      overrides: { linked: true, dbUrl: Option.some("postgresql://u@h/db") },
+      expected: {
+        _tag: "TargetSelectorConflictError",
+        flags: ["--linked", "--db-url"],
         message:
-          "Only one of --remote, --linked, --db-url and --local can be set; got --linked and --local.",
+          "Only one of --linked, --db-url and --local can be set; got --linked and --db-url.",
+        suggestion:
+          "Use --from=remote or --to=remote instead of --linked, and --from=<url> or --to=<url> instead of --db-url.",
+      },
+    },
+    {
+      label: "--db-url with --local",
+      overrides: { dbUrl: Option.some("postgresql://u@h/db"), local: true },
+      expected: {
+        _tag: "TargetSelectorConflictError",
+        flags: ["--db-url", "--local"],
+        message: "Only one of --linked, --db-url and --local can be set; got --db-url and --local.",
+        suggestion: "Use --from=<url> or --to=<url> instead of --db-url, and drop --local.",
+      },
+    },
+    {
+      label: "--linked, --db-url and --local together",
+      overrides: { linked: true, dbUrl: Option.some("postgresql://u@h/db"), local: true },
+      expected: {
+        _tag: "TargetSelectorConflictError",
+        flags: ["--linked", "--db-url", "--local"],
+        message:
+          "Only one of --linked, --db-url and --local can be set; got --linked, --db-url and --local.",
         suggestion:
           "Use --from=remote or --to=remote instead of --linked, --from=<url> or --to=<url> instead of --db-url, and drop --local.",
       },
@@ -229,6 +273,22 @@ describe("explicitSelectorError", () => {
     expect(rewritten).toMatchObject(expected);
     expect(rewritten.suggestion).not.toContain("--remote");
   });
+
+  it.each([
+    ["--project-id", "--project-ref"],
+    ["--remote", "--local"],
+    ["--linked", "--remote"],
+  ])(
+    "returns a conflict between %s and %s unchanged, since db diff cannot raise it",
+    (...flags) => {
+      const conflict = new TargetSelectorConflictError({
+        flags,
+        message: "m",
+        suggestion: "s",
+      });
+      expect(explicitSelectorError(conflict)).toBe(conflict);
+    },
+  );
 
   it("never echoes the connection string a conflict was raised for", () => {
     const rewritten = explicitSelectorError(

@@ -92,6 +92,7 @@ import type { DbDiffFlags } from "./diff.command.ts";
 import {
   classifyExplicitRef,
   explicitDeprecationMessages,
+  explicitIpv6Error,
   explicitSelectorError,
 } from "./diff.explicit.ts";
 import {
@@ -261,12 +262,16 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         mergedLinkedRef ??= target.ref;
         // Loaded before the temp-role mint, so a config error surfaces before that side effect.
         yield* loadCfg();
-        const resolved = yield* resolver.resolveConnection({
-          target,
-          dnsResolver,
-          password: Option.none(),
-          networkBanRemoval: yield* hostedMutationPreapproval,
-        });
+        const resolved = yield* resolver
+          .resolveConnection({
+            target,
+            dnsResolver,
+            password: Option.none(),
+            networkBanRemoval: yield* hostedMutationPreapproval,
+          })
+          .pipe(
+            Effect.catchTag("DbConfigIpv6Error", (error) => Effect.fail(explicitIpv6Error(error))),
+          );
         const endpoint = {
           kind: "database",
           ref: toPostgresURL(resolved.conn),
