@@ -135,7 +135,7 @@ export const explicitSelectorError = (error: TargetSelectorError): TargetSelecto
   }
 };
 
-/** An IPv6 failure for another project suggests `--from`/`--to`, as explicit mode rejects `--remote`. */
+/** Points another project's IPv6 suggestion at `--from`/`--to`; explicit mode rejects `--remote`. */
 export const explicitIpv6Error = (error: DbConfigIpv6Error): DbConfigIpv6Error =>
   error.remedy === "pooler-url"
     ? new DbConfigIpv6Error({
