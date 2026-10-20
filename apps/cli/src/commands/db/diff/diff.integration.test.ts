@@ -2297,6 +2297,37 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("explicit --from=remote --to=migrations validates the merged config", () => {
+    // 16 is not a supported major version: the base config only validates once the linked
+    // project's remote override replaces it, so reading it before the ref resolves would fail.
+    const s = setup(tmp.current, {
+      files: {
+        "supabase/config.toml": [
+          "[db]",
+          "major_version = 16",
+          "",
+          "[remotes.staging]",
+          'project_id = "abcdefghijklmnopqrst"',
+          "",
+          "[remotes.staging.db]",
+          "major_version = 15",
+          "",
+        ].join("\n"),
+      },
+      isLocal: false,
+      linkedRef: "abcdefghijklmnopqrst",
+      diffSql: "create table m ();\n",
+    });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ from: Option.some("remote"), to: Option.some("migrations") }));
+      expect(s.explicitDiffCalls[0]?.desired).toEqual({
+        kind: "migrations",
+        projectRef: "abcdefghijklmnopqrst",
+      });
+      expect(s.explicitDiffCalls[0]?.toml?.majorVersion).toBe(15);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("empty --from/--to (shell vars) fall through to the normal diff", () => {
     // `--from "" --to ""` is unset and runs the normal local diff, not an
     // unknown-target error.
