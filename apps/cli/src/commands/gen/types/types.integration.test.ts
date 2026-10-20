@@ -35,6 +35,7 @@ import { rootCommandForFeatures } from "../../../cli/root.ts";
 import { cliArgsLayer, prepareCliArgs } from "../../../shared/cli/run.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import { mockContextualAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
@@ -3182,6 +3183,52 @@ describe("gen types", () => {
             ).toBe(true);
           }
         }).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.effect.each([
+      {
+        name: "a missing database container in a linked checkout",
+        linked: true,
+        stderr: "Error: No such container: supabase_db_demo",
+        expected: {
+          code: "GenTypesLocalDbNotRunningError",
+          message: "supabase start is not running.",
+          suggestion: "To use the linked project instead, pass --remote.",
+        },
+      },
+      {
+        name: "an unreachable Docker daemon in a linked checkout",
+        linked: true,
+        stderr: "Cannot connect to the Docker daemon",
+        expected: {
+          code: "GenTypesLocalDbInspectError",
+          message: "failed to inspect service: Cannot connect to the Docker daemon",
+          suggestion: "To use the linked project instead, pass --remote.",
+        },
+      },
+      {
+        name: "a missing database container in an unlinked checkout",
+        linked: false,
+        stderr: "Error: No such container: supabase_db_demo",
+        expected: {
+          code: "GenTypesLocalDbNotRunningError",
+          message: "supabase start is not running.",
+        },
+      },
+    ])("reports $name in the JSON error envelope", ({ linked, stderr, expected }) =>
+      Effect.gen(function* () {
+        const workdir = yield* makeWorkdir("supabase-gen-types-local-envelope-");
+        if (linked) yield* writeTempFile(workdir, "project-ref", VALID_REF);
+        const { layer, out } = yield* setup({
+          workdir,
+          format: "json",
+          childExitCode: 1,
+          childStderr: [stderr],
+        });
+        yield* genTypes(defaultFlags()).pipe(withJsonErrorHandling, Effect.provide(layer));
+
+        expect(out.failures).toStrictEqual([expected]);
+      }).pipe(Effect.provide(BunServices.layer)),
     );
 
     it.effect("generates locally with defaults when supabase/config.toml is missing", () =>
