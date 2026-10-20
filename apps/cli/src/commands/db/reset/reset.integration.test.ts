@@ -111,7 +111,6 @@ import type {
   DbConnectionInput,
   ResolvedDbConnection,
 } from "../../../command-internal/db-config.types.ts";
-import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
 import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
@@ -2644,22 +2643,6 @@ describe("db reset", () => {
       });
     });
 
-    it.effect("returns context canceled when the reset prompt is declined", () => {
-      const { layer, conn } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        confirm: [false],
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(
-          Effect.provide(layer),
-          Effect.exit,
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("context canceled");
-        expect(conn.execs).toHaveLength(0);
-      });
-    });
-
     it.effect("drops schemas and applies migrations + seed on a confirmed remote reset", () => {
       const { layer, out, conn, linkedCache } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
@@ -2818,17 +2801,23 @@ describe("db reset", () => {
       });
     });
 
-    it.effect("auto-confirms a remote reset via SUPABASE_YES set only in the project .env", () => {
-      const { layer, conn } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        files: { "supabase/.env": "SUPABASE_YES=true\n" },
-        // No `confirm` responses: the prompt must auto-confirm.
-      });
-      return Effect.gen(function* () {
-        yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
-        expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
-      });
-    });
+    it.effect(
+      "asks once before a remote reset when SUPABASE_YES is set only in the project .env",
+      () => {
+        const { layer, out, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          files: { "supabase/.env": "SUPABASE_YES=true\n" },
+          confirm: [true],
+        });
+        return withEmptyConfigEnv(
+          Effect.gen(function* () {
+            yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(Effect.provide(layer));
+            expect(out.promptConfirmCalls).toHaveLength(1);
+            expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
+          }),
+        );
+      },
+    );
 
     it.effect("still caches the linked ref when DB-config resolution fails", () => {
       const { layer, linkedCache } = setup(tmp.current, {
@@ -3449,23 +3438,6 @@ describe("db reset", () => {
       });
     });
 
-    it.effect("emits a json result for a confirmed remote reset", () => {
-      const { layer, out } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        files: migrationFile("20240101000000"),
-        format: "json",
-      });
-      return Effect.gen(function* () {
-        // json mode's default-false prompt has no confirm response, so it declines and cancels.
-        const exit = yield* dbReset({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(
-          Effect.provide(layer),
-          Effect.exit,
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        expect(out).toBeDefined();
-      });
-    });
-
     describe("seeding into a target that matched a [remotes.*] block", () => {
       const REMOTE_TOML = `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n`;
       const remoteSeed = (
@@ -3506,19 +3478,6 @@ describe("db reset", () => {
           expect(out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
           expect(out.stderrText).toContain(SEED_PLAN);
           expect(seeded(out)).toBe(true);
-        });
-      });
-
-      it.effect("seeds nothing and writes nothing when the question is declined", () => {
-        const { layer, out, conn } = remoteSeed({ confirm: [false] });
-        return Effect.gen(function* () {
-          const exit = yield* dbReset(flags).pipe(Effect.provide(layer), Effect.exit);
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            expect(Cause.squash(exit.cause)).toBeInstanceOf(HostedMutationDeclinedError);
-          }
-          expect(out.stderrText).not.toContain("Resetting remote database");
-          expect(conn.execs).toEqual([]);
         });
       });
 
@@ -3831,7 +3790,7 @@ describeHostedConsent("db reset", {
           ),
         ),
       ),
-      mutations: () => conn.execs.filter((sql) => sql.includes("drop schema if exists")).length,
+      mutations: () => conn.execs.length,
     };
   },
 });

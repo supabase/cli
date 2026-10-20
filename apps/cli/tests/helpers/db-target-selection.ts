@@ -127,7 +127,7 @@ interface DbTargetSelectionScenario<R> {
     readonly target: TargetFlagValuesWithDbUrl;
   }) => DbTargetAttempt<R> | Effect.Effect<DbTargetAttempt<R>, unknown, BunServices.BunServices>;
   /** Wraps each row, for a leaf whose tests pin ambient environment variables around their body. */
-  readonly around?: (row: Effect.Effect<void, unknown>) => Effect.Effect<void, unknown>;
+  readonly around?: <E>(row: Effect.Effect<void, E>) => Effect.Effect<void, E>;
   /** The flags besides `--remote` that the run sets and the leaf's permission map branches on. */
   readonly activeFlags?: ActiveFlags;
   /** Rows the leaf cannot express, each with why. */
