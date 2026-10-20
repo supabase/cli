@@ -24,6 +24,7 @@ import {
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { describeDbTargetSelection } from "../../../../tests/helpers/db-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   asRecordedRequests,
@@ -43,11 +44,7 @@ import type {
 } from "../../../command-internal/db-config.types.ts";
 import { DbConnectError, DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
-import {
-  TargetEmptyValueError,
-  TargetProjectRefConflictError,
-  TargetSelectorConflictError,
-} from "../../../command-internal/target/target.errors.ts";
+import { TargetEmptyValueError } from "../../../command-internal/target/target.errors.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { inspectDbDbStats } from "./db-stats/db-stats.handler.ts";
 import { dbStatsSpec } from "./db-stats/db-stats.query.ts";
@@ -55,11 +52,7 @@ import { inspectDbLocks } from "./locks/locks.handler.ts";
 import { inspectDbRoleStats } from "./role-stats/role-stats.handler.ts";
 import { roleStatsSpec } from "./role-stats/role-stats.query.ts";
 import type { InspectConnectionFlags } from "./inspect-query.ts";
-import {
-  BRANCH_PROJECT_REF,
-  branchRow,
-  warningsOf,
-} from "../../../../tests/helpers/remote-selection.ts";
+import { branchRow, warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
 const FLAG_REF = "flagflagflagflagflag";
 
@@ -391,116 +384,25 @@ describe("inspect db query runner", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("--remote=<branch> targets the project of the branch it names", () => {
-    const { layer, resolver, branchRequests, warnings } = setup({
-      rows: [DB_STATS_ROW],
-      projectId: VALID_REF,
-    });
-    return Effect.gen(function* () {
-      yield* inspectDbDbStats(
-        flags({ remote: Option.some({ _tag: "Branch", name: "feature-x" } as const) }),
-      );
-      expect(branchRequests.map(({ method, url }) => `${method} ${url}`)).toEqual([
-        `GET https://api.supabase.com/v1/projects/${VALID_REF}/branches`,
-      ]);
-      expect(resolver.connectionInput?.target).toMatchObject({
-        kind: "linked",
-        ref: BRANCH_PROJECT_REF,
+  describeDbTargetSelection("inspect db db-stats", {
+    dbUrl: true,
+    workdir: () => workdir.current,
+    attempt: ({ workdir: dir, args, target }) => {
+      const ctx = setup({
+        rows: [DB_STATS_ROW],
+        workdir: dir,
+        projectId: VALID_REF,
+        cliArgs: args,
+        commandPath: ["inspect", "db", "db-stats"],
       });
-      expect(warnings()).toEqual([]);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--remote=<branch> fails with the branches that exist when none matches", () => {
-    const { layer, resolver } = setup({ rows: [DB_STATS_ROW], projectId: VALID_REF });
-    return Effect.gen(function* () {
-      const error = yield* inspectDbDbStats(
-        flags({ remote: Option.some({ _tag: "Branch", name: "feature-y" } as const) }),
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "LinkBranchNotFoundError",
-        message: expect.stringContaining("Available branches: feature-x"),
-      });
-      expect(resolver.connectionInput).toBeUndefined();
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("rejects --remote combined with --local", () => {
-    const { layer, resolver } = setup();
-    return Effect.gen(function* () {
-      const error = yield* inspectDbDbStats(
-        flags({ remote: Option.some({ _tag: "Linked" } as const), local: true }),
-      ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(TargetSelectorConflictError);
-      expect(resolver.connectionInput).toBeUndefined();
-    }).pipe(Effect.provide(layer));
-  });
-
-  describe("deprecated selectors", () => {
-    const DEPRECATED_DB_URL = "postgres://x";
-    const cases = [
-      {
-        alias: "--linked",
-        cliArgs: ["inspect", "db", "db-stats", "--linked"],
-        flags: { linked: true },
-        target: { kind: "linked", ref: VALID_REF },
-        warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
-      },
-      {
-        alias: "--project-ref",
-        cliArgs: ["inspect", "db", "db-stats", "--project-ref", FLAG_REF],
-        flags: { projectRef: Option.some(FLAG_REF) },
-        target: { kind: "linked", ref: FLAG_REF, source: "flag" },
-        warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
-      },
-      {
-        alias: "--db-url",
-        cliArgs: ["inspect", "db", "db-stats", "--db-url", DEPRECATED_DB_URL],
-        flags: { dbUrl: Option.some(DEPRECATED_DB_URL) },
-        target: { kind: "db-url" },
-        warning: "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead",
-      },
-      {
-        alias: "--local",
-        cliArgs: ["inspect", "db", "db-stats", "--local"],
-        flags: { local: true },
-        target: { kind: "local" },
-        warning: "--local isn't needed (local is the default) and will be removed in v4",
-      },
-    ] as const satisfies ReadonlyArray<{
-      readonly alias: string;
-      readonly cliArgs: ReadonlyArray<string>;
-      readonly flags: Partial<InspectConnectionFlags>;
-      readonly target: Record<string, string>;
-      readonly warning: string;
-    }>;
-
-    for (const testCase of cases) {
-      it.effect(`${testCase.alias} still selects its target and warns`, () => {
-        const { layer, resolver, warnings } = setup({
-          rows: [DB_STATS_ROW],
-          projectId: VALID_REF,
-          cliArgs: testCase.cliArgs,
-          commandPath: ["inspect", "db", "db-stats"],
-        });
-        return Effect.gen(function* () {
-          yield* inspectDbDbStats(flags(testCase.flags));
-          expect(resolver.connectionInput?.target).toMatchObject(testCase.target);
-          expect(warnings()).toEqual([testCase.warning]);
-        }).pipe(Effect.provide(layer));
-      });
-    }
-
-    it.effect("rejects --project-ref combined with --local", () => {
-      const { layer, resolver } = setup();
-      return Effect.gen(function* () {
-        const error = yield* inspectDbDbStats(
-          flags({ local: true, projectRef: Option.some(FLAG_REF) }),
-        ).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(TargetProjectRefConflictError);
-        expect(resolver.connectionInput).toBeUndefined();
-      }).pipe(Effect.provide(layer));
-    });
+      return {
+        layer: ctx.layer,
+        out: ctx.out,
+        run: inspectDbDbStats(flags(target)),
+        target: () => ctx.resolver.connectionInput?.target,
+        branchLookups: () => ctx.branchRequests.map(({ method, url }) => `${method} ${url}`),
+      };
+    },
   });
 
   it.effect("passes network-ban removal only under --yes", () => {
