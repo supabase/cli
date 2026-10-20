@@ -15,6 +15,7 @@ before migrations unless `--skip-vault` is set.
 | `<workdir>/supabase/migrations/*.sql` | SQL        | for each pending migration, when applied (and not `--dry-run`)                                                                       |
 | seed files from `[db.seed].sql_paths` | SQL        | when `--include-seed` and `[db.seed].enabled` (paths under `supabase/`)                                                              |
 | `<workdir>/supabase/roles.sql`        | SQL        | when `--include-roles` (existence check + apply)                                                                                     |
+| `PGSSL*` PEM, `pg_service.conf`       | PEM, libpq | `--db-url` or the linked project, when the DSN or env sets them; no PEM file is read under `sslmode=disable` (see Notes)             |
 
 ## Files Written
 
@@ -50,6 +51,7 @@ before migrations unless `--skip-vault` is set.
 | `SUPABASE_PROJECT_ID`                    | linked-ref resolution override, superseded by `--project-ref` when set (same precedence position) — see Notes                                                                                                                              | no                                                      |
 | `DOTENV_PRIVATE_KEY*`                    | decrypts `encrypted:` config secrets; `[db.vault]` values are not decrypted with `--skip-vault`                                                                                                                                            | no                                                      |
 | `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION` | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.` | no                                                      |
+| `PG*` libpq                              | linked project, shell only: `PGSSLMODE`, `PGSSLROOTCERT`, `PGSSLCERT`/`PGSSLKEY`/`PGSSLPASSWORD`, `PGCONNECT_TIMEOUT`, `PGSERVICE`/`PGSERVICEFILE`; `--db-url`: any `PG*` the DSN omits, shell first, then project `.env*` (see Notes)     | no                                                      |
 
 ## Exit Codes
 
@@ -122,3 +124,17 @@ stdout is payload-only. A single `result` object is emitted:
   Prefer idempotent forms (`CREATE INDEX CONCURRENTLY IF NOT EXISTS …`) and isolating
   such statements in their own migration file. Intentional fix for supabase/cli#5139,
   adopted into TS in PR supabase/cli#5671 (landed on develop as `b48fad60`).
+- **Linked libpq env.** On every linked database connection, `PGSSLMODE`, `PGSSLROOTCERT`,
+  `PGSSLCERT`/`PGSSLKEY`/`PGSSLPASSWORD`, `PGCONNECT_TIMEOUT`, and `PGSERVICE`/`PGSERVICEFILE`
+  are read from the shell only, never the project `.env*` (`gen types` keeps its pinned mode
+  and CA), on the direct host and the IPv4 pooler alike; host, port, role, and
+  database stay pinned. As in libpq, a `PGSERVICE` entry's settings outrank these vars. An invalid
+  mode or `PGCONNECT_TIMEOUT`, an unknown `PGSERVICE`, or a lone `PGSSLCERT`/`PGSSLKEY` outside
+  `sslmode=disable` fails with `invalid libpq environment` on either route. `sslmode=disable`
+  dials plaintext and reads no CA or client-cert file; otherwise those PEM files are read when
+  set and a missing one fails the connection, and a `pg_service.conf` is read whenever
+  `PGSERVICE` names a service. The pooler route also reads `.pgpass` (`PGPASSFILE`, else
+  `~/.pgpass`) and discards that password, and it keeps `PGAPPNAME` and a service's `options`
+  and runtime keys, which the direct host drops. Tool containers get no TLS settings; migra and
+  pgadmin get the timeout as `connect_timeout` and the pooler's `options` and runtime keys in
+  their URL.

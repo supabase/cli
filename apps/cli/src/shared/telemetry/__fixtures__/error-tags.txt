@@ -144,6 +144,7 @@ DbAdvisorsSecurityStatusError
 DbAdvisorsSetupError
 DbConfigConnectTempRoleError
 DbConfigIpv6Error
+DbConfigLibpqEnvError
 DbConfigListBansNetworkError
 DbConfigListBansStatusError
 DbConfigLoadError

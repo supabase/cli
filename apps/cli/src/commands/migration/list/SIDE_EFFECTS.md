@@ -7,6 +7,7 @@
 | `~/.supabase/access-token`             | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked`                                                         |
 | `<workdir>/supabase/.temp/project-ref` | plain text | `--linked` (default), to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set |
 | `<workdir>/supabase/migrations/`       | directory  | always, to list local migration files                                                                     |
+| `PGSSL*` PEM, `pg_service.conf`        | PEM, libpq | linked project, when set; see `db push`                                                                   |
 
 ## Files Written
 
@@ -26,6 +27,7 @@
 | ----------------------- | --------------------------------------- | ------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN` | auth token for `--linked` mode          | no (falls back to keyring → `~/.supabase/access-token`) |
 | `DB_PASSWORD`           | password for direct database connection | no                                                      |
+| `PG*` libpq             | linked project; see `db push`           | no                                                      |
 
 ## Exit Codes
 

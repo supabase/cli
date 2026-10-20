@@ -1,6 +1,17 @@
 import * as net from "node:net";
 import { BunServices } from "@effect/platform-bun";
-import { Config, Crypto, Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
+import {
+  Config,
+  Crypto,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Predicate,
+  Struct,
+} from "effect";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
@@ -28,6 +39,7 @@ import {
 import * as Errors from "./db-config.errors.ts";
 import {
   layeredParseEnv,
+  POOLER_URL_UNPARSABLE,
   poolerConfigFromConnectionString,
   parseConnectionString,
   redactConnectionString,
@@ -294,9 +306,13 @@ const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
   return yield* attempt(1);
 });
 
+const LIBPQ_ENV_MESSAGE =
+  "invalid libpq environment: check PGSSLMODE, PGSSLCERT/PGSSLKEY, PGSERVICE/PGSERVICEFILE and PGCONNECT_TIMEOUT";
+
 /**
  * Parse + validate the configured pooler connection string. Returns `None` (treated as "no
- * pooler" → IPv6 error) on any validation failure.
+ * pooler" → IPv6 error) on any validation failure, except an invalid libpq `PG*` environment,
+ * which fails with {@link Errors.DbConfigLibpqEnvError}.
  */
 const poolerConfigFrom = Effect.fnUntraced(function* (
   ref: string,
@@ -305,7 +321,15 @@ const poolerConfigFrom = Effect.fnUntraced(function* (
 ) {
   const debug = yield* DebugLogger;
   const result = yield* poolerConfigFromConnectionString(ref, connectionString, poolerHost);
-  if (result._tag === "ok") return Option.some(result.conn);
+  if (Predicate.isTagged(result, "ok")) return Option.some(result.conn);
+  /* An env-only parse tells an invalid `PG*` setting apart from a malformed pooler URL. */
+  if (
+    result.reason === POOLER_URL_UNPARSABLE &&
+    (yield* parseConnectionString("postgresql://postgres@localhost:5432/postgres?passfile=")) ===
+      undefined
+  ) {
+    return yield* new Errors.DbConfigLibpqEnvError({ message: LIBPQ_ENV_MESSAGE });
+  }
   yield* debug.debug(result.reason);
   return Option.none();
 });
@@ -472,11 +496,30 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
   const reachable = yield* tcpReachable(host, DIRECT_PORT);
   yield* Effect.annotateCurrentSpan("db.direct_reachable", reachable);
   if (reachable) {
-    if (base.password.length > 0) {
-      yield* debug.debug("Using database password from env var...");
-      return base;
+    /* Same libpq TLS and timeout precedence as the pooler URL; host, port, role and database stay
+       pinned. The empty `passfile=` skips a `.pgpass` read for a password that is discarded. */
+    const parsed = yield* parseConnectionString(
+      `postgresql://postgres@${host}:${DIRECT_PORT}/postgres?passfile=`,
+    );
+    if (parsed === undefined) {
+      return yield* new Errors.DbConfigLibpqEnvError({ message: LIBPQ_ENV_MESSAGE });
     }
-    return yield* initLoginRole(ref, base);
+    const direct = {
+      ...base,
+      ...Struct.pick(parsed, [
+        "sslmode",
+        "sslrootcert",
+        "sslcert",
+        "sslkey",
+        "sslpassword",
+        "connectTimeoutSeconds",
+      ]),
+    };
+    if (direct.password.length > 0) {
+      yield* debug.debug("Using database password from env var...");
+      return direct;
+    }
+    return yield* initLoginRole(ref, direct);
   }
 
   // Direct host unreachable (IPv6-only network) → try the pooler. For an ad-hoc `--project-id`

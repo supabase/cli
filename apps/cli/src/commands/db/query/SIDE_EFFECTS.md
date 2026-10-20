@@ -14,6 +14,7 @@ the result as a table or JSON.
 | `~/.supabase/access-token`           | plain text | `--linked` when `SUPABASE_ACCESS_TOKEN` unset                                              |
 | `supabase/.temp/project-ref`         | plain text | `--linked` ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set |
 | `supabase/.temp/linked-project.json` | JSON       | `--linked` existence check before the cache write (see below)                              |
+| `PGSSL*` PEM, `pg_service.conf`      | PEM, libpq | linked project, when set; see `db push`                                                    |
 
 ## Files Written
 
@@ -34,6 +35,7 @@ the result as a table or JSON.
 | ----------------------- | ---------------------------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN` | `--linked` auth                                                              |
 | agent-detection signals | `--agent=auto` (e.g. `CURSOR_*`, `CLAUDECODE`, …) via `@vercel/detect-agent` |
+| `PG*` libpq             | linked-project TLS, timeout, service; see `db push`                          |
 
 ## Exit Codes
 

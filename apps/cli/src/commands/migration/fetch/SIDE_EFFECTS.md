@@ -7,6 +7,7 @@
 | `~/.supabase/access-token`                    | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked`                                                         |
 | `<workdir>/supabase/.temp/project-ref`        | plain text | `--linked` (default), to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set |
 | `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | always, to resolve `SUPABASE_YES` (CLI-1878)                                                              |
+| `PGSSL*` PEM, `pg_service.conf`               | PEM, libpq | linked project, when set; see `db push`                                                                   |
 
 ## Files Written
 
@@ -26,6 +27,7 @@
 | ----------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN` | auth token for `--linked` mode    | no (falls back to keyring → `~/.supabase/access-token`)                                                           |
 | `SUPABASE_YES`          | auto-confirm the overwrite prompt | no — read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` files (shell wins; CLI-1878) |
+| `PG*` libpq             | linked project; see `db push`     | no                                                                                                                |
 
 ## Exit Codes
 

@@ -417,6 +417,8 @@ export type PoolerConfigResult =
   | { readonly _tag: "ok"; readonly conn: PgConnInput }
   | { readonly _tag: "invalid"; readonly reason: string };
 
+export const POOLER_URL_UNPARSABLE = "failed to parse pooler URL";
+
 /**
  * Parse + validate a Supabase transaction-pooler URL: strip the dashboard password placeholder,
  * require the project ref in the tenant user/options, verify the pooler domain belongs to the
@@ -430,7 +432,7 @@ export const poolerConfigFromConnectionString = Effect.fnUntraced(function* (
   const sanitized = connectionString.replaceAll("[YOUR-PASSWORD]", "");
   const parsed = yield* parseConnectionString(sanitized);
   if (parsed === undefined) {
-    return { _tag: "invalid", reason: "failed to parse pooler URL" };
+    return { _tag: "invalid", reason: POOLER_URL_UNPARSABLE };
   }
 
   const optionsParam = parsed.options ?? "";
@@ -562,9 +564,10 @@ const parseUrlConnectionString = Effect.fnUntraced(function* (
     svc("sslrootcert") ??
     libpqEnv(env, "PGSSLROOTCERT") ??
     null;
-  // libpq client cert (query, service, or PGSSLCERT/PGSSLKEY/PGSSLPASSWORD); both or neither,
-  // else this is a parse error.
-  const clientCert = resolveClientCert((key) => url.searchParams.get(key), svc, env);
+  /* libpq client cert (query, service, or PGSSLCERT/PGSSLKEY/PGSSLPASSWORD), skipped under
+     `sslmode=disable`; otherwise both or neither, else this is a parse error. */
+  const clientCert =
+    sslmode === "disable" ? {} : resolveClientCert((key) => url.searchParams.get(key), svc, env);
   if (clientCert === "invalid") {
     return undefined;
   }
@@ -799,8 +802,9 @@ const parseKeywordValueDsn = Effect.fnUntraced(function* (
   if (isInvalidSslmode(sslmode)) return undefined;
   const sslrootcert =
     params.get("sslrootcert") ?? svc("sslrootcert") ?? libpqEnv(env, "PGSSLROOTCERT");
-  // libpq client cert (keyword, service, or PG*); both or neither.
-  const clientCert = resolveClientCert((key) => params.get(key), svc, env);
+  /* libpq client cert (keyword, service, or PG*), skipped under `sslmode=disable`; both or neither. */
+  const clientCert =
+    sslmode === "disable" ? {} : resolveClientCert((key) => params.get(key), svc, env);
   if (clientCert === "invalid") return undefined;
   const options = params.get("options") ?? svc("options");
   // Every other keyword setting (e.g. search_path, statement_timeout) is a startup runtime

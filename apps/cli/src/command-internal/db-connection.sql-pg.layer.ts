@@ -725,12 +725,15 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
     // ({@link sslConfigsFor} already plaintexts socket targets).
     const rootcertPath = cfg.sslrootcert;
     const anyTcpTarget = dialTargets.some(({ dialHost }) => !isUnixSocketHost(dialHost));
+    /* `sslmode=disable` never dials TLS, so leftover CA or client-cert paths cannot abort it. */
+    const plaintextOnly = cfg.sslmode === "disable";
     const caCert =
       cfg.sslrootcertInline !== undefined &&
       cfg.sslrootcertInline.length > 0 &&
       (!isLocal || explicitTls)
         ? cfg.sslrootcertInline
-        : rootcertPath !== undefined &&
+        : !plaintextOnly &&
+            rootcertPath !== undefined &&
             rootcertPath.length > 0 &&
             (!isLocal || explicitTls) &&
             anyTcpTarget
@@ -750,7 +753,7 @@ const acquirePgPoolConnection = (cfg: PgConnInput, { isLocal, dnsResolver }: DbC
     const certPath = cfg.sslcert;
     const keyPath = cfg.sslkey;
     const clientCert =
-      certPath !== undefined && keyPath !== undefined && !isLocal && anyTcpTarget
+      !plaintextOnly && certPath !== undefined && keyPath !== undefined && !isLocal && anyTcpTarget
         ? {
             cert: yield* readFileUtf8(fs, certPath).pipe(
               Effect.mapError(

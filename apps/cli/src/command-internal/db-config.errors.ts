@@ -16,6 +16,15 @@ export class DbConfigParseUrlError extends Data.TaggedError("DbConfigParseUrlErr
   }
 }
 
+/** The shell libpq `PG*` environment is invalid for a linked connection. */
+export class DbConfigLibpqEnvError extends Data.TaggedError("DbConfigLibpqEnvError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
+
 /**
  * `supabase/config.toml` exists but could not be read or parsed: the read/decode
  * error aborts the load, rather than silently running against the default local database.

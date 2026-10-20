@@ -249,6 +249,33 @@ layer(parseTestLayer)("parseConnectionString (URL form)", (it) => {
     }),
   );
 
+  it.effect("ignores a one-sided client cert under sslmode=disable", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* parseConnectionString("postgres://u:pw@h/db?sslmode=disable&sslcert=/c/client.crt"),
+      ).toEqual({
+        host: "h",
+        port: 5432,
+        user: "u",
+        password: "pw",
+        database: "db",
+        sslmode: "disable",
+      });
+      expect(
+        yield* parseConnectionString(
+          "host=h user=u password=pw sslmode=disable sslkey=/c/client.key",
+        ),
+      ).toEqual({
+        host: "h",
+        port: 5432,
+        user: "u",
+        password: "pw",
+        database: "u",
+        sslmode: "disable",
+      });
+    }),
+  );
+
   it.effect("returns undefined for an unparseable URL", () =>
     Effect.gen(function* () {
       expect(yield* parseConnectionString("postgres://user:pw@ bad host/db")).toBeUndefined();
