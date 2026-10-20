@@ -1,10 +1,8 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { ProjectRefResolver, PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
+import { PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
 import { readProjectRefFile, tempPaths } from "../shared/config/temp-paths.ts";
-import { announceTarget } from "../shared/output/command-target.service.ts";
-import { describeLinkedTarget } from "./target/target-identity.ts";
 
 export type ParentRefResolution =
   | {
@@ -16,11 +14,7 @@ export type ParentRefResolution =
   | { readonly kind: "invalid" }
   | { readonly kind: "absent" };
 
-/**
- * The subset of `<workdir>/supabase/.temp/linked-project.json` callers care about: the
- * parent project's `ref`, `name`, `organization_slug`, and `organization_id`. The latter
- * three are optional, present only when the cache holds a non-empty string value.
- */
+/** The fields of `supabase/.temp/linked-project.json` callers read; all but `ref` are present only when non-empty. */
 export interface CachedLinkedProject {
   readonly ref: string;
   readonly name?: string;
@@ -37,11 +31,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-/**
- * Best-effort parse of `<workdir>/supabase/.temp/linked-project.json`'s `ref` (and, when
- * present, `name`/`organization_slug`/`organization_id`) fields. A missing/unreadable file,
- * malformed JSON, or non-string/empty `ref` all degrade to `None` rather than failing.
- */
+/** Parses `linked-project.json`; malformed JSON or a missing `ref` is `None`, never a failure. */
 export function parseCachedLinkedProject(content: string): Option.Option<CachedLinkedProject> {
   try {
     const parsed: unknown = JSON.parse(content);
@@ -83,9 +73,8 @@ function parseCachedParentRef(content: string): Option.Option<string> {
 function classifyParentCandidates(
   candidates: ReadonlyArray<Option.Option<string>>,
 ): ParentRefResolution {
-  // The first present candidate decides: a malformed higher-priority candidate (e.g. a
-  // typo'd SUPABASE_PROJECT_ID) hard-classifies as invalid rather than falling through to a
-  // lower-priority project, which could otherwise run a mutation against the wrong project.
+  // The first present candidate decides: a malformed higher-priority one stays invalid rather than
+  // falling through to a lower-priority project that a mutation could then hit by mistake.
   for (const candidate of candidates) {
     if (Option.isSome(candidate)) {
       return PROJECT_REF_PATTERN.test(candidate.value)
@@ -97,10 +86,8 @@ function classifyParentCandidates(
 }
 
 /**
- * Resolves the linked PARENT project ref, not the branch's own ref that `resolve`/`resolveOptional`
- * return right after `link <branch>`. The first present candidate wins: `SUPABASE_PROJECT_ID`, the
- * `linked-project.json` cache, then the temp `project-ref` file. A malformed candidate is
- * `"invalid"` and never falls through; no candidate at all is `"absent"`.
+ * The linked PARENT project ref, not the branch's own ref that `resolve` returns right after
+ * `link <branch>`: `SUPABASE_PROJECT_ID`, then the `linked-project.json` cache, then `project-ref`.
  */
 export const resolveLinkedParentRef = Effect.fnUntraced(function* () {
   const cliSettings = yield* CommandSettings;
@@ -140,45 +127,7 @@ export const resolveLinkedParentRef = Effect.fnUntraced(function* () {
   return Option.isSome(linkedRef) ? { ...parent, linkedRef: linkedRef.value } : parent;
 });
 
-/**
- * Project-ref resolver for the PARENT-SCOPED `branches` command family: after `link <branch>`,
- * the temp `project-ref` file holds the branch's own ref, but branch-management endpoints
- * return 403 for branch refs, so this resolves the parent instead. An explicit `flagValue`
- * always wins; otherwise it prefers `resolveLinkedParentRef`'s cached parent, falling back to
- * `resolver.resolve` unchanged when no parent is resolvable.
- */
-export const resolveParentScopedProjectRef = Effect.fn("ParentProjectRef.resolve")(function* (
-  flagValue: Option.Option<string>,
-) {
-  const resolver = yield* ProjectRefResolver;
-
-  if (Option.isSome(flagValue) && flagValue.value.length > 0) {
-    yield* Effect.annotateCurrentSpan("parent_project_ref.source", "flag");
-    return yield* resolver.resolve(flagValue);
-  }
-
-  const parent = yield* resolveLinkedParentRef();
-  yield* Effect.annotateCurrentSpan("parent_project_ref.linked_parent", parent.kind);
-  if (parent.kind === "resolved") {
-    yield* Effect.annotateCurrentSpan("parent_project_ref.source", "linked_parent");
-    const cliSettings = yield* CommandSettings;
-    const cache = yield* readCachedLinkedProject(
-      yield* FileSystem.FileSystem,
-      yield* Path.Path,
-      cliSettings.workdir,
-    );
-    yield* announceTarget(describeLinkedTarget({ ref: parent.ref, cache }));
-    return parent.ref;
-  }
-
-  yield* Effect.annotateCurrentSpan("parent_project_ref.source", "resolver");
-  return yield* resolver.resolve(Option.none());
-});
-
-/**
- * A plausible ref typo: all lowercase letters but not 20 of them, or 20 letters with an uppercase
- * one. Appended to {@link parentNotLinkedMessage} and `link`'s own branch-not-found message.
- */
+/** A hint for a value that looks like a mistyped project ref; empty otherwise. */
 export function parentRefTypoHint(value: string): string {
   if (/^[a-z]+$/.test(value)) {
     return `\n  If you meant a project ref: refs are exactly 20 lowercase letters ("${value}" has ${value.length}).`;
@@ -189,11 +138,7 @@ export function parentRefTypoHint(value: string): string {
   return "";
 }
 
-/**
- * Shared "no project is linked to search for branches" message, produced when
- * {@link resolveLinkedParentRef} reports `"absent"` for a non-ref-shaped
- * `--project-ref`/positional value. Used by both `link` and `config diff`.
- */
+/** The error for a branch name looked up with no linked project, shared by `link` and `config diff`. */
 export function parentNotLinkedMessage(value: string): string {
   return (
     `Cannot resolve "${value}": it is not a project ref (refs are exactly 20 lowercase letters, ` +
@@ -204,11 +149,7 @@ export function parentNotLinkedMessage(value: string): string {
   );
 }
 
-/**
- * Shared "the linked project ref is invalid" message, produced when
- * {@link resolveLinkedParentRef} reports `"invalid"` for a non-ref-shaped
- * `--project-ref`/positional value. Used by both `link` and `config diff`.
- */
+/** The error for a branch name looked up when the linked project ref is invalid, shared by `link` and `config diff`. */
 export function parentRefInvalidMessage(value: string): string {
   return `Cannot resolve branch "${value}": the linked project ref is invalid (checked SUPABASE_PROJECT_ID, supabase/.temp/linked-project.json, supabase/.temp/project-ref). Relink the parent project first: supabase link --project-ref <parent-ref>`;
 }

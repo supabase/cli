@@ -76,6 +76,17 @@ export const linkedAlternativeHint = (input: {
   return `default; pass --remote for ${named(name, input.ref)}`;
 };
 
+/** The `config.target_is_branch` span attribute: the default branch is the production project, and it is omitted while a branch UUID's default-ness is unknown. */
+export const targetIsBranchAttribute = (target: {
+  readonly branch?: string | undefined;
+  readonly isDefault?: boolean | undefined;
+}): { readonly "config.target_is_branch"?: boolean } => {
+  if (target.branch === undefined || target.isDefault === true) {
+    return { "config.target_is_branch": false };
+  }
+  return target.isDefault === undefined ? {} : { "config.target_is_branch": true };
+};
+
 /**
  * A branch resolved to its own project ref; `branch` is absent for a UUID lookup and `parentRef`
  * for anything but a name lookup. The default branch is the linked project itself, so it renders

@@ -24,18 +24,9 @@ import type {
 } from "./pull.aggregate.ts";
 import type { PullStepContext } from "./pull.types.ts";
 
-/**
- * `supabase pull` step runners — one per `PULL_STEP_ORDER` entry, each a thin adapter over its
- * sub-step's own run-core. No confirmation, failure capture, or aggregation lives here: these
- * only run once the aggregated confirmation is accepted, so every one performs its side effect
- * (there's no internal dry-run/declined branch).
- */
+// One adapter per `PULL_STEP_ORDER` entry; each runs only after the aggregated confirmation, so it always performs its side effect.
 
-/**
- * `config` step: applies the already-planned config write (skipped when the plan had no work)
- * and reports the fixed `{dryRun: false, confirmed: true}` shape `pullConfigStepResult` expects
- * for an executed run.
- */
+/** `config` step: applies the planned config write (skipped when the plan had no work) and reports the executed-run shape `pullConfigStepResult` expects. */
 export const pullConfigStep = Effect.fnUntraced(function* (input: {
   readonly runPlan: ConfigPullRunPlan;
   readonly source: ConfigPullSource;
@@ -52,10 +43,8 @@ export const pullConfigStep = Effect.fnUntraced(function* (input: {
 });
 
 /**
- * `migration_history` step: fetches the remote migration history table into
- * `supabase/migrations`, targeting the already-resolved `context.target` directly (ADR 0024) and
- * suppressing its own overwrite prompt with `assumeYes` since the orchestrator's confirmation
- * already covers it.
+ * `migration_history` step: fetches the remote migration history into `supabase/migrations` from
+ * `context.target` (ADR 0024), with its overwrite prompt suppressed by the orchestrator's confirmation.
  */
 export const pullMigrationHistoryStep = Effect.fnUntraced(function* (context: PullStepContext) {
   const cliSettings = yield* CommandSettings;
@@ -71,10 +60,8 @@ export const pullMigrationHistoryStep = Effect.fnUntraced(function* (context: Pu
 });
 
 /**
- * `db` step: pulls the linked project's schema in migration mode, targeting `context.target`
- * directly and reusing the orchestrator's consent for the remote-history update.
- * `DbPullInSyncError` is caught and reported as `in_sync`, a finding rather than a failure at the
- * `pull` level (ADR 0024).
+ * `db` step: pulls the linked project's schema in migration mode, reusing the orchestrator's consent.
+ * `DbPullInSyncError` is reported as `in_sync`, a finding rather than a failure (ADR 0024).
  */
 export const pullDbStep = Effect.fnUntraced(function* (context: PullStepContext) {
   const cliSettings = yield* CommandSettings;

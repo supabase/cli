@@ -13,7 +13,6 @@ export function relativeConfigPath(workdir: string, path: string): string {
   return path.startsWith(workdir) ? path.slice(workdir.length).replace(/^[/\\]/, "") : path;
 }
 
-/** The one message every loader reports for a config file that fails to parse. */
 export function describeConfigParseError(
   workdir: string,
   error: { readonly path: string; readonly cause: unknown },

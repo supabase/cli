@@ -62,7 +62,7 @@ const poolerConfigEntry = {
   operationId: "v1-get-pooler-config",
   kind: "required",
   context:
-    "a project ref or branch names the target, the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
+    "the direct database host is unreachable (IPv4-only network) and there is no usable saved supabase/.temp/pooler-url",
 } as const satisfies Omit<OperationEntry, "source">;
 
 const networkBanEntries = [
@@ -84,7 +84,7 @@ const networkBanEntries = [
 
 const linkedEntries: ReadonlyArray<Omit<OperationEntry, "source">> = [
   loginRoleEntry,
-  { ...poolerConfigEntry, when: [{ selector: ["ref", "branch", "uuid"] }] },
+  poolerConfigEntry,
   ...networkBanEntries,
   ...projectRefPicker.operations,
 ];
@@ -269,7 +269,7 @@ const removeBans = Effect.fnUntraced(function* (ref: string, addrs: ReadonlyArra
 const networkBannedError = (ref: string, addrs: ReadonlyArray<string>) =>
   new Errors.LinkedDbNetworkBannedError({
     message: `Network bans (${addrs.join(", ")}) may be blocking the connection. Removing them clears every listed address, so it needs --yes.`,
-    suggestion: `Re-run with --yes to remove them, or run supabase network-bans remove --remote=${ref} --db-unban-ip ${addrs.join(",")} --experimental --yes.`,
+    suggestion: `Re-run with --yes to remove them, or run supabase network-bans remove --db-unban-ip ${addrs.join(",")} --experimental --yes --remote=${ref}`,
   });
 
 // Verify-connect with backoff while the pooler refreshes the temp password. From attempt 3 on, look
@@ -521,11 +521,9 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     readonly adHocProjectRef?: boolean;
     readonly resolveVaultSecrets?: boolean;
     /**
-     * Requests the Management API pooler-config fetch on an IPv4-only network
-     * independent of `adHocProjectRef`'s saved-URL semantics. Set when the caller
-     * supplied an explicit `--project-ref` rather than falling back to
-     * `.temp/project-ref`, so an unlinked or mismatched-tenant workdir still reaches
-     * the primary pooler config instead of dead-ending in the "run supabase link" IPv6 error.
+     * Requests the Management API pooler-config fetch on an IPv4-only network independent of
+     * `adHocProjectRef`'s saved-URL semantics, so a workdir with no usable saved pooler URL still
+     * reaches the primary pooler config instead of dead-ending in the "run supabase link" IPv6 error.
      */
     readonly fetchPoolerFromApi?: boolean;
     /** Whether the calling command binds `--password`, so the withheld-password notice can name it. */
@@ -556,14 +554,9 @@ export const resolveLinkedConn = Effect.fn("DbConfig.resolveLinkedConn")(functio
     return yield* initLoginRole(ref, base);
   }
 
-  // Direct host unreachable (IPv6-only network) → try the pooler. For an ad-hoc `--project-ref`
-  // the command already holds a Management API token, so fall back to the API pooler config
-  // (and ignore the workdir's saved pooler URL) rather than failing with the IPv6 suggestion. An
-  // explicit `--project-ref` on a non-ad-hoc `db` command keeps `ignoreSavedUrl` at the
-  // saved-URL-first default (the tenant-mismatch check in `poolerConfigFrom` still rejects a
-  // stale saved URL for a different ref), but independently requests the same API fetch via
-  // `fetchPoolerFromApi` so an unlinked or mismatched-tenant workdir doesn't dead-end in the
-  // IPv6 error.
+  // Direct host unreachable (IPv6-only network) → try the pooler. An ad-hoc ref skips the saved
+  // pooler URL, which belongs to the linked project; with `fetchPoolerFromApi`, either case falls
+  // back to the Management API's pooler config.
   const poolerConn = yield* resolvePoolerConn(
     ref,
     workdir,
@@ -774,7 +767,6 @@ export const dbConfigResolverLayer = Layer.effect(
         readonly password: Option.Option<string>;
         readonly resolveVaultSecrets: boolean;
         readonly adHocProjectRef: boolean;
-        readonly fetchPoolerFromApi: boolean;
         readonly hasPasswordFlag: boolean;
         readonly removeNetworkBans: boolean;
       },
@@ -793,7 +785,7 @@ export const dbConfigResolverLayer = Layer.effect(
           {
             adHocProjectRef: options.adHocProjectRef,
             resolveVaultSecrets: options.resolveVaultSecrets,
-            fetchPoolerFromApi: options.fetchPoolerFromApi,
+            fetchPoolerFromApi: true,
             hasPasswordFlag: options.hasPasswordFlag,
             removeNetworkBans: options.removeNetworkBans,
           },
@@ -829,7 +821,6 @@ export const dbConfigResolverLayer = Layer.effect(
               password: input.password,
               resolveVaultSecrets,
               adHocProjectRef: !target.matchesLinkedRef,
-              fetchPoolerFromApi: target.source === "flag",
               hasPasswordFlag: input.hasPasswordFlag ?? false,
               removeNetworkBans: canRemoveNetworkBans(input),
             }),

@@ -3229,6 +3229,40 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
+    it.effect.each([
+      {
+        name: "a linked checkout",
+        linked: true,
+        suggestion:
+          "Make sure Docker is running, then run: supabase start\nTo use the linked project instead, pass --remote.",
+      },
+      { name: "an unlinked checkout", linked: false, suggestion: undefined },
+    ])(
+      "reports a refused local connection in $name in the JSON error envelope",
+      ({ linked, suggestion }) =>
+        Effect.gen(function* () {
+          const workdir = yield* makeWorkdir("supabase-gen-types-local-refused-");
+          if (linked) yield* writeTempFile(workdir, "project-ref", VALID_REF);
+          const refused = Object.assign(new Error("PgClient: Failed to connect"), {
+            cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:54322"), {
+              code: "ECONNREFUSED",
+            }),
+          });
+          const { layer, out } = yield* setup({
+            workdir,
+            format: "json",
+            generator: mockGenTypesGenerator({
+              generate: (input) => Effect.fail(toConnectError(input.conn, input.isLocal, refused)),
+            }),
+          });
+          yield* genTypes(defaultFlags()).pipe(withJsonErrorHandling, Effect.provide(layer));
+
+          expect(out.failures).toHaveLength(1);
+          expect(out.failures[0]).toMatchObject({ code: "DbConnectError" });
+          expect(out.failures[0]?.suggestion).toBe(suggestion);
+        }).pipe(Effect.provide(BunServices.layer)),
+    );
+
     it.effect("generates locally with defaults when supabase/config.toml is missing", () =>
       Effect.gen(function* () {
         const workdir = yield* makeWorkdir("supabase-gen-types-local-no-config-");

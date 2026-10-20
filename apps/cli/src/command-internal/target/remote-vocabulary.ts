@@ -2,11 +2,10 @@ export const REMOTE_FLAG_NAME = "remote";
 
 export const DB_URL_PATTERN = /^postgres(ql)?:\/\//i;
 
-/** The spellings of a bare `--remote`, in any case. */
-export const LINKED_LITERAL = /^(true|yes|on|1)$/i;
+/** The spellings of a bare `--remote`, in any case: the words the flag parser reads as a boolean. */
+export const LINKED_LITERAL = /^(true|yes|on|1|y)$/i;
 
-/** The spellings of an off switch, in any case. */
-export const OFF_LITERAL = /^(false|no|off|0)$/i;
+export const OFF_LITERAL = /^(false|no|off|0|n)$/i;
 
 export const isBooleanLiteral = (word: string): boolean =>
   LINKED_LITERAL.test(word) || OFF_LITERAL.test(word);

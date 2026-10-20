@@ -210,16 +210,27 @@ const rejectRefShapedOperand = Effect.fnUntraced(function* (operand: string) {
   });
 });
 
+const bareRemoteWord = Effect.fnUntraced(function* () {
+  const cliArgs = yield* Effect.serviceOption(CliArgs);
+  return Option.getOrUndefined(cliArgs)?.bareRemoteOperand;
+});
+
+/** Fails a bare `--remote` whose next word is a project ref, before the command prompts, connects or writes. */
+export const rejectRefShapedRemote = Effect.fnUntraced(function* () {
+  const operand = yield* bareRemoteWord();
+  if (operand !== undefined && BRANCH_PROJECT_REF_PATTERN.test(operand)) {
+    return yield* rejectRefShapedOperand(operand);
+  }
+});
+
 /**
  * Fails a bare `--remote` whose next word is a project ref, or is, or may be, a branch of the
  * linked project, before the command prompts, connects or writes.
  */
 const rejectAmbiguousRemote = Effect.fnUntraced(function* () {
-  const cliArgs = yield* Effect.serviceOption(CliArgs);
-  const operand = Option.getOrUndefined(cliArgs)?.bareRemoteOperand;
-  if (operand === undefined) return;
-  if (BRANCH_PROJECT_REF_PATTERN.test(operand)) return yield* rejectRefShapedOperand(operand);
-  yield* checkRemoteOperand(operand);
+  yield* rejectRefShapedRemote();
+  const operand = yield* bareRemoteWord();
+  if (operand !== undefined) yield* checkRemoteOperand(operand);
 });
 
 /** The linked target for a ref the ref chain has already resolved and announced. */

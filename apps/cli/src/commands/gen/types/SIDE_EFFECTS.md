@@ -161,6 +161,8 @@ Not applicable.
   `Try rerunning the command with --debug to troubleshoot the error.`, and the JSON error envelope
   reports it as `suggestion`:
   `{"code":"GenTypesLocalDbNotRunningError","message":"supabase start is not running.","suggestion":"To use the linked project instead, pass --remote."}`.
+  A container that exists but refuses the connection (`DbConnectError`) carries
+  `Make sure Docker is running, then run: supabase start` and, on a second line, the same pointer.
   An unlinked checkout keeps the error without one.
 - **`--project-id`.** A hidden alias of the deprecated `--project-ref`; passing both fails with
   `--project-id is a deprecated alias of --project-ref; pass only one of them.`

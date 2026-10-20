@@ -63,8 +63,6 @@ export const readProjectRefFile = (
 ): Effect.Effect<Option.Option<string>, ProjectRefReadError> =>
   Effect.gen(function* () {
     const refPath = tempPaths(path, workdir).projectRef;
-    // A `NotFound` PlatformError means unlinked (fall through); any other
-    // read error fails.
     const content = yield* fs.readFileString(refPath).pipe(
       Effect.catchTag("PlatformError", (error) =>
         error.reason._tag === "NotFound"

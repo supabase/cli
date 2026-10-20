@@ -516,7 +516,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       });
     });
 
-  const assertLocalDbRunning = (projectId: string) =>
+  const assertLocalDbRunning = (projectId: string, linkedCheckout: boolean) =>
     Effect.scoped(
       Effect.gen(function* () {
         // Only the exit code and stderr matter; discard stdout so the inspect JSON can't
@@ -536,14 +536,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         ]);
         if (exitCode !== 0) {
           const message = stderr.trim();
-          const suggestion = (yield* isCheckoutLinked(
-            fs,
-            path,
-            cliSettings.workdir,
-            cliSettings.projectId,
-          ))
-            ? SUGGEST_LINKED_PROJECT
-            : undefined;
+          const suggestion = linkedCheckout ? SUGGEST_LINKED_PROJECT : undefined;
           if (message.toLowerCase().includes("no such container")) {
             return yield* new GenTypesLocalDbNotRunningError({
               message: "supabase start is not running.",
@@ -665,7 +658,13 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         yield* configValues.load({ workdir: cliSettings.workdir, projectRef: Option.none() }),
       );
       yield* announceTarget(renderLocalTarget(host, config.port));
-      yield* assertLocalDbRunning(projectId);
+      const linkedCheckout = yield* isCheckoutLinked(
+        fs,
+        path,
+        cliSettings.workdir,
+        cliSettings.projectId,
+      );
+      yield* assertLocalDbRunning(projectId, linkedCheckout);
       yield* runGenerate({
         conn: {
           host,
@@ -673,6 +672,15 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
           user: "postgres",
           password: config.password,
           database: "postgres",
+          ...(linkedCheckout
+            ? {
+                suggestionContext: {
+                  dashboardUrl: cliSettings.dashboardUrl,
+                  profileName: cliSettings.profile,
+                  linkedCheckout,
+                },
+              }
+            : {}),
         },
         isLocal: true,
         includedSchemas,

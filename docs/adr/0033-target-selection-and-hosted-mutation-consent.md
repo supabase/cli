@@ -90,10 +90,11 @@ than positionals. The one ambiguous shape, a bare `--remote` directly followed b
 command took as a positional, is settled before anything runs. A project-ref-shaped token fails
 with no request, because a 20-letter operand such as a migration or function name must not silently
 retarget the command at another project: the error offers `--remote=<ref>` for that project and
-`--remote` last to keep the operand. Any other token is checked against the linked project's
-branches. It fails when it names a branch, equals one ignoring case, or is one edit (an adjacent swap
-counts as one) from a non-default branch name of five or more characters, so an ordinary word is not
-mistaken for a typo; otherwise it runs as the operand. When the branches can't be listed the run
+`--remote` last to keep the operand. A `branches *` command, whose `--remote` never names a branch,
+applies only this check. Any other token is checked against the linked project's branches. It fails
+when it names a branch, equals one ignoring case, or is one edit (an adjacent swap counts as one)
+from a non-default branch name of five or more characters, so an ordinary word is not mistaken for
+a typo; otherwise it runs as the operand. When the branches can't be listed the run
 still fails closed, and the error names the cause (an HTTP status or the network error, with the fix
 for a 401, 403 or 404). Docs, help and examples put `--remote` last, in the `=` form when it has a
 value, so it cannot be read as anything else, and shell completion never offers a space-separated
@@ -121,10 +122,13 @@ onto `--remote`:
   bare `--remote` counting as the linked project, and an error before anything runs when they differ.
 - A bare `--remote` together with `--project-ref=<x>` is accepted, as `--linked --project-ref=<x>`
   is: the alias's value wins and its warning prints.
-- `db diff` with `--remote` or an alias together with `--from` or `--to` is an error. In `--from`
-  and `--to`, `remote` always means the linked project.
+- `db diff` with `--remote` together with `--from` or `--to` is an error. The aliases are accepted
+  there with a warning that names the `--from`/`--to` value: `--project-ref` points a `remote` side
+  at the project it names, and is an error when neither side is `remote`; `--linked`, `--db-url`
+  and `--local` change nothing. In `--from` and `--to`, `remote` means the linked project, or the
+  one `--project-ref` names.
 - `--no-remote` and `--remote=false` fail and tell the user to leave `--remote` out.
-  `--remote yes`, `--remote 1`, `--remote true` and `--remote on` mean bare `--remote`. An empty
+  `--remote yes`, `--remote y`, `--remote 1`, `--remote true` and `--remote on` mean bare `--remote`. An empty
   `--remote=` value is rejected, and the message names the values that command accepts. Neither
   error prints the command's help.
 - A conflict error lists only the selector flags the command has and suggests the `--remote` form.

@@ -84,7 +84,6 @@ import {
 // project-ref schema (e.g. updated length) only needs to update one constant.
 export const VALID_REF = "abcdefghijklmnopqrst";
 
-/** The stderr banner a command prints for a linked project with no `linked-project.json` cache. */
 export const unverifiedTargetBanner = (ref: string = VALID_REF): string =>
   `Target: project ${ref}\n`;
 
@@ -1455,7 +1454,6 @@ export interface BuildTestRuntimeOpts {
   readonly outputFlag?: Option.Option<OutputFlagValue>;
   /** Raw argv seen by the handler (e.g. to exercise an explicit `--yes=false`). */
   readonly cliArgs?: ReadonlyArray<string>;
-  /** The command path the handler runs as, e.g. `["storage", "ls"]`; leave it out to run without a `CommandRuntime`. */
   readonly commandPath?: ReadonlyArray<string>;
 }
 

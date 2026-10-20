@@ -51,7 +51,6 @@ export function argvStringValue(
   return values === undefined ? Option.none() : Option.some(values[values.length - 1] ?? "");
 }
 
-/** The scan's last `--remote`, classified like the flag's own parser, so it reconciles with `--project-ref` read from the same scan. */
 export function argvRemoteValue(
   occurrences: ReadonlyMap<string, ReadonlyArray<string>>,
 ): Option.Option<RemoteValue> {

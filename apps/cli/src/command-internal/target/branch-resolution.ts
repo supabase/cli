@@ -176,7 +176,7 @@ const listParentBranches = Effect.fnUntraced(function* (parentRef: string, label
   return branches;
 });
 
-type ResolvedParent = Extract<ParentRefResolution, { readonly kind: "resolved" }>;
+export type ResolvedParent = Extract<ParentRefResolution, { readonly kind: "resolved" }>;
 
 /**
  * The branches of the parent a lookup runs under. A cached parent stands only while it lists the
@@ -185,7 +185,7 @@ type ResolvedParent = Extract<ParentRefResolution, { readonly kind: "resolved" }
  */
 export const listLinkedParentBranches = Effect.fnUntraced(function* (
   parent: ResolvedParent,
-  label: string,
+  label?: string,
 ) {
   const cached = yield* listParentBranches(parent.ref, label);
   const { linkedRef } = parent;

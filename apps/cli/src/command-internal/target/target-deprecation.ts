@@ -56,13 +56,19 @@ export const refFromDbUrl = (url: string, projectHost: string): string | undefin
   }
 };
 
+/** The first sentence of every alias warning: which flags are deprecated, and that v4 removes them. */
+export const deprecationLead = (flags: ReadonlyArray<string>): string =>
+  `${joinFlags(flags)} ${flags.length > 1 ? "are" : "is"} deprecated and will be removed in v4.`;
+
+export const LOCAL_NOT_NEEDED_MESSAGE =
+  "--local isn't needed (local is the default) and will be removed in v4";
+
 const aliasMessage = (
   deprecation: Extract<TargetDeprecation, { readonly kind: "remote-alias" }>,
   projectHost: string,
 ): string => {
   const { flags, remote } = deprecation;
-  const verb = flags.length > 1 ? "are" : "is";
-  const lead = `${joinFlags(flags)} ${verb} deprecated and will be removed in v4.`;
+  const lead = deprecationLead(flags);
 
   if (remote._tag === "Branch" && isBooleanLiteral(remote.name)) {
     return `${lead} Reach a branch named "${remote.name}" with ${BRANCH_BY_REF} instead`;
@@ -82,6 +88,6 @@ export const deprecationMessages = (
 ): ReadonlyArray<string> =>
   deprecations.map((deprecation) =>
     deprecation.kind === "local"
-      ? "--local isn't needed (local is the default) and will be removed in v4"
+      ? LOCAL_NOT_NEEDED_MESSAGE
       : aliasMessage(deprecation, projectHost),
   );

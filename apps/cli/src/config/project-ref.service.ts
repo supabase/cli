@@ -9,13 +9,11 @@ import type {
   ProjectRefRequiredError,
 } from "./project-ref.errors.ts";
 
-/** Where a resolved project ref came from, in chain order. */
 export type ProjectRefSource = "flag" | "env" | "file" | "picker";
 
 export interface ResolvedProjectRef {
   readonly ref: string;
   readonly source: ProjectRefSource;
-  /** Whether `ref` is the project linked in `supabase/.temp/project-ref`. */
   readonly matchesLinkedRef: boolean;
 }
 

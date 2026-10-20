@@ -21,6 +21,7 @@ import {
   unexpectedStatusMessage,
 } from "../../../command-internal/http-errors.ts";
 import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
+import { targetIsBranchAttribute } from "../../../command-internal/target/target-identity.ts";
 import {
   missingProjectConfigMessageEffect,
   relativeConfigPath,
@@ -231,7 +232,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     yield* Ref.set(resolvedRef, Option.some(ref));
     yield* Effect.annotateCurrentSpan({
       "project.ref": ref,
-      "config.target_is_branch": branch !== undefined,
+      ...targetIsBranchAttribute({ branch, isDefault }),
     });
 
     // 2. Load config.toml with the resolved ref (a TOML parse error aborts before any network

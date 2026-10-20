@@ -232,6 +232,12 @@ describe("branches delete integration", () => {
             if (request.method === "DELETE" && request.url.includes("/v1/branches/")) {
               return jsonResponse(request, 200, { message: "ok" });
             }
+            if (
+              request.method === "GET" &&
+              request.url === `${API}/v1/projects/${PARENT_REF}/branches`
+            ) {
+              return jsonResponse(request, 200, [branchListing(BRANCH_OWN_REF, "linked-branch")]);
+            }
             return jsonResponse(request, 200, null);
           }),
       });
@@ -262,6 +268,7 @@ describe("branches delete integration", () => {
         const del = api.requests.find((r) => r.method === "DELETE");
         expect(del?.url).toContain(`/v1/branches/${RESOLVED_BRANCH_UUID}`);
         expect(sequence(api.requests)).toEqual([
+          `GET ${API}/v1/projects/${PARENT_REF}/branches`,
           `GET ${API}/v1/projects/${PARENT_REF}/branches/my-feature`,
           `DELETE ${API}/v1/branches/${RESOLVED_BRANCH_UUID}`,
         ]);

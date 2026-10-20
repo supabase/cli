@@ -74,6 +74,11 @@ describe("the token after a bare --remote", () => {
     expect(complete("db", "deploy", "--remote", "feat")).toEqual(noValueCandidates);
   });
 
+  it("is the value when it is the linked boolean literal y, even with a free positional slot", () => {
+    expect(complete("db", "pull", "--remote", "y")).toEqual(noValueCandidates);
+    expect(complete("db", "query", "--remote", "y")).toEqual(noValueCandidates);
+  });
+
   it("is the positional while the command has a free positional slot", () => {
     expect(complete("db", "pull", "--remote", "")).toEqual(positionalCandidates);
     expect(complete("db", "query", "--remote", "sel")).toEqual(positionalCandidates);

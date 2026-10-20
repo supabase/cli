@@ -34,7 +34,6 @@ export interface PullStepContext {
   readonly ref: string;
   readonly assumeYes: boolean;
   readonly target: ResolvedTarget;
-  /** The consent collected for the whole pull; `db pull` reuses it instead of asking again. */
   readonly preapproved: Option.Option<HostedMutationConsent>;
 }
 

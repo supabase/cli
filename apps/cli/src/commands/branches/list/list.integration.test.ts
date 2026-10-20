@@ -67,6 +67,8 @@ const EXPLICIT_REF = "explicitprojectrefzz";
 const ENV_REF = "envprojectrefaaaaaaa";
 const CACHE_REF = "cacheprojectrefbbbbb";
 const FILE_ONLY_REF = "fileonlyprojectrefcc";
+// A cached parent stands only while its branch list contains the linked branch.
+const LINKED_BRANCH: Branches[number] = { ...SAMPLE_BRANCH, project_ref: BRANCH_OWN_REF };
 
 function writeTempContent(workdir: string, name: string, content: string) {
   return Effect.gen(function* () {
@@ -386,14 +388,16 @@ describe("branches list integration", () => {
       () => {
         const { layer, out, api, workdir } = setup({
           projectId: Option.none(),
-          response: [SAMPLE_BRANCH],
+          response: [LINKED_BRANCH],
         });
         return Effect.gen(function* () {
           yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
           yield* writeLinkedProjectCacheFile(workdir, PARENT_REF);
           yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
-          expect(api.requests).toHaveLength(1);
-          expect(api.requests[0]?.url).toContain(`/v1/projects/${PARENT_REF}/branches`);
+          expect(api.requests.map(({ url }) => url)).toEqual([
+            `https://api.supabase.com/v1/projects/${PARENT_REF}/branches`,
+            `https://api.supabase.com/v1/projects/${PARENT_REF}/branches`,
+          ]);
           expect(out.stdoutText).toContain("STATUS");
           expect(out.stdoutText).toContain("feat-1");
           assertPermissionDrift({ command: "branches list", requests: api.requests, exact: true });
@@ -404,7 +408,7 @@ describe("branches list integration", () => {
     it.effect("announces the cached parent project as the production target", () => {
       const { layer, out, workdir } = setup({
         projectId: Option.none(),
-        response: [SAMPLE_BRANCH],
+        response: [LINKED_BRANCH],
       });
       return Effect.gen(function* () {
         yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
@@ -495,13 +499,13 @@ describe("branches list integration", () => {
       () => {
         const { layer, api, workdir } = setup({
           projectId: Option.some(BRANCH_OWN_REF),
-          response: [SAMPLE_BRANCH],
+          response: [LINKED_BRANCH],
         });
         return Effect.gen(function* () {
           yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
           yield* writeLinkedProjectCacheFile(workdir, PARENT_REF);
           yield* branchesList({ remote: Option.none(), projectRef: Option.none() });
-          expect(api.requests[0]?.url).toContain(`/v1/projects/${PARENT_REF}/branches`);
+          expect(api.requests.at(-1)?.url).toContain(`/v1/projects/${PARENT_REF}/branches`);
         }).pipe(Effect.provide(layer));
       },
     );
