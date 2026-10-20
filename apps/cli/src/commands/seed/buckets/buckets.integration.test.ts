@@ -310,7 +310,6 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
 });
 
 const FLAG_REF = "flagflagflagflagflag";
-const DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 
 const VECTOR_LIST = "/storage/v1/vector/ListVectorBuckets";
 const VECTOR_CREATE = "/storage/v1/vector/CreateVectorBucket";
@@ -2337,25 +2336,6 @@ describe("seed buckets", () => {
       expect(error).toMatchObject({
         _tag: "LinkBranchNotFoundError",
         message: expect.stringContaining("Available branches: feature-x"),
-      });
-      expect(requests).toEqual([]);
-      expect(linkedCache.cached).toBe(false);
-    }).pipe(seedScenario),
-  );
-
-  it.effect("rejects --remote=<url> because seeding buckets needs a project, not a database", () =>
-    Effect.gen(function* () {
-      const { layer, requests, linkedCache } = yield* setupSeedBuckets(tmp.current, {
-        toml: "[storage.buckets.test]\npublic = true\n",
-      });
-      const error = yield* seedBuckets({
-        ...DEFAULT_FLAGS,
-        remote: Option.some({ _tag: "DbUrl", url: DB_URL } as const),
-        local: false,
-      }).pipe(Effect.provide(layer), Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "TargetNeedsProjectError",
-        message: expect.stringContaining("needs a project, not a database URL"),
       });
       expect(requests).toEqual([]);
       expect(linkedCache.cached).toBe(false);

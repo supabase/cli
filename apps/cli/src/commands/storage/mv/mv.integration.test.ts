@@ -19,7 +19,6 @@ import type { StorageMvFlags } from "./mv.command.ts";
 import { warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
 const FLAG_REF = "flagflagflagflagflag";
-const DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 const MOVE = "/storage/v1/object/move";
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
 const REVEALED_API_KEYS = `GET https://api.supabase.com/v1/projects/${VALID_REF}/api-keys?reveal=true`;
@@ -354,25 +353,6 @@ describe("storage mv", () => {
         message: expect.stringContaining("Available branches: feature-x"),
       });
       expect(requests).toHaveLength(0);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("rejects --remote=<url> because storage needs a project, not a database", () => {
-    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
-      toml: 'project_id = "test"\n',
-      yes: true,
-    });
-    return Effect.gen(function* () {
-      const error = yield* storageMv({
-        ...mvFlags({ src: "ss:///private/a", dst: "ss:///private/b" }),
-        remote: Option.some({ _tag: "DbUrl", url: DB_URL } as const),
-      }).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "TargetNeedsProjectError",
-        message: expect.stringContaining("needs a project, not a database URL"),
-      });
-      expect(requests).toHaveLength(0);
-      expect(linkedCache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 

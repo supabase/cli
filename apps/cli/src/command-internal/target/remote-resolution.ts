@@ -32,12 +32,9 @@ import type { RemoteValue } from "./remote-value.ts";
 import { stripUserinfo } from "./remote-vocabulary.ts";
 import type { LinkedTarget } from "./resolve-target.ts";
 import { deprecationMessages, remoteFlagText, shellQuote } from "./target-deprecation.ts";
+import type { TargetFlagValues } from "./target-flags.ts";
 import { describeLinkedTarget, renderBranchTarget } from "./target-identity.ts";
-import {
-  parseTargetSelector,
-  type TargetDeprecation,
-  type TargetSelectorInput,
-} from "./target-selector.ts";
+import { parseTargetSelector, type TargetDeprecation } from "./target-selector.ts";
 import { TargetRemoteAmbiguousError } from "./target.errors.ts";
 
 /** A `--remote` value that names a hosted project, as opposed to a database URL. */
@@ -65,7 +62,7 @@ export const warnTargetDeprecations = Effect.fnUntraced(function* (
  * errors that need it.
  */
 export const selectTarget = Effect.fnUntraced(function* (
-  flags: TargetSelectorInput,
+  flags: TargetFlagValues,
   options: { readonly valueHint?: string } = {},
 ) {
   const runtime = yield* Effect.serviceOption(CommandRuntime);
@@ -75,7 +72,7 @@ export const selectTarget = Effect.fnUntraced(function* (
   const cliArgs = yield* Effect.serviceOption(CliArgs);
   const remoteConflict = Option.getOrUndefined(cliArgs)?.remoteConflict === true;
   const { selection, deprecations } = yield* Result.match(
-    parseTargetSelector(flags, { commandName, remoteConflict, ...options }),
+    parseTargetSelector(flags, { remoteConflict, ...options }),
     { onFailure: Effect.fail, onSuccess: Effect.succeed },
   );
   yield* warnTargetDeprecations(deprecations);

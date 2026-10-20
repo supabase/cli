@@ -53,7 +53,7 @@ export class TargetInvalidValueError extends Data.TaggedError("TargetInvalidValu
   }
 }
 
-/** A command that acts on a project was given a database URL. */
+/** A command that acts on a parent project was given a branch name. */
 export class TargetNeedsProjectError extends Data.TaggedError("TargetNeedsProjectError")<{
   readonly message: string;
 }> {
@@ -97,5 +97,4 @@ export type TargetSelectorError =
   | TargetSelectorConflictError
   | TargetProjectRefConflictError
   | TargetEmptyValueError
-  | TargetInvalidValueError
-  | TargetNeedsProjectError;
+  | TargetInvalidValueError;

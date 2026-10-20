@@ -709,31 +709,6 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("--remote=<url> is rejected before any request", () => {
-    const { layer, api } = setup({ toml: 'project_id = "test"\n' });
-    return Effect.gen(function* () {
-      const error = yield* configDiff({
-        ...noFlags,
-        remote: Option.some<RemoteValue>({
-          _tag: "DbUrl",
-          url: "postgresql://postgres:pw@db.example.com:5432/postgres",
-        }),
-      }).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "TargetNeedsProjectError",
-        message: "`supabase config diff` needs a project, not a database URL.",
-      });
-      expect(api.requests).toEqual([]);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layer,
-          commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunServices.layer)),
-        ),
-      ),
-    );
-  });
-
   it.effect("an unknown branch fails listing the available branches", () => {
     const { layer, telemetry, linkedProjectCache } = setup({
       toml: 'project_id = "test"\n',

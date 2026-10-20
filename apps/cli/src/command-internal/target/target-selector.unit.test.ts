@@ -2,17 +2,17 @@ import { Option, Result } from "effect";
 import { describe, expect, it } from "vitest";
 
 import type { RemoteValue } from "./remote-value.ts";
+import type { TargetFlagValues } from "./target-flags.ts";
 import {
   hasExplicitSelector,
   parseTargetSelector,
-  type TargetSelectorInput,
   type TargetSelectorOptions,
 } from "./target-selector.ts";
 
 const REF = "abcdefghijklmnopqrst";
 const URL = "postgresql://u:p@db.example.com:5432/postgres";
 
-const none: TargetSelectorInput = {
+const none: TargetFlagValues = {
   remote: Option.none(),
   local: false,
   linked: false,
@@ -22,17 +22,17 @@ const none: TargetSelectorInput = {
 
 const remote = (value: RemoteValue) => ({ remote: Option.some(value) });
 
-const parse = (overrides: Partial<TargetSelectorInput>, options?: TargetSelectorOptions) =>
+const parse = (overrides: Partial<TargetFlagValues>, options?: TargetSelectorOptions) =>
   parseTargetSelector({ ...none, ...overrides }, options);
 
-const success = (overrides: Partial<TargetSelectorInput>) => {
+const success = (overrides: Partial<TargetFlagValues>) => {
   const result = parse(overrides);
   if (Result.isFailure(result))
     throw new Error(`expected the selector to be accepted: ${result.failure.message}`);
   return result.success;
 };
 
-const failure = (overrides: Partial<TargetSelectorInput>, options?: TargetSelectorOptions) => {
+const failure = (overrides: Partial<TargetFlagValues>, options?: TargetSelectorOptions) => {
   const result = parse(overrides, options);
   if (Result.isSuccess(result)) throw new Error("expected the selector to be rejected");
   return result.failure;
@@ -378,7 +378,7 @@ describe("parseTargetSelector", () => {
   });
 
   describe("a command with no database connection", () => {
-    const hosted = (overrides: Partial<TargetSelectorInput>, options?: TargetSelectorOptions) =>
+    const hosted = (overrides: Partial<TargetFlagValues>, options?: TargetSelectorOptions) =>
       parseTargetSelector(
         {
           remote: Option.none(),
@@ -402,22 +402,18 @@ describe("parseTargetSelector", () => {
       });
     });
 
-    it("rejects a database URL and names the command", () => {
-      const result = hosted(remote({ _tag: "DbUrl", url: URL }), {
-        commandName: "`supabase functions deploy`",
-      });
+    it("rejects a database URL given to --project-ref without echoing it", () => {
+      const result = hosted({ projectRef: Option.some(URL) });
       expect(result).toMatchObject({
         failure: {
-          _tag: "TargetNeedsProjectError",
-          message: "`supabase functions deploy` needs a project, not a database URL.",
+          _tag: "TargetInvalidValueError",
+          flag: "--project-ref",
+          message: "--project-ref takes a project ref or a branch name, not a URL.",
+          suggestion:
+            "Pass a project ref or a branch name, for example --remote=abcdefghijklmnopqrst",
         },
       });
-    });
-
-    it("falls back to a generic name for the command", () => {
-      expect(hosted(remote({ _tag: "DbUrl", url: URL }))).toMatchObject({
-        failure: { message: "This command needs a project, not a database URL." },
-      });
+      expect(JSON.stringify(result)).not.toContain("db.example.com");
     });
   });
 });
@@ -427,7 +423,7 @@ describe("hasExplicitSelector", () => {
     expect(hasExplicitSelector(none)).toBe(false);
   });
 
-  it.each<readonly [string, Partial<TargetSelectorInput>]>([
+  it.each<readonly [string, Partial<TargetFlagValues>]>([
     ["--remote", { remote: Option.some({ _tag: "Linked" }) }],
     ["--linked", { linked: true }],
     ["--local", { local: true }],

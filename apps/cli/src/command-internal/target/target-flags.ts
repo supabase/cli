@@ -12,10 +12,10 @@ interface TargetFlagOptions {
   readonly subject: TargetSubject;
 }
 
-interface SelectableRemoteFlagVariant<DbUrl extends boolean> {
+interface SelectableRemoteFlagVariant {
   readonly kind: "selectable";
   readonly subject: TargetSubject;
-  readonly dbUrl: DbUrl;
+  readonly dbUrl: boolean;
 }
 
 interface HostedRemoteFlagVariant {
@@ -24,15 +24,10 @@ interface HostedRemoteFlagVariant {
   readonly parent: boolean;
 }
 
-type RemoteFlagVariant = SelectableRemoteFlagVariant<boolean> | HostedRemoteFlagVariant;
+type RemoteFlagVariant = SelectableRemoteFlagVariant | HostedRemoteFlagVariant;
 
-declare const urlAcceptance: unique symbol;
-
-/** A `--remote` value on a command that takes a database URL; the brand exists only in the type. */
-type RemoteValueWithUrl = RemoteValue & { readonly [urlAcceptance]?: "accepted" };
-
-/** A `--remote` value on a command with no database connection; the brand exists only in the type. */
-type RemoteValueWithoutUrl = RemoteValue & { readonly [urlAcceptance]?: "rejected" };
+const takesDbUrl = (variant: RemoteFlagVariant): boolean =>
+  variant.kind === "selectable" && variant.dbUrl;
 
 /** What the variant's `--remote` takes as a value; the help rows, the flag description and the errors all read it. */
 const valueHintOf = (variant: RemoteFlagVariant): string => {
@@ -42,7 +37,7 @@ const valueHintOf = (variant: RemoteFlagVariant): string => {
 
 const acceptedValuesOf = (variant: RemoteFlagVariant): string => {
   if (variant.kind === "hosted" && variant.parent) return "a project ref";
-  const url = variant.kind === "selectable" && variant.dbUrl ? "a postgres:// URL, " : "";
+  const url = takesDbUrl(variant) ? "a postgres:// URL, " : "";
   return `${url}a project ref or a branch name`;
 };
 
@@ -72,7 +67,7 @@ const rejectionMessage = (variant: RemoteFlagVariant, rejection: RemoteValueReje
       }`;
     case "KeywordDsn":
       return `--remote takes ${acceptedValuesOf(variant)}${
-        variant.kind === "selectable" && variant.dbUrl
+        takesDbUrl(variant)
           ? "; convert a connection string to a postgresql:// URL and pass --remote=<url>."
           : "."
       }`;
@@ -83,7 +78,8 @@ const REMOTE_PRIMITIVE = Symbol.for("supabase/cli/RemotePrimitive");
 
 /**
  * Keeps the `Boolean` primitive tag so the parser accepts a bare `--remote` and never takes the
- * next token as its value; only `--remote=<value>` (or a boolean literal) reaches `parse`.
+ * next token as its value; only `--remote=<value>` (or a boolean literal) reaches `parse`. A
+ * database URL is rejected here for a command with no database connection.
  */
 const remotePrimitive = (variant: RemoteFlagVariant): Primitive.Primitive<RemoteValue> =>
   Object.assign(Object.create(Primitive.Boolean), {
@@ -91,7 +87,10 @@ const remotePrimitive = (variant: RemoteFlagVariant): Primitive.Primitive<Remote
     parse: (raw: string) =>
       Result.match(parseRemoteValue(raw), {
         onFailure: (rejection) => Effect.fail(rejectionMessage(variant, rejection)),
-        onSuccess: Effect.succeed,
+        onSuccess: (value) =>
+          value._tag === "DbUrl" && !takesDbUrl(variant)
+            ? Effect.fail(`--remote takes ${acceptedValuesOf(variant)}.`)
+            : Effect.succeed(value),
       }),
   });
 
@@ -100,21 +99,13 @@ export const isRemoteFlag = (single: Param.Single<Param.ParamKind, unknown>): bo
   REMOTE_PRIMITIVE in single.primitiveType;
 
 /** `--remote`: the linked project when bare, else the project, branch or database named by its value. */
-function remoteFlag(
-  variant: SelectableRemoteFlagVariant<true>,
-): Flag.Flag<Option.Option<RemoteValueWithUrl>>;
-function remoteFlag(
-  variant: SelectableRemoteFlagVariant<false>,
-): Flag.Flag<Option.Option<RemoteValueWithoutUrl>>;
-function remoteFlag(variant: HostedRemoteFlagVariant): Flag.Flag<Option.Option<RemoteValue>>;
-function remoteFlag(variant: RemoteFlagVariant): Flag.Flag<Option.Option<RemoteValue>> {
-  return Param.makeSingle({
+const remoteFlag = (variant: RemoteFlagVariant): Flag.Flag<Option.Option<RemoteValue>> =>
+  Param.makeSingle({
     kind: Param.flagKind,
     name: REMOTE_FLAG_NAME,
     primitiveType: remotePrimitive(variant),
     typeName: valueHintOf(variant),
   }).pipe(Flag.withDescription(remoteDescription(variant)), Flag.optional);
-}
 
 const localFlag = () =>
   Flag.Boolean("local").pipe(
@@ -146,20 +137,14 @@ const projectRefFlag = () =>
     Flag.withHidden,
   );
 
-export type TargetFlagsWithDbUrl = {
-  readonly remote: Flag.Flag<Option.Option<RemoteValueWithUrl>>;
+type TargetFlagDeclarations = {
+  readonly remote: Flag.Flag<Option.Option<RemoteValue>>;
   readonly local: Flag.Flag<boolean>;
   readonly linked: Flag.Flag<boolean>;
-  readonly dbUrl: Flag.Flag<Option.Option<string>>;
   readonly projectRef: Flag.Flag<Option.Option<string>>;
 };
 
-export type TargetFlagsWithoutDbUrl = {
-  readonly remote: Flag.Flag<Option.Option<RemoteValueWithoutUrl>>;
-  readonly local: Flag.Flag<boolean>;
-  readonly linked: Flag.Flag<boolean>;
-  readonly projectRef: Flag.Flag<Option.Option<string>>;
-};
+type DbUrlFlagDeclaration = { readonly dbUrl: Flag.Flag<Option.Option<string>> };
 
 /** The decoded flags every hosted command's selector is read from. */
 export interface ProjectTargetFlagValues {
@@ -173,41 +158,30 @@ export interface TargetFlagValues extends ProjectTargetFlagValues {
   readonly linked: boolean;
   /** `gen types` only: the deprecated alias of `--project-ref`. */
   readonly projectId?: Option.Option<string>;
+  /** The deprecated `--db-url`; absent on a command with no database connection. */
+  readonly dbUrl?: Option.Option<string>;
 }
 
 /** The decoded flags of a command whose `targetFlags` declared `dbUrl: true`. */
 export interface TargetFlagValuesWithDbUrl extends TargetFlagValues {
-  readonly remote: Option.Option<RemoteValueWithUrl>;
   readonly dbUrl: Option.Option<string>;
-}
-
-/** The decoded flags of a command whose `targetFlags` declared `dbUrl: false`. */
-export interface TargetFlagValuesWithoutDbUrl extends TargetFlagValues {
-  readonly remote: Option.Option<RemoteValueWithoutUrl>;
-  readonly dbUrl?: undefined;
 }
 
 /** The only declaration of `--remote` and its deprecated `--local`, `--linked`, `--db-url` and `--project-ref` aliases for selectable commands. */
 export function targetFlags(
   options: TargetFlagOptions & { readonly dbUrl: true },
-): TargetFlagsWithDbUrl;
+): TargetFlagDeclarations & DbUrlFlagDeclaration;
 export function targetFlags(
   options: TargetFlagOptions & { readonly dbUrl: false },
-): TargetFlagsWithoutDbUrl;
-export function targetFlags(
-  options: TargetFlagOptions & { readonly dbUrl: boolean },
-): TargetFlagsWithDbUrl | TargetFlagsWithoutDbUrl {
-  const base = { local: localFlag(), linked: linkedFlag(), projectRef: projectRefFlag() };
-  return options.dbUrl
-    ? {
-        ...base,
-        remote: remoteFlag({ kind: "selectable", subject: options.subject, dbUrl: true }),
-        dbUrl: dbUrlFlag(),
-      }
-    : {
-        ...base,
-        remote: remoteFlag({ kind: "selectable", subject: options.subject, dbUrl: false }),
-      };
+): TargetFlagDeclarations;
+export function targetFlags(options: TargetFlagOptions & { readonly dbUrl: boolean }) {
+  const base = {
+    remote: remoteFlag({ kind: "selectable", subject: options.subject, dbUrl: options.dbUrl }),
+    local: localFlag(),
+    linked: linkedFlag(),
+    projectRef: projectRefFlag(),
+  };
+  return options.dbUrl ? { ...base, dbUrl: dbUrlFlag() } : base;
 }
 
 /** The flags of a hosted-only command: `--remote=<ref|branch>` and the deprecated `--project-ref` alias; `parent` narrows the value to a ref. */
@@ -253,7 +227,7 @@ export const readSeedTargetFlags = Effect.fnUntraced(function* () {
     linked: yield* seedTargetGlobalFlags.linked,
     local: yield* seedTargetGlobalFlags.local,
     projectRef: yield* seedTargetGlobalFlags.projectRef,
-  } satisfies TargetFlagValuesWithoutDbUrl;
+  } satisfies TargetFlagValues;
 });
 
 /** Hidden alias of `--remote=<ref>`, accepted only by `gen types`. */

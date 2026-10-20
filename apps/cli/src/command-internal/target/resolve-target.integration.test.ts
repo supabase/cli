@@ -33,9 +33,9 @@ import { resolveTarget } from "./resolve-target.ts";
 import { renderLocalTarget } from "./target-identity.ts";
 import { TargetPolicy } from "./target-policy.ts";
 import type { TargetGroup } from "./target-policy.ts";
-import type { TargetFlagValuesWithDbUrl } from "./target-flags.ts";
+import type { TargetFlagValues } from "./target-flags.ts";
 
-const none: TargetFlagValuesWithDbUrl = {
+const none: TargetFlagValues = {
   remote: Option.none(),
   local: false,
   linked: false,
@@ -43,7 +43,7 @@ const none: TargetFlagValuesWithDbUrl = {
   projectRef: Option.none(),
 };
 
-const remote = (value: RemoteValue): Partial<TargetFlagValuesWithDbUrl> => ({
+const remote = (value: RemoteValue): Partial<TargetFlagValues> => ({
   remote: Option.some(value),
 });
 
@@ -100,7 +100,7 @@ const projectRefResolver = (options: { readonly linked: boolean }) => {
 
 const run = (
   group: TargetGroup,
-  input: TargetFlagValuesWithDbUrl,
+  input: TargetFlagValues,
   options: {
     readonly linked?: boolean;
     readonly projectId?: Option.Option<string>;

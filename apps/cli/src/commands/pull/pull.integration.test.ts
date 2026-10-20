@@ -997,31 +997,6 @@ describe("pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("--remote=<url> is rejected before any request", () => {
-    const { layer, api } = setup({ yes: true });
-    return Effect.gen(function* () {
-      yield* writeConfig();
-      const error = yield* runPull(
-        pullFlags({
-          remote: Option.some<RemoteValue>({
-            _tag: "DbUrl",
-            url: "postgresql://postgres:pw@db.example.com:5432/postgres",
-          }),
-          dryRun: true,
-        }),
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "TargetNeedsProjectError",
-        message: "`supabase pull` needs a project, not a database URL.",
-      });
-      expect(api.requests).toEqual([]);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(layer, commandRuntimeLayer(["pull"]).pipe(Layer.provide(BunServices.layer))),
-      ),
-    );
-  });
-
   it.effect(
     "a branch-name --remote resolves exactly once: one branch lookup, one config GET, no picker prompt",
     () => {

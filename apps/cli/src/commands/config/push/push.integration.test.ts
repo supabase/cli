@@ -3570,31 +3570,6 @@ describe("config push --remote branch name/UUID resolution (CLI-2289)", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("--remote=<url> is rejected before any request", () => {
-    const { layer, api } = setup({ toml: BRANCH_PUSH_TOML, yes: true });
-    return Effect.gen(function* () {
-      const error = yield* configPush({
-        remote: Option.some<RemoteValue>({
-          _tag: "DbUrl",
-          url: "postgresql://postgres:pw@db.example.com:5432/postgres",
-        }),
-        projectRef: Option.none(),
-      }).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "TargetNeedsProjectError",
-        message: "`supabase config push` needs a project, not a database URL.",
-      });
-      expect(api.requests).toEqual([]);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          layer,
-          commandRuntimeLayer(["config", "push"]).pipe(Layer.provide(BunServices.layer)),
-        ),
-      ),
-    );
-  });
-
   it.effect("--remote=<unknown-branch-name> fails listing the available branches", () => {
     const { layer, api, telemetry, linkedProjectCache } = setup({
       toml: BRANCH_PUSH_TOML,

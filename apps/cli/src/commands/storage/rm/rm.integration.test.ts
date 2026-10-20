@@ -43,7 +43,6 @@ const RM_ARGS = {
   projectRef: Option.none(),
 };
 const FLAG_REF = "flagflagflagflagflag";
-const DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 const BUCKET = "/storage/v1/bucket";
 const DELETE_OBJECT = (bucket: string) => `/storage/v1/object/${bucket}`;
 const DELETE_BUCKET = (bucket: string) => `/storage/v1/bucket/${bucket}`;
@@ -823,25 +822,6 @@ describe("storage rm", () => {
         message: expect.stringContaining("Available branches: feature-x"),
       });
       expect(requests).toHaveLength(0);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("rejects --remote=<url> because storage needs a project, not a database", () => {
-    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
-      toml: 'project_id = "test"\n',
-      yes: true,
-    });
-    return Effect.gen(function* () {
-      const error = yield* storageRm({
-        ...RM_ARGS,
-        remote: Option.some({ _tag: "DbUrl", url: DB_URL } as const),
-      }).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "TargetNeedsProjectError",
-        message: expect.stringContaining("needs a project, not a database URL"),
-      });
-      expect(requests).toHaveLength(0);
-      expect(linkedCache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 

@@ -22,7 +22,6 @@ import type { ActiveFlags, PermissionVariant } from "./permission-registry.ts";
 import { BRANCH_PROJECT_REF, branchRow, warningsOf } from "./remote-selection.ts";
 
 const OTHER_REF = "qrstuvwxyzabcdefghij";
-const DB_URL = "postgresql://postgres:pw@db.example.com:5432/postgres";
 const API_URL = "https://api.supabase.com";
 const PROJECT_REF_IN_URL = /\/v[12]\/projects\/([a-z]{20})(?:[/?]|$)/;
 
@@ -82,8 +81,8 @@ const projectRefsOf = (requests: ReadonlyArray<RecordedCall>): ReadonlyArray<str
 /**
  * Registers the `--remote` selection matrix for the leaf `path`: `--remote=<ref>` with no
  * warning, a bare `--remote` on the linked project, the `--project-ref` alias with its
- * deprecation warning, a database URL rejected before any request, and a branch name looked up
- * under the linked project (or rejected, for a parent-scoped command).
+ * deprecation warning, and a branch name looked up under the linked project (or rejected, for a
+ * parent-scoped command).
  */
 export function describeTargetSelectionMatrix<R>(
   path: string,
@@ -156,22 +155,6 @@ export function describeTargetSelectionMatrix<R>(
         expect(run.warnings()).toEqual([
           `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
         ]);
-      }).pipe(Effect.provide(run.layer));
-    });
-
-    it.effect("rejects a database URL before any request", () => {
-      const run = harness([`--remote=${DB_URL}`], VALID_REF);
-      return Effect.gen(function* () {
-        yield* prepare;
-        const error = yield* matrix
-          .run({ remote: Option.some({ _tag: "DbUrl", url: DB_URL }), projectRef: Option.none() })
-          .pipe(Effect.flip);
-
-        expect(error).toMatchObject({
-          _tag: "TargetNeedsProjectError",
-          message: `${commandName} needs a project, not a database URL.`,
-        });
-        expect(run.requests()).toEqual([]);
       }).pipe(Effect.provide(run.layer));
     });
 

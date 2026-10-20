@@ -20,7 +20,6 @@ import type { StorageCpFlags } from "./cp.command.ts";
 import { warningsOf } from "../../../../tests/helpers/remote-selection.ts";
 
 const FLAG_REF = "flagflagflagflagflag";
-const DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 const BUCKET = "/storage/v1/bucket";
 const OBJECT = (p: string) => `/storage/v1/object/${p}`;
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
@@ -631,26 +630,6 @@ describe("storage cp", () => {
         message: expect.stringContaining("Available branches: feature-x"),
       });
       expect(requests).toHaveLength(0);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("rejects --remote=<url> because storage needs a project, not a database", () => {
-    const { layer, requests, linkedCache } = setupStorage(tmp.current, {
-      toml: 'project_id = "test"\n',
-      yes: true,
-    });
-    return Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const error = yield* storageCp({
-        ...cpFlags({ src: "ss:///private/readme.md", dst: path.join(tmp.current, "out.md") }),
-        remote: Option.some({ _tag: "DbUrl", url: DB_URL } as const),
-      }).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "TargetNeedsProjectError",
-        message: expect.stringContaining("needs a project, not a database URL"),
-      });
-      expect(requests).toHaveLength(0);
-      expect(linkedCache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 

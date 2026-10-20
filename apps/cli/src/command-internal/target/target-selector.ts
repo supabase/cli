@@ -1,26 +1,25 @@
 import { Option, Result } from "effect";
 
-import { parseNamedRemote, type RemoteValue } from "./remote-value.ts";
+import {
+  parseNamedRemote,
+  type NamedRemoteRejection,
+  type NamedRemoteValue,
+  type RemoteValue,
+} from "./remote-value.ts";
 import type { TargetFlagValues } from "./target-flags.ts";
 import {
   TargetEmptyValueError,
   TargetInvalidValueError,
-  TargetNeedsProjectError,
   TargetProjectRefConflictError,
   TargetSelectorConflictError,
   type TargetSelectorError,
 } from "./target.errors.ts";
 
-/** The decoded selector flags; `dbUrl` is absent for a command with no database connection, which rejects a database URL. */
-export type TargetSelectorInput = TargetFlagValues & {
-  readonly dbUrl?: Option.Option<string> | undefined;
-};
-
 /** What the flags select: the default, the local stack, or a remote project, branch or database. */
 type TargetSelection = { readonly _tag: "Default" } | { readonly _tag: "Local" } | RemoteValue;
 
 /** Whether any selector flag, `--local` and the deprecated aliases included, was given. */
-export const hasExplicitSelector = (flags: TargetSelectorInput): boolean =>
+export const hasExplicitSelector = (flags: TargetFlagValues): boolean =>
   flags.local ||
   flags.linked ||
   Option.isSome(flags.remote) ||
@@ -45,8 +44,6 @@ export interface ParsedTargetSelector {
 }
 
 export interface TargetSelectorOptions {
-  /** Names the command in the error for a database URL it cannot use. */
-  readonly commandName?: string;
   /** What `--remote` takes on this command, for the suggestions; a command with no `dbUrl` input defaults to `<ref|branch>`. */
   readonly valueHint?: string;
   /** `--remote` is given more than once with values that differ. */
@@ -79,13 +76,25 @@ const PROJECT_REF_CONFLICT_SUGGESTION: Readonly<
 
 const trimmed = (value: string): string => value.trim();
 
+/** Why an alias value cannot be used: a foreign URL or keyword connection string, or a database URL on a command with no database. */
+const aliasRejection = (
+  parsed: Result.Result<NamedRemoteValue, NamedRemoteRejection> | undefined,
+  hasDatabase: boolean,
+): NamedRemoteRejection | undefined => {
+  if (parsed === undefined) return undefined;
+  if (Result.isFailure(parsed)) return parsed.failure;
+  return parsed.success._tag === "DbUrl" && !hasDatabase
+    ? { _tag: "ForeignUrl", ref: undefined }
+    : undefined;
+};
+
 /**
  * A `false` switch counts as absent, so `--linked=false` and `--no-linked` select nothing.
  * `--linked`, `--project-ref`, `--project-id` and `--db-url` resolve exactly like the `--remote`
  * form they map to and are reported as deprecations; `--local` selects the default.
  */
 export const parseTargetSelector = (
-  input: TargetSelectorInput,
+  input: TargetFlagValues,
   options: TargetSelectorOptions = {},
 ): Result.Result<ParsedTargetSelector, TargetSelectorError> => {
   const remote = Option.getOrUndefined(input.remote);
@@ -163,14 +172,15 @@ export const parseTargetSelector = (
   }
 
   const aliasRemote = aliasValue === undefined ? undefined : parseNamedRemote(aliasValue);
-  if (aliasRemote !== undefined && Result.isFailure(aliasRemote)) {
+  const rejectedAlias = aliasRejection(aliasRemote, input.dbUrl !== undefined);
+  if (rejectedAlias !== undefined) {
     return Result.fail(
       new TargetInvalidValueError({
         flag: aliasFlag,
-        message: `${aliasFlag} takes a project ref or a branch name, not a ${aliasRemote.failure._tag === "ForeignUrl" ? "URL" : "connection string"}.`,
+        message: `${aliasFlag} takes a project ref or a branch name, not a ${rejectedAlias._tag === "ForeignUrl" ? "URL" : "connection string"}.`,
         suggestion:
-          aliasRemote.failure._tag === "ForeignUrl" && aliasRemote.failure.ref !== undefined
-            ? `Use --remote=${aliasRemote.failure.ref}.`
+          rejectedAlias._tag === "ForeignUrl" && rejectedAlias.ref !== undefined
+            ? `Use --remote=${rejectedAlias.ref}.`
             : "Pass a project ref or a branch name, for example --remote=abcdefghijklmnopqrst",
       }),
     );
@@ -211,12 +221,5 @@ export const parseTargetSelector = (
     return { selection: { _tag: "Default" }, deprecations: [] };
   })();
 
-  if (input.dbUrl === undefined && outcome.selection._tag === "DbUrl") {
-    return Result.fail(
-      new TargetNeedsProjectError({
-        message: `${options.commandName ?? "This command"} needs a project, not a database URL.`,
-      }),
-    );
-  }
   return Result.succeed(outcome);
 };

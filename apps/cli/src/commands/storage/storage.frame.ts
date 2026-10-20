@@ -15,7 +15,7 @@ import {
   makeStorageGateway,
   type StorageGateway,
 } from "../../command-internal/storage-gateway.ts";
-import type { TargetFlagValuesWithoutDbUrl } from "../../command-internal/target/target-flags.ts";
+import type { TargetFlagValues } from "../../command-internal/target/target-flags.ts";
 import { resolveTarget } from "../../command-internal/target/resolve-target.ts";
 import {
   UrlParseError,
@@ -36,9 +36,7 @@ import {
 } from "./storage.errors.ts";
 
 /** The resolved target and its project ref, empty for the local stack. */
-export const resolveStorageTarget = Effect.fnUntraced(function* (
-  flags: TargetFlagValuesWithoutDbUrl,
-) {
+export const resolveStorageTarget = Effect.fnUntraced(function* (flags: TargetFlagValues) {
   const target = yield* resolveTarget(flags);
   return { target, projectRef: target.kind === "linked" ? target.ref : "" };
 });

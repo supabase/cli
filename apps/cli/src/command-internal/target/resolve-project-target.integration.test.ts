@@ -284,14 +284,15 @@ describe("resolveProjectTarget", () => {
     }),
   );
 
-  it.effect("rejects a database URL, naming the command", () =>
+  it.effect("rejects a database URL given to --project-ref, since a project has no database", () =>
     Effect.gen(function* () {
       const result = yield* run({
-        remote: { _tag: "DbUrl", url: "postgresql://postgres:pw@db.example.com:5432/postgres" },
+        projectRef: "postgresql://postgres:pw@db.example.com:5432/postgres",
       });
       expect(failureOf(result.exit)).toMatchObject({
-        _tag: "TargetNeedsProjectError",
-        message: "`supabase functions deploy` needs a project, not a database URL.",
+        _tag: "TargetInvalidValueError",
+        flag: "--project-ref",
+        message: "--project-ref takes a project ref or a branch name, not a URL.",
       });
       expect(result.refFlags).toEqual([]);
     }),

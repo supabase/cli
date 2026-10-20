@@ -140,7 +140,7 @@ describe("remote target selection", () => {
   testBehaviour("rejects --remote=<url> on a hosted command", async ({ run, apiUrl }) => {
     const result = await run(["secrets", "list", `--remote=${DEAD_DB_URL}`]);
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("needs a project, not a database URL");
+    expect(result.stderr).toContain("--remote takes a project ref or a branch name.");
     const requests = await getRequestLog(apiUrl);
     expect(requests.filter((r) => r.pathname.endsWith("/secrets"))).toEqual([]);
   });

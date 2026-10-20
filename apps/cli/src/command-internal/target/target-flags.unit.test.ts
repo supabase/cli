@@ -14,7 +14,6 @@ import {
   seedTargetGlobalFlags,
   targetFlags,
 } from "./target-flags.ts";
-import { resolveTarget } from "./resolve-target.ts";
 
 const silentFormatter: CliOutput.Formatter = {
   formatCliError: () => "",
@@ -218,28 +217,32 @@ describe("targetFlags", () => {
     ]);
   });
 
-  it("keeps a database-URL leaf from dropping --db-url and a no-URL leaf from passing one", () => {
-    const storage = targetFlags({ subject: "Storage API", dbUrl: false });
-    const unselected = {
-      remote: Option.none(),
-      local: false,
-      linked: false,
-      projectRef: Option.none(),
-    };
-    const withUrl: CliCommand.Command.Config.Infer<typeof withDbUrl> = {
-      ...unselected,
-      dbUrl: Option.none(),
-    };
-    const withoutUrl: CliCommand.Command.Config.Infer<typeof storage> = unselected;
-    const { dbUrl: _dropped, ...droppedDbUrl } = withUrl;
-
-    expect(Effect.isEffect(resolveTarget(withUrl))).toBe(true);
-    expect(Effect.isEffect(resolveTarget(withoutUrl))).toBe(true);
-    // @ts-expect-error a leaf that declared dbUrl: true cannot hand the resolver flags without it
-    resolveTarget(droppedDbUrl);
-    // @ts-expect-error a leaf that declared dbUrl: false cannot pass a database URL
-    resolveTarget({ ...withoutUrl, dbUrl: Option.some(URL) });
-  });
+  it.effect.each([
+    {
+      name: "a command with no database connection",
+      config: targetFlags({ subject: "Storage API", dbUrl: false }),
+      message: "--remote takes a project ref or a branch name.",
+    },
+    {
+      name: "a hosted command",
+      config: projectTargetFlags(),
+      message: "--remote takes a project ref or a branch name.",
+    },
+    {
+      name: "a parent-scoped hosted command",
+      config: projectTargetFlags({ parent: true }),
+      message: "--remote takes a project ref.",
+    },
+    {
+      name: "the seed group",
+      config: { remote: seedTargetGlobalFlags.remote.flag },
+      message: "--remote takes a project ref or a branch name.",
+    },
+  ])("rejects a database URL on $name without echoing it", ({ config, message }) =>
+    Effect.gen(function* () {
+      expect(yield* rejectedMessage(config, [`--remote=${URL}`])).toBe(message);
+    }),
+  );
 
   it("shows --remote and hides every deprecated alias", () => {
     expect(describeFlag(withDbUrl.remote).hidden).toBeFalsy();

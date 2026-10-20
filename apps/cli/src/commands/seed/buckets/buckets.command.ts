@@ -6,7 +6,7 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import {
   readSeedTargetFlags,
-  type TargetFlagValuesWithoutDbUrl,
+  type TargetFlagValues,
 } from "../../../command-internal/target/target-flags.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -16,7 +16,7 @@ import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-ru
 import { seedBuckets } from "./buckets.handler.ts";
 import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
-export type BucketsFlags = TargetFlagValuesWithoutDbUrl;
+export type BucketsFlags = TargetFlagValues;
 
 export const bucketsCommand = Command.make("buckets").pipe(
   Command.withDescription("Seed buckets declared in [storage.buckets]."),
