@@ -1,4 +1,5 @@
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { describeDbTargetSelection } from "../../../../tests/helpers/db-target-selection.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -83,11 +84,7 @@ import { ShadowDbError } from "../../../command-internal/db-bootstrap/shadow-dat
 import { MigrationApplyError } from "../../../command-internal/migration-apply.ts";
 import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
 import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
-import {
-  TargetPasswordConflictError,
-  TargetProjectRefConflictError,
-  TargetSelectorConflictError,
-} from "../../../command-internal/target/target.errors.ts";
+import { TargetPasswordConflictError } from "../../../command-internal/target/target.errors.ts";
 import { MigrationFileNotFoundError, MigrationInvalidVersionError } from "../migration.errors.ts";
 import type { MigrationSquashFlags } from "./squash.command.ts";
 import {
@@ -97,11 +94,7 @@ import {
   MigrationSquashWriteError,
 } from "./squash.errors.ts";
 import { migrationSquash } from "./squash.handler.ts";
-import {
-  BRANCH_PROJECT_REF,
-  branchRow,
-  warningsOf,
-} from "../../../../tests/helpers/remote-selection.ts";
+import { branchRow } from "../../../../tests/helpers/remote-selection.ts";
 
 // Distinguishes squash's three pg_dump containers from the shadow's setup jobs by env:
 // only a pg_dump invocation carries PGDATABASE. Among dump calls, the first two sharing
@@ -239,9 +232,6 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
     Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status: 200 }))),
   ),
 );
-
-const FLAG_REF = "flagflagflagflagflag";
-const DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 
 interface SetupOpts {
   /** Runs the real `DbConfigResolver` and linked-project cache against `workdir`. */
@@ -465,7 +455,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     telemetry,
     cache,
     branchRequests: branchApi.requests,
-    warnings: () => warningsOf(out),
     ...fake,
   };
 }
@@ -533,44 +522,6 @@ const tmp = useTempWorkdir();
 
 describe("migration squash", () => {
   describe("flag surface & ordering", () => {
-    it.effect("rejects --remote combined with --local", () => {
-      const s = setup(tmp.current);
-      return Effect.gen(function* () {
-        const error = yield* migrationSquash(
-          flags({ remote: Option.some({ _tag: "Linked" }), local: true }),
-        ).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(TargetSelectorConflictError);
-        expect(s.resolverCalls).toEqual([]);
-      }).pipe(Effect.provide(s.layer));
-    });
-
-    it.effect("rejects --project-ref combined with --local before any shadow or cache work", () => {
-      const s = setup(tmp.current);
-      return Effect.gen(function* () {
-        const error = yield* migrationSquash(
-          flags({ local: true, projectRef: Option.some(VALID_REF) }),
-        ).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(TargetProjectRefConflictError);
-        expect(s.resolverCalls).toEqual([]);
-        expect(s.shadowSpawned).toEqual([]);
-        expect(s.dumpCalls).toEqual([]);
-        expect(s.setupJobCalls).toEqual([]);
-        expect(s.cache.cached).toBe(false);
-      }).pipe(Effect.provide(s.layer));
-    });
-
-    it.effect("rejects --project-ref combined with --db-url", () => {
-      const s = setup(tmp.current);
-      return Effect.gen(function* () {
-        const error = yield* migrationSquash(
-          flags({ dbUrl: Option.some("postgresql://x"), projectRef: Option.some(VALID_REF) }),
-        ).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(TargetProjectRefConflictError);
-        expect(s.resolverCalls).toEqual([]);
-        expect(s.cache.cached).toBe(false);
-      }).pipe(Effect.provide(s.layer));
-    });
-
     it.effect("rejects --password combined with --remote=<url> through the real resolver", () => {
       const s = setup(tmp.current, { realLayers: true });
       return Effect.gen(function* () {
@@ -630,15 +581,6 @@ describe("migration squash", () => {
           flags({ remote: Option.some({ _tag: "Linked" }), version: Option.some("not-a-number") }),
         ).pipe(Effect.flip);
         expect(error).toBeInstanceOf(ProjectRefNotLinkedError);
-      }).pipe(Effect.provide(s.layer));
-    });
-
-    it.effect("defaults to the local database when no target flag is given", () => {
-      const s = setup(tmp.current);
-      return Effect.gen(function* () {
-        yield* seedMigration(tmp.current, "0_init.sql");
-        yield* migrationSquash(flags());
-        expect(s.resolverCalls[0]?.target).toEqual({ kind: "local" });
       }).pipe(Effect.provide(s.layer));
     });
   });
@@ -1362,128 +1304,6 @@ describe("migration squash", () => {
       }).pipe(Effect.provide(s.layer));
     });
 
-    it.effect("--remote=<ref> overrides the workdir's own ref for resolution and caching", () => {
-      // VALID_REF is what the workdir would resolve to without the flag.
-      const s = setup(tmp.current);
-      return Effect.gen(function* () {
-        const error = yield* migrationSquash(
-          flags({
-            remote: Option.some({ _tag: "Ref", ref: FLAG_REF }),
-            version: Option.some("bad"),
-          }),
-        ).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(MigrationInvalidVersionError);
-        expect(s.resolverCalls[0]?.target).toMatchObject({ kind: "linked", ref: FLAG_REF });
-        expect(s.cache.cached).toBe(true);
-        expect(s.cache.cachedRef).toBe(FLAG_REF);
-        expect(s.cache.cachedRef).not.toBe(VALID_REF);
-        expect(s.warnings()).toEqual([]);
-      }).pipe(Effect.provide(s.layer));
-    });
-
-    it.effect(
-      "--remote=<branch> resolves the branch's project ref for resolution and caching",
-      () => {
-        const s = setup(tmp.current);
-        return Effect.gen(function* () {
-          const error = yield* migrationSquash(
-            flags({
-              remote: Option.some({ _tag: "Branch", name: "feature-x" }),
-              version: Option.some("bad"),
-            }),
-          ).pipe(Effect.flip);
-          expect(error).toBeInstanceOf(MigrationInvalidVersionError);
-          expect(s.branchRequests.map(({ method, url }) => `${method} ${url}`)).toEqual([
-            `GET https://api.supabase.com/v1/projects/${VALID_REF}/branches`,
-          ]);
-          expect(s.resolverCalls[0]?.target).toMatchObject({
-            kind: "linked",
-            ref: BRANCH_PROJECT_REF,
-          });
-          expect(s.cache.cachedRef).toBe(BRANCH_PROJECT_REF);
-          expect(s.warnings()).toEqual([]);
-        }).pipe(Effect.provide(s.layer));
-      },
-    );
-
-    it.effect("--remote=<branch> fails with the branches that exist when none matches", () => {
-      const s = setup(tmp.current);
-      return Effect.gen(function* () {
-        const error = yield* migrationSquash(
-          flags({ remote: Option.some({ _tag: "Branch", name: "feature-y" }) }),
-        ).pipe(Effect.flip);
-        expect(error).toMatchObject({
-          _tag: "LinkBranchNotFoundError",
-          message: expect.stringContaining("Available branches: feature-x"),
-        });
-        expect(s.resolverCalls).toEqual([]);
-        expect(s.shadowSpawned).toEqual([]);
-      }).pipe(Effect.provide(s.layer));
-    });
-
-    it.effect("--remote=<url> squashes against that database and skips the linked cache", () => {
-      const s = setupRemote();
-      return Effect.gen(function* () {
-        yield* seedMigration(tmp.current, "0_init.sql");
-        yield* migrationSquash(flags({ remote: Option.some({ _tag: "DbUrl", url: DB_URL }) }));
-        expect(s.resolverCalls[0]?.target).toMatchObject({ kind: "db-url" });
-        expect(s.cache.cached).toBe(false);
-        expect(s.warnings()).toEqual([]);
-      }).pipe(Effect.provide(s.layer));
-    });
-
-    describe("deprecated selectors", () => {
-      const cases = [
-        {
-          alias: "--linked",
-          args: ["migration", "squash", "--linked"],
-          flags: { linked: true },
-          target: { kind: "linked", ref: VALID_REF },
-          warning: "--linked is deprecated and will be removed in v4. Use --remote instead",
-        },
-        {
-          alias: "--project-ref",
-          args: ["migration", "squash", "--project-ref", FLAG_REF],
-          flags: { projectRef: Option.some(FLAG_REF) },
-          target: { kind: "linked", ref: FLAG_REF },
-          warning: `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
-        },
-        {
-          alias: "--db-url",
-          args: ["migration", "squash", "--db-url", DB_URL],
-          flags: { dbUrl: Option.some(DB_URL) },
-          target: { kind: "db-url" },
-          warning:
-            "--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead",
-        },
-        {
-          alias: "--local",
-          args: ["migration", "squash", "--local"],
-          flags: { local: true },
-          target: { kind: "local" },
-          warning: "--local isn't needed (local is the default) and will be removed in v4",
-        },
-      ] as const satisfies ReadonlyArray<{
-        readonly alias: string;
-        readonly args: ReadonlyArray<string>;
-        readonly flags: Partial<MigrationSquashFlags>;
-        readonly target: Record<string, string>;
-        readonly warning: string;
-      }>;
-
-      for (const testCase of cases) {
-        it.effect(`${testCase.alias} still selects its target and warns`, () => {
-          const s = setupRemote({ args: testCase.args });
-          return Effect.gen(function* () {
-            yield* seedMigration(tmp.current, "0_init.sql");
-            yield* migrationSquash(flags(testCase.flags));
-            expect(s.resolverCalls[0]?.target).toMatchObject(testCase.target);
-            expect(s.warnings()).toEqual([testCase.warning]);
-          }).pipe(Effect.provide(s.layer));
-        });
-      }
-    });
-
     it.effect(
       "--remote reads [remotes.<ref>] and prints the config-override line before the consent",
       () => {
@@ -1669,6 +1489,24 @@ describe("migration squash", () => {
       }).pipe(Effect.provide(s.layer));
     });
   });
+});
+
+describeDbTargetSelection("migration squash", {
+  dbUrl: true,
+  workdir: () => tmp.current,
+  attempt: ({ workdir, args, target }) => {
+    const s = setup(workdir, { yes: true, args });
+    return {
+      layer: s.layer,
+      out: s.out,
+      run: seedMigration(workdir, "0_init.sql").pipe(
+        Effect.andThen(migrationSquash(flags(target))),
+      ),
+      target: () => s.resolverCalls[0]?.target,
+      cachedRef: () => s.cache.cachedRef,
+      branchLookups: () => s.branchRequests.map(({ method, url }) => `${method} ${url}`),
+    };
+  },
 });
 
 describeHostedConsent("migration squash", {
