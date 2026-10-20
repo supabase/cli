@@ -17,7 +17,7 @@ FROM library/kong:2.8.1 AS kong
 
 FROM axllent/mailpit:v1.31.3 AS mailpit
 
-FROM postgrest/postgrest:v16.4 AS postgrest
+FROM postgrest/postgrest:v16.5 AS postgrest
 
 FROM supabase/postgres-meta:v0.100.0 AS pgmeta
 
