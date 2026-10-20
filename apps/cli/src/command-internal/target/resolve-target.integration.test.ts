@@ -1182,6 +1182,18 @@ describe("resolveTarget", () => {
       }),
     );
 
+    it.effect(
+      "adds no hint when SUPABASE_PROJECT_ID is not a project ref, even if a link exists",
+      () =>
+        Effect.gen(function* () {
+          const result = yield* run("selectable", none, {
+            projectId: Option.some("not-a-ref"),
+            savedRef: FILE_REF,
+          });
+          expect(result.stderr).toBe("Target: local stack (127.0.0.1:54322)\n");
+        }),
+    );
+
     it.effect("adds no hint when the checkout is not linked", () =>
       Effect.gen(function* () {
         const result = yield* run("selectable", none, { cache: { ref: FILE_REF, name: "alpha" } });
