@@ -1491,11 +1491,17 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
   );
 
   it.effect(
-    "the plain --linked path (no --project-ref) keeps the IPv6 error when no pooler URL is saved",
+    "the plain --linked path (no --project-ref) keeps the IPv6 error when the API has no pooler config either",
     () => {
       const ref = "plainlinkedrefabcdef";
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
 
       return Effect.gen(function* () {
+        yield* stubManagementApi(requests, (method, path) =>
+          method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`
+            ? Response.json([])
+            : undefined,
+        );
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const dir = yield* withWorkdir(
@@ -1505,11 +1511,15 @@ describe("dbConfigResolver (an explicit --project-ref fetches the pooler config)
         yield* fs.writeFileString(path.join(dir, "supabase", ".temp", "project-ref"), ref);
         return yield* resolveConnection(dir, inputFor(linkedTarget(ref)), {
           projectHost: "invalid",
+          configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
         });
       }).pipe(
         Effect.exit,
         Effect.tap((exit) =>
           Effect.sync(() => {
+            expect(requests).toEqual([
+              { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
+            ]);
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
               const causeText = Cause.pretty(exit.cause);
@@ -1974,6 +1984,36 @@ describe("dbConfigResolver.resolveConnection", () => {
       expect(output.stderrText).toBe("");
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
   });
+
+  it.effect(
+    "a linked target with no saved pooler URL fetches the pooler config from the API",
+    () => {
+      const ref = "bareremoterefabcdefg";
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      return Effect.gen(function* () {
+        yield* stubManagementApi(requests, (method, path) =>
+          method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`
+            ? Response.json(primaryPoolerConfigs(ref))
+            : undefined,
+        );
+        const dir = yield* withWorkdir();
+        const r = yield* resolveConnection(
+          dir,
+          inputFor(linkedTarget(ref), { password: Option.some("pw") }),
+          { projectHost: "invalid", configEnv: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN } },
+        );
+        expect(r.conn).toMatchObject({
+          host: "aws-0-us-east-1.pooler.supabase.com",
+          user: `postgres.${ref}`,
+          password: "pw",
+        });
+        expect(requests).toEqual([
+          { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
+        ]);
+        assertDbConfigDrift(requests, { remote: true });
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    },
+  );
 
   it.effect("a linked target that is not the linked workdir ignores the saved pooler URL", () => {
     const linkedRef = "abcdefghijklmnopqrst";
