@@ -321,12 +321,6 @@ const failSuggestion = (
 ): string | undefined =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.suggestion : undefined;
 
-const failError = (exit: Exit.Exit<unknown, unknown>): { _tag: string; message: string } =>
-  (Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined) as {
-    _tag: string;
-    message: string;
-  };
-
 const MIGRATION_DIR = "supabase/migrations";
 const migrationFile = (version: string, body = "create table t ();") => ({
   [`${MIGRATION_DIR}/${version}_test.sql`]: body,
@@ -709,40 +703,6 @@ describe("db push", () => {
       });
     });
 
-    it.effect("stops before any write when the question is declined", () => {
-      const { layer, out, conn } = setup(tmp.current, {
-        includeSeed: true,
-        toml: 'project_id = "test"\n',
-        files: allFiles,
-        confirm: [false],
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbPush(allFlags).pipe(Effect.provide(layer), Effect.exit);
-        expect(failError(exit)._tag).toBe("HostedMutationDeclinedError");
-        expect(out.stderrText).not.toContain("Applying migration");
-        expect(out.stderrText).not.toContain("Seeding globals");
-        expect(conn.execs).not.toContain("BEGIN");
-        expect(seeded(conn)).toBe(false);
-      });
-    });
-
-    it.effect("fails before any write when nothing can ask and --yes is absent", () => {
-      const { layer, out, conn } = setup(tmp.current, {
-        includeSeed: true,
-        toml: 'project_id = "test"\n',
-        files: allFiles,
-        format: "json",
-      });
-      return Effect.gen(function* () {
-        const exit = yield* dbPush(allFlags).pipe(Effect.provide(layer), Effect.exit);
-        expect(failError(exit)._tag).toBe("HostedMutationConsentRequiredError");
-        expect(failSuggestion(exit)).toContain("--yes");
-        expect(out.promptConfirmCalls).toEqual([]);
-        expect(conn.execs).not.toContain("BEGIN");
-        expect(seeded(conn)).toBe(false);
-      });
-    });
-
     it.effect("runs under --yes without asking and says what it confirmed", () => {
       const { layer, out, conn } = setup(tmp.current, {
         includeSeed: true,
@@ -826,26 +786,6 @@ describe("db push", () => {
         });
       },
     );
-
-    it.effect("asks before pushing to a --remote=<db-url> that is not local", () => {
-      const { layer, out, conn } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        files: migrationFile("20240101000000"),
-        isLocal: false,
-        confirm: [true],
-      });
-      return Effect.gen(function* () {
-        yield* dbPush({
-          ...DEFAULT_FLAGS,
-          remote: Option.some({
-            _tag: "DbUrl",
-            url: "postgresql://postgres:pw@db.example.com:5432/postgres",
-          }),
-        }).pipe(Effect.provide(layer));
-        expect(out.promptConfirmCalls).toHaveLength(1);
-        expect(conn.execs).toContain("BEGIN");
-      });
-    });
 
     it.effect("lets the connection clear a network ban only under --yes", () =>
       Effect.gen(function* () {
@@ -1408,34 +1348,49 @@ describe("db push", () => {
   });
 });
 
+const CONSENT_READS = new Set([LIST_MIGRATIONS, SELECT_SEEDS, READ_VAULT]);
+
 describeHostedConsent("db push", {
   setup: (workdir) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       yield* fs.makeDirectory(`${workdir}/supabase/.temp`, { recursive: true });
       yield* fs.writeFileString(`${workdir}/supabase/.temp/project-ref`, VALID_REF);
-      yield* fs.writeFileString(`${workdir}/supabase/config.toml`, 'project_id = "test"\n');
+      yield* fs.writeFileString(
+        `${workdir}/supabase/config.toml`,
+        'project_id = "test"\n\n[db.vault]\nexisting = "v1"\nfresh = "v2"\n',
+      );
       yield* fs.makeDirectory(`${workdir}/${MIGRATION_DIR}`, { recursive: true });
       yield* fs.writeFileString(
         `${workdir}/${MIGRATION_DIR}/20240101000000_test.sql`,
         "create table t ();",
       );
+      yield* fs.writeFileString(`${workdir}/supabase/roles.sql`, "create role app;");
+      yield* fs.writeFileString(`${workdir}/supabase/seed.sql`, "insert into t values (1);");
     }),
   invoke: ({ out }) => {
-    const conn = mockConnection({});
+    const conn = mockConnection({ vaultRows: [{ id: "id-1", name: "existing" }] });
     return {
-      run: dbPush({ ...DEFAULT_FLAGS, remote: REMOTE_LINKED }).pipe(
+      run: dbPush({
+        ...DEFAULT_FLAGS,
+        remote: REMOTE_LINKED,
+        includeRoles: true,
+        includeSeed: Option.some(true),
+      }).pipe(
         Effect.provide(
           Layer.mergeAll(
             conn.layer,
             mockResolver().layer,
-            configValuesLayer({ output: out.layer }),
+            configValuesLayer({
+              output: out.layer,
+              flags: [flagInput("db.seed.enabled", "include-seed", true)],
+            }),
             Layer.succeed(DnsResolverFlag, "native"),
           ),
         ),
       ),
       mutations: () =>
-        conn.queries.filter((q) => q.sql.includes("INSERT INTO supabase_migrations")).length,
+        conn.execs.length + conn.queries.filter((query) => !CONSENT_READS.has(query.sql)).length,
     };
   },
 });
