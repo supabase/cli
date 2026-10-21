@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Exit, Fiber, FileSystem, Option, Path, Schema } from "effect";
+import { Deferred, Effect, Exit, Fiber, FileSystem, Layer, Option, Path, Schema } from "effect";
 import {
   notebookListPage,
   notebookResource,
@@ -10,6 +10,9 @@ import {
   type NotebooksSetupOptions,
 } from "../../../tests/helpers/notebooks.ts";
 import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
+import { assertPermissionDrift } from "../../../tests/helpers/permission-drift.ts";
+import type { RemoteValue } from "../../command-internal/target/remote-value.ts";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { NonInteractiveError } from "../../shared/output/errors.ts";
 import { EventCommandExecuted, PropExitCode } from "../../shared/telemetry/event-catalog.ts";
@@ -21,6 +24,11 @@ import {
 } from "./notebooks.errors.ts";
 import { notebooksPullHandler } from "./pull/pull.command.ts";
 import { notebooksPushHandler } from "./push/push.command.ts";
+import {
+  BRANCH_PROJECT_REF,
+  branchRow,
+  warningsOf,
+} from "../../../tests/helpers/remote-selection.ts";
 
 const temp = useTempWorkdir("supabase-notebooks-regression-");
 const ID = "44444444-4444-4444-8444-444444444444";
@@ -29,27 +37,42 @@ const LOCAL = '{"content":{"cells":[{"type":"markdown","text":"local edits"}]}}'
 const commands = ["pull", "push"] as const;
 type Command = (typeof commands)[number];
 
-const run = Effect.fnUntraced(function* (
-  command: Command,
-  name?: string,
-  projectRef: Option.Option<string> = Option.some(NOTEBOOKS_PROJECT_REF),
-) {
+interface Selector {
+  readonly remote: Option.Option<RemoteValue>;
+  readonly projectRef: Option.Option<string>;
+}
+
+const runWith = Effect.fnUntraced(function* (command: Command, selector: Selector, name?: string) {
   if (command === "pull")
     return yield* notebooksPullHandler({
-      projectRef,
+      ...selector,
       notebookId: Option.fromUndefinedOr(name),
     });
   return yield* notebooksPushHandler({
-    projectRef,
+    ...selector,
     notebookName: Option.fromUndefinedOr(name),
   });
 });
+
+const run = (
+  command: Command,
+  name?: string,
+  ref: Option.Option<string> = Option.some(NOTEBOOKS_PROJECT_REF),
+) =>
+  runWith(
+    command,
+    {
+      remote: Option.map(ref, (value) => ({ _tag: "Ref", ref: value }) as const),
+      projectRef: Option.none(),
+    },
+    name,
+  );
 
 function setup(command: Command, options: Omit<NotebooksSetupOptions, "workdir" | "command"> = {}) {
   return setupNotebooks({
     workdir: temp.current,
     command,
-    args: ["notebooks", command, "--project-ref", NOTEBOOKS_PROJECT_REF],
+    args: ["notebooks", command, `--remote=${NOTEBOOKS_PROJECT_REF}`],
     routes: {
       [`GET ${notebooksRoute()}`]: { status: 200, body: notebookListPage({ notebooks: [] }) },
     },
@@ -532,7 +555,7 @@ describe.each(commands)("notebooks %s command wiring", (command) => {
           event: EventCommandExecuted,
           properties: expect.objectContaining({
             [PropExitCode]: 1,
-            flags: { "project-ref": NOTEBOOKS_PROJECT_REF },
+            flags: { remote: NOTEBOOKS_PROJECT_REF },
             command: `notebooks ${command}`,
           }),
         });
@@ -613,4 +636,49 @@ describe.each(commands)("notebooks %s command wiring", (command) => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describe.each(commands)("notebooks %s project selection", (command) => {
+  const none = { remote: Option.none(), projectRef: Option.none() } satisfies Selector;
+  const branchesRoute = `GET /v1/projects/${NOTEBOOKS_PROJECT_REF}/branches`;
+
+  it.effect("acts on the project of the branch --remote=<branch> names", () => {
+    const { layer, http } = setup(command, {
+      args: ["notebooks", command, "--remote=feature-x"],
+      routes: {
+        [branchesRoute]: { status: 200, body: [branchRow("feature-x")] },
+        [`GET /v2/projects/${BRANCH_PROJECT_REF}/notebooks`]: {
+          status: 200,
+          body: notebookListPage({ notebooks: [] }),
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      yield* runWith(command, {
+        ...none,
+        remote: Option.some({ _tag: "Branch", name: "feature-x" }),
+      });
+      expect(http.routeKeys).toEqual([
+        branchesRoute,
+        `GET /v2/projects/${BRANCH_PROJECT_REF}/notebooks`,
+      ]);
+      assertPermissionDrift({
+        command: `notebooks ${command}`,
+        activeFlags: { remote: "feature-x" },
+        requests: http.driftRequests,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps --project-ref working and points at --remote=<ref>", () => {
+    const argv = ["notebooks", command, "--project-ref", NOTEBOOKS_PROJECT_REF];
+    const { layer, out, http } = setup(command, { args: argv });
+    return Effect.gen(function* () {
+      yield* runWith(command, { ...none, projectRef: Option.some(NOTEBOOKS_PROJECT_REF) });
+      expect(http.routeKeys).toEqual([`GET ${notebooksRoute()}`]);
+      expect(warningsOf(out)).toEqual([
+        `--project-ref is deprecated and will be removed in v4. Use --remote=<ref> instead`,
+      ]);
+    }).pipe(Effect.provide(Layer.mergeAll(layer, Layer.succeed(CliArgs, { args: argv }))));
+  });
 });

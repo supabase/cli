@@ -12,6 +12,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -77,6 +78,7 @@ describe("sso show integration", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: "not-a-uuid",
           metadata: false,
@@ -95,6 +97,7 @@ describe("sso show integration", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -110,6 +113,7 @@ describe("sso show integration", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -130,6 +134,7 @@ describe("sso show integration", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -149,6 +154,7 @@ describe("sso show integration", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -166,6 +172,7 @@ describe("sso show integration", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -184,6 +191,7 @@ describe("sso show integration", () => {
     const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -199,6 +207,7 @@ describe("sso show integration", () => {
     const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -224,6 +233,7 @@ updatedat: "2023-03-28T13:50:14.464Z"
     const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -247,6 +257,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -260,6 +271,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -272,6 +284,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: true,
@@ -293,6 +306,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     const { layer, out } = setup({ body: { id: VALID_PROVIDER_ID } });
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: true,
@@ -306,6 +320,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     return Effect.gen(function* () {
       yield* Effect.exit(
         ssoShow({
+          remote: Option.none(),
           projectRef: Option.none(),
           providerId: VALID_PROVIDER_ID,
           metadata: false,
@@ -319,6 +334,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     const { layer, telemetry, cache } = setup();
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -332,6 +348,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -374,6 +391,7 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
       const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
       expect(yield* fs.exists(cachePath)).toBe(false);
       yield* ssoShow({
+        remote: Option.none(),
         projectRef: Option.none(),
         providerId: VALID_PROVIDER_ID,
         metadata: false,
@@ -390,4 +408,10 @@ UpdatedAt = "2023-03-28T13:50:14.464Z"
       assertPermissionDrift({ command: "sso show", requests: api.requests, exact: true });
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedTargetSelection("sso show", {
+  operands: [VALID_PROVIDER_ID],
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, PROVIDER)),
+  run: (flags) => ssoShow({ ...flags, providerId: VALID_PROVIDER_ID, metadata: false }),
 });

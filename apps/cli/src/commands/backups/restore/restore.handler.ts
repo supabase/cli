@@ -1,10 +1,11 @@
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
@@ -25,14 +26,19 @@ export const backupsRestore = Effect.fn("backups.restore")(function* (flags: Bac
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  const ref = yield* resolveProjectTarget(flags);
   const recoveryTimeTargetUnix = Option.getOrElse(flags.timestamp, () => 0);
 
   yield* Effect.gen(function* () {
+    yield* requireHostedMutationConsent({
+      action: Option.isSome(flags.timestamp)
+        ? `Restore the database to Unix timestamp ${flags.timestamp.value} (PITR)`
+        : "Start a PITR restore without a recovery time target",
+    });
+
     const restoring =
       output.format === "text" ? yield* output.task("Initiating PITR restore...") : undefined;
     yield* api.v1

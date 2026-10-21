@@ -2,13 +2,20 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
-import { mockTelemetryStateTracked } from "../../../../tests/helpers/command-mocks.ts";
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
+import {
+  buildTestRuntime,
+  mockCommandPlatformApi,
+  mockCommandSettings,
+  mockTelemetryStateTracked,
+} from "../../../../tests/helpers/command-mocks.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { NO_TARGET } from "../../../../tests/helpers/db-target-selection.ts";
+import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import type { DbConnectionInput } from "../../../command-internal/db-config.types.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { DbConnection, type PgConnInput } from "../../../command-internal/db-connection.service.ts";
-import type { InspectConnectionFlags, InspectQuerySpec } from "./inspect-query.ts";
+import type { InspectQuerySpec } from "./inspect-query.ts";
 import { dbStatsSpec } from "./db-stats/db-stats.query.ts";
 import { indexStatsSpec } from "./index-stats/index-stats.query.ts";
 import { roleStatsSpec } from "./role-stats/role-stats.query.ts";
@@ -36,13 +43,19 @@ function setup() {
   const telemetry = mockTelemetryStateTracked();
   let querySql: string | undefined;
   const layer = Layer.mergeAll(
-    out.layer,
-    telemetry.layer,
+    buildTestRuntime({
+      out,
+      api: mockCommandPlatformApi(),
+      cliSettings: mockCommandSettings({ workdir: "/tmp/inspect-deprecated-test" }),
+      telemetry: telemetry.layer,
+    }),
     Layer.succeed(DnsResolverFlag, "native"),
-    Layer.succeed(CliArgs, { args: [] }),
+    Layer.succeed(YesFlag, false),
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
+    configValuesLayer(),
     Layer.succeed(DbConfigResolver, {
-      resolve: (_flags: DbConfigFlags) =>
-        Effect.succeed({ conn: LOCAL_CONN, isLocal: true } satisfies ResolvedDbConfig),
+      resolveConnection: (input: DbConnectionInput) =>
+        Effect.succeed({ conn: LOCAL_CONN, isLocal: true, target: input.target }),
       resolvePoolerFallback: () => Effect.succeed(Option.none()),
     }),
     Layer.succeed(DbConnection, {
@@ -68,13 +81,6 @@ function setup() {
     },
   };
 }
-
-const flags: InspectConnectionFlags = {
-  dbUrl: Option.none<string>(),
-  linked: false,
-  local: true,
-  projectRef: Option.none<string>(),
-};
 
 // All deprecated-alias handlers share the same factory-produced type.
 type AliasHandler = typeof inspectDbCacheHit;
@@ -155,7 +161,7 @@ describe("inspect db deprecated aliases", () => {
     it.effect(`${testCase.alias} warns and runs the ${testCase.routedSpec.name} query`, () => {
       const ctx = setup();
       return Effect.gen(function* () {
-        yield* testCase.handler(flags);
+        yield* testCase.handler(NO_TARGET);
         expect(ctx.out.stderrText).toContain(
           `Command "${testCase.alias}" is deprecated, use "${testCase.target}" instead.\n`,
         );

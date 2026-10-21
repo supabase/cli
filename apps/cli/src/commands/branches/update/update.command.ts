@@ -12,6 +12,9 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { branchesUpdate } from "./update.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
+import { branchesParentTarget } from "../branches.target.ts";
 
 const BRANCH_STATUSES = [
   "RUNNING_MIGRATIONS",
@@ -26,10 +29,7 @@ const config = {
     Argument.withDescription("Branch name or ID to update."),
     Argument.optional,
   ),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags({ parent: true }),
   name: Flag.String("name").pipe(Flag.withDescription("Rename the preview branch."), Flag.optional),
   gitBranch: Flag.String("git-branch").pipe(
     Flag.withDescription("Change the associated git branch."),
@@ -62,6 +62,7 @@ export const branchesUpdateCommand = Command.make("update", config).pipe(
         operations: [{ operationId: "v1-update-a-branch-config", kind: "required" }],
         noApiEffectFlags: ["name", "git-branch", "persistent", "status", "notify-url"],
       },
+      branchesParentTarget,
       projectRefPicker,
       branchPrompt,
       branchRef,
@@ -70,10 +71,8 @@ export const branchesUpdateCommand = Command.make("update", config).pipe(
     ),
   ),
   Command.withHandler((flags) =>
-    branchesUpdate(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: ["project-ref"], config }),
-      withJsonErrorHandling,
-    ),
+    branchesUpdate(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["branches", "update"])),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

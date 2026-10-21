@@ -7,6 +7,7 @@ import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts
 import { stackStatus } from "./status.handler.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
   stack: Flag.String("stack").pipe(Flag.withDescription("Inspect a named stack."), Flag.optional),
@@ -52,4 +53,5 @@ export const stackStatusCommand = Command.make("status", config).pipe(
   ),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

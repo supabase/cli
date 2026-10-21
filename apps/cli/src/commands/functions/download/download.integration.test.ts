@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { BunServices } from "@effect/platform-bun";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import {
@@ -21,7 +21,6 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import {
   type ApiHandler,
   buildTestRuntime,
@@ -35,7 +34,8 @@ import {
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
-import { mockContextualAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   assertBlockDrift,
   assertPermissionDrift,
@@ -55,7 +55,6 @@ import { functionsLocalConfigLoader } from "../../../command-internal/functions-
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ConflictingFunctionDownloadFlagsError } from "../../../shared/functions/download.errors.ts";
 import { FunctionsApiStatusError } from "../../../shared/functions/functions-api.errors.ts";
-import { functionsDownloadHandler } from "./download.command.ts";
 import type { FunctionsDownloadFlags } from "./download.command.ts";
 import { functionsDownload } from "./download.handler.ts";
 
@@ -151,6 +150,7 @@ const workdirProjectId = Effect.gen(function* () {
 
 const baseFlags: FunctionsDownloadFlags = {
   functionName: Option.some("hello-world"),
+  remote: Option.none(),
   projectRef: Option.none(),
   useApi: false,
   useDocker: false,
@@ -212,8 +212,7 @@ describe("functions download", () => {
           "functions",
           "download",
           "hello-world",
-          "--project-ref",
-          "abcdefghijklmnopqrst",
+          "--remote=abcdefghijklmnopqrst",
         ]),
       }),
     );
@@ -330,8 +329,7 @@ describe("functions download", () => {
           "download",
           "hello-world",
           "--use-api",
-          "--project-ref",
-          PROJECT_ID,
+          `--remote=${PROJECT_ID}`,
         ]),
       }),
     );
@@ -364,8 +362,7 @@ describe("functions download", () => {
       "functions",
       "download",
       "hello-world",
-      "--project-ref",
-      PROJECT_ID,
+      `--remote=${PROJECT_ID}`,
     ],
   ) {
     return Layer.mergeAll(
@@ -477,7 +474,7 @@ describe("functions download", () => {
             Effect.succeed(
               HttpClientResponse.fromWeb(request, new Response(body, { status: 200 })),
             ),
-          ["functions", "download", "--project-ref", PROJECT_ID],
+          ["functions", "download", `--remote=${PROJECT_ID}`],
         ),
       ),
     ),
@@ -505,7 +502,7 @@ describe("functions download", () => {
         Layer.mergeAll(
           nativeDownloadLayer(
             (request) => Effect.succeed(jsonResponse(request, 200, {})),
-            ["functions", "download", "hello-world", "--use-docker", "--project-ref", PROJECT_ID],
+            ["functions", "download", "hello-world", "--use-docker", `--remote=${PROJECT_ID}`],
           ),
           child.layer,
         ),
@@ -535,7 +532,7 @@ describe("functions download", () => {
         Layer.mergeAll(
           nativeDownloadLayer(
             (request) => Effect.succeed(jsonResponse(request, 200, {})),
-            ["functions", "download", "hello-world", "--use-docker", "--project-ref", PROJECT_ID],
+            ["functions", "download", "hello-world", "--use-docker", `--remote=${PROJECT_ID}`],
           ),
           child.layer,
         ),
@@ -579,8 +576,7 @@ describe("functions download", () => {
           "download",
           "hello-world",
           "--use-docker",
-          "--project-ref",
-          PROJECT_ID,
+          `--remote=${PROJECT_ID}`,
         ]),
       }),
     );
@@ -612,7 +608,7 @@ describe("functions download", () => {
       }),
       child.layer,
       Stdio.layerTest({
-        args: Effect.succeed(["functions", "download", "hello-world", "--project-ref", PROJECT_ID]),
+        args: Effect.succeed(["functions", "download", "hello-world", `--remote=${PROJECT_ID}`]),
       }),
     );
 
@@ -666,8 +662,7 @@ describe("functions download", () => {
             "download",
             "hello-world",
             "--use-api",
-            "--project-ref",
-            "abcdefghijklmnopqrst",
+            "--remote=abcdefghijklmnopqrst",
           ]),
         }),
       );
@@ -708,8 +703,7 @@ describe("functions download", () => {
             "download",
             "hello-world",
             "--use-api=false",
-            "--project-ref",
-            PROJECT_ID,
+            `--remote=${PROJECT_ID}`,
           ]),
         }),
       );
@@ -749,8 +743,7 @@ describe("functions download", () => {
             "functions",
             "download",
             "hello-world",
-            "--project-ref",
-            PROJECT_ID,
+            `--remote=${PROJECT_ID}`,
             "--output-format",
             "json",
           ]),
@@ -800,8 +793,7 @@ describe("functions download", () => {
         args: Effect.succeed([
           "functions",
           "download",
-          "--project-ref",
-          PROJECT_ID,
+          `--remote=${PROJECT_ID}`,
           "--output-format",
           "json",
         ]),
@@ -866,8 +858,7 @@ describe("functions download", () => {
           "download",
           "hello-world",
           "--use-docker",
-          "--project-ref",
-          PROJECT_ID,
+          `--remote=${PROJECT_ID}`,
         ]),
       }),
     );
@@ -947,8 +938,7 @@ describe("functions download", () => {
           "download",
           "hello-world",
           "--use-docker",
-          "--project-ref",
-          PROJECT_ID,
+          `--remote=${PROJECT_ID}`,
         ]),
       }),
     );
@@ -998,8 +988,7 @@ describe("functions download", () => {
           "download",
           "hello-world",
           "--use-docker",
-          "--project-ref",
-          PROJECT_ID,
+          `--remote=${PROJECT_ID}`,
         ]),
       }),
     );
@@ -1030,8 +1019,7 @@ describe("functions download", () => {
           "download",
           "hello-world",
           "--use-docker",
-          "--project-ref",
-          PROJECT_ID,
+          `--remote=${PROJECT_ID}`,
           "--network-id",
           "custom-network",
         ]),
@@ -1074,8 +1062,7 @@ describe("functions download", () => {
             "download",
             "hello-world",
             "--use-docker",
-            "--project-ref",
-            PROJECT_ID,
+            `--remote=${PROJECT_ID}`,
             "--network-id=",
           ]),
         }),
@@ -1112,8 +1099,7 @@ describe("functions download", () => {
           "download",
           "hello-world",
           "--use-docker",
-          "--project-ref",
-          PROJECT_ID,
+          `--remote=${PROJECT_ID}`,
           "--network-id",
           "old-network",
           "--network-id",
@@ -1151,8 +1137,7 @@ describe("functions download", () => {
             "download",
             "hello-world",
             "--use-docker",
-            "--project-ref",
-            PROJECT_ID,
+            `--remote=${PROJECT_ID}`,
             "--network-id",
             "custom-network",
             "--network-id=",
@@ -1174,7 +1159,7 @@ describe("functions download", () => {
     "does not climb to an ancestor project's config.toml for the Docker download path",
     () => {
       // A nested workdir without its own config.toml is named after the workdir,
-      // not an ancestor's `project_id` and not `--project-ref`.
+      // not an ancestor's `project_id` and not `--remote`.
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
       const child = mockChildProcessSpawner({ exitCode: 0 });
@@ -1193,8 +1178,7 @@ describe("functions download", () => {
             "download",
             "hello-world",
             "--use-docker",
-            "--project-ref",
-            PROJECT_ID,
+            `--remote=${PROJECT_ID}`,
           ]),
         }),
       );
@@ -1240,8 +1224,7 @@ describe("functions download", () => {
           "download",
           "hello-world",
           "--use-docker",
-          "--project-ref",
-          PROJECT_ID,
+          `--remote=${PROJECT_ID}`,
         ]),
       }),
     );
@@ -1288,8 +1271,7 @@ describe("functions download", () => {
           "download",
           "hello-world",
           "--use-docker",
-          "--project-ref",
-          PROJECT_ID,
+          `--remote=${PROJECT_ID}`,
           "--network-id",
           "container:redis",
         ]),
@@ -1326,8 +1308,7 @@ describe("functions download", () => {
           "download",
           "hello-world",
           "--use-docker",
-          "--project-ref",
-          PROJECT_ID,
+          `--remote=${PROJECT_ID}`,
         ]),
       }),
     );
@@ -1368,8 +1349,7 @@ describe("functions download", () => {
           "download",
           "hello-world",
           "--use-docker",
-          "--project-ref",
-          PROJECT_ID,
+          `--remote=${PROJECT_ID}`,
           "--debug",
         ]),
       }),
@@ -1408,8 +1388,7 @@ describe("functions download", () => {
             "download",
             "hello-world",
             "--use-docker",
-            "--project-ref",
-            PROJECT_ID,
+            `--remote=${PROJECT_ID}`,
             "--debug=false",
           ]),
         }),
@@ -1446,13 +1425,7 @@ describe("functions download", () => {
         }),
         child.layer,
         Stdio.layerTest({
-          args: Effect.succeed([
-            "functions",
-            "download",
-            "hello-world",
-            "--project-ref",
-            PROJECT_ID,
-          ]),
+          args: Effect.succeed(["functions", "download", "hello-world", `--remote=${PROJECT_ID}`]),
         }),
       );
 
@@ -1495,8 +1468,7 @@ describe("functions download", () => {
             "download",
             "hello-world",
             "--use-docker",
-            "--project-ref",
-            PROJECT_ID,
+            `--remote=${PROJECT_ID}`,
           ]),
         }),
       );
@@ -1538,8 +1510,7 @@ describe("functions download", () => {
               "download",
               "hello-world",
               "--use-docker",
-              "--project-ref",
-              PROJECT_ID,
+              `--remote=${PROJECT_ID}`,
             ]),
           }),
         );
@@ -1588,8 +1559,7 @@ describe("functions download", () => {
               "download",
               "hello-world",
               "--use-docker",
-              "--project-ref",
-              PROJECT_ID,
+              `--remote=${PROJECT_ID}`,
             ]),
           }),
         );
@@ -1643,8 +1613,7 @@ describe("functions download", () => {
           "download",
           "hello-world",
           "--use-docker",
-          "--project-ref",
-          PROJECT_ID,
+          `--remote=${PROJECT_ID}`,
         ]),
       }),
     );
@@ -1691,8 +1660,7 @@ describe("functions download", () => {
             "download",
             "hello-world",
             "--use-docker",
-            "--project-ref",
-            PROJECT_ID,
+            `--remote=${PROJECT_ID}`,
           ]),
         }),
       );
@@ -1745,8 +1713,7 @@ describe("functions download", () => {
         args: Effect.succeed([
           "functions",
           "download",
-          "--project-ref",
-          "abcdefghijklmnopqrst",
+          "--remote=abcdefghijklmnopqrst",
           "--output-format",
           "json",
         ]),
@@ -1791,8 +1758,7 @@ describe("functions download", () => {
         args: Effect.succeed([
           "functions",
           "download",
-          "--project-ref",
-          "abcdefghijklmnopqrst",
+          "--remote=abcdefghijklmnopqrst",
           "--output-format",
           "json",
         ]),
@@ -1834,8 +1800,7 @@ describe("functions download", () => {
         args: Effect.succeed([
           "functions",
           "download",
-          "--project-ref",
-          "abcdefghijklmnopqrst",
+          "--remote=abcdefghijklmnopqrst",
           "--output-format",
           "json",
         ]),
@@ -1883,7 +1848,7 @@ describe("functions download", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
         Stdio.layerTest({
-          args: Effect.succeed(["functions", "download", "--project-ref", PROJECT_ID]),
+          args: Effect.succeed(["functions", "download", `--remote=${PROJECT_ID}`]),
         }),
       );
 
@@ -1926,8 +1891,7 @@ describe("functions download", () => {
           "functions",
           "download",
           "../../etc",
-          "--project-ref",
-          "abcdefghijklmnopqrst",
+          "--remote=abcdefghijklmnopqrst",
         ]),
       }),
     );
@@ -1940,46 +1904,6 @@ describe("functions download", () => {
       }).pipe(Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("does not redact --project-ref in cli_command_executed", () => {
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi({
-      handler: (request) =>
-        request.url.endsWith("/body")
-          ? Effect.succeed(multipartResponse(request))
-          : Effect.succeed(jsonResponse(request, 200, {})),
-    });
-    const analytics = mockContextualAnalytics();
-    const layer = Layer.mergeAll(
-      cliConfigValuesTestLayer,
-      buildTestRuntime({
-        out,
-        api,
-        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-        analytics,
-      }),
-      commandRuntimeLayer(["functions", "download"]).pipe(Layer.provide(BunCrypto.layer)),
-      Stdio.layerTest({
-        args: Effect.succeed([
-          "functions",
-          "download",
-          "hello-world",
-          "--project-ref",
-          "abcdefghijklmnopqrst",
-        ]),
-      }),
-    );
-
-    return Effect.gen(function* () {
-      yield* functionsDownloadHandler({
-        ...baseFlags,
-        projectRef: Option.some("abcdefghijklmnopqrst"),
-      });
-
-      const event = analytics.captured.find((c) => c.event === "cli_command_executed");
-      expect(event?.properties.flags).toEqual({ "project-ref": "abcdefghijklmnopqrst" });
     }).pipe(Effect.provide(layer));
   });
 
@@ -2035,8 +1959,7 @@ describe("functions download", () => {
               "functions",
               "download",
               "hello-world",
-              "--project-ref",
-              PROJECT_ID,
+              `--remote=${PROJECT_ID}`,
             ]),
           }),
         );
@@ -2081,8 +2004,7 @@ describe("functions download", () => {
               "functions",
               "download",
               "hello-world",
-              "--project-ref",
-              PROJECT_ID,
+              `--remote=${PROJECT_ID}`,
             ]),
           }),
         );
@@ -2131,8 +2053,7 @@ describe("functions download", () => {
               "download",
               "hello-world",
               "--use-docker",
-              "--project-ref",
-              PROJECT_ID,
+              `--remote=${PROJECT_ID}`,
             ]),
           }),
         );
@@ -2170,8 +2091,7 @@ describe("functions download", () => {
               "download",
               "hello-world",
               "--use-docker",
-              "--project-ref",
-              PROJECT_ID,
+              `--remote=${PROJECT_ID}`,
             ]),
           }),
         );
@@ -2209,8 +2129,7 @@ describe("functions download", () => {
             "download",
             "hello-world",
             "--use-docker",
-            "--project-ref",
-            PROJECT_ID,
+            `--remote=${PROJECT_ID}`,
             "--network-id",
             "flag-network",
           ]),
@@ -2252,8 +2171,7 @@ describe("functions download", () => {
               "download",
               "hello-world",
               "--use-docker",
-              "--project-ref",
-              PROJECT_ID,
+              `--remote=${PROJECT_ID}`,
             ]),
           }),
         );
@@ -2333,8 +2251,7 @@ describe("functions download", () => {
             "download",
             "hello-world",
             "--use-docker",
-            "--project-ref",
-            PROJECT_ID,
+            `--remote=${PROJECT_ID}`,
           ]),
         }),
       );
@@ -2372,8 +2289,7 @@ describe("functions download", () => {
             "download",
             "hello-world",
             "--use-docker",
-            "--project-ref",
-            PROJECT_ID,
+            `--remote=${PROJECT_ID}`,
           ]),
         }),
       );
@@ -2415,13 +2331,7 @@ describe("functions download", () => {
         }),
         child.layer,
         Stdio.layerTest({
-          args: Effect.succeed([
-            "functions",
-            "download",
-            "hello-world",
-            "--project-ref",
-            PROJECT_ID,
-          ]),
+          args: Effect.succeed(["functions", "download", "hello-world", `--remote=${PROJECT_ID}`]),
         }),
       );
 
@@ -2433,10 +2343,10 @@ describe("functions download", () => {
           {
             api: platformApi,
             projectRoot: tempRoot.current,
-            rawArgs: ["functions", "download", "hello-world", "--project-ref", PROJECT_ID],
+            rawArgs: ["functions", "download", "hello-world", `--remote=${PROJECT_ID}`],
             localConfigLoader: functionsLocalConfigLoader,
             edgeRuntimeVersion: "1.69.12",
-            resolveProjectRef: () => Effect.succeed(PROJECT_ID),
+            resolveProjectRef: Effect.succeed(PROJECT_ID),
             styleWarning: (text) => `<warn>${text}</warn>`,
           },
         );
@@ -2445,4 +2355,18 @@ describe("functions download", () => {
       }).pipe(Effect.provide(layer));
     });
   });
+});
+
+describeHostedTargetSelection("functions download", {
+  operands: ["hello-world"],
+  respond: (request) =>
+    Effect.succeed(
+      request.url.endsWith("/body") ? multipartResponse(request) : jsonResponse(request, 200, {}),
+    ),
+  run: (flags) =>
+    functionsDownload({ ...baseFlags, ...flags }).pipe(
+      Effect.provide(
+        Layer.mergeAll(cliConfigValuesTestLayer, Stdio.layerTest({ args: Effect.succeed([]) })),
+      ),
+    ),
 });

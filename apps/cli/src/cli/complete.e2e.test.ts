@@ -16,7 +16,7 @@ describe("supabase __complete", () => {
         );
         expect(exitCode).toBe(0);
         const lines = stdout.trim().split("\n");
-        expect(lines[0]).toBe("list\tList local and remote migrations");
+        expect(lines[0]).toBe("list\tList local files and the target database's migration history");
         expect(lines.at(-1)).toBe(":4");
       }),
     E2E_TIMEOUT_MS,

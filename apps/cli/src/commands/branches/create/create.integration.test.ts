@@ -11,6 +11,8 @@ import {
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import { GLOBAL_FLAGS, YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import {
   VALID_REF,
   buildTestRuntime,
@@ -19,6 +21,7 @@ import {
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
+  type MockCommandPlatformApiOpts,
   useTempWorkdir,
   withConfigEnv,
 } from "../../../../tests/helpers/command-mocks.ts";
@@ -85,19 +88,18 @@ interface SetupOpts {
   readonly network?: "fail";
   readonly gated?: boolean;
   readonly featureKey?: string;
-  /** Resolved `--yes`/`SUPABASE_YES` for the git-branch auto-name confirm. */
   readonly yes?: boolean;
   readonly stdinIsTty?: boolean;
-  /** Piped stdin lines consumed by the non-TTY confirm read. */
-  readonly stdinInput?: string;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
 }
 
-function buildApiLayer(opts: SetupOpts) {
+const hostedCreatePolicy = Layer.succeed(TargetPolicy, { group: "hosted", consent: "yes" });
+
+function apiOptions(opts: SetupOpts): MockCommandPlatformApiOpts {
   const status = opts.status ?? 201;
   const body = opts.response ?? CREATED;
   const featureKey = opts.featureKey ?? "branching_limit";
-  return mockCommandPlatformApi({
+  return {
     network: opts.network,
     handler: (request) =>
       Effect.sync(() => {
@@ -116,7 +118,11 @@ function buildApiLayer(opts: SetupOpts) {
         }
         return jsonResponse(request, 200, null);
       }),
-  });
+  };
+}
+
+function buildApiLayer(opts: SetupOpts) {
+  return mockCommandPlatformApi(apiOptions(opts));
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -134,10 +140,11 @@ function setup(opts: SetupOpts = {}) {
       cliSettings,
       analytics,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
-      stdin: mockStdin(opts.stdinIsTty ?? false, opts.stdinInput),
+      stdin: mockStdin(opts.stdinIsTty ?? false),
       outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
     }),
-    Layer.succeed(YesFlag, opts.yes ?? false),
+    Layer.succeed(YesFlag, opts.yes ?? true),
+    hostedCreatePolicy,
   );
   return { layer, out, api, analytics };
 }
@@ -158,13 +165,15 @@ function setupTracked(opts: SetupOpts = {}) {
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
     }),
-    Layer.succeed(YesFlag, opts.yes ?? false),
+    Layer.succeed(YesFlag, opts.yes ?? true),
+    hostedCreatePolicy,
   );
   return { layer, out, api, telemetry, cache, analytics };
 }
 
 const baseFlags: BranchesCreateFlags = {
   name: Option.none(),
+  remote: Option.none(),
   projectRef: Option.none(),
   region: Option.none(),
   size: Option.none(),
@@ -226,7 +235,8 @@ describe("branches create integration", () => {
             cliSettings,
           }),
         }),
-        Layer.succeed(YesFlag, false),
+        Layer.succeed(YesFlag, true),
+        hostedCreatePolicy,
       );
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -320,71 +330,36 @@ describe("branches create integration", () => {
   const withGitBranch = <A, E, R>(effect: Effect.Effect<A, E, R>, branch = "feat-y") =>
     withConfigEnv({ GITHUB_HEAD_REF: branch }, effect);
 
-  it.effect("--yes auto-confirms the git-branch name with the [Y/n] y echo", () => {
-    const { layer, out, api } = setup({ yes: true, stdinIsTty: true });
-    return withGitBranch(
-      Effect.gen(function* () {
-        yield* branchesCreate(baseFlags);
-        expect(out.stderrText).toContain("Do you want to create a branch named ");
-        expect(out.stderrText).toContain("? [Y/n] y\n");
-        expect(api.requests[0]?.body).toMatchObject({
-          branch_name: "feat-y",
-          git_branch: "feat-y",
-        });
-      }).pipe(Effect.provide(layer)),
-    );
-  });
-
-  it.effect("SUPABASE_YES=1 auto-confirms the git-branch name like --yes", () => {
-    const { layer, out, api } = setup({ stdinIsTty: true });
-    return withGitBranch(
-      withConfigEnv(
-        { SUPABASE_YES: "1" },
+  it.effect(
+    "--yes names the branch after the current git branch and echoes the confirmation",
+    () => {
+      const { layer, out, api } = setup({ yes: true });
+      return withGitBranch(
         Effect.gen(function* () {
           yield* branchesCreate(baseFlags);
-          expect(out.stderrText).toContain("? [Y/n] y\n");
-          expect(api.requests[0]?.body).toMatchObject({ branch_name: "feat-y" });
+          expect(out.stderrText).toContain("Confirmed by --yes: Create preview branch feat-y on ");
+          expect(api.requests[0]?.body).toMatchObject({
+            branch_name: "feat-y",
+            git_branch: "feat-y",
+          });
         }).pipe(Effect.provide(layer)),
-      ),
-    );
-  });
+      );
+    },
+  );
 
-  it.effect("non-TTY with piped `n` declines the git-branch name", () => {
-    const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "n\n" });
-    return withGitBranch(
-      Effect.gen(function* () {
-        const exit = yield* Effect.exit(branchesCreate(baseFlags));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Cause.pretty(exit.cause)).toContain("BranchesCreateCancelledError");
-        }
-        expect(out.stderrText).toContain("? [Y/n] n\n");
-        expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(layer)),
-    );
-  });
-
-  it.effect("non-TTY with empty stdin takes the Yes default and creates the branch", () => {
-    const { layer, out, api } = setup({ stdinIsTty: false });
+  it.effect("asks once on a TTY and says the name came from the git branch", () => {
+    const { layer, out, api } = setup({
+      yes: false,
+      stdinIsTty: true,
+      promptConfirmResponses: [true],
+    });
     return withGitBranch(
       Effect.gen(function* () {
         yield* branchesCreate(baseFlags);
-        expect(out.stderrText).toContain("? [Y/n] \n");
+        expect(out.promptConfirmCalls).toHaveLength(1);
+        expect(out.promptConfirmCalls[0]?.message).toContain("Create preview branch feat-y");
+        expect(out.stderrText).toContain("Branch name taken from the current git branch");
         expect(api.requests[0]?.body).toMatchObject({ branch_name: "feat-y" });
-      }).pipe(Effect.provide(layer)),
-    );
-  });
-
-  it.effect("TTY decline of the git-branch name cancels without creating", () => {
-    const { layer, api } = setup({ stdinIsTty: true, promptConfirmResponses: [false] });
-    return withGitBranch(
-      Effect.gen(function* () {
-        const exit = yield* Effect.exit(branchesCreate(baseFlags));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          expect(Cause.pretty(exit.cause)).toContain("BranchesCreateCancelledError");
-        }
-        expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer)),
     );
   });
@@ -545,3 +520,8 @@ function rejectsInvalidSizeChoice(error: unknown): boolean {
     )
   );
 }
+
+describeHostedConsent("branches create", {
+  api: apiOptions({}),
+  invoke: () => ({ run: branchesCreate({ ...baseFlags, name: Option.some("feat-x") }) }),
+});

@@ -2,21 +2,16 @@ import type { V1ListAllSecretsOutput } from "@supabase/api/effect";
 import { Effect } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { resolveYes } from "../../../command-internal/global-flags.ts";
-import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
-import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { Tty } from "../../../shared/runtime/tty.service.ts";
-import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { mapHttpError, sanitizeInlineName } from "../../../command-internal/http-errors.ts";
 import {
   SecretsListNetworkError,
   SecretsListUnexpectedStatusError,
   SecretsNoArgumentsError,
-  SecretsUnsetCancelledError,
-  SecretsUnsetConfirmationRequiredError,
   SecretsUnsetInputError,
   SecretsUnsetNetworkError,
   SecretsUnsetUnexpectedStatusError,
@@ -44,12 +39,8 @@ const mapUnsetError = mapHttpError({
 export const secretsUnset = Effect.fn("secrets.unset")(function* (flags: SecretsUnsetFlags) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
-  const tty = yield* Tty;
-  // `resolveYes` also honors `SUPABASE_YES`, not just the `--yes` flag.
-  const yes = yield* resolveYes;
 
   if (flags.all && flags.names.length > 0) {
     return yield* new SecretsUnsetInputError({
@@ -64,18 +55,9 @@ export const secretsUnset = Effect.fn("secrets.unset")(function* (flags: Secrets
     });
   }
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  const ref = yield* resolveProjectTarget(flags);
 
   yield* Effect.gen(function* () {
-    const canPrompt = tty.stdinIsTty && output.interactive && output.format === "text";
-    if (!flags.dryRun && !yes && !canPrompt) {
-      return yield* new SecretsUnsetConfirmationRequiredError({
-        message: `Unsetting secrets on project ${ref} needs confirmation, and this run can't prompt. Nothing was unset.`,
-        suggestion:
-          "Pass --yes (or set SUPABASE_YES=1) to confirm without a prompt, or --dry-run to preview.",
-      });
-    }
-
     let names: ReadonlyArray<string> = flags.names;
 
     if (flags.all) {
@@ -121,13 +103,10 @@ export const secretsUnset = Effect.fn("secrets.unset")(function* (flags: Secrets
       return;
     }
 
-    const label = `Do you want to unset these function secrets from project ${ref}?\n • ${names.join("\n • ")}\n\n`;
-
-    const confirmed = yield* promptYesNo(output, yes, label, false);
-
-    if (!confirmed) {
-      return yield* new SecretsUnsetCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
-    }
+    yield* requireHostedMutationConsent({
+      action: `Unset ${names.length} ${names.length === 1 ? "secret" : "secrets"}`,
+      details: ["Secrets to unset:", ...names.map((name) => ` • ${sanitizeInlineName(name)}`)],
+    });
 
     const unsetting =
       output.format === "text" ? yield* output.task("Unsetting secrets...") : undefined;

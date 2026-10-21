@@ -10,6 +10,9 @@ vi.mock("node:net", (importOriginal) =>
   ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net)),
 );
 
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
+import { describeDbTargetSelection } from "../../../../tests/helpers/db-target-selection.ts";
+import { branchListApi } from "../../../../tests/helpers/remote-selection.ts";
 import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -32,10 +35,14 @@ import {
   type StubbedRequest,
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
+import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
+import type {
+  DbConnectionInput,
+  ResolvedDbConnection,
+} from "../../../command-internal/db-config.types.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
   DbConnection,
@@ -68,14 +75,16 @@ function checkRow(proname: string, issues: ReadonlyArray<Record<string, unknown>
 }
 
 function mockResolver(opts: { isLocal?: boolean } = {}) {
-  let resolveInput: DbConfigFlags | undefined;
+  let resolveInput: DbConnectionInput | undefined;
   const layer = Layer.succeed(DbConfigResolver, {
-    resolve: (flags: DbConfigFlags) => {
-      resolveInput = flags;
+    resolveConnection: (input: DbConnectionInput) => {
+      resolveInput = input;
       return Effect.succeed({
         conn: LOCAL_CONN,
-        isLocal: opts.isLocal ?? true,
-      } satisfies ResolvedDbConfig);
+        isLocal: opts.isLocal ?? input.target.kind === "local",
+        ref: input.target.kind === "linked" ? Option.some(input.target.ref) : Option.none(),
+        target: input.target,
+      } satisfies ResolvedDbConnection);
     },
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
@@ -86,6 +95,8 @@ function mockResolver(opts: { isLocal?: boolean } = {}) {
     },
   };
 }
+
+const tempRoot = useTempWorkdir("supabase-db-lint-int-");
 
 function mockConnection(opts: {
   schemas?: ReadonlyArray<string>;
@@ -160,22 +171,22 @@ function mockConnection(opts: {
   };
 }
 
-/** Project-ref resolver mock. `db lint --linked` resolves the ref via the
- *  non-prompting `loadProjectRef` to write the linked-project cache; the
- *  other methods are unused by lint. */
+/** Project-ref resolver mock; an explicit `--remote=<ref>` wins over the workdir's own ref. */
 function mockProjectRef() {
   const calls: Array<string> = [];
   const layer = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
-    resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
-    // An explicit `--project-ref` flag takes top precedence, mirroring the real
-    // resolver.
-    loadProjectRef: (flagValue: Option.Option<string>) =>
+    resolveRef: (flagValue: Option.Option<string>) =>
       Effect.sync(() => {
-        calls.push("loadProjectRef");
-        return Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : VALID_REF;
+        calls.push("resolveRef");
+        return {
+          ref: Option.getOrElse(flagValue, () => VALID_REF),
+          source: Option.isSome(flagValue) ? ("flag" as const) : ("file" as const),
+          matchesLinkedRef: Option.isNone(flagValue),
+        };
       }),
+    resolveOptional: () => Effect.succeed(Option.some(VALID_REF)),
     promptProjectRef: () => Effect.succeed(VALID_REF),
   });
   return {
@@ -195,10 +206,8 @@ interface SetupOpts {
   enableFails?: boolean;
   queryFails?: boolean;
   listFails?: boolean;
-  /** Raw CLI args for `CliArgs` — drives DB target selection (Changed-based). */
-  args?: ReadonlyArray<string>;
   /** Runs the real `DbConfigResolver` and linked-project cache against the temp `workdir`. */
-  realLayers?: { readonly workdir: string };
+  realLayers?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -219,10 +228,10 @@ function setup(opts: SetupOpts = {}) {
   const http = recordingProjectHttpClient(VALID_REF);
   const layer = Layer.mergeAll(
     out.layer,
-    opts.realLayers === undefined
+    opts.realLayers !== true
       ? resolver.layer
       : realDbConfigResolver({
-          workdir: opts.realLayers.workdir,
+          workdir: tempRoot.current,
           dbConnection: connection.layer,
           env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN },
         }),
@@ -230,20 +239,26 @@ function setup(opts: SetupOpts = {}) {
     telemetry.layer,
     processControl.layer,
     projectRef.layer,
-    opts.realLayers === undefined
+    opts.realLayers !== true
       ? cache.layer
       : realLinkedProjectCache({
           httpClient: http.layer,
-          cliSettings: mockCommandSettings({ workdir: opts.realLayers.workdir }),
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         }),
+    mockCommandSettings({ workdir: tempRoot.current }),
+    cliConfigValuesTestLayer,
+    Layer.succeed(TargetPolicy, { group: "selectable", consent: "none" }),
+    Layer.succeed(YesFlag, false),
+    Layer.succeed(CliArgs, { args: [] }),
     Layer.succeed(DnsResolverFlag, "native"),
-    Layer.succeed(CliArgs, { args: opts.args ?? [] }),
+    BunServices.layer,
   );
   return { layer, out, resolver, connection, telemetry, processControl, projectRef, cache, http };
 }
 
 const flags = (over: Partial<DbLintFlags> = {}): DbLintFlags => ({
   dbUrl: over.dbUrl ?? Option.none<string>(),
+  remote: over.remote ?? Option.none(),
   linked: over.linked ?? false,
   local: over.local ?? false,
   projectRef: over.projectRef ?? Option.none<string>(),
@@ -253,8 +268,6 @@ const flags = (over: Partial<DbLintFlags> = {}): DbLintFlags => ({
 });
 
 describe("db lint", () => {
-  const tempRoot = useTempWorkdir("supabase-db-lint-int-");
-
   it.effect("lints the named schema and prints parsed issues to stdout", () => {
     const { layer, out, connection } = setup({
       schemas: [],
@@ -271,7 +284,6 @@ describe("db lint", () => {
         ),
       ]);
       expect(out.stdoutText).toBe(expected);
-      expect(out.stderrText).toContain("Connecting to local database...");
       expect(out.stderrText).toContain("Linting schema: public");
       expect(connection.execs).toEqual(["begin", ENABLE_PGSQL_CHECK, "rollback"]);
     }).pipe(Effect.provide(layer));
@@ -414,20 +426,6 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --db-url together with --linked (via args Changed detection)", () => {
-    const { layer } = setup({ args: ["--db-url=postgres://x", "--linked"] });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(dbLint(flags({ dbUrl: Option.some("postgres://x") })));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain(
-          "if any flags in the group [db-url linked local] are set none of the others can be",
-        );
-      }
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("emits a standard success envelope in json mode", () => {
     const { layer, out } = setup({
       format: "json",
@@ -483,18 +481,6 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("labels the diagnostic 'remote' for a non-local connection", () => {
-    const { layer, out } = setup({
-      isLocal: false,
-      checkRows: { public: [] },
-      args: ["--db-url=postgres://x"],
-    });
-    return Effect.gen(function* () {
-      yield* dbLint(flags({ schema: ["public"], dbUrl: Option.some("postgres://x") }));
-      expect(out.stderrText).toContain("Connecting to remote database...");
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("lints multiple pre-parsed schemas from a comma-separated --schema value", () => {
     // CSV parsing happens at `Flag.mapTryCatch` parse time; the handler receives the
     // already-split list directly.
@@ -507,49 +493,21 @@ describe("db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("writes the linked-project cache for --linked", () => {
-    const { layer, projectRef, cache } = setup({
-      isLocal: false,
-      checkRows: { public: [] },
-      args: ["--linked"],
-    });
-    return Effect.gen(function* () {
-      yield* dbLint(flags({ schema: ["public"] }));
-      expect(projectRef.calls).toContain("loadProjectRef");
-      expect(cache.cached).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("lints the project given via --project-ref, overriding the workdir's own ref", () => {
-    // `VALID_REF` stands in for whatever the workdir would resolve to absent the
-    // flag; the flag must win.
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, cache } = setup({
-      isLocal: false,
-      checkRows: { public: [] },
-      args: ["--linked"],
-    });
-    return Effect.gen(function* () {
-      yield* dbLint(flags({ schema: ["public"], projectRef: Option.some(FLAG_REF) }));
-      expect(cache.cached).toBe(true);
-      expect(cache.cachedRef).toBe(FLAG_REF);
-      expect(cache.cachedRef).not.toBe(VALID_REF);
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("mints a login role and fills the cache through the real resolver and cache", () => {
     const { layer, http } = setup({
       isLocal: false,
       checkRows: { public: [] },
-      args: ["db", "lint", "--linked", "--project-ref", VALID_REF],
-      realLayers: { workdir: tempRoot.current },
+      realLayers: true,
     });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
       yield* dbLint(
-        flags({ schema: ["public"], linked: true, projectRef: Option.some(VALID_REF) }),
+        flags({
+          schema: ["public"],
+          remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+        }),
       );
       expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
         `GET /v1/projects/${VALID_REF}/config/database/pooler`,
@@ -561,7 +519,7 @@ describe("db lint", () => {
       expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(true);
       assertPermissionDrift({
         command: "db lint",
-        activeFlags: { linked: true, "project-ref": VALID_REF, schema: true },
+        activeFlags: { remote: VALID_REF, schema: true },
         requests: [...asRecordedRequests(requests), ...http.calls],
         exact: true,
       });
@@ -573,18 +531,14 @@ describe("db lint", () => {
   });
 
   it.effect(
-    "makes no Management API request for --local through the real resolver and cache",
+    "makes no Management API request for the default local target through the real resolver and cache",
     () => {
-      const { layer, http } = setup({
-        checkRows: { public: [] },
-        args: ["db", "lint", "--local"],
-        realLayers: { workdir: tempRoot.current },
-      });
+      const { layer, http } = setup({ checkRows: { public: [] }, realLayers: true });
       const requests: Array<StubbedRequest> = [];
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         yield* stubManagementApi(requests, () => undefined);
-        yield* dbLint(flags({ schema: ["public"], local: true }));
+        yield* dbLint(flags({ schema: ["public"] }));
         expect(requests).toEqual([]);
         expect(http.calls).toEqual([]);
         expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(
@@ -592,7 +546,7 @@ describe("db lint", () => {
         );
         assertPermissionDrift({
           command: "db lint",
-          activeFlags: { local: true, schema: true },
+          activeFlags: { schema: true },
           requests: [],
           exact: true,
         });
@@ -605,11 +559,7 @@ describe("db lint", () => {
   );
 
   it.effect("defaults to the local target and makes no Management API request", () => {
-    const { layer, http } = setup({
-      checkRows: { public: [] },
-      args: ["db", "lint"],
-      realLayers: { workdir: tempRoot.current },
-    });
+    const { layer, http } = setup({ checkRows: { public: [] }, realLayers: true });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
       yield* stubManagementApi(requests, () => undefined);
@@ -629,18 +579,22 @@ describe("db lint", () => {
     );
   });
 
-  it.effect("--linked=false still reaches the linked database through the real resolver", () => {
+  it.effect("--remote=<ref> alone reaches the linked database through the real resolver", () => {
     const { layer, http } = setup({
       isLocal: false,
       checkRows: { public: [] },
-      args: ["db", "lint", "--linked=false", "--project-ref", VALID_REF],
-      realLayers: { workdir: tempRoot.current },
+      realLayers: true,
     });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-      yield* dbLint(flags({ schema: ["public"], projectRef: Option.some(VALID_REF) }));
+      yield* dbLint(
+        flags({
+          schema: ["public"],
+          remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const),
+        }),
+      );
       expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
         `GET /v1/projects/${VALID_REF}/config/database/pooler`,
         `POST /v1/projects/${VALID_REF}/cli/login-role`,
@@ -648,7 +602,7 @@ describe("db lint", () => {
       expect(yield* fs.exists(`${tempRoot.current}/supabase/.temp/linked-project.json`)).toBe(true);
       assertPermissionDrift({
         command: "db lint",
-        activeFlags: { linked: false, "project-ref": VALID_REF, schema: true },
+        activeFlags: { remote: VALID_REF, schema: true },
         requests: [...asRecordedRequests(requests), ...http.calls],
         exact: true,
       });
@@ -657,33 +611,6 @@ describe("db lint", () => {
       Effect.provide(Layer.mergeAll(layer, BunServices.layer)),
       provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     );
-  });
-
-  it.effect("does not write the linked-project cache for a local run", () => {
-    const { layer, cache } = setup({ checkRows: { public: [] } });
-    return Effect.gen(function* () {
-      yield* dbLint(flags({ schema: ["public"] }));
-      expect(cache.cached).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("rejects --project-ref on the default local target", () => {
-    const FLAG_REF = "flagflagflagflagflag";
-    const { layer, connection, cache } = setup({ checkRows: { public: [] } });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        dbLint(flags({ schema: ["public"], projectRef: Option.some(FLAG_REF) })),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain(
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        );
-      }
-      expect(connection.execs).toEqual([]);
-      expect(cache.cached).toBe(false);
-    }).pipe(Effect.provide(layer));
   });
 
   it.effect("flushes telemetry on success and on failure", () => {
@@ -696,59 +623,23 @@ describe("db lint", () => {
       expect(failure.telemetry.flushed).toBe(true);
     });
   });
+});
 
-  it.effect("--linked=false routes to the linked branch (Changed, not value)", () => {
-    const { layer, projectRef, cache } = setup({
-      isLocal: false,
-      checkRows: { public: [] },
-      args: ["db", "lint", "--linked=false"],
-    });
-    return Effect.gen(function* () {
-      yield* dbLint(flags({ schema: ["public"] }));
-      expect(projectRef.calls).toContain("loadProjectRef");
-      expect(cache.cached).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("--no-linked routes to the linked branch (boolean negation is still Changed)", () => {
-    const { layer, projectRef, cache } = setup({
-      isLocal: false,
-      checkRows: { public: [] },
-      args: ["--no-linked"],
-    });
-    return Effect.gen(function* () {
-      yield* dbLint(flags({ schema: ["public"] }));
-      expect(projectRef.calls).toContain("loadProjectRef");
-      expect(cache.cached).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect(
-    "--local=false --linked fails with mutual-exclusion (sorted set [linked local])",
-    () => {
-      const { layer } = setup({ args: ["--local=false", "--linked"] });
-      return Effect.gen(function* () {
-        const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const causeText = Cause.pretty(exit.cause);
-          expect(causeText).toContain(
-            "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
-          );
-        }
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect(
-    "--local=false alone routes to the local branch (Changed local, connType=local)",
-    () => {
-      const { layer, out, cache } = setup({ checkRows: { public: [] }, args: ["--local=false"] });
-      return Effect.gen(function* () {
-        yield* dbLint(flags({ schema: ["public"] }));
-        expect(out.stderrText).toContain("Connecting to local database...");
-        expect(cache.cached).toBe(false);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+describeDbTargetSelection("db lint", {
+  dbUrl: true,
+  workdir: () => tempRoot.current,
+  activeFlags: { schema: true },
+  attempt: ({ target }) => {
+    const ctx = setup({ checkRows: { public: [] } });
+    const branchApi = branchListApi();
+    return {
+      layer: Layer.merge(ctx.layer, branchApi.layer),
+      out: ctx.out,
+      run: dbLint(flags({ schema: ["public"], ...target })),
+      target: () => ctx.resolver.resolveInput?.target,
+      cachedRef: () => ctx.cache.cachedRef,
+      branchLookups: () => branchApi.requests,
+      apiRequests: () => branchApi.requests,
+    };
+  },
 });

@@ -1,5 +1,7 @@
 # `supabase db test [path...]`
 
+Target: selectable, consent default No — see [Command target](../../../../docs/command-target.md)
+
 `db test` is a **hidden alias** for `supabase test db`. It
 shares the same flag config and handler: `test.command.ts` reuses `test db`'s
 flag config and assembled handler verbatim
@@ -36,10 +38,10 @@ Identical to `test db`. See
 Identical to `test db`. See
 [`../../test/db/SIDE_EFFECTS.md`](../../test/db/SIDE_EFFECTS.md#docker).
 
-## API Routes (`--linked` only)
+## API Routes (remote project or branch only)
 
 Identical to `test db`. See
-[`../../test/db/SIDE_EFFECTS.md`](../../test/db/SIDE_EFFECTS.md#api-routes---linked-only).
+[`../../test/db/SIDE_EFFECTS.md`](../../test/db/SIDE_EFFECTS.md#api-routes-remote-project-or-branch-only).
 
 ## Environment Variables
 
@@ -74,9 +76,6 @@ Identical to `test db`. See
 
 - Hidden command —
   registered with `.pipe(Command.unlisted)` in `../db.command.ts`.
-- `--local` defaults to `true` on both `db test` and `test db` — bare
-  `supabase db test` always targets the local stack. The flag drives
-  `resolveDbTargetFlags`'s presence-based selection directly, the same
-  mechanism `test db` uses, so the true default is reflected exactly.
+- Target selection and the hosted-target confirmation are identical to `test db`.
 - Shares every behavior documented on `test db` (pg_prove image pin,
   `pg_extension`-based "already exists" detection, global `--network-id` handling, etc.).

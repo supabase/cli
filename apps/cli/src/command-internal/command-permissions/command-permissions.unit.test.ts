@@ -9,8 +9,9 @@ import { OPERATIONS } from "../../../tests/helpers/operation-table.ts";
 import { readPermissions } from "./command-permissions.annotation.ts";
 import { GLOBAL_NO_API_EFFECT_FLAGS } from "../../../tests/helpers/permission-global-flags.ts";
 import type { CommandPermissions, EntryCondition, OperationEntry } from "./model.ts";
-import { DB_TARGET_FLAGS } from "../../../tests/helpers/permission-registry.ts";
+import { DB_TARGET_FLAGS, SELECTOR_FLAGS } from "../../../tests/helpers/permission-registry.ts";
 import type { PermissionVariant } from "../../../tests/helpers/permission-registry.ts";
+import { readTargetPolicy } from "../target/target-policy.ts";
 
 /**
  * Whole-command Go delegation, per `docs/go-cli-porting-status.md`. Flag-gated delegation
@@ -31,6 +32,8 @@ const OPERATIONS_WITHOUT_FGA: ReadonlyMap<string, string> = new Map<string, stri
   ],
 ]);
 
+const BRANCH_RESOLUTION_SOURCE = "branch-resolution";
+
 const VARIANTS: ReadonlyArray<{ readonly name: string; readonly variant: PermissionVariant }> = [
   { name: "default backend", variant: undefined },
   {
@@ -48,9 +51,11 @@ function rootGlobalFlagIds(): ReadonlySet<string> {
 
 function conditionFlagNames(entries: ReadonlyArray<OperationEntry>): ReadonlyArray<string> {
   return entries.flatMap((entry) =>
-    (entry.when ?? []).flatMap((cond: EntryCondition) =>
-      cond.dbTarget === undefined ? [cond.flag] : DB_TARGET_FLAGS,
-    ),
+    (entry.when ?? []).flatMap((cond: EntryCondition) => {
+      if (cond.dbTarget !== undefined) return DB_TARGET_FLAGS;
+      if (cond.selector !== undefined) return SELECTOR_FLAGS;
+      return [cond.flag];
+    }),
   );
 }
 
@@ -117,16 +122,27 @@ describe("command permission mapping completeness", () => {
               if (cond.dbTarget !== undefined) {
                 const where = `"${path}"'s \`when\` condition on "${entry.operationId}"`;
                 expect(
-                  permissions.dbTargetDefault,
-                  `${where} checks the database target, but the declaration sets no default — wrap it in withDbTarget`,
-                ).toBeDefined();
+                  Option.getOrUndefined(readTargetPolicy(node.command))?.group,
+                  `${where} checks the database target, which only a selectable leaf can choose between`,
+                ).toBe("selectable");
                 // A block's condition may name a target the command can't select; a command's own must be reachable.
                 for (const target of cond.source === undefined ? cond.dbTarget : []) {
                   expect(
-                    target === permissions.dbTargetDefault || node.flags.has(target),
+                    target === "local" || node.flags.has(target),
                     `${where} names the "${target}" target, which --${target} can't select and isn't the default`,
                   ).toBe(true);
                 }
+                continue;
+              }
+              if (cond.selector !== undefined) {
+                expect(
+                  cond.selector.length,
+                  `"${path}"'s \`when\` condition on "${entry.operationId}" lists no selector shapes`,
+                ).toBeGreaterThan(0);
+                expect(
+                  cond.source !== undefined || SELECTOR_FLAGS.some((flag) => node.flags.has(flag)),
+                  `"${path}"'s \`when\` condition on "${entry.operationId}" checks the target selector, but the command accepts no selector flag`,
+                ).toBe(true);
                 continue;
               }
               // A condition a building block wrote (`cond.source` set) only has to name a real flag
@@ -191,6 +207,19 @@ describe("command permission mapping completeness", () => {
               `"${path}" declares "${entry.operationId}", which has no x-fga-permissions in the bundled spec — add it to OPERATIONS_WITHOUT_FGA with the reason`,
             ).toBe(true);
           }
+        }
+      });
+
+      it("composes branch resolution on every leaf that accepts --remote, except the branches that act on a parent project", () => {
+        for (const [path, node] of leaves) {
+          const permissions = declarationOf(node);
+          if (permissions?.status !== "mapped") continue;
+          if (!node.flags.has("remote") || path.startsWith("branches ")) continue;
+          if (permissions.noApiEffectFlags.includes("remote")) continue;
+          expect(
+            permissions.operations.some((entry) => entry.source === BRANCH_RESOLUTION_SOURCE),
+            `"${path}" accepts --remote=<branch> but does not compose branchResolution`,
+          ).toBe(true);
         }
       });
 

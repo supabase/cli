@@ -5,11 +5,13 @@ import { Command, Flag } from "effect/cli";
 import type { PlatformError } from "effect/PlatformError";
 
 import { ExperimentalFlag } from "../command-internal/global-flags.ts";
+import { hostedRemoteFlag, remoteFlag } from "../../tests/helpers/remote-flag-fixture.ts";
 
 import { rootCommand } from "../cli/root.ts";
 import { DocsExamplesError, readDocsContent, type DocsContent } from "./docs-spec.content.ts";
 import {
   buildDocsSpec,
+  docsFlagDoc,
   docsOverlayPath,
   docsStripOverlayHeading,
   stringifyDocsSpec,
@@ -82,6 +84,21 @@ describe("docsStripOverlayHeading", () => {
   it("keeps content that does not start with a heading", () => {
     expect(docsStripOverlayHeading("Creates a resource.\nMore.\n")).toBe(
       "Creates a resource.\nMore.\n",
+    );
+  });
+});
+
+describe("docsFlagDoc", () => {
+  it("renders --remote with the value hint its declaration carries", () => {
+    const doc = docsFlagDoc(["supabase", "db", "push"], remoteFlag);
+
+    expect(doc?.name).toBe("--remote[=<ref|branch|url>]");
+    expect(doc?.id).toBe("remote");
+  });
+
+  it("renders the narrower hint of a hosted command's --remote", () => {
+    expect(docsFlagDoc(["supabase", "functions", "deploy"], hostedRemoteFlag)?.name).toBe(
+      "--remote[=<ref|branch>]",
     );
   });
 });
@@ -314,7 +331,7 @@ describe("review fixes stay fixed", () => {
         `${command.id} publishes include-raw-output`,
       ).toBe(false);
     }
-    expect(byId.get("supabase-domains-get")?.flags.map((flag) => flag.id)).toContain("project-ref");
+    expect(byId.get("supabase-domains-get")?.flags.map((flag) => flag.id)).toContain("remote");
   });
 
   it("renders required variadic usage from the override table", () => {

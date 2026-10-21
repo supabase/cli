@@ -1,5 +1,7 @@
 # `supabase orgs list`
 
+Target: account, no consent — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                      | Format                    | When                                                                                          |
@@ -15,7 +17,7 @@
 | `~/.supabase/telemetry.json` | JSON   | always (in `Effect.ensuring`) at end of command |
 
 `orgs list` is a user-level command — it does not resolve a `--project-ref`, so the
-linked-project cache (`~/.supabase/<workdir-hash>/linked-project.json`) is never written.
+linked-project cache (`<workdir>/supabase/.temp/linked-project.json`) is never written.
 
 ## API Routes
 

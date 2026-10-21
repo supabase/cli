@@ -1,6 +1,6 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, FileSystem, Fiber, Option, Schema } from "effect";
+import { Cause, Deferred, Effect, Exit, FileSystem, Fiber, Layer, Option, Schema } from "effect";
 import { TestClock } from "effect/testing";
 
 import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
@@ -12,16 +12,22 @@ import {
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
+  type MockCommandPlatformApiOpts,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { DomainsCnameError } from "../domains.errors.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { domainsCreate } from "./create.handler.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const CUSTOM_HOSTNAME = "shop.acme.dev";
 const EXPECTED_CNAME = `${VALID_REF}.supabase.co.`;
@@ -58,12 +64,20 @@ interface SetupOpts {
 
 const tempRoot = useTempWorkdir("supabase-domains-create-int-");
 
+const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
+  Layer.mergeAll(
+    buildTestRuntime(opts),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "yes" }),
+  );
+
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-function setup(opts: SetupOpts = {}) {
+const confirmed = `Confirmed by --yes: Create custom hostname ${CUSTOM_HOSTNAME} on project ${VALID_REF}\n`;
+
+function apiOptions(opts: SetupOpts): MockCommandPlatformApiOpts {
   const cname = opts.cname ?? "ok";
-  const out = mockOutput({ format: opts.format ?? "text" });
-  const api = mockCommandPlatformApi({
+  return {
     handler: (request) => {
       if (request.url.includes("1.1.1.1")) {
         if (opts.dnsRequested !== undefined) {
@@ -88,12 +102,17 @@ function setup(opts: SetupOpts = {}) {
         jsonResponse(request, opts.apiStatus ?? 201, opts.apiResponse ?? HOSTNAME_RESPONSE),
       );
     },
-  });
+  };
+}
+
+function setup(opts: SetupOpts = {}) {
+  const out = mockOutput({ format: opts.format ?? "text" });
+  const api = mockCommandPlatformApi(apiOptions(opts));
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const analytics = mockAnalytics();
   const telemetry = mockTelemetryStateTracked();
   const linkedProjectCache = mockLinkedProjectCacheTracked();
-  const layer = buildTestRuntime({
+  const layer = buildRuntime({
     out,
     api,
     cliSettings,
@@ -107,6 +126,7 @@ function setup(opts: SetupOpts = {}) {
 
 function flags() {
   return {
+    remote: Option.none(),
     projectRef: Option.none<string>(),
     customHostname: CUSTOM_HOSTNAME,
     includeRawOutput: Option.none<boolean>(),
@@ -257,7 +277,7 @@ describe("domains create integration", () => {
     return Effect.gen(function* () {
       yield* domainsCreate(flags());
       expect(out.stdoutText.startsWith("{")).toBe(true);
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + confirmed);
     }).pipe(Effect.provide(layer));
   });
 
@@ -267,7 +287,7 @@ describe("domains create integration", () => {
       yield* domainsCreate(flags());
       // YAML output lowercases the whole field name.
       expect(out.stdoutText).toContain(`customhostname: ${CUSTOM_HOSTNAME}`);
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + confirmed);
     }).pipe(Effect.provide(layer));
   });
 
@@ -342,7 +362,7 @@ describe("domains create integration", () => {
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildTestRuntime({
+      const layer = buildRuntime({
         out,
         api,
         cliSettings,
@@ -371,4 +391,19 @@ describe("domains create integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describeHostedConsent("domains create", {
+  api: apiOptions({}),
+  invoke: () => ({ run: domainsCreate(flags()) }),
+});
+
+describeHostedTargetSelection("domains create", {
+  respond: (request, ref) =>
+    Effect.succeed(
+      request.url.includes("1.1.1.1")
+        ? jsonResponse(request, 200, { Answer: [{ type: 5, data: `${ref}.supabase.co.` }] })
+        : jsonResponse(request, 201, HOSTNAME_RESPONSE),
+    ),
+  run: (selection) => domainsCreate({ ...flags(), ...selection }),
 });

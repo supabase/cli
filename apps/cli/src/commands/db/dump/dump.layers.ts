@@ -20,7 +20,7 @@ import { bundledPostgresClientLayer } from "../../../command-internal/bundled-po
  * Runtime layer for `supabase db dump`.
  *
  * Mirrors `test db`'s composition: most of the Management API stack builds lazily
- * inside the resolver's `--linked` branch. `ProjectRefResolver` is exposed here (like
+ * inside the resolver's hosted-target branch. `ProjectRefResolver` is exposed here (like
  * `db push`) so the handler can validate `--project-ref` before the linked-project-cache
  * finalizer sees it.
  */
@@ -32,7 +32,7 @@ const credentials = commandCredentialsLayer.pipe(
 );
 
 // The lazy `commandPlatformApiFactoryLayer` (not the eager management-API runtime)
-// keeps dump's auth-free `--linked --password` path from resolving an access token
+// keeps dump's auth-free `--remote --password` path from resolving an access token
 // at layer-build time, same as `db push`.
 const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
   Layer.provide(credentials),
@@ -41,8 +41,8 @@ const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
   Layer.provide(identityStitchLayer),
 );
 
-// Exposed so the handler can pre-validate `--project-ref` via `loadProjectRef`
-// before the linked-project-cache finalizer ever sees it.
+// Exposed so target resolution can validate `--project-ref` before the linked-project-cache
+// finalizer ever sees it.
 const projectRef = projectRefLayer.pipe(
   Layer.provide(platformApiFactory),
   Layer.provide(cliSettings),
@@ -74,6 +74,7 @@ export const dbDumpRuntimeLayer = Layer.mergeAll(
   cliSettings,
   projectRef,
   linkedProjectCache,
+  platformApiFactory,
   identityStitchLayer,
   telemetryStateLayer,
   stackApiLayer,

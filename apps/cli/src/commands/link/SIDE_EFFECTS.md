@@ -1,11 +1,14 @@
 # `supabase link`
 
+Target: hosted, no consent — see [Command target](../../../docs/command-target.md)
+
 Writes flat state files under `<workdir>/supabase/.temp/`.
 
 `link` accepts an optional `[ref-or-branch]` positional
-argument, and `--project-ref` also accepts a branch name instead of a project ref. A value is
-treated as a ref when it matches `PROJECT_REF_PATTERN` (20 lowercase letters); any other
-non-empty value is looked up as a branch name of the currently-linked parent project.
+argument (`supabase link <ref>`), and `--project-ref` still works and also accepts a branch name
+instead of a project ref. A value is treated as a ref when it matches `PROJECT_REF_PATTERN` (20
+lowercase letters); any other non-empty value is looked up as a branch name of the
+currently-linked parent project. `link` takes no `--remote`: the argument is its target.
 
 ## Files Read
 
@@ -129,6 +132,10 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 ### `--output-format text`
 
 - stderr: the warning `link ignores --password; remove it from your scripts.` when `--password` is passed (printed before the access token is resolved); `Selected project: <ref>` (prompt path); `WARNING: Project status is <status> instead of Active Healthy. Some operations might fail.`; the dashboard unpause suggestion on a paused project.
+- stderr: the target banner `Target: project <ref>` (`Target: project <name> (<ref>)` when the
+  picker named it), printed once the ref resolves and before the project is looked up; see
+  [Command target](../../../docs/command-target.md). `link` only records a link, so it asks for no
+  confirmation and the banner stays as is once the project verifies.
 - stderr: `Resolved branch "<name>" of project <parentRef> to project ref <branchRef>.` — via
   `output.raw(..., "stderr")` (NOT `output.info`, which clack renders on stdout with `│`/`◇`
   framing in text mode) — only when a non-ref-shaped `[ref-or-branch]`/`--project-ref` value

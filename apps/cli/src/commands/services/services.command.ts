@@ -10,6 +10,7 @@ import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import type * as CliCommand from "effect/cli/Command";
 import { services } from "./services.handler.ts";
 import { servicesRuntimeLayer } from "./services.layers.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 const config = {};
 export type ServicesFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -35,4 +36,5 @@ export const servicesCommand = Command.make("services", config).pipe(
   Command.provide(servicesRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

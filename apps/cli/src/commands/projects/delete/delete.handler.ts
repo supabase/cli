@@ -12,15 +12,11 @@ import {
 } from "../../../config/project-ref.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { resolveYes } from "../../../command-internal/global-flags.ts";
-import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
-import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
-import { aqua } from "../../../command-internal/colors.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
-  ProjectsDeleteCancelledError,
   ProjectsDeleteNetworkError,
   ProjectsDeleteNotFoundError,
   ProjectsDeleteRefRequiredError,
@@ -37,8 +33,6 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
   const cliSettings = yield* CommandSettings;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
-  // `resolveYes` also honors `SUPABASE_YES`, not just the `--yes` flag.
-  const yes = yield* resolveYes;
   const tty = yield* Tty;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -66,14 +60,10 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
       return yield* new InvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE });
     }
 
-    const title = `Do you want to delete project ${aqua(ref)}? This action is irreversible.`;
-    // `promptYesNo` echoes `<title> [y/N] <answer>` to stderr even on a non-TTY: it scans one
-    // piped line (100ms timeout) so `echo y | supabase projects delete <ref>` confirms;
-    // unparseable input falls back to No.
-    const confirmed = yield* promptYesNo(output, yes, title, false);
-    if (!confirmed) {
-      return yield* new ProjectsDeleteCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
-    }
+    yield* requireHostedMutationConsent({
+      action: `Delete project ${ref}`,
+      details: ["This action is irreversible."],
+    });
 
     const mapDeleteError = mapHttpError({
       networkError: ProjectsDeleteNetworkError,

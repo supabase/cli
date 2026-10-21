@@ -15,15 +15,6 @@ import {
  * `InvalidProjectRefError`.
  */
 
-/** Conflicting `db-url`/`linked`/`local` flags; message text is an established output contract. */
-export class DbAdvisorsMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "DbAdvisorsMutuallyExclusiveFlagsError",
-)<{ readonly message: string }> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
 /**
  * `--linked` PreRunE: no access token; message text and the "Run supabase
  * login first." suggestion are an established output contract.

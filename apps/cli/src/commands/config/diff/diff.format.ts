@@ -21,7 +21,7 @@ import {
 export interface ConfigDiffContext {
   /** The resolved comparison target's project ref. */
   readonly projectRef: string;
-  /** The branch name or UUID `--project-ref` carried, when it named one. */
+  /** The branch name or UUID `--remote` carried, when it named one. */
   readonly branch: string | undefined;
   /** Matched `[remotes.<name>]` block, when the local operand was merged. */
   readonly appliedRemote: string | undefined;

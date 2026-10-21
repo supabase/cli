@@ -1,6 +1,7 @@
 import { Argument, Command } from "effect/cli";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { removedCommand } from "../../../command-internal/removed-command.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
@@ -8,6 +9,12 @@ import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts
 
 const REMOVED_SUGGESTION =
   "Local database branches are no longer supported. For hosted preview branches, see `supabase branches --help`.";
+
+const withRemovedBranchTargetPolicy = withTargetPolicy({
+  group: "removed",
+  consent: "none",
+  consentExemptReason: "removed command",
+});
 
 /** A tombstoned `db branch` leaf taking an optional `<branch name>` positional. */
 function removedBranchLeaf(name: string, argDescription: string) {
@@ -26,6 +33,7 @@ function removedBranchLeaf(name: string, argDescription: string) {
     ),
     Command.provide(commandRuntimeLayer(["db", "branch", name])),
     Command.provide(telemetryStateLayer),
+    withRemovedBranchTargetPolicy,
   );
 }
 
@@ -43,6 +51,7 @@ const dbBranchListCommand = Command.make("list", {}).pipe(
   ),
   Command.provide(commandRuntimeLayer(["db", "branch", "list"])),
   Command.provide(telemetryStateLayer),
+  withRemovedBranchTargetPolicy,
 );
 
 export const dbBranchCommand = Command.make("branch").pipe(

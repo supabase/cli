@@ -15,6 +15,7 @@ import {
 } from "../../src/command-internal/global-flags.ts";
 import { identityStitchLayer } from "../../src/command-internal/identity-stitch.ts";
 import type { CommandSettings } from "../../src/config/command-settings.service.ts";
+import { commandTargetLayer } from "../../src/shared/output/command-target.layer.ts";
 import { DebugLogger } from "../../src/shared/output/debug-logger.service.ts";
 import { linkedProjectCacheLayer } from "../../src/telemetry/linked-project-cache.layer.ts";
 import type { LinkedProjectCache } from "../../src/telemetry/linked-project-cache.service.ts";
@@ -64,6 +65,7 @@ export function realDbConfigResolver(opts: {
   readonly dbConnection: Layer.Layer<DbConnection>;
   readonly env: Record<string, string | undefined>;
 }): Layer.Layer<DbConfigResolver> {
+  const out = mockOutput();
   const deps = Layer.mergeAll(
     mockCommandSettings({
       workdir: opts.workdir,
@@ -72,7 +74,8 @@ export function realDbConfigResolver(opts: {
     }),
     opts.dbConnection,
     Layer.succeed(DebugLogger, { debug: () => Effect.void, http: () => Effect.void }),
-    mockOutput().layer,
+    out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     mockAnalytics().layer,
     mockTelemetryRuntime(),
     mockTty(),

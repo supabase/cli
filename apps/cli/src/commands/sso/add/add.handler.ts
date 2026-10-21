@@ -4,8 +4,9 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import {
   mutuallyExclusiveFlagsMessage,
   PERSISTENT_VALUE_FLAG_NAMES,
@@ -28,6 +29,7 @@ import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-
 import {
   argvBoolValue,
   argvEnumValue,
+  argvRemoteValue,
   argvSliceValue,
   argvStringValue,
   resolveArgvProfile,
@@ -148,7 +150,6 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
   const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const stdio = yield* Stdio.Stdio;
@@ -229,12 +230,13 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     // than the TS-parsed flags, since the scan consumes flag-shaped tokens as
     // values where the parser doesn't.
     const projectRef = argvStringValue(occurrences, "project-ref");
+    const remote = argvRemoteValue(occurrences);
     const metadataFile = argvStringValue(occurrences, "metadata-file");
     const metadataUrl = argvStringValue(occurrences, "metadata-url");
     const attributeMappingFile = argvStringValue(occurrences, "attribute-mapping-file");
     const domains = argvSliceValue(occurrences, "domains", flags.domains);
 
-    const ref = yield* resolver.resolve(projectRef);
+    const ref = yield* resolveProjectTarget({ remote, projectRef });
 
     // Use the argv-reconciled profile's host when it disagreed with
     // `--profile`, otherwise the config layer's — applies to the POST and
@@ -287,6 +289,16 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
         const format = toNameIdFormat(nameIdFormat.value);
         if (format !== undefined) body.name_id_format = format;
       }
+
+      yield* requireHostedMutationConsent({
+        action: "Add an SSO provider",
+        details: [
+          `Type: ${flags.type}`,
+          ...(domains.length > 0 ? [`Domains: ${domains.join(", ")}`] : []),
+          ...(Option.isSome(metadataFile) ? ["Metadata: from a file"] : []),
+          ...(Option.isSome(metadataUrl) ? ["Metadata: from a URL"] : []),
+        ],
+      });
 
       const reconciledToken =
         reconciledTokenCached === undefined

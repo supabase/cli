@@ -2,7 +2,6 @@ import { Effect, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
-import { PROJECT_REF_PATTERN } from "../../config/project-ref.service.ts";
 import { withPermissions } from "../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose, withContext } from "../../command-internal/command-permissions/model.ts";
 import { linkServices } from "../../command-internal/link-services-core.ts";
@@ -16,6 +15,7 @@ import { withJsonErrorHandling } from "../../shared/output/json-error-handling.t
 import { managementApiRuntimeLayer } from "../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { link } from "./link.handler.ts";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 
 const config = {
   refOrBranch: Argument.String("ref-or-branch").pipe(
@@ -44,16 +44,10 @@ const config = {
 
 export type LinkFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const linkHandler = (flags: LinkFlags) =>
+const linkHandler = (flags: LinkFlags) =>
   link(flags).pipe(
-    // `--project-ref` is only safe to log verbatim when it's ref-shaped — it can also be a
-    // branch name, which is user data. `--skip-pooler` is always safe; `--password` stays redacted.
     withCommandTelemetry({
       flags,
-      safeFlags:
-        Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
-          ? ["project-ref"]
-          : [],
     }),
     withJsonErrorHandling,
   );
@@ -69,7 +63,7 @@ export const linkCommand = Command.make("link", config).pipe(
   Command.withShortDescription("Link to a Supabase project"),
   Command.withExamples([
     {
-      command: "supabase link --project-ref abcdefghijklmnopqrst",
+      command: "supabase link abcdefghijklmnopqrst",
       description: "Link to a project by ref",
     },
     {
@@ -113,4 +107,5 @@ export const linkCommand = Command.make("link", config).pipe(
   // Outermost, so it runs before the management API runtime resolves the access token.
   Command.provideEffectDiscard((flags) => warnPasswordIgnored(flags)),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

@@ -4,7 +4,7 @@ import { Effect, Option, Ref, Result } from "effect";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { mapHttpError, sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -34,15 +34,14 @@ export const functionsList = Effect.fn("functions.list")(function* (flags: Funct
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const resolvedProjectRef = yield* Ref.make(Option.none<string>());
 
   yield* Effect.gen(function* () {
-    const ref = yield* resolver
-      .resolve(flags.projectRef)
-      .pipe(Effect.tap((projectRef) => Ref.set(resolvedProjectRef, Option.some(projectRef))));
+    const ref = yield* resolveProjectTarget(flags).pipe(
+      Effect.tap((projectRef) => Ref.set(resolvedProjectRef, Option.some(projectRef))),
+    );
     yield* Effect.annotateCurrentSpan("project.ref", ref);
 
     const fetching =

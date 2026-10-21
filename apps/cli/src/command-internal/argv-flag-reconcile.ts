@@ -11,6 +11,8 @@ import {
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { loadProfile, type LoadedProfile } from "./profile-load.ts";
 import { parseStringSliceFlag } from "./string-slice-flag.ts";
+import { classifyRemoteValue, type RemoteValue } from "./target/remote-value.ts";
+import { REMOTE_FLAG_NAME } from "./target/remote-vocabulary.ts";
 import { validateWorkdirIsDirectory } from "./workdir-validation.ts";
 
 /**
@@ -47,6 +49,14 @@ export function argvStringValue(
 ): Option.Option<string> {
   const values = occurrences.get(flagName);
   return values === undefined ? Option.none() : Option.some(values[values.length - 1] ?? "");
+}
+
+export function argvRemoteValue(
+  occurrences: ReadonlyMap<string, ReadonlyArray<string>>,
+): Option.Option<RemoteValue> {
+  return Option.flatMap(argvStringValue(occurrences, REMOTE_FLAG_NAME), (raw) =>
+    Option.fromNullishOr(classifyRemoteValue(raw)),
+  );
 }
 
 /**

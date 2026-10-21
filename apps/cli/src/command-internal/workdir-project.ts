@@ -13,6 +13,13 @@ export function relativeConfigPath(workdir: string, path: string): string {
   return path.startsWith(workdir) ? path.slice(workdir.length).replace(/^[/\\]/, "") : path;
 }
 
+export function describeConfigParseError(
+  workdir: string,
+  error: { readonly path: string; readonly cause: unknown },
+): string {
+  return `failed to parse ${relativeConfigPath(workdir, error.path)}: ${String(error.cause)}`;
+}
+
 /**
  * Shared "no project here" message for JSON-capable config loads (`config diff/push/pull`,
  * `gen types`, `storage ls|mv|rm|cp`, `seed buckets`).

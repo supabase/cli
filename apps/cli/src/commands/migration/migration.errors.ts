@@ -7,19 +7,6 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 
 /**
- * Conflicting database-target flags. Matches the established
- * mutually-exclusive-flags error text for `db-url`/`linked`/`local`. Shared by
- * list / fetch / repair / up / down / squash.
- */
-export class MigrationTargetFlagsError extends Data.TaggedError("MigrationTargetFlagsError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
  * A positional version argument is not a valid integer. Matches the established
  * `failed to parse <v>: invalid version number` text.
  */

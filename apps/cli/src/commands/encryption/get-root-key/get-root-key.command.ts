@@ -1,4 +1,4 @@
-import { Command, Flag } from "effect/cli";
+import { Command } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
@@ -9,12 +9,12 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { encryptionGetRootKey } from "./get-root-key.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
 } as const;
 
 export type EncryptionGetRootKeyFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -29,14 +29,12 @@ export const encryptionGetRootKeyCommand = Command.make("get-root-key", config).
       },
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
-    encryptionGetRootKey(flags).pipe(
-      // `--project-ref` is not telemetry-safe for encryption (no `markFlagTelemetrySafe`).
-      withCommandTelemetry({ flags }),
-      withJsonErrorHandling,
-    ),
+    encryptionGetRootKey(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["encryption", "get-root-key"])),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

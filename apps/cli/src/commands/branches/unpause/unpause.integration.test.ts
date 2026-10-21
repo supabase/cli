@@ -1,6 +1,6 @@
 import { type V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
+import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
 
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -10,11 +10,15 @@ import {
   mockCommandSettings,
   mockCommandPlatformApi,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import type { BranchesUnpauseFlags } from "./unpause.command.ts";
 import { branchesUnpause } from "./unpause.handler.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 // 20-lowercase ref (matches V1RestoreAProjectInput.ref plain pattern).
 const BRANCH_REF = "cccccccccccccccccccc";
@@ -57,6 +61,14 @@ const branchListing = (projectRef: string, name: string) => ({
 
 const tempRoot = useTempWorkdir("supabase-branches-unpause-int-");
 
+const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
+  Layer.mergeAll(
+    buildTestRuntime(opts),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
+
+const confirmed = `Confirmed by --yes: Unpause preview branch ${BRANCH_REF} on project ${VALID_REF}\n`;
 const sequence = (requests: ReadonlyArray<{ method: string; url: string }>) =>
   requests.map(({ method, url }) => `${method} ${url}`);
 
@@ -77,12 +89,13 @@ function setup(opts: SetupOpts = {}) {
       }),
   });
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
-  const layer = buildTestRuntime({ out, api, cliSettings });
+  const layer = buildRuntime({ out, api, cliSettings });
   return { layer, out, api };
 }
 
 const baseFlags: BranchesUnpauseFlags = {
   name: Option.none(),
+  remote: Option.none(),
   projectRef: Option.none(),
 };
 
@@ -117,7 +130,7 @@ describe("branches unpause integration", () => {
             : jsonResponse(request, 200, null),
         ),
     });
-    const layer = buildTestRuntime({
+    const layer = buildRuntime({
       out,
       api,
       cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
@@ -137,7 +150,7 @@ describe("branches unpause integration", () => {
     return Effect.gen(function* () {
       yield* branchesUnpause({ ...baseFlags, name: Option.some(BRANCH_REF) });
       expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + confirmed);
     }).pipe(Effect.provide(layer));
   });
 
@@ -191,7 +204,7 @@ describe("branches unpause integration", () => {
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildTestRuntime({
+      const layer = buildRuntime({
         out,
         api,
         cliSettings,
@@ -226,4 +239,9 @@ describe("branches unpause integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describeHostedConsent("branches unpause", {
+  api: { response: { status: 200, body: null } },
+  invoke: () => ({ run: branchesUnpause({ ...baseFlags, name: Option.some(BRANCH_REF) }) }),
 });

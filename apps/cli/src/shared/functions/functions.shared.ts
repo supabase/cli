@@ -11,8 +11,6 @@ export function validateFunctionSlugMessage(slug: string): string | undefined {
   return functionSlugPattern.test(slug) ? undefined : invalidFunctionSlugDetail;
 }
 
-export const FUNCTIONS_PROJECT_REF_SAFE_FLAGS = ["project-ref"] as const;
-
 // Order is rendered verbatim in the mutually-exclusive-flags error message.
 export const FUNCTIONS_DEPLOY_BUNDLER_MUTEX_GROUP = [
   "use-api",

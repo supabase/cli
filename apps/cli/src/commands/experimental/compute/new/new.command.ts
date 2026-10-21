@@ -16,6 +16,7 @@ import { debugLoggerLayer } from "../../../../command-internal/debug-logger.laye
 import { telemetryStateLayer } from "../../../../telemetry/telemetry-state.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computeNew } from "./new.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
   name: Argument.String("name").pipe(
@@ -114,4 +115,5 @@ export const computeNewCommand = Command.make("new", config).pipe(
   Command.provide(computeNewRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

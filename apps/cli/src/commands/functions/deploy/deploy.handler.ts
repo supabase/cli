@@ -5,8 +5,7 @@ import { aqua, bold, yellow } from "../../../command-internal/colors.ts";
 import { functionsLocalConfigLoader } from "../../../command-internal/functions-local-config.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
-import { resolveYes } from "../../../command-internal/global-flags.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { dashboardUrl } from "../../../command-internal/profile.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -18,9 +17,6 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
 ) {
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* ProjectRefResolver;
-  // Also honors `SUPABASE_YES`, not just the `--yes` flag, for the `--prune` confirm.
-  const yes = yield* resolveYes;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
@@ -40,13 +36,11 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
     supabaseDir: path.join(cliSettings.workdir, "supabase"),
     dashboardUrl: dashboardUrl(cliSettings.profile),
     localConfigLoader: functionsLocalConfigLoader,
-    yes,
     rawArgs,
     edgeRuntimeVersion,
-    resolveProjectRef: (projectRef) =>
-      resolver
-        .resolve(projectRef)
-        .pipe(Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref)))),
+    resolveProjectRef: resolveProjectTarget(flags).pipe(
+      Effect.tap((ref) => Ref.set(resolvedProjectRef, Option.some(ref))),
+    ),
     // Written to stdout, so the TTY color gate must check stdout.
     styleIdentifier: (text) => aqua(text, process.stdout),
     // Written to stderr, matching `bold`'s default TTY gate.

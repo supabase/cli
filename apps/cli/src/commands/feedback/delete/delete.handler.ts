@@ -1,9 +1,8 @@
 import { Effect, Option } from "effect";
 import { FeedbackClient } from "../../../shared/feedback/feedback-client.service.ts";
-import { NonInteractiveError } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { Stdin } from "../../../shared/runtime/stdin.service.ts";
-import { OutputFlag, resolveYes } from "../../../command-internal/global-flags.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { BRANCH_UUID_PATTERN } from "../../../command-internal/ref-patterns.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -13,10 +12,8 @@ import { resolveFeedbackProjectRef } from "../feedback-project-ref.ts";
 import { settleFeedbackTask } from "../feedback-task.ts";
 import type { FeedbackDeleteArgs } from "./delete.command.ts";
 import {
-  FEEDBACK_DELETE_CANCELLED_MESSAGE,
   FEEDBACK_INVALID_TOKEN_MESSAGE,
   FEEDBACK_NOT_FOUND_MESSAGE,
-  FeedbackDeleteCancelledError,
   FeedbackInvalidTokenError,
   FeedbackNotFoundError,
 } from "./delete.errors.ts";
@@ -71,42 +68,9 @@ export const feedbackDelete = Effect.fn("feedback.delete")(function* (args: Feed
       userId: telemetryRuntime.identity.current(),
     };
 
-    // The CLI never reads the row (CLI-2406 removes the backend read path
-    // too), so the prompt runs before the row's existence is known; a wrong
-    // token is reported as "not found" after the DELETE matches zero rows.
-    // `--yes`/`SUPABASE_YES` auto-confirms; otherwise prompt. Non-interactive
-    // contexts fail loudly with NonInteractiveError rather than silently
-    // deleting — pass --yes there. `output.interactive` is stdout-derived and
-    // clack's confirm answers on a single y/n keypress from any stdin, so both
-    // streams must be TTYs — otherwise `printf 'y' | feedback delete` could
-    // confirm a permanent delete without --yes (same gate as the add prompt).
-    // `-o json` is gated explicitly too: it leaves `output.format === "text"`,
-    // so the clack prompt would write ANSI and prompt text to stdout ahead of
-    // the machine payload.
-    const yes = yield* resolveYes;
-    if (!yes) {
-      const stdin = yield* Stdin;
-      if (outputFlagFormat === "json") {
-        return yield* new NonInteractiveError({
-          detail: "Cannot prompt for confirmation with -o json",
-          suggestion: "Pass --yes to delete without confirmation",
-        });
-      }
-      if (!stdin.isTTY || !output.interactive) {
-        return yield* new NonInteractiveError({
-          detail: "Cannot prompt for confirmation in a non-interactive context",
-          suggestion: "Pass --yes to delete without confirmation",
-        });
-      }
-      const confirmed = yield* output.promptConfirm("Permanently delete this feedback?", {
-        defaultValue: false,
-      });
-      if (!confirmed) {
-        return yield* new FeedbackDeleteCancelledError({
-          message: FEEDBACK_DELETE_CANCELLED_MESSAGE,
-        });
-      }
-    }
+    // The row is never read, so consent is asked before its existence is known; a wrong token
+    // is reported as "not found" after the DELETE matches zero rows.
+    yield* requireHostedMutationConsent({ action: "Permanently delete this feedback" });
 
     const deleting = yield* output.task("Deleting feedback...");
     const { deleted } = yield* client.delete(token, rowContext).pipe(settleFeedbackTask(deleting));

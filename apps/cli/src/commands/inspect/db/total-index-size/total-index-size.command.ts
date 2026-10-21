@@ -5,7 +5,7 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { telemetryStateLayer } from "../../../../telemetry/telemetry-state.layer.ts";
-import { INSPECT_DB_FLAGS } from "../inspect-db-command.ts";
+import { INSPECT_DB_FLAGS, withInspectDbTargetPolicy } from "../inspect-db-command.ts";
 import { inspectDbCommandPath } from "../db.layers.ts";
 
 export const inspectDbTotalIndexSizeCommand = Command.make(
@@ -17,7 +17,7 @@ export const inspectDbTotalIndexSizeCommand = Command.make(
   // Removed: fails before any Management API call, so no flag changes what it calls.
   withPermissions({
     operations: [],
-    noApiEffectFlags: ["db-url", "linked", "local", "project-ref"],
+    noApiEffectFlags: ["db-url", "linked", "local", "project-ref", "remote"],
   }),
   Command.withHandler(() =>
     removedCommand("Use `supabase inspect db index-stats` instead.").pipe(
@@ -27,4 +27,5 @@ export const inspectDbTotalIndexSizeCommand = Command.make(
   ),
   Command.provide(commandRuntimeLayer(inspectDbCommandPath("total-index-size"))),
   Command.provide(telemetryStateLayer),
+  withInspectDbTargetPolicy,
 );

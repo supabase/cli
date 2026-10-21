@@ -13,6 +13,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -117,7 +118,7 @@ describe("functions list integration", () => {
   it.effect("renders a Glamour table with all 6 columns in text mode", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
-      yield* functionsList({ projectRef: Option.none() });
+      yield* functionsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("ID");
       expect(out.stdoutText).toContain("NAME");
       expect(out.stdoutText).toContain("SLUG");
@@ -132,7 +133,7 @@ describe("functions list integration", () => {
   it.effect("renders literal `|` characters in table cells", () => {
     const { layer, out } = setup({ response: [PIPE_FUNCTION] });
     return Effect.gen(function* () {
-      yield* functionsList({ projectRef: Option.none() });
+      yield* functionsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("Hello|World");
       expect(out.stdoutText).toContain("hello|world");
     }).pipe(Effect.provide(layer));
@@ -141,7 +142,7 @@ describe("functions list integration", () => {
   it.effect("renders an empty table when the API returns []", () => {
     const { layer, out } = setup({ response: [] });
     return Effect.gen(function* () {
-      yield* functionsList({ projectRef: Option.none() });
+      yield* functionsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("UPDATED_AT (UTC)");
       expect(out.stdoutText).not.toContain("Hello World");
     }).pipe(Effect.provide(layer));
@@ -150,7 +151,7 @@ describe("functions list integration", () => {
   it.effect("emits a success event with { functions } for --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
-      yield* functionsList({ projectRef: Option.none() });
+      yield* functionsList({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((message) => message.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({ functions: [SAMPLE_FUNCTION] });
@@ -160,7 +161,7 @@ describe("functions list integration", () => {
   it.effect("emits a success event for --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
-      yield* functionsList({ projectRef: Option.none() });
+      yield* functionsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.messages.find((message) => message.type === "success")).toBeDefined();
     }).pipe(Effect.provide(layer));
   });
@@ -168,7 +169,7 @@ describe("functions list integration", () => {
   it.effect("emits byte-exact indented JSON for --output json", () => {
     const { layer, out } = setup({ outputFlag: "json" });
     return Effect.gen(function* () {
-      yield* functionsList({ projectRef: Option.none() });
+      yield* functionsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText.startsWith("[\n  {\n")).toBe(true);
       expect(out.stdoutText.endsWith("]\n")).toBe(true);
       expect(out.stdoutText).toContain('"created_at": 1687423025152');
@@ -179,7 +180,7 @@ describe("functions list integration", () => {
   it.effect("emits a YAML array for --output yaml", () => {
     const { layer, out } = setup({ outputFlag: "yaml" });
     return Effect.gen(function* () {
-      yield* functionsList({ projectRef: Option.none() });
+      yield* functionsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("createdat: 1687423025152");
       expect(out.stdoutText).toContain("entrypointpath: functions/hello-world/index.ts");
       expect(out.stdoutText).toContain("verifyjwt: true");
@@ -191,7 +192,7 @@ describe("functions list integration", () => {
   it.effect("wraps the result as { functions = [...] } for --output toml", () => {
     const { layer, out } = setup({ outputFlag: "toml" });
     return Effect.gen(function* () {
-      yield* functionsList({ projectRef: Option.none() });
+      yield* functionsList({ remote: Option.none(), projectRef: Option.none() });
       // Array-of-table keys are indented by 2 spaces.
       expect(out.stdoutText).toContain(`[[functions]]
   CreatedAt = 1687423025152
@@ -208,7 +209,9 @@ describe("functions list integration", () => {
   it.effect("fails with FunctionsEnvNotSupportedError for --output env", () => {
     const { layer } = setup({ outputFlag: "env" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        functionsList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -221,7 +224,7 @@ describe("functions list integration", () => {
   it.effect("treats --output pretty as identical to text mode (table render)", () => {
     const { layer, out } = setup({ outputFlag: "pretty" });
     return Effect.gen(function* () {
-      yield* functionsList({ projectRef: Option.none() });
+      yield* functionsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("Hello World");
       expect(out.stdoutText).toContain("UPDATED_AT (UTC)");
     }).pipe(Effect.provide(layer));
@@ -230,7 +233,7 @@ describe("functions list integration", () => {
   it.effect("lets --output pretty win over --output-format json", () => {
     const { layer, out } = setup({ format: "json", outputFlag: "pretty" });
     return Effect.gen(function* () {
-      yield* functionsList({ projectRef: Option.none() });
+      yield* functionsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("Hello World");
       expect(out.stdoutText).toContain("UPDATED_AT (UTC)");
       expect(out.messages.find((message) => message.type === "success")).toBeUndefined();
@@ -240,7 +243,7 @@ describe("functions list integration", () => {
   it.effect("--output flag wins over --output-format", () => {
     const { layer, out } = setup({ format: "json", outputFlag: "yaml" });
     return Effect.gen(function* () {
-      yield* functionsList({ projectRef: Option.none() });
+      yield* functionsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("name: Hello World");
       expect(out.stdoutText.startsWith("{")).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -249,7 +252,7 @@ describe("functions list integration", () => {
   it.effect("passes the resolved project ref to listAllFunctions", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* functionsList({ projectRef: Option.none() });
+      yield* functionsList({ remote: Option.none(), projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.url).toContain(`/v1/projects/${VALID_REF}/functions`);
       assertPermissionDrift({ command: "functions list", requests: api.requests, exact: true });
@@ -283,7 +286,7 @@ describe("functions list integration", () => {
       const fs = yield* FileSystem.FileSystem;
       const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
       expect(yield* fs.exists(cachePath)).toBe(false);
-      yield* functionsList({ projectRef: Option.none() });
+      yield* functionsList({ remote: Option.none(), projectRef: Option.none() });
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         "GET https://api.supabase.com/v1/projects",
         `GET https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
@@ -297,7 +300,7 @@ describe("functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("skips the project picker when --project-ref is empty and a ref file exists", () => {
+  it.effect("skips the project picker for a bare --remote when a ref file exists", () => {
     const savedRef = "qrstuvwxyzabcdefghij";
     const out = mockOutput();
     const api = mockCommandPlatformApi({ response: { status: 200, body: [SAMPLE_FUNCTION] } });
@@ -311,35 +314,50 @@ describe("functions list integration", () => {
       const fs = yield* FileSystem.FileSystem;
       yield* fs.makeDirectory(`${tempRoot.current}/supabase/.temp`, { recursive: true });
       yield* fs.writeFileString(`${tempRoot.current}/supabase/.temp/project-ref`, savedRef);
-      yield* functionsList({ projectRef: Option.some("") });
+      yield* functionsList({ remote: Option.some({ _tag: "Linked" }), projectRef: Option.none() });
       expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
         `GET https://api.supabase.com/v1/projects/${savedRef}/functions`,
       ]);
       assertPermissionDrift({
         command: "functions list",
-        activeFlags: { "project-ref": "" },
+        activeFlags: { remote: true },
         requests: api.requests,
         exact: true,
       });
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("rejects an empty --project-ref before any request", () => {
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      const error = yield* functionsList({
+        remote: Option.none(),
+        projectRef: Option.some(""),
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "TargetEmptyValueError", flag: "--project-ref" });
+      expect(api.requests).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("accepts unknown future function status strings", () => {
     const { layer, out } = setup({ response: [UNKNOWN_STATUS_FUNCTION] });
     return Effect.gen(function* () {
-      yield* functionsList({ projectRef: Option.none() });
+      yield* functionsList({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toContain("PAUSED_FOR_REBALANCE");
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("uses --project-ref over the linked project default", () => {
+  it.effect("uses --remote=<ref> over the linked project default", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
-      yield* functionsList({ projectRef: Option.some("qrstuvwxyzabcdefghij") });
+      yield* functionsList({
+        remote: Option.some({ _tag: "Ref", ref: "qrstuvwxyzabcdefghij" }),
+        projectRef: Option.none(),
+      });
       expect(api.requests[0]?.url).toContain("/v1/projects/qrstuvwxyzabcdefghij/functions");
       assertPermissionDrift({
         command: "functions list",
-        activeFlags: { "project-ref": "qrstuvwxyzabcdefghij" },
+        activeFlags: { remote: "qrstuvwxyzabcdefghij" },
         requests: api.requests,
         exact: true,
       });
@@ -349,7 +367,9 @@ describe("functions list integration", () => {
   it.effect("fails with FunctionsListUnexpectedStatusError on HTTP 503", () => {
     const { layer, api } = setup({ status: 503, response: [] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        functionsList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -366,7 +386,9 @@ describe("functions list integration", () => {
   it.effect("fails with FunctionsListNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        functionsList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -393,7 +415,9 @@ describe("functions list integration", () => {
     const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
     const layer = buildTestRuntime({ out, api, cliSettings });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        functionsList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -420,7 +444,9 @@ describe("functions list integration", () => {
     const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
     const layer = buildTestRuntime({ out, api, cliSettings });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        functionsList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -434,7 +460,9 @@ describe("functions list integration", () => {
   it.effect("fails on invalid optional field types", () => {
     const { layer } = setup({ response: [INVALID_OPTIONAL_FUNCTION] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        functionsList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -447,7 +475,9 @@ describe("functions list integration", () => {
   it.effect("fails on non-integer numeric fields", () => {
     const { layer } = setup({ response: [NON_INTEGER_FUNCTION] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(functionsList({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        functionsList({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -460,7 +490,7 @@ describe("functions list integration", () => {
   it.effect("writes linked-project cache + telemetry state on success", () => {
     const { layer, telemetry, cache } = setupTracked();
     return Effect.gen(function* () {
-      yield* functionsList({ projectRef: Option.none() });
+      yield* functionsList({ remote: Option.none(), projectRef: Option.none() });
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -469,7 +499,7 @@ describe("functions list integration", () => {
   it.effect("writes linked-project cache + telemetry state on failure", () => {
     const { layer, telemetry, cache } = setupTracked({ status: 503, response: [] });
     return Effect.gen(function* () {
-      yield* Effect.exit(functionsList({ projectRef: Option.none() }));
+      yield* Effect.exit(functionsList({ remote: Option.none(), projectRef: Option.none() }));
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -497,13 +527,13 @@ describe("functions list integration", () => {
             }),
           ),
         resolveForLink: () => Effect.die("not used in functions list test"),
+        resolveRef: () => Effect.die("not used in functions list test"),
         resolveOptional: () => Effect.die("not used in functions list test"),
-        loadProjectRef: () => Effect.die("not used in functions list test"),
         promptProjectRef: () => Effect.die("not used in functions list test"),
       }),
     );
     return Effect.gen(function* () {
-      yield* Effect.exit(functionsList({ projectRef: Option.none() }));
+      yield* Effect.exit(functionsList({ remote: Option.none(), projectRef: Option.none() }));
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(false);
       expect(api.requests).toHaveLength(0);
@@ -513,8 +543,15 @@ describe("functions list integration", () => {
   it.effect("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({ format: "json", status: 503, response: [] });
     return Effect.gen(function* () {
-      yield* functionsList({ projectRef: Option.none() }).pipe(withJsonErrorHandling);
+      yield* functionsList({ remote: Option.none(), projectRef: Option.none() }).pipe(
+        withJsonErrorHandling,
+      );
       expect(out.messages.some((message) => message.type === "fail")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedTargetSelection("functions list", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, [SAMPLE_FUNCTION])),
+  run: (flags) => functionsList(flags),
 });

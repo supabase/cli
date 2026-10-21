@@ -6,10 +6,8 @@ import { withPermissions } from "../../../../../command-internal/command-permiss
 import {
   compose,
   withCondition,
-  withContext,
-  type PermissionFragment,
 } from "../../../../../command-internal/command-permissions/model.ts";
-import { dbConfigLinked } from "../../../../../command-internal/db-config.layer.ts";
+import { dbConfig } from "../../../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../../../telemetry/linked-project-cache.layer.ts";
 import { withCliConfigFlags } from "../../../../../config/cli-config-flags.ts";
 import { CliConfigKeys } from "../../../../../config/cli-config-keys.ts";
@@ -22,8 +20,12 @@ import { dbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
 import { dbSchemaDeclarativeGenerate } from "./generate.handler.ts";
 import { dbSchemaDeclarativeGenerateRuntimeLayer } from "./generate.layers.ts";
 import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
+import { branchResolution } from "../../../../../command-internal/target/branch-resolution.ts";
+import { targetFlags } from "../../../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
 
 const config = {
+  ...targetFlags({ subject: "database", dbUrl: true }),
   overwrite: Flag.Boolean("overwrite").pipe(
     Flag.withDescription("Overwrite declarative schema files without confirmation."),
     Flag.withDefault(false),
@@ -52,36 +54,13 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription(
-      "Generates declarative schema from the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  // Explicit-target selection keys off presence, not the bool value, so model `--linked`/
-  // `--local` as `Option` (like `--db-url`) so `--linked=false` still takes the explicit path.
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Generates declarative schema from the linked project."),
-    Flag.optional,
-  ),
-  local: Flag.Boolean("local").pipe(
-    Flag.withDescription("Generates declarative schema from the local database."),
-    Flag.optional,
-  ),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
     description:
-      "Database password for the linked project (--linked/--project-ref). Not used with --local or --db-url.",
+      "Database password for the project selected with --remote. Not used for the local database or a database URL.",
   }),
 } as const;
-
-// Without a target flag, a run whose workdir has migrations can ask where to generate from.
-const noTargetFlag = (fragment: PermissionFragment) =>
-  (["db-url", "local", "linked"] as const).reduce(
-    (current, flag) => withCondition(current, { flag, present: false }),
-    fragment,
-  );
 
 // `--no-cache` is a shared flag on the `declarative` group (read from the parent),
 // so the handler input merges it in alongside the leaf's own flags.
@@ -92,7 +71,7 @@ export type DbSchemaDeclarativeGenerateFlags = CliCommand.Command.Config.Infer<t
 
 export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", config).pipe(
   Command.withDescription(
-    "Exports a live database into the complete declarative schema tree. This replaces declarative files only; it does not create migration files or update migration history. Use --output-dir to stage an export without changing the configured declarative path. In non-interactive use, pass --local, --linked, or --db-url explicitly.",
+    "Exports a live database into the complete declarative schema tree. This replaces declarative files only; it does not create migration files or update migration history. Use --output-dir to stage an export without changing the configured declarative path. Generates from the local database unless --remote selects another.",
   ),
   Command.withShortDescription("Generate declarative schema from a database"),
   withPermissions(
@@ -108,19 +87,9 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
           "strict-coverage",
         ],
       },
-      withCondition(compose(dbConfigLinked, linkedProjectCache), { flag: "linked" }),
-      noTargetFlag(
-        compose(
-          withContext(
-            dbConfigLinked,
-            "migrations exist and the user picks the linked project in the target prompt, which needs an interactive terminal or --yes and a linked project ref",
-          ),
-          withContext(
-            linkedProjectCache,
-            "migrations exist and SUPABASE_PROJECT_ID or supabase/.temp/project-ref gives a ref, whichever target is picked",
-          ),
-        ),
-      ),
+      dbConfig,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
@@ -153,9 +122,6 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
             "output-dir": merged.outputDir,
             reset: merged.reset,
             schema: merged.schema,
-            "db-url": merged.dbUrl,
-            linked: merged.linked,
-            local: merged.local,
             // `password` must never be added to `safeFlags`: it's a credential and must always
             // reach telemetry as `<redacted>`.
             password: merged.password,
@@ -171,4 +137,9 @@ export const dbSchemaDeclarativeGenerateCommand = Command.make("generate", confi
   Command.provide(dbSchemaDeclarativeGenerateRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({
+    group: "selectable",
+    consent: "none",
+    consentExemptReason: "reads the target and writes only local declarative files",
+  }),
 );

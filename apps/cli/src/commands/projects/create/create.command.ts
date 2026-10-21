@@ -13,6 +13,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { projectsCreate } from "./create.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const AWS_REGIONS = [
   "ap-east-1",
@@ -161,4 +162,5 @@ export const projectsCreateCommand = Command.make("create", config).pipe(
     ),
   ),
   Command.provide(managementApiRuntimeLayer(["projects", "create"])),
+  withTargetPolicy({ group: "account", consent: "yes" }),
 );

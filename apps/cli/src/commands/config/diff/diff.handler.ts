@@ -15,15 +15,9 @@ import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { unsupportedOutputFlagMessage } from "../../../command-internal/output-formats.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
-import {
-  mapHttpError,
-  sanitizeErrorBody,
-  unexpectedStatusMessage,
-} from "../../../command-internal/http-errors.ts";
-import {
-  configTargetErrorsFor,
-  resolveConfigTarget,
-} from "../../../command-internal/project-target.ts";
+import { sanitizeErrorBody } from "../../../command-internal/http-errors.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
+import { targetIsBranchAttribute } from "../../../command-internal/target/target-identity.ts";
 import { configIsRecord } from "../config.paths.ts";
 import {
   loadResolvedConfig,
@@ -32,6 +26,7 @@ import {
 } from "../config.load.ts";
 import { configApiScope, configEnvOriginLookup, configScopeLine } from "../config.format.ts";
 import { configProjectConfigTry } from "../config.project-config.ts";
+import { withAnnouncedTarget } from "../../../shared/output/command-target.service.ts";
 import { configReadStatusMessage } from "../config.read-status.ts";
 import {
   configDiffComparisonLine,
@@ -41,34 +36,13 @@ import {
   type ConfigDiffContext,
 } from "./diff.format.ts";
 import {
-  ConfigDiffBranchNotFoundError,
-  ConfigDiffBranchNotLinkedError,
-  ConfigDiffBranchNotReadyError,
-  ConfigDiffBranchResolveNetworkError,
-  ConfigDiffBranchResolveStatusError,
   ConfigDiffLoadConfigError,
   ConfigDiffOutputFlagUnsupportedError,
-  ConfigDiffParentRefInvalidError,
   ConfigDiffReadNetworkError,
   ConfigDiffReadStatusError,
   ConfigDiffWorkdirError,
 } from "./diff.errors.ts";
 import type { ConfigDiffFlags } from "./diff.command.ts";
-
-const mapBranchResolveError = mapHttpError({
-  networkError: ConfigDiffBranchResolveNetworkError,
-  statusError: ConfigDiffBranchResolveStatusError,
-  networkMessage: (cause) => `failed to resolve branch: ${cause}`,
-  statusMessage: unexpectedStatusMessage,
-});
-
-// Maps resolveConfigTarget's generic errors onto config diff's own tagged error classes.
-const configTargetErrors = configTargetErrorsFor({
-  notLinked: ConfigDiffBranchNotLinkedError,
-  parentRefInvalid: ConfigDiffParentRefInvalidError,
-  branchNotFound: ConfigDiffBranchNotFoundError,
-  branchNotReady: ConfigDiffBranchNotReadyError,
-});
 
 export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffFlags) {
   const output = yield* Output;
@@ -79,9 +53,6 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
   const processControl = yield* ProcessControl;
   const outputFlag = yield* OutputFlag;
   const fs = yield* FileSystem.FileSystem;
-
-  // An empty `--project-ref` value is absent, mirroring the resolver's own rule.
-  const requested = Option.filter(flags.projectRef, (value) => value.length > 0);
 
   const makeLoadError = (message: string) => new ConfigDiffLoadConfigError({ message });
 
@@ -113,16 +84,11 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
       makeLoadError,
     );
 
-    // See resolveConfigTarget's doc comment for the target-resolution rules this preserves.
-    const { ref, branch } = yield* resolveConfigTarget(
-      requested,
-      configTargetErrors,
-      mapBranchResolveError,
-    );
+    const { ref, branch, isDefault } = yield* resolveProjectTarget(flags, { detail: true });
     yield* Ref.set(resolvedRef, Option.some(ref));
     yield* Effect.annotateCurrentSpan({
       "project.ref": ref,
-      "config.target_is_branch": branch !== undefined,
+      ...targetIsBranchAttribute({ branch, isDefault }),
     });
 
     // The view `config push` sends: the `[remotes.*]` block matched to `ref` and the env overlay.
@@ -202,7 +168,7 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
     if (output.format !== "text") {
       yield* output.success(
         configDiffSummaryMessage(changeSet, scope),
-        configDiffPayload(changeSet, scope, context, originFor),
+        yield* withAnnouncedTarget(configDiffPayload(changeSet, scope, context, originFor)),
       );
     } else {
       yield* output.raw(renderConfigDiffText(changeSet, scope, originFor));

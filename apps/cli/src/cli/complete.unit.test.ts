@@ -92,15 +92,11 @@ describe("respondToComplete", () => {
   });
 
   it("offers a non-root command's own declared global flags from a nested subcommand (Command.withGlobalFlags)", () => {
-    const atGroup = respondToComplete(rootCommand, ["__complete", "seed", "--l"]);
-    expect(atGroup?.candidates.map((c) => c.name)).toEqual(
-      expect.arrayContaining(["--linked", "--local"]),
-    );
+    const atGroup = respondToComplete(rootCommand, ["__complete", "seed", "--rem"]);
+    expect(atGroup?.candidates.map((c) => c.name)).toEqual(expect.arrayContaining(["--remote="]));
 
-    const atLeaf = respondToComplete(rootCommand, ["__complete", "seed", "buckets", "--l"]);
-    expect(atLeaf?.candidates.map((c) => c.name)).toEqual(
-      expect.arrayContaining(["--linked", "--local"]),
-    );
+    const atLeaf = respondToComplete(rootCommand, ["__complete", "seed", "buckets", "--rem"]);
+    expect(atLeaf?.candidates.map((c) => c.name)).toEqual(expect.arrayContaining(["--remote="]));
   });
 
   it("does not duplicate a flag name that exists both globally and as a command's own local flag", () => {
@@ -178,9 +174,9 @@ describe("respondToComplete", () => {
         "squash",
         "--version",
         "20240101000000",
-        "--l",
+        "--rem",
       ]);
-      expect(result?.candidates.map((c) => c.name)).toContain("--linked");
+      expect(result?.candidates.map((c) => c.name)).toContain("--remote=");
     });
 
     it("does not short-circuit on --help positioned after a genuine `--` terminator (it is positional, not a flag)", () => {
@@ -388,7 +384,7 @@ describe("respondToComplete", () => {
         "--p",
       ]);
       expect(result?.candidates.map((c) => c.name)).toEqual(
-        expect.arrayContaining(["--profile", "--project-ref", "--prune"]),
+        expect.arrayContaining(["--profile", "--prune"]),
       );
       expect(result?.directive).toBe(CompletionDirective.NoFileComp);
     });
@@ -527,7 +523,7 @@ describe("respondToComplete", () => {
       ]);
       expect(result?.directive).toBe(CompletionDirective.NoFileComp);
       expect(result?.candidates.map((c) => c.name)).toEqual(
-        expect.arrayContaining(["--debug", "--dns-resolver", "--db-url"]),
+        expect.arrayContaining(["--debug", "--dns-resolver"]),
       );
     });
   });
@@ -557,9 +553,9 @@ describe("respondToComplete", () => {
         "query",
         "--output",
         "table",
-        "--li",
+        "--rem",
       ]);
-      expect(result?.candidates.map((c) => c.name)).toContain("--linked");
+      expect(result?.candidates.map((c) => c.name)).toContain("--remote=");
     });
 
     it("accepts the resource-command values (env/pretty/toml/yaml) outside db query", () => {
@@ -583,12 +579,10 @@ describe("respondToComplete", () => {
         "restore",
         "--timestamp",
         "0x10",
-        "--p",
+        "--r",
       ]);
-      expect(result?.directive).toBe(CompletionDirective.NoFileComp);
-      expect(result?.candidates.map((c) => c.name)).toEqual(
-        expect.arrayContaining(["--profile", "--project-ref"]),
-      );
+      expect(result?.directive).toBe(CompletionDirective.NoFileComp | CompletionDirective.NoSpace);
+      expect(result?.candidates.map((c) => c.name)).toEqual(expect.arrayContaining(["--remote="]));
     });
 
     it("rejects a value one past int64 max for a plain (non-uint) integer flag", () => {
@@ -632,7 +626,7 @@ describe("respondToComplete", () => {
         "types",
         "--query-timeout",
         "bogus",
-        "--l",
+        "--rem",
       ]);
       expect(queryTimeout).toEqual({
         candidates: [],
@@ -645,9 +639,9 @@ describe("respondToComplete", () => {
         "types",
         "--query-timeout",
         "5s",
-        "--l",
+        "--rem",
       ]);
-      expect(queryTimeoutValid?.candidates.map((c) => c.name)).toContain("--local");
+      expect(queryTimeoutValid?.candidates.map((c) => c.name)).toContain("--remote=");
 
       const validFor = respondToComplete(rootCommand, [
         "__complete",
@@ -681,7 +675,7 @@ describe("respondToComplete", () => {
         "types",
         "--query-timeout",
         "2562048h",
-        "--l",
+        "--rem",
       ]);
       expect(overflow).toEqual({ candidates: [], directive: CompletionDirective.Default });
 
@@ -691,9 +685,9 @@ describe("respondToComplete", () => {
         "types",
         "--query-timeout",
         "2562047h47m16.854775807s",
-        "--l",
+        "--rem",
       ]);
-      expect(max?.candidates.map((c) => c.name)).toContain("--local");
+      expect(max?.candidates.map((c) => c.name)).toContain("--remote=");
     });
 
     it("rejects a malformed value for the time flag (gen bearer-jwt --exp, RFC3339 only)", () => {

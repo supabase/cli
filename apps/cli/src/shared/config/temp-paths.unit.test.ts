@@ -3,7 +3,12 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import { classifyCliErrorActionability } from "../telemetry/error-actionability.ts";
-import { ProjectRefReadError, readProjectRefFile, tempPaths } from "./temp-paths.ts";
+import {
+  isCheckoutLinked,
+  ProjectRefReadError,
+  readProjectRefFile,
+  tempPaths,
+} from "./temp-paths.ts";
 
 const readRef = (workdir: string) =>
   Effect.gen(function* () {
@@ -111,4 +116,41 @@ describe("readProjectRefFile", () => {
     expect(result.suggestion_type).toBe("none");
     expect(result.suggested_command).toBeUndefined();
   });
+});
+
+describe("isCheckoutLinked", () => {
+  const linked = (dir: string, projectId?: Option.Option<string>) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      return yield* isCheckoutLinked(fs, path, dir, projectId);
+    });
+
+  it.effect("is linked when the project-ref file names a project", () =>
+    withWorkdir(seedRef(REF), (dir) => linked(dir)).pipe(
+      Effect.tap((value) => Effect.sync(() => expect(value).toBe(true))),
+    ),
+  );
+
+  it.effect("is not linked without a project-ref file or a project id", () =>
+    withWorkdir(
+      () => Effect.void,
+      (dir) => linked(dir, Option.none()),
+    ).pipe(Effect.tap((value) => Effect.sync(() => expect(value).toBe(false)))),
+  );
+
+  it.effect("is linked by SUPABASE_PROJECT_ID alone", () =>
+    withWorkdir(
+      () => Effect.void,
+      (dir) => linked(dir, Option.some(REF)),
+    ).pipe(Effect.tap((value) => Effect.sync(() => expect(value).toBe(true)))),
+  );
+
+  it.effect("counts an unreadable project-ref file as unlinked", () =>
+    withWorkdir(
+      (fs, path, dir) =>
+        fs.makeDirectory(path.join(dir, "supabase", ".temp", "project-ref"), { recursive: true }),
+      (dir) => linked(dir),
+    ).pipe(Effect.tap((value) => Effect.sync(() => expect(value).toBe(false)))),
+  );
 });

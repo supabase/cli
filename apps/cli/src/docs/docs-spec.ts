@@ -9,6 +9,8 @@ import {
   userGlobalFlagParams,
 } from "./docs-introspection.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
+import { isRemoteFlag } from "../command-internal/target/target-flags.ts";
+import { remoteFlagName } from "../shared/output/target-help.ts";
 import {
   DOCS_ARG_OVERRIDES,
   DOCS_CHOICE_OVERRIDES,
@@ -179,7 +181,7 @@ function docsNormalizeText(text: string): string {
 }
 
 /** Doc for a visible flag; `undefined` for hidden flags; throws on an unrecognizable param. */
-function docsFlagDoc(
+export function docsFlagDoc(
   commandPath: ReadonlyArray<string>,
   param: Param.AnyFlag,
 ): DocsFlag | undefined {
@@ -207,9 +209,11 @@ function docsFlagDoc(
   const varname = enumType ?? docsPrimitiveVarname(single, isVariadic);
 
   const shorthand = single.aliases.find((alias) => alias.length === 1);
-  const name = `${shorthand === undefined ? "" : `-${shorthand}, `}--${single.name}${
-    varname === undefined ? "" : ` <${varname}>`
-  }`;
+  const longName =
+    isRemoteFlag(single) && single.typeName !== undefined
+      ? remoteFlagName(single.typeName)
+      : `${single.name}${varname === undefined ? "" : ` <${varname}>`}`;
+  const name = `${shorthand === undefined ? "" : `-${shorthand}, `}--${longName}`;
 
   const required = DOCS_REQUIRED.has(overrideKey);
 
@@ -423,7 +427,7 @@ export function buildDocsSpec(input: DocsSpecInput): DocsSpec {
       flags,
     });
 
-    // A non-root command's own global flags (e.g. `seed`'s `--linked`/`--local`) behave like
+    // A non-root command's own global flags (e.g. `seed`'s `--remote`) behave like
     // persistent flags: they're surfaced on every leaf beneath it, alongside shared flags.
     const childInherited = [
       ...inheritedParams,

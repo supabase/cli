@@ -1,19 +1,22 @@
 # `supabase inspect db <subcommand>`
 
+Target: selectable, no consent — see [Command target](../../../../docs/command-target.md)
+
 Single shared side-effect document for all 13 active `inspect db` subcommands and
-their 12 deprecated aliases. Every subcommand has the same surface — it resolves a
-Postgres connection from `--db-url` / `--linked` / `--local`, runs one read-only
-`SELECT`, and renders the result as an ASCII table. They differ only in the
-SQL run and the columns rendered (see the per-subcommand `<name>.query.ts`).
+their 12 deprecated aliases. Every subcommand has the same surface — it resolves its target, runs one read-only
+`SELECT`, and renders the result as an ASCII table. They differ only in the SQL run and
+the columns rendered (see the per-subcommand `<name>.query.ts`).
 
 ## Files Read
 
-| Path                             | Format     | When                                                                                |
-| -------------------------------- | ---------- | ----------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml` | TOML       | `--local` (db host/port/password); `--linked` (project ref)                         |
-| `~/.supabase/access-token`       | plain text | `--linked` only, lazily, when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
-| `.pgpass` / `pg_service.conf`    | libpq      | only if referenced by a `--db-url` connection string                                |
-| `$PGSSLROOTCERT` CA bundle       | PEM        | only if a `--db-url` sets `sslrootcert` / `PGSSLROOTCERT`                           |
+| Path                                           | Format     | When                                                                                                                                                                                   |
+| ---------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`               | TOML       | always, for the `[db]` settings, with a matched `[remotes.<ref>]` block over the base for a remote project (flag > shell env > project `.env*` > config)                               |
+| `<workdir>/supabase/.temp/project-ref`         | plain text | a remote project: resolves the ref (bare `--remote` with no `SUPABASE_PROJECT_ID`) and tells whether it is the linked project; with no selector, only to word the linked-checkout hint |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON       | to name the project in the `Target:` banner and the linked-checkout hint, and as the parent project for `--remote=<branch>`                                                            |
+| `~/.supabase/access-token`                     | plain text | when `SUPABASE_ACCESS_TOKEN` unset and the target is a remote project (or a branch is looked up)                                                                                       |
+| `.pgpass` / `pg_service.conf`                  | libpq      | only if referenced by a database URL (`--remote=<db-url>`)                                                                                                                             |
+| `$PGSSLROOTCERT` CA bundle                     | PEM        | only if a database URL sets `sslrootcert` / `PGSSLROOTCERT`                                                                                                                            |
 
 Connection resolution and all of the above are handled inside
 `DbConfigResolver` (`command-internal/db-config.layer.ts`); the command adds
@@ -25,23 +28,29 @@ no new config reads.
 | ---------------------------- | ------ | ----------------------------------------- |
 | `~/.supabase/telemetry.json` | JSON   | always, post-run (`TelemetryState.flush`) |
 
-## API Routes (MAY fire on `--linked`, inside the resolver)
+## API Routes (MAY fire on a remote project, inside the resolver)
 
-| Method   | Path                                        | Auth         | When                                                                                 |
-| -------- | ------------------------------------------- | ------------ | ------------------------------------------------------------------------------------ |
-| `POST`   | `/v1/projects/{ref}/cli/login-role`         | Bearer token | `--linked` with no database password, to create a temp login role                    |
-| `GET`    | `/v1/projects/{ref}/config/database/pooler` | Bearer token | `--linked` with `--project-ref`, direct host unreachable, no usable saved pooler URL |
-| `POST`   | `/v1/projects/{ref}/network-bans/retrieve`  | Bearer token | `--linked`, from the 3rd failed temp-role connect (list bans)                        |
-| `DELETE` | `/v1/projects/{ref}/network-bans`           | Bearer token | `--linked`, only when bans are listed (clear a self-ban)                             |
+Local targets and database URLs make none.
+
+| Method   | Path                                        | Auth         | Request body                              | Response (used fields)                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------- | ------------------------------------------- | ------------ | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/v1/projects`                              | Bearer token | none                                      | `[{id, name, organization_slug, region}]` — project picker: bare `--remote` with no ref from `SUPABASE_PROJECT_ID` or `.temp/project-ref`, with stdin and stdout TTYs and a non-JSON output format                                                                                                                                                                                                        |
+| `GET`    | `/v1/projects/{parent}/branches`            | Bearer token | none                                      | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>` (or the deprecated `--project-ref=<branch>`), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project                                                                                                                                                  |
+| `GET`    | `/v1/branches/{id}`                         | Bearer token | none                                      | `{ref, status, …}` — only for `--remote=<branch UUID>` when no project is linked                                                                                                                                                                                                                                                                                                                          |
+| `POST`   | `/v1/projects/{ref}/cli/login-role`         | Bearer token | `{ read_only: false }`                    | temporary `role` and `password` — remote project with no database password                                                                                                                                                                                                                                                                                                                                |
+| `GET`    | `/v1/projects/{ref}/config/database/pooler` | Bearer token | none                                      | primary pooler `connection_string` — remote project on an IPv4-only network (direct host unreachable), only when there is no usable saved `.temp/pooler-url` and an access token is available; a ref that differs from the linked project ignores the saved URL                                                                                                                                           |
+| `POST`   | `/v1/projects/{ref}/network-bans/retrieve`  | Bearer token | none                                      | `banned_ipv4_addresses` — remote project, from the 3rd failed temporary-role connect                                                                                                                                                                                                                                                                                                                      |
+| `DELETE` | `/v1/projects/{ref}/network-bans`           | Bearer token | `{ ipv4_addresses, requester_ip: false }` | none — remote project, only when bans are listed and `--yes` or a shell `SUPABASE_YES` is set (clears every listed address, announced on stderr as `Removing network bans (...)`); otherwise the connect keeps retrying and fails with `LinkedDbNetworkBannedError` once the retries run out while bans are still listed; under `--yes` a failed listing or removal fails the run with that error instead |
 
 ## Environment Variables
 
-| Variable                                             | Purpose                                                               | Required?                               |
-| ---------------------------------------------------- | --------------------------------------------------------------------- | --------------------------------------- |
-| `SUPABASE_DB_PASSWORD` / `DB_PASSWORD`               | database password (linked/local)                                      | no (prompts / config fallback)          |
-| `SUPABASE_ACCESS_TOKEN`                              | Management API auth (linked only)                                     | no (falls back to keyring / token file) |
-| `SUPABASE_PROJECT_ID`                                | project ref fallback (linked), superseded by `--project-ref` when set | no (config resolution fallback)         |
-| libpq vars (`PGSSLROOTCERT`, `PGCONNECT_TIMEOUT`, …) | honored when `--db-url` is used                                       | no                                      |
+| Variable                                             | Purpose                                                                           | Required?                               |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------- | --------------------------------------- |
+| `SUPABASE_DB_PASSWORD` / `DB_PASSWORD`               | database password (linked/local)                                                  | no (prompts / config fallback)          |
+| `SUPABASE_ACCESS_TOKEN`                              | Management API auth (remote project only)                                         | no (falls back to keyring / token file) |
+| `SUPABASE_PROJECT_ID`                                | project ref for a bare `--remote`, and the parent project for `--remote=<branch>` | no (config resolution fallback)         |
+| `SUPABASE_YES`                                       | shell value lets a remote connection clear a network ban                          | no                                      |
+| libpq vars (`PGSSLROOTCERT`, `PGCONNECT_TIMEOUT`, …) | honored when a database URL is used                                               | no                                      |
 
 ## Database Queries
 
@@ -79,11 +88,10 @@ flags, run no query and open no connection, and exit 1 with
 
 ## Exit Codes
 
-| Code | Condition                                                                |
-| ---- | ------------------------------------------------------------------------ |
-| `0`  | success                                                                  |
-| `1`  | mutually-exclusive flags, resolution, connection, or query failure       |
-| `1`  | `--project-ref` set with a resolved target other than linked (see Notes) |
+| Code | Condition                                |
+| ---- | ---------------------------------------- |
+| `0`  | success                                  |
+| `1`  | resolution, connection, or query failure |
 
 ## Telemetry Events Fired
 
@@ -101,13 +109,13 @@ An ASCII table:
 a leading blank line, a decorative line, the header row, a dashes separator, then one
 row per result. Statement/query cells (locks, blocking, outliers, calls) have their
 whitespace runs collapsed to single spaces (long-running-queries' query is NOT
-collapsed). The "Connecting to local/remote database..." diagnostic is
-written to **stderr** before the query runs.
+collapsed). One `Target: …` banner naming the resolved target is written to
+**stderr** before the query runs.
 
 ### `--output-format json`
 
-A single object: `{ "rows": [ <raw driver rows, snake_case keys> ] }`. Additive —
-there is no other machine output for inspect.
+A single object: `{ "rows": [ <raw driver rows, snake_case keys> ], "target": { … } }`,
+where `target` describes the resolved target. The stderr banner is still printed.
 
 ### `--output-format stream-json`
 
@@ -120,16 +128,7 @@ Emit one extra stderr line before the table:
 
 ## Notes
 
-- The Management API stack is built lazily, only on the `--linked` path, so `--local`
-  and `--db-url` never require an access token.
-- `--linked` defaults to `true`; the runner derives it
-  from the absence of `--db-url` / `--local` while keeping the mutual-exclusivity check
-  keyed off explicitly-set flags.
+- The Management API stack is built lazily, only for a remote project or a branch lookup, so a
+  local or database-URL target never requires an access token.
 - All queries are read-only `SELECT`s; the command performs no writes to the database.
-- **`--project-ref`** overrides ONLY the linked-ref resolution `DbConfigResolver` performs
-  (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies
-  `--linked`: passing it with a resolved `--local`/`--db-url` target is a hard
-  error rather than a silently discarded flag (stricter than
-  `SUPABASE_PROJECT_ID`, which is simply left unused on
-  a non-linked target). Shared verbatim by every `inspect db` subcommand via
-  `INSPECT_DB_FLAGS`.
+- Shared verbatim by every `inspect db` subcommand via `INSPECT_DB_FLAGS`.

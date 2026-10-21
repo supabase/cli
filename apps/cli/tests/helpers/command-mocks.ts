@@ -57,10 +57,12 @@ import {
   PGDATA_PATH,
 } from "../../src/command-internal/db-bootstrap/pgdata-snapshot.ts";
 import { projectRefLayer } from "../../src/config/project-ref.layer.ts";
+import { commandTargetLayer } from "../../src/shared/output/command-target.layer.ts";
 import { LocalDockerEngine } from "../../src/command-internal/db-bootstrap/local-db-running.ts";
 import { LinkedProjectCache } from "../../src/telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../src/telemetry/telemetry-state.service.ts";
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
+import { commandRuntimeLayer } from "../../src/shared/runtime/command-runtime.layer.ts";
 import type { Stdin } from "../../src/shared/runtime/stdin.service.ts";
 import { OutputFlag } from "../../src/command-internal/global-flags.ts";
 import type { Output } from "../../src/shared/output/output.service.ts";
@@ -81,6 +83,10 @@ import {
 // Fixtures shared across every native-port integration test. Centralized so a change to the
 // project-ref schema (e.g. updated length) only needs to update one constant.
 export const VALID_REF = "abcdefghijklmnopqrst";
+
+export const unverifiedTargetBanner = (ref: string = VALID_REF): string =>
+  `Target: project ${ref}\n`;
+
 export const VALID_TOKEN = "sbp_" + "a".repeat(40);
 export const DEFAULT_API_URL = "https://api.supabase.com";
 const DEFAULT_USER_AGENT = "SupabaseCLI/0.0.0-dev";
@@ -1448,6 +1454,7 @@ export interface BuildTestRuntimeOpts {
   readonly outputFlag?: Option.Option<OutputFlagValue>;
   /** Raw argv seen by the handler (e.g. to exercise an explicit `--yes=false`). */
   readonly cliArgs?: ReadonlyArray<string>;
+  readonly commandPath?: ReadonlyArray<string>;
 }
 
 export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
@@ -1475,9 +1482,11 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
   const topLevelFactory = Layer.succeed(CommandPlatformApiFactory, {
     make: CommandPlatformApi.pipe(Effect.provide(opts.api.layer)),
   });
+  const commandTarget = commandTargetLayer.pipe(Layer.provide(opts.out.layer));
 
   return Layer.mergeAll(
     opts.out.layer,
+    commandTarget,
     opts.api.layer,
     topLevelFactory,
     opts.cliSettings,
@@ -1494,11 +1503,15 @@ export function buildTestRuntime(opts: BuildTestRuntimeOpts) {
       Layer.provide(opts.cliSettings),
       Layer.provide(tty),
       Layer.provide(opts.out.layer),
+      Layer.provide(commandTarget),
       Layer.provide(BunServices.layer),
     ),
     BunServices.layer,
     Layer.succeed(OutputFlag, outputFlag),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
+    opts.commandPath === undefined
+      ? Layer.empty
+      : commandRuntimeLayer(opts.commandPath).pipe(Layer.provide(BunServices.layer)),
     linkedProjectCache,
     telemetry,
     analytics,

@@ -4,9 +4,10 @@ import {
   type V1UpdateNetworkRestrictionsOutput,
 } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
-
+import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -19,6 +20,8 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -75,6 +78,11 @@ const PATCH_APPLIED: typeof V1PatchNetworkRestrictionsOutput.Type = {
   status: "applied",
 };
 
+const consentApproved = Layer.mergeAll(
+  Layer.succeed(YesFlag, true),
+  Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+);
+
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml";
@@ -101,12 +109,15 @@ function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const api = mockCommandPlatformApi(apiOpts(opts));
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
-  const layer = buildTestRuntime({
-    out,
-    api,
-    cliSettings,
-    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
-  });
+  const layer = Layer.mergeAll(
+    buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
+    }),
+    consentApproved,
+  );
   return { layer, out, api };
 }
 
@@ -116,17 +127,21 @@ function setupTracked(opts: SetupOpts = {}) {
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
-  const layer = buildTestRuntime({
-    out,
-    api,
-    cliSettings,
-    telemetry: telemetry.layer,
-    linkedProjectCache: cache.layer,
-  });
+  const layer = Layer.mergeAll(
+    buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      telemetry: telemetry.layer,
+      linkedProjectCache: cache.layer,
+    }),
+    consentApproved,
+  );
   return { layer, out, api, telemetry, cache };
 }
 
 const baseFlags: NetworkRestrictionsUpdateFlags = {
+  remote: Option.none(),
   projectRef: Option.none(),
   dbAllowCidr: [],
   bypassCidrChecks: false,
@@ -202,16 +217,19 @@ describe("network-restrictions update integration", () => {
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildTestRuntime({
-        out,
-        api,
-        cliSettings,
-        tty: mockTty({ stdinIsTty: true }),
-        linkedProjectCache: realLinkedProjectCache({
-          httpClient: api.httpClientLayer,
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
           cliSettings,
+          tty: mockTty({ stdinIsTty: true }),
+          linkedProjectCache: realLinkedProjectCache({
+            httpClient: api.httpClientLayer,
+            cliSettings,
+          }),
         }),
-      });
+        consentApproved,
+      );
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const cachePath = `${tempRoot.current}/supabase/.temp/linked-project.json`;
@@ -723,31 +741,36 @@ describe("network-restrictions update integration", () => {
 
   // Project ref resolution
 
-  it.effect("uses --project-ref flag value over CommandSettings.projectId", () => {
+  it.effect("uses the --remote=<ref> value over CommandSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {
       yield* networkRestrictionsUpdate({
         ...baseFlags,
-        projectRef: Option.some(flagRef),
+        remote: Option.some({ _tag: "Ref", ref: flagRef }),
       });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${flagRef}/`);
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("rejects a malformed resolved project ref before issuing any HTTP call", () => {
-    const { layer } = setup({ postResponse: POST_EMPTY_APPLIED });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        networkRestrictionsUpdate({
-          ...baseFlags,
-          projectRef: Option.some("BADREF"),
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi(apiOpts({ postResponse: POST_EMPTY_APPLIED }));
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({
+          workdir: tempRoot.current,
+          projectId: Option.some("BADREF"),
         }),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.pretty(exit.cause)).toContain("InvalidProjectRefError");
-      }
+      }),
+      consentApproved,
+    );
+    return Effect.gen(function* () {
+      const error = yield* networkRestrictionsUpdate(baseFlags).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "InvalidProjectRefError" });
+      expect(api.requests).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -801,4 +824,23 @@ describe("network-restrictions update integration", () => {
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedTargetSelection("network-restrictions update", {
+  operands: ["--db-allow-cidr", "12.3.4.5/32"],
+  respond: (request) => Effect.succeed(jsonResponse(request, 201, POST_APPLIED)),
+  activeFlags: { append: false },
+  run: (flags) =>
+    networkRestrictionsUpdate({ ...baseFlags, ...flags, dbAllowCidr: ["12.3.4.5/32"] }),
+});
+
+describeHostedConsent("network-restrictions update", {
+  api: { byMethod: { POST: { status: 201, body: POST_APPLIED } } },
+  invoke: () => ({
+    run: networkRestrictionsUpdate({
+      ...baseFlags,
+      remote: Option.some({ _tag: "Ref", ref: VALID_REF }),
+      dbAllowCidr: ["12.3.4.5/32"],
+    }),
+  }),
 });

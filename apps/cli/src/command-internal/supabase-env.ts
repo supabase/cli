@@ -13,7 +13,7 @@ import { envValue } from "../shared/config/env-option.ts";
 const TRUE_VALUES = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 
 /** Truthiness for an already-resolved env value (see module doc). */
-function parseEnvBool(raw: string | undefined): boolean {
+export function parseEnvBool(raw: string | undefined): boolean {
   return raw !== undefined && TRUE_VALUES.has(raw);
 }
 

@@ -22,7 +22,7 @@ import { StackApi, stackApiLayer } from "./stack-api.ts";
 /**
  * Runtime layer for the commands that talk to the Storage gateway directly:
  * `seed buckets` and `storage ls/cp/mv/rm`. The Management API client is lazy,
- * so the local path (no `--linked`) never resolves a token or requires login.
+ * so the local default (no `--remote`) never resolves a token or requires login.
  *
  * `HttpClient` is exposed at the top level because the Storage gateway needs
  * it directly, not through the typed Management API client.
@@ -35,7 +35,7 @@ export function storageGatewayRuntimeLayer(subcommand: ReadonlyArray<string>) {
     Layer.provide(debugLoggerLayer),
   );
   // Token resolution is deferred until `factory.make` is first called, on the
-  // `--linked` branch.
+  // hosted-target branch.
   const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
     Layer.provide(credentials),
     Layer.provide(cliSettings),

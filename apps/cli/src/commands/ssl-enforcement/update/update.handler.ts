@@ -1,10 +1,11 @@
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { encodeEnv, encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
@@ -36,7 +37,6 @@ export const sslEnforcementUpdate = Effect.fn("ssl-enforcement.update")(function
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
@@ -51,9 +51,15 @@ export const sslEnforcementUpdate = Effect.fn("ssl-enforcement.update")(function
       return yield* new SslEnforcementNoEnableDisableFlagError();
     }
 
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
+      yield* requireHostedMutationConsent({
+        action: flags.enableDbSslEnforcement
+          ? "Enable SSL enforcement for database connections"
+          : "Disable SSL enforcement for database connections",
+      });
+
       const updating =
         output.format === "text"
           ? yield* output.task("Updating SSL enforcement config...")

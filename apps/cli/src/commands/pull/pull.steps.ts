@@ -15,10 +15,7 @@ import {
   type ConfigPullSource,
 } from "../../command-internal/config-pull-run.ts";
 import { runDbPull, type DbPullRunFlags } from "../../command-internal/db-pull-run.ts";
-import {
-  runMigrationFetch,
-  type MigrationFetchFlags,
-} from "../../command-internal/migration-fetch-run.ts";
+import { runMigrationFetch } from "../../command-internal/migration-fetch-run.ts";
 import type {
   PullConfigStepOutcome,
   PullDbStepOutcome,
@@ -27,18 +24,9 @@ import type {
 } from "./pull.aggregate.ts";
 import type { PullStepContext } from "./pull.types.ts";
 
-/**
- * `supabase pull` step runners — one per `PULL_STEP_ORDER` entry, each a thin adapter over its
- * sub-step's own run-core. No confirmation, failure capture, or aggregation lives here: these
- * only run once the aggregated confirmation is accepted, so every one performs its side effect
- * (there's no internal dry-run/declined branch).
- */
+// One adapter per `PULL_STEP_ORDER` entry; each runs only after the aggregated confirmation.
 
-/**
- * `config` step: applies the already-planned config write (skipped when the plan had no work)
- * and reports the fixed `{dryRun: false, confirmed: true}` shape `pullConfigStepResult` expects
- * for an executed run.
- */
+/** `config` step: applies the planned config write, or skips it when the plan has no work. */
 export const pullConfigStep = Effect.fnUntraced(function* (input: {
   readonly runPlan: ConfigPullRunPlan;
   readonly source: ConfigPullSource;
@@ -55,22 +43,13 @@ export const pullConfigStep = Effect.fnUntraced(function* (input: {
 });
 
 /**
- * `migration_history` step: fetches the remote migration history table into
- * `supabase/migrations`, targeting the already-resolved `context.ref` directly (ADR 0024) and
- * suppressing its own overwrite prompt with `assumeYes` since the orchestrator's confirmation
- * already covers it.
+ * `migration_history` step: fetches the remote migration history into `supabase/migrations` from
+ * `context.target` (ADR 0024); the orchestrator's confirmation replaces its overwrite prompt.
  */
 export const pullMigrationHistoryStep = Effect.fnUntraced(function* (context: PullStepContext) {
   const cliSettings = yield* CommandSettings;
-  const flags: MigrationFetchFlags = {
-    dbUrl: Option.none(),
-    linked: true,
-    local: false,
-    projectRef: Option.some(context.ref),
-  };
   const outcome = yield* runMigrationFetch({
-    flags,
-    target: { setFlags: [], connType: "linked" },
+    target: context.target,
     assumeYes: context.assumeYes,
   });
   return {
@@ -81,10 +60,8 @@ export const pullMigrationHistoryStep = Effect.fnUntraced(function* (context: Pu
 });
 
 /**
- * `db` step: pulls the linked project's schema in migration mode, targeting `context.ref`
- * directly and suppressing `db pull`'s remote-history-update prompt with `assumeYes`.
- * `DbPullInSyncError` is caught and reported as `in_sync`, a finding rather than a failure at the
- * `pull` level (ADR 0024).
+ * `db` step: pulls the linked project's schema in migration mode under the orchestrator's consent.
+ * `DbPullInSyncError` is reported as `in_sync`, a finding rather than a failure (ADR 0024).
  */
 export const pullDbStep = Effect.fnUntraced(function* (context: PullStepContext) {
   const cliSettings = yield* CommandSettings;
@@ -94,13 +71,9 @@ export const pullDbStep = Effect.fnUntraced(function* (context: PullStepContext)
     diffEngine: Option.none(),
     strictCoverage: false,
     schema: [],
-    dbUrl: Option.none(),
-    linked: Option.none(),
-    local: Option.none(),
-    projectRef: Option.some(context.ref),
     password: Option.none(),
   };
-  return yield* runDbPull(flags, { assumeYes: context.assumeYes }).pipe(
+  return yield* runDbPull(flags, context.target, { preapproved: context.preapproved }).pipe(
     Effect.map((outcome): PullDbStepOutcome => ({
       kind: "applied",
       outcome,
@@ -130,7 +103,6 @@ export const pullFunctionsStep = Effect.fnUntraced(function* (context: PullStepC
   const result: DownloadFunctionsResult = yield* downloadFunctions(
     {
       functionName: Option.none(),
-      projectRef: Option.some(context.ref),
       useApi: false,
       useDocker: true,
     },
@@ -143,7 +115,7 @@ export const pullFunctionsStep = Effect.fnUntraced(function* (context: PullStepC
       styleEmphasis: (text) => bold(text),
       styleAqua: (text) => aqua(text),
       styleWarning: (text) => yellow(text),
-      resolveProjectRef: () => Effect.succeed(context.ref),
+      resolveProjectRef: Effect.succeed(context.ref),
     },
   );
   return { kind: "downloaded", result } satisfies PullFunctionsStepOutcome;

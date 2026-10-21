@@ -24,21 +24,10 @@ export class SeedConfigLoadError extends Data.TaggedError("SeedConfigLoadError")
   }
 }
 
-/** Raised when both `--local` and `--linked` are passed. */
-export class SeedMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "SeedMutuallyExclusiveFlagsError",
-)<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
 /**
  * The resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a
- * directory. Only reachable when explicitly set — beats the `--project-ref`
- * guard and every network call.
+ * directory. Only reachable when explicitly set — beats the target-flag
+ * guards and every network call.
  */
 export class SeedWorkdirError extends Data.TaggedError("SeedWorkdirError")<{
   readonly message: string;

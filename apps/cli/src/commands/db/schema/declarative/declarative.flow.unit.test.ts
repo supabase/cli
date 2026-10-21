@@ -113,7 +113,7 @@ describe("classifyDeclarativeCompatibilityGap", () => {
       context: { declarativeDir: "supabase/schemas", schema: [], platform: "posix" },
     });
     expect(suggestion).toContain(
-      "generate --local --overwrite \\\n    --output-dir supabase/schemas-next --experimental",
+      "generate --overwrite \\\n    --output-dir supabase/schemas-next --experimental",
     );
   });
 
@@ -172,7 +172,7 @@ describe("formatDeclarativeUpgradeGate", () => {
       [
         "Upgrade without changing the active supabase/schemas tree:",
         "",
-        "  supabase db schema declarative generate --local --overwrite \\",
+        "  supabase db schema declarative generate --overwrite \\",
         "    --output-dir supabase/schemas-next --experimental",
         "  # review supabase/schemas-next",
         "  rm -rf supabase/schemas && mv supabase/schemas-next supabase/schemas",
@@ -219,7 +219,7 @@ describe("formatDeclarativeUpgradeGate", () => {
     });
 
     expect(gate.suggestion).toContain(
-      "  supabase db schema declarative generate --local --overwrite --output-dir 'supabase/custom schema-next' --experimental",
+      "  supabase db schema declarative generate --overwrite --output-dir 'supabase/custom schema-next' --experimental",
     );
     expect(gate.suggestion).toContain(
       "  Remove-Item -Recurse -Force -ErrorAction Stop 'supabase/custom schema'; Move-Item 'supabase/custom schema-next' 'supabase/custom schema'",

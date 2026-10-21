@@ -7,12 +7,7 @@ import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { LinkedProjectCache } from "../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../telemetry/telemetry-state.service.ts";
-import {
-  DnsResolverFlag,
-  WorkdirFlag,
-  resolveYes,
-  resolveYesWithProjectEnv,
-} from "../../command-internal/global-flags.ts";
+import { DnsResolverFlag, WorkdirFlag, resolveYes } from "../../command-internal/global-flags.ts";
 import {
   emitSuccessTrailer,
   setSuccessWorkingDirectory,
@@ -28,9 +23,13 @@ import { getProjectApiKeys } from "../../command-internal/get-api-keys.ts";
 import { sanitizeErrorBody } from "../../command-internal/http-errors.ts";
 import type { ConnectSuggestionContext } from "../../command-internal/connect-errors.ts";
 import { resolveLinkedConn } from "../../command-internal/db-config.layer.ts";
-import { checkDbToml, loadProjectEnvValues } from "../../command-internal/db-config.toml-read.ts";
+import { checkDbToml } from "../../command-internal/db-config.toml-read.ts";
 import { dbPushCore } from "../../command-internal/db-push-core.ts";
-import { resolveDbSeedInput } from "../../command-internal/seed-remote-consent.ts";
+import {
+  hostedMutationPreapproval,
+  requireHostedMutationConsent,
+} from "../../command-internal/hosted-consent/hosted-consent.ts";
+import { planDbSeed } from "../../command-internal/seed-remote-consent.ts";
 import { linkServicesCore } from "../../command-internal/link-services-core.ts";
 import { projectCreateCore } from "../../command-internal/project-create-core.ts";
 import { tempPaths } from "../../shared/config/temp-paths.ts";
@@ -140,6 +139,11 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
           })
         : false;
 
+    const consent = yield* requireHostedMutationConsent({
+      action: `Create a new Supabase project from the "${starter.name}" template`,
+      details: ["Push the template's migrations, roles, seed data and vault secrets to it."],
+    });
+
     yield* fs.makeDirectory(workdir, { recursive: true });
     const entries = yield* fs
       .readDirectory(workdir)
@@ -206,6 +210,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       postgresEngine: undefined,
       templateUrl: starter.url.length > 0 ? starter.url : undefined,
       emitStructuredResult: false,
+      consent,
     });
     const projectRef = created.ref;
     yield* Ref.set(createdRef, projectRef.length > 0 ? projectRef : undefined);
@@ -222,13 +227,9 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
 
     // Config load must run before link/health/`.env` steps: a malformed config.toml aborts here
     // rather than after side effects start.
-    const { pushYes, toml } = yield* Effect.gen(function* () {
-      const projectEnv = yield* loadProjectEnvValues(fs, path, workdir);
-      return {
-        pushYes: yield* resolveYesWithProjectEnv(projectEnv),
-        toml: yield* checkDbToml(fs, path, workdir, projectRef),
-      };
-    }).pipe(Effect.withSpan("bootstrap.loadConfig"));
+    const toml = yield* checkDbToml(fs, path, workdir, projectRef).pipe(
+      Effect.withSpan("bootstrap.loadConfig"),
+    );
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
@@ -323,6 +324,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       cliSettings.poolerHost,
       dnsResolver,
       Option.some(created.dbPassword),
+      { removeNetworkBans: Option.isSome(yield* hostedMutationPreapproval) },
     ).pipe(
       Effect.catchTag("DbConfigIpv6Error", (error) =>
         output.raw(`${error.message}\n`, "stderr").pipe(Effect.as(dbConfig)),
@@ -333,7 +335,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     // command, since its CommandSettings-based resolvers would be stale after this handler's
     // own chdir above.
     const pushNotify = yield* bootstrapRetryNotify;
-    const seed = yield* resolveDbSeedInput(
+    const seed = yield* planDbSeed(
       yield* configValues.load({ workdir, projectRef: Option.some(projectRef) }),
       { workdir, ref: projectRef },
     );
@@ -342,7 +344,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       projectRef,
       conn,
       isLocal: false,
-      repairSuggestsLocalFlag: false,
+      repairTargetFlags: "--remote",
       dryRun: false,
       includeAll: false,
       includeRoles: true,
@@ -351,7 +353,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       includeVault: true,
       dnsResolver,
       toml,
-      yes: pushYes,
+      preapproved: Option.some(consent),
       emitStructuredResult: false,
     }).pipe(pushNotify, Effect.retry(retry), Effect.withSpan("bootstrap.pushMigrations"));
 

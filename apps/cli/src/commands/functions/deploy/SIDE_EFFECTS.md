@@ -1,5 +1,7 @@
 # `supabase functions deploy [Function name]`
 
+Target: hosted, consent default No — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                                                                                                       | Format      | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
@@ -46,7 +48,9 @@ Docker bundling may pull or run the configured edge-runtime image and uses the
 | `PATCH`  | `/v1/projects/{ref}/functions/{slug}` | Bearer token | bundled function body   | `{ id, slug, ... }`                                                                                                                                                                                                                                                                         |
 | `PUT`    | `/v1/projects/{ref}/functions`        | Bearer token | bulk update payload     | none (only status `200` is checked)                                                                                                                                                                                                                                                         |
 | `DELETE` | `/v1/projects/{ref}/functions/{slug}` | Bearer token | none                    | ignored on `200/404`                                                                                                                                                                                                                                                                        |
-| `GET`    | `/v1/projects`                        | Bearer token | none                    | `[{id, name, organization_slug, region}]` — project picker: no project ref from `--project-ref`, `SUPABASE_PROJECT_ID` or `supabase/.temp/project-ref`, with stdin and stdout TTYs and a non-JSON output format                                                                             |
+| `GET`    | `/v1/projects`                        | Bearer token | none                    | `[{id, name, organization_slug, region}]` — project picker: no project ref from `--remote=<ref>`, `SUPABASE_PROJECT_ID` or `supabase/.temp/project-ref`, with stdin and stdout TTYs and a non-JSON output format                                                                            |
+| `GET`    | `/v1/projects/{parent}/branches`      | Bearer token | none                    | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>` (or the deprecated `--project-ref=<branch>`), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project                                    |
+| `GET`    | `/v1/branches/{id}`                   | Bearer token | none                    | `{ref, status, …}` — only for `--remote=<branch UUID>` when no project is linked                                                                                                                                                                                                            |
 | `GET`    | `/v1/projects/{ref}`                  | Bearer token | none                    | `{ref, name, organization_id, organization_slug}` — linked-project cache miss only (best-effort, post-run): written only when `<workdir>/supabase/.temp/linked-project.json` doesn't exist, `.temp/project-ref` doesn't name another ref, an access token exists and the lookup returns 200 |
 
 ## Environment Variables
@@ -54,7 +58,7 @@ Docker bundling may pull or run the configured edge-runtime image and uses the
 | Variable                             | Purpose                                                                                                                                                                                                                                                               | Required?                                               |
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN`              | auth token (bypasses credential file/keyring lookup)                                                                                                                                                                                                                  | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROJECT_ID`                | optional project ref fallback; also read from project dotenv now (previously ambient-shell-only)                                                                                                                                                                      | no                                                      |
+| `SUPABASE_PROJECT_ID`                | optional project ref fallback and the parent project that `--remote=<branch>` is resolved against; also read from project dotenv now (previously ambient-shell-only)                                                                                                  | no                                                      |
 | `SUPABASE_ENV`                       | selects environment-specific dotenv files (`.env.<env>.local`, `.env.<env>`)                                                                                                                                                                                          | no (defaults to `development`)                          |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`   | selects the Functions bundler image registry; read from the ambient shell **or** project dotenv; unset resolves ECR->GHCR->Docker-Hub candidates in order instead of a single URL                                                                                     | no                                                      |
 | `SUPABASE_USE_SLIM_IMAGES`           | resolves the Functions bundler image from the slim `ghcr.io/supabase/cli/edge-runtime` build (`true`/`1` enable); `deno_version = 1` and historical `.temp/edge-runtime-version` pins stay on docker.io; ambient shell only, unlike the neighboring registry override | no                                                      |
@@ -66,15 +70,16 @@ Docker bundling may pull or run the configured edge-runtime image and uses the
 
 ## Exit Codes
 
-| Code | Condition                                                         |
-| ---- | ----------------------------------------------------------------- |
-| `0`  | success                                                           |
-| `1`  | authentication / project-ref resolution                           |
-| `1`  | API error or unexpected HTTP status                               |
-| `1`  | build / bundle failure                                            |
-| `1`  | invalid function slug or flag conflict                            |
-| `1`  | a function directory has `import_map.json` instead of `deno.json` |
-| `1`  | prune confirmation cancelled                                      |
+| Code | Condition                                                                                                                                         |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                           |
+| `1`  | authentication / project-ref resolution                                                                                                           |
+| `1`  | API error or unexpected HTTP status                                                                                                               |
+| `1`  | build / bundle failure                                                                                                                            |
+| `1`  | invalid function slug or flag conflict                                                                                                            |
+| `1`  | a function directory has `import_map.json` instead of `deno.json`                                                                                 |
+| `1`  | `HostedMutationDeclinedError` — the consent question was declined                                                                                 |
+| `1`  | `HostedMutationConsentRequiredError` — no `--yes`/shell `SUPABASE_YES` on a non-interactive or machine-output run; nothing is deployed or deleted |
 
 ## Output
 
@@ -84,7 +89,8 @@ Prints progress and success messages as Functions are deployed, bundled, uploade
 
 ### `--output-format json`
 
-Emits a structured success payload with the project ref, deployed function slugs, and dashboard URL.
+Emits one structured success payload with the project ref, deployed function slugs, and dashboard
+URL, after `--prune` has finished deleting. A failing prune emits only the error envelope.
 
 ### `--output-format stream-json`
 
@@ -109,12 +115,18 @@ The `--output`/`-o` flag does not change deploy output.
   directory, forward slashes). Imports outside the workdir but inside
   the nearest git root still upload, with `../`-relative names. The nearest git
   root is the containment boundary for uploaded imports.
-- Requires a linked project unless `--project-ref` is provided.
 - Bundles locally with Docker by default (`--use-docker` defaults to true and is hidden); `--use-api` selects server-side bundling, and a stopped Docker daemon falls back to it after a `WARNING: Docker is not running`.
 - Local Docker bundling mounts existing local values declared under an import map's `scopes` read-only, including targets outside the nearest Git root; each such out-of-root mount prints a `WARN` naming the host path. The mounted target itself is bound as declared; imports reached from inside an out-of-root target are not additionally bound. API source uploads retain their existing source-root restrictions.
 - `--use-api`, `--use-docker`, and `--legacy-bundle` are mutually exclusive deploy modes.
-- `--prune` deletes deployed Functions that are not present locally after a confirmation prompt;
-  global `--yes` skips the prompt.
+- Prints the target banner before anything else.
+- **Consent:** one question, `Deploy N Function(s)` on the target, asked after planning and
+  before the first bundle, upload or delete. The default answer is No. `--prune` adds
+  `delete N Function(s) with --prune` to the same question, so a deploy with pruning never asks
+  twice. The question lists the Function slugs on stderr.
+- The question lists every enabled Function, including ones the upload later finds unchanged;
+  a deploy with nothing enabled and nothing to prune does not ask.
+- `--prune` deletes deployed Functions that are not present locally, and runs even when every
+  local Function is already up to date.
 - **Spec-strict import-map key matching:** the functions import scanner (`walkImportPaths`/`substituteImportMapValue`,
   shared with `functions serve` and `start`'s Edge Runtime bring-up) matches import-map keys
   per the import-maps spec Deno/edge-runtime implement — exact match, or prefix match only

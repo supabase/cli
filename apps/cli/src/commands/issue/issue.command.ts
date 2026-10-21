@@ -1,5 +1,6 @@
 import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
+import { withTargetPolicy } from "../../command-internal/target/target-policy.ts";
 import { browserLayer } from "../../shared/runtime/browser.layer.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";
@@ -97,6 +98,7 @@ const issueBugCommand = Command.make("bug", issueBugConfig).pipe(
   ),
   Command.provide(commandRuntimeLayer(["issue", "bug"])),
   Command.provide(browserLayer),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );
 
 const issueFeatureCommand = Command.make("feature", issueFeatureConfig).pipe(
@@ -126,6 +128,7 @@ const issueFeatureCommand = Command.make("feature", issueFeatureConfig).pipe(
   ),
   Command.provide(commandRuntimeLayer(["issue", "feature"])),
   Command.provide(browserLayer),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );
 
 const issueDocsCommand = Command.make("docs", issueDocsConfig).pipe(
@@ -154,6 +157,7 @@ const issueDocsCommand = Command.make("docs", issueDocsConfig).pipe(
   ),
   Command.provide(commandRuntimeLayer(["issue", "docs"])),
   Command.provide(browserLayer),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );
 
 export const issueCommand = Command.make("issue").pipe(

@@ -3,6 +3,8 @@ import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { upgradeSuggestion } from "../../../command-internal/upgrade-suggest.ts";
@@ -12,6 +14,7 @@ import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts"
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
 import { ssoAdd } from "./add.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 // `--domains` is a CSV string-slice flag; malformed CSV reports a diagnostic (see `stringSliceFlag`).
 export const ssoAddDomainsFlag = stringSliceFlag(
@@ -20,10 +23,7 @@ export const ssoAddDomainsFlag = stringSliceFlag(
 );
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   // No `Flag.optional`: `--type` is required, enforced by the CLI parser.
   type: Flag.Literals("type", ["saml"] as const).pipe(
     Flag.withAlias("t"),
@@ -71,7 +71,7 @@ export const ssoAddCommand = Command.make("add", config).pipe(
   Command.withExamples([
     {
       command:
-        "supabase sso add --type saml --project-ref mwjylndxudmiehsxhmmz --metadata-url 'https://...' --domains example.com",
+        "supabase sso add --type saml --metadata-url 'https://...' --domains example.com --remote=mwjylndxudmiehsxhmmz",
       description: "Add a new SAML SSO provider",
     },
   ]),
@@ -92,13 +92,13 @@ export const ssoAddCommand = Command.make("add", config).pipe(
       upgradeSuggestion,
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
     ssoAdd(flags).pipe(
       withCommandTelemetry({
         flags,
-        safeFlags: ["project-ref"],
         config,
         // Maps the `-t` alias back to `type` so telemetry records it as changed.
         aliases: { t: "type" },
@@ -107,4 +107,5 @@ export const ssoAddCommand = Command.make("add", config).pipe(
     ),
   ),
   Command.provide(managementApiRuntimeLayer(["sso", "add"])),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

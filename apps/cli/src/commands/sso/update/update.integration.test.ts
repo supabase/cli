@@ -16,6 +16,8 @@ import {
 } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import {
   mockAnalytics,
   mockOutput,
@@ -37,7 +39,11 @@ import {
   projectResponse,
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
-import { ProfileFlag } from "../../../command-internal/global-flags.ts";
+import { rootCommandForFeatures } from "../../../cli/root.ts";
+import { ProfileFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { prepareCliArgs } from "../../../shared/cli/run.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import type { SsoUpdateFlags } from "./update.command.ts";
@@ -60,6 +66,13 @@ const RESPONSE_PROVIDER = {
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const tempRoot = useTempWorkdir("supabase-sso-update-int-");
+
+const OTHER_REF = "qrstuvwxyzabcdefghij";
+
+const providerRequestUrls = (requests: ReadonlyArray<{ readonly url: string }>) =>
+  requests
+    .map((request) => request.url)
+    .filter((url) => url.includes("/config/auth/sso/providers/"));
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -181,6 +194,8 @@ function setup(opts: SetupOpts = {}) {
     Stdio.layerTest({
       args: Effect.succeed(opts.cliArgs ?? ["sso", "update", VALID_PROVIDER_ID]),
     }),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
     opts.profileFlag === undefined ? Layer.empty : Layer.succeed(ProfileFlag, opts.profileFlag),
     ConfigProvider.layer(
       ConfigProvider.fromEnvRecord({ SUPABASE_NO_KEYRING: "1" }, { preserveEmptyStrings: true }),
@@ -202,6 +217,7 @@ const decodePutDomains = Schema.decodeUnknownEffect(
 );
 
 const defaultFlags: SsoUpdateFlags = {
+  remote: Option.none(),
   projectRef: Option.none(),
   domains: [],
   addDomains: [],
@@ -305,6 +321,8 @@ describe("sso update integration", () => {
           cliSettings,
         }),
       }),
+      Layer.succeed(YesFlag, true),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
       Stdio.layerTest({ args: Effect.succeed(["sso", "update", VALID_PROVIDER_ID]) }),
     );
     return Effect.gen(function* () {
@@ -565,6 +583,57 @@ describe("sso update integration", () => {
         const putReq = api.requests.find((r) => r.method === "PUT");
         const { domains } = yield* decodePutDomains(putReq?.body);
         expect([...domains].sort()).toEqual(["--domains=x.com", "old1.com", "old2.com"]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("selects the project from a --remote the argv scan sees", () => {
+    const { layer, api } = setup({
+      cliArgs: ["sso", "update", VALID_PROVIDER_ID, `--remote=${OTHER_REF}`],
+    });
+    return Effect.gen(function* () {
+      yield* ssoUpdate(defaultFlags);
+      expect(providerRequestUrls(api.requests)).toEqual([
+        expect.stringContaining(`/v1/projects/${OTHER_REF}/`),
+        expect.stringContaining(`/v1/projects/${OTHER_REF}/`),
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails before any API call when --remote is given twice with different values", () => {
+    const cliArgs = ["sso", "update", VALID_PROVIDER_ID, `--remote=${OTHER_REF}`, "--remote"];
+    const { layer, api } = setup({ cliArgs });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(ssoUpdate(defaultFlags));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toMatchObject({
+          _tag: "TargetSelectorConflictError",
+          message: "--remote is given more than once with different values; pass it once.",
+        });
+      }
+      expect(api.requests).toEqual([]);
+    }).pipe(
+      Effect.provideService(CliArgs, prepareCliArgs(rootCommandForFeatures(), cliArgs)),
+      Effect.provide(layer),
+    );
+  });
+
+  it.effect(
+    "ignores a --remote token a bare --domains consumed as its value, as it does for --project-ref",
+    () => {
+      const { layer, api } = setup({
+        cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--domains", `--remote=${OTHER_REF}`],
+      });
+      return Effect.gen(function* () {
+        yield* ssoUpdate({
+          ...defaultFlags,
+          remote: Option.some({ _tag: "Ref", ref: OTHER_REF }),
+        });
+        expect(providerRequestUrls(api.requests)).toEqual([
+          expect.stringContaining(`/v1/projects/${VALID_REF}/`),
+          expect.stringContaining(`/v1/projects/${VALID_REF}/`),
+        ]);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1668,4 +1737,34 @@ describe("sso update integration", () => {
       expect(api.requests.length).toBe(0);
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("sso update", {
+  api: {
+    byMethod: {
+      GET: { status: 200, body: EXISTING_PROVIDER },
+      PUT: { status: 200, body: RESPONSE_PROVIDER },
+    },
+  },
+  invoke: () => ({
+    run: ssoUpdate({
+      ...defaultFlags,
+      remote: Option.some({ _tag: "Ref", ref: VALID_REF }),
+    }).pipe(
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["sso", "update", VALID_PROVIDER_ID, `--remote=${VALID_REF}`]),
+        }),
+      ),
+    ),
+  }),
+});
+
+describeHostedTargetSelection("sso update", {
+  operands: [VALID_PROVIDER_ID],
+  respond: (request) =>
+    Effect.succeed(
+      jsonResponse(request, 200, request.method === "GET" ? EXISTING_PROVIDER : RESPONSE_PROVIDER),
+    ),
+  run: (flags) => ssoUpdate({ ...defaultFlags, ...flags }),
 });

@@ -9,9 +9,11 @@ import { CommandPlatformApiFactory } from "../../src/auth/command-platform-api-f
 import { CommandPlatformApi } from "../../src/auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../src/config/command-settings.service.ts";
 import { projectRefLayer } from "../../src/config/project-ref.layer.ts";
+import { commandTargetLayer } from "../../src/shared/output/command-target.layer.ts";
 import { ProjectRefResolver } from "../../src/config/project-ref.service.ts";
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import { OutputFlag, YesFlag } from "../../src/command-internal/global-flags.ts";
+import { TargetPolicy } from "../../src/command-internal/target/target-policy.ts";
 import { randomLayer } from "../../src/shared/runtime/random.layer.ts";
 import { ProjectRefNotLinkedError } from "../../src/config/project-ref.errors.ts";
 import { mockLinkedProjectCacheLayer } from "./command-mocks.ts";
@@ -360,6 +362,26 @@ export function makeComputeProject(files: Readonly<Record<string, string>> = {})
 }
 
 /**
+ * Writes `files` under `workdir` and links it to {@link COMPUTE_PROJECT_REF}, for
+ * `describeHostedConsent` scenarios whose runtime resolves the project from the real filesystem.
+ */
+export const seedLinkedComputeProject = (
+  workdir: string,
+  files: Readonly<Record<string, string>>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const all = { ...files, "supabase/.temp/project-ref": COMPUTE_PROJECT_REF };
+    for (const [relativePath, contents] of Object.entries(all)) {
+      const absolutePath = `${workdir}/${relativePath}`;
+      yield* fs.makeDirectory(absolutePath.slice(0, absolutePath.lastIndexOf("/")), {
+        recursive: true,
+      });
+      yield* fs.writeFileString(absolutePath, contents);
+    }
+  });
+
+/**
  * `CommandSettings` for the compute commands: the workdir they treat as the
  * project, and the host their URLs are built on, plus every other field
  * `CommandSettingsShape` requires.
@@ -389,27 +411,33 @@ const testCliConfigLayer = (workdir: string, explicitWorkdir: boolean) =>
   ).pipe(Layer.provide(BunServices.layer));
 
 /** The resolver, stubbed: `--project-ref` wins, else the linked project. */
-const testProjectRefLayer = (linked: boolean) =>
-  Layer.succeed(ProjectRefResolver, {
-    resolve: (flagValue: Option.Option<string>) =>
-      Option.isSome(flagValue)
-        ? Effect.succeed(flagValue.value)
-        : linked
-          ? Effect.succeed(COMPUTE_PROJECT_REF)
-          : Effect.fail(
-              new ProjectRefNotLinkedError({
-                message: "Cannot find project ref. Have you run supabase link?",
-              }),
-            ),
+const testProjectRefLayer = (linked: boolean) => {
+  const resolve = (
+    flagValue: Option.Option<string>,
+  ): Effect.Effect<string, ProjectRefNotLinkedError> =>
+    Option.isSome(flagValue)
+      ? Effect.succeed(flagValue.value)
+      : linked
+        ? Effect.succeed(COMPUTE_PROJECT_REF)
+        : Effect.fail(
+            new ProjectRefNotLinkedError({
+              message: "Cannot find project ref. Have you run supabase link?",
+            }),
+          );
+  return Layer.succeed(ProjectRefResolver, {
+    resolve,
+    resolveRef: (flagValue: Option.Option<string>) =>
+      resolve(flagValue).pipe(
+        Effect.map((ref) => ({ ref, source: "file" as const, matchesLinkedRef: true })),
+      ),
     resolveForLink: () =>
       Effect.fail(new ProjectRefNotLinkedError({ message: "Not available in compute tests" })),
     resolveOptional: () =>
       Effect.succeed(linked ? Option.some(COMPUTE_PROJECT_REF) : Option.none()),
-    loadProjectRef: () =>
-      Effect.fail(new ProjectRefNotLinkedError({ message: "Not available in compute tests" })),
     promptProjectRef: () =>
       Effect.fail(new ProjectRefNotLinkedError({ message: "Not available in compute tests" })),
   });
+};
 
 export interface ComputeSetupOptions {
   readonly workdir: string;
@@ -439,7 +467,7 @@ export interface ComputeSetupOptions {
    * render text for.
    */
   readonly outputFlag?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
-  /** The root `--yes`, read by `delete` through `resolveYes`. */
+  /** The root `--yes`, which `push` and `delete` read through `resolveYes`. */
   readonly yes?: boolean;
   /** Raw argv, which `resolveYes` scans for an explicit `--yes=false`. */
   readonly cliArgs?: ReadonlyArray<string>;
@@ -510,6 +538,7 @@ export function setupCompute(options: ComputeSetupOptions) {
           ),
           Layer.provide(cliSettings),
           Layer.provide(tty),
+          Layer.provide(commandTargetLayer.pipe(Layer.provide(out.layer))),
           Layer.provide(out.layer),
           Layer.provide(BunServices.layer),
         )
@@ -540,6 +569,7 @@ export function setupCompute(options: ComputeSetupOptions) {
         options.outputFlag === undefined ? Option.none() : Option.some(options.outputFlag),
       ),
       Layer.succeed(YesFlag, options.yes ?? false),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
       Layer.succeed(CliArgs, { args: options.cliArgs ?? [] }),
       processControl.layer,
       BunServices.layer,

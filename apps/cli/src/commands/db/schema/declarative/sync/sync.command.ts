@@ -3,9 +3,7 @@ import { Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../../../command-internal/command-permissions/command-permissions.annotation.ts";
-import { compose, withContext } from "../../../../../command-internal/command-permissions/model.ts";
-import { dbConfigLinked } from "../../../../../command-internal/db-config.layer.ts";
-import { linkedProjectCache } from "../../../../../telemetry/linked-project-cache.layer.ts";
+import { compose } from "../../../../../command-internal/command-permissions/model.ts";
 import { withCliConfigFlags } from "../../../../../config/cli-config-flags.ts";
 import { withJsonErrorHandling } from "../../../../../shared/output/json-error-handling.ts";
 import { parseSchemaFlags } from "../../../../../command-internal/schema-flags.ts";
@@ -14,6 +12,7 @@ import { dbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
 import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
 import { dbSchemaDeclarativeSyncRuntimeLayer } from "./sync.layers.ts";
 import { cliConfigValuesLayer } from "../../../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../../../command-internal/target/target-policy.ts";
 
 const config = {
   schema: Flag.String("schema").pipe(
@@ -63,28 +62,18 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
   ),
   Command.withShortDescription("Generate a new migration from declarative schema"),
   withPermissions(
-    compose(
-      {
-        operations: [],
-        noApiEffectFlags: [
-          "schema",
-          "file",
-          "name",
-          "apply",
-          "no-apply",
-          "no-cache",
-          "strict-coverage",
-        ],
-      },
-      withContext(
-        dbConfigLinked,
-        "no declarative schema files yet, migrations exist, and the user picks the linked project in the bootstrap target prompt",
-      ),
-      withContext(
-        linkedProjectCache,
-        "the bootstrap runs with migrations present and SUPABASE_PROJECT_ID or supabase/.temp/project-ref gives a ref, whichever target is picked",
-      ),
-    ),
+    compose({
+      operations: [],
+      noApiEffectFlags: [
+        "schema",
+        "file",
+        "name",
+        "apply",
+        "no-apply",
+        "no-cache",
+        "strict-coverage",
+      ],
+    }),
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
@@ -117,4 +106,5 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
   Command.provide(dbSchemaDeclarativeSyncRuntimeLayer),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

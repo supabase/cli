@@ -1,14 +1,14 @@
-import { Layer, Option } from "effect";
+import { Layer } from "effect";
 import type * as CliCommand from "effect/cli/Command";
 import { Command, Flag } from "effect/cli";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
-import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { configPullRun } from "../../../command-internal/config-pull-run.ts";
-import { configTarget } from "../../../command-internal/project-target.ts";
+import { projectRefPicker } from "../../../config/project-ref.layer.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
@@ -16,16 +16,11 @@ import { GLOBAL_OUTPUT_FORMATS } from "../../../command-internal/global-flags.ts
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { configPull } from "./pull.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 
 const config = {
-  // Accepts either a project ref or a branch name/UUID of the linked project; there's no
-  // separate --target flag.
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription(
-      "Project ref of the Supabase project, or the name (or UUID) of one of its branches. Values that are exactly 20 lowercase letters are always treated as project refs.",
-    ),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   remoteLabel: Flag.String("remote-label").pipe(
     Flag.withDescription(
       "Name of the [remotes.*] block to write into, overriding the block config pull would otherwise reuse or create.",
@@ -47,15 +42,9 @@ export type ConfigPullFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 const configPullHandler = (flags: ConfigPullFlags) =>
   configPull(flags).pipe(
-    // --project-ref accepts branch names too, so it's only safe to log verbatim when
-    // ref-shaped; a branch name must never reach PostHog. --remote-label is free-form user text
-    // and is never safe to log.
+    // --remote-label is free-form user text and is never safe to log.
     withCommandTelemetry({
       flags,
-      safeFlags:
-        Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
-          ? ["project-ref"]
-          : [],
       // The handler rejects every -o/--output value itself, so the full global choice set is
       // declared "allowed" here rather than gated by this wrapper.
       outputFormats: GLOBAL_OUTPUT_FORMATS,
@@ -74,7 +63,7 @@ export const configPullCommand = Command.make("pull", config).pipe(
       description: "Pull from the linked project into the config root",
     },
     {
-      command: "supabase config pull --project-ref staging",
+      command: "supabase config pull --remote=staging",
       description: "Pull from the 'staging' branch into [remotes.staging]",
     },
     {
@@ -84,7 +73,8 @@ export const configPullCommand = Command.make("pull", config).pipe(
   ]),
   withPermissions(
     compose(
-      configTarget,
+      branchResolution,
+      projectRefPicker,
       configPullRun,
       { operations: [], noApiEffectFlags: ["remote-label", "dry-run", "force"] },
       linkedProjectCache,
@@ -96,4 +86,5 @@ export const configPullCommand = Command.make("pull", config).pipe(
   Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["config", "pull"]), stdinLayer)),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

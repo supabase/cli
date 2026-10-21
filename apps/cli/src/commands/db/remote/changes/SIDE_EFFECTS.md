@@ -42,7 +42,7 @@ regardless of `-o`/`--output`:
 
 ```
 supabase db remote changes was removed.
-Use `supabase db diff --linked` instead.
+Use `supabase db diff --remote` instead.
 ```
 
 ### `--output-format json` / `stream-json`

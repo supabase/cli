@@ -6,7 +6,7 @@ import { renderComputeDetails } from "../compute.format.ts";
 import {
   emitComputeMachineOutput,
   rejectComputeEnvOutput,
-  computeProjectRefSuffix,
+  computeRemoteSuffix,
 } from "../compute.output.ts";
 import { CommandPlatformApi } from "../../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
@@ -15,7 +15,7 @@ import { formatApiSize } from "../../../../shared/compute/compute-runtimes.ts";
 import { computeUrl } from "../../../../shared/compute/compute-url.ts";
 import { getCompute } from "../../../../shared/compute/compute-api.ts";
 import { ComputeNotDeployedError } from "../../../../shared/compute/compute.errors.ts";
-import { ProjectRefResolver } from "../../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../../command-internal/target/resolve-project-target.ts";
 import { LinkedProjectCache } from "../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
@@ -36,7 +36,6 @@ export const computeStatus = Effect.fn("compute.status")(function* (flags: Compu
   const output = yield* Output;
   const path = yield* Path.Path;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const settings = yield* CommandSettings;
@@ -44,8 +43,8 @@ export const computeStatus = Effect.fn("compute.status")(function* (flags: Compu
   // Resolved here, outside the block below, since caching it is one of that
   // block's own finalizers — everything else that can fail belongs inside so
   // those failures still flush telemetry.
-  const projectRef = yield* resolver.resolve(flags.projectRef);
-  const refSuffix = computeProjectRefSuffix(flags.projectRef);
+  const projectRef = yield* resolveProjectTarget(flags);
+  const refSuffix = computeRemoteSuffix(flags, projectRef);
 
   yield* Effect.gen(function* () {
     const project = yield* loadComputeProjectForReporting();

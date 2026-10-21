@@ -14,7 +14,6 @@ import {
 } from "effect";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
-import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   buildTestRuntime,
   DEFAULT_API_URL,
@@ -25,16 +24,22 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
+import { mockAnalytics, mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
-import { ProfileFlag } from "../../../command-internal/global-flags.ts";
+import { ProfileFlag, YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 import { EventUpgradeSuggested } from "../../../shared/telemetry/event-catalog.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import type { SsoAddFlags } from "./add.command.ts";
 import { ssoAdd } from "./add.handler.ts";
+
+const OTHER_REF = "qrstuvwxyzabcdefghij";
 
 const RESPONSE_PROVIDER = {
   id: "b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8",
@@ -181,12 +186,15 @@ function setup(opts: SetupOpts = {}) {
       args: Effect.succeed(opts.cliArgs ?? ["sso", "add", "--type", "saml"]),
     }),
     opts.profileFlag === undefined ? Layer.empty : Layer.succeed(ProfileFlag, opts.profileFlag),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
   );
 
   return { layer, out, api, analytics, telemetry, cache };
 }
 
 const defaultFlags: SsoAddFlags = {
+  remote: Option.none(),
   projectRef: Option.none(),
   type: "saml",
   domains: [],
@@ -241,6 +249,33 @@ describe("sso add integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("selects the project from a --remote the argv scan sees", () => {
+    const { layer, api } = setup({
+      cliArgs: ["sso", "add", "--type", "saml", `--remote=${OTHER_REF}`],
+    });
+    return Effect.gen(function* () {
+      yield* ssoAdd(defaultFlags);
+      expect(api.requests.find((r) => r.method === "POST")?.url).toContain(
+        `/v1/projects/${OTHER_REF}/config/auth/sso/providers`,
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "ignores a --remote token a bare --domains consumed as its value, as it does for --project-ref",
+    () => {
+      const { layer, api } = setup({
+        cliArgs: ["sso", "add", "--type", "saml", "--domains", `--remote=${OTHER_REF}`],
+      });
+      return Effect.gen(function* () {
+        yield* ssoAdd({ ...defaultFlags, remote: Option.some({ _tag: "Ref", ref: OTHER_REF }) });
+        expect(api.requests.find((r) => r.method === "POST")?.url).toContain(
+          `/v1/projects/${VALID_REF}/config/auth/sso/providers`,
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("lists the projects for the picker and fills the linked-project cache", () => {
     const out = mockOutput({ promptSelectResponses: [VALID_REF] });
     const api = mockCommandPlatformApi({
@@ -272,6 +307,8 @@ describe("sso add integration", () => {
           cliSettings,
         }),
       }),
+      Layer.succeed(YesFlag, true),
+      Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
       Stdio.layerTest({ args: Effect.succeed(["sso", "add", "--type", "saml"]) }),
     );
     return Effect.gen(function* () {
@@ -378,7 +415,7 @@ describe("sso add integration", () => {
   );
 
   it.effect(
-    "reconciles project-ref consuming --metadata-file: fails ref validation, never reads metadata",
+    "reconciles project-ref consuming --metadata-file: looks the value up as a branch, never reads metadata",
     () => {
       const { layer, api } = setup({
         cliArgs: [
@@ -404,10 +441,12 @@ describe("sso add integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const dump = Cause.pretty(exit.cause);
-          expect(dump).toContain("InvalidProjectRefError");
-          expect(dump).toContain("Invalid project ref format. Must be like");
+          expect(dump).toContain("LinkBranchListStatusError");
+          expect(dump).not.toContain("SsoAddMetadataFileError");
         }
-        expect(api.requests.some((r) => r.method === "POST")).toBe(false);
+        expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
+          `GET ${DEFAULT_API_URL}/v1/projects/${VALID_REF}/branches`,
+        ]);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -1322,4 +1361,23 @@ describe("sso add integration", () => {
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.provide(BunServices.layer)),
   );
+});
+
+describeHostedConsent("sso add", {
+  api: { response: { status: 201, body: RESPONSE_PROVIDER } },
+  invoke: () => ({
+    run: ssoAdd({ ...defaultFlags, remote: Option.some({ _tag: "Ref", ref: VALID_REF }) }).pipe(
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["sso", "add", "--type", "saml", `--remote=${VALID_REF}`]),
+        }),
+      ),
+    ),
+  }),
+});
+
+describeHostedTargetSelection("sso add", {
+  operands: ["--type", "saml"],
+  respond: (request) => Effect.succeed(jsonResponse(request, 201, RESPONSE_PROVIDER)),
+  run: (flags) => ssoAdd({ ...defaultFlags, ...flags }),
 });

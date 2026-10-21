@@ -21,6 +21,10 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { TestClock } from "effect/testing";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { HostedMutationDeclinedError } from "../../../command-internal/hosted-consent/hosted-consent.errors.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { rootCommandForFeatures } from "../../../cli/root.ts";
+import { cliArgsLayer, prepareCliArgs } from "../../../shared/cli/run.ts";
 import { stripControlSequences } from "../../../shared/output/strip-control-sequences.ts";
 import {
   type ApiHandler,
@@ -43,7 +47,10 @@ import {
   realLinkedProjectCache,
 } from "../../../../tests/helpers/permission-real-layers.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import {
   deployFunctions,
   shouldChmodBundleOutputDirectory,
@@ -61,10 +68,16 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { functionsDeploy } from "./deploy.handler.ts";
 import type { FunctionsDeployFlags } from "./deploy.command.ts";
+import { branchRow } from "../../../../tests/helpers/remote-selection.ts";
 
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const tempRoot = useTempWorkdir("supabase-functions-deploy-legacy-");
+
+const approvedHostedMutation = Layer.mergeAll(
+  Layer.succeed(YesFlag, true),
+  Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+);
 
 const apiPathFlags = {
   "use-api": true,
@@ -74,6 +87,22 @@ const apiPathFlags = {
 } as const;
 
 const dockerPathFlags = { ...apiPathFlags, "use-api": false } as const;
+
+const requestLines = (requests: ReadonlyArray<{ readonly method: string; readonly url: string }>) =>
+  requests.map(({ method, url }) => `${method} ${url}`);
+
+const baseFlags: FunctionsDeployFlags = {
+  functionNames: ["hello-world"],
+  remote: Option.none(),
+  projectRef: Option.none(),
+  noVerifyJwt: false,
+  useApi: true,
+  importMap: Option.none(),
+  prune: false,
+  jobs: Option.none(),
+  useDocker: false,
+  legacyBundle: false,
+};
 
 const deployedFunction = (slug: string) => ({
   id: `${slug}-id`,
@@ -88,21 +117,6 @@ const deployedFunction = (slug: string) => ({
   entrypoint_path: `functions/${slug}/index.ts`,
   import_map_path: `functions/${slug}/deno.json`,
 });
-
-const requestLines = (requests: ReadonlyArray<{ readonly method: string; readonly url: string }>) =>
-  requests.map(({ method, url }) => `${method} ${url}`);
-
-const baseFlags: FunctionsDeployFlags = {
-  functionNames: ["hello-world"],
-  projectRef: Option.none(),
-  noVerifyJwt: false,
-  useApi: true,
-  importMap: Option.none(),
-  prune: false,
-  jobs: Option.none(),
-  useDocker: false,
-  legacyBundle: false,
-};
 
 const removeTempRoot = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -205,7 +219,7 @@ describe("functions deploy", () => {
         linkedProjectCache: linkedProjectCache.layer,
         telemetry: telemetry.layer,
       }),
-      Layer.succeed(YesFlag, false),
+      approvedHostedMutation,
       Stdio.layerTest({
         args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
       }),
@@ -274,7 +288,7 @@ describe("functions deploy", () => {
           cliSettings,
         }),
       }),
-      Layer.succeed(YesFlag, false),
+      approvedHostedMutation,
       Stdio.layerTest({
         args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
       }),
@@ -410,7 +424,7 @@ describe("functions deploy", () => {
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
-      Layer.succeed(YesFlag, false),
+      approvedHostedMutation,
       Stdio.layerTest({
         args: Effect.succeed(["functions", "deploy", "hello-world", "hello-world", "--use-api"]),
       }),
@@ -436,68 +450,98 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.effect("uses an explicit project ref when provided", () => {
-    const out = mockOutput({ format: "text" });
-    const api = mockCommandPlatformApi({
-      handler: (request) => {
-        if (request.method === "GET") {
-          return Effect.succeed(jsonResponse(request, 200, []));
-        }
-        return Effect.succeed(
-          jsonResponse(request, 201, {
-            id: "function-id",
-            slug: "hello-world",
-            name: "hello-world",
-            status: "ACTIVE",
-            version: 2,
-            created_at: 1_687_423_025_152,
-            updated_at: 1_687_423_025_152,
-            verify_jwt: true,
-            import_map: true,
-            entrypoint_path: "functions/hello-world/index.ts",
-            import_map_path: "functions/hello-world/deno.json",
-          }),
-        );
-      },
-    });
-    const layer = Layer.mergeAll(
-      cliConfigValuesTestLayer,
-      buildTestRuntime({
-        out,
-        api,
-        cliSettings: mockCommandSettings({
-          workdir: tempRoot.current,
-          projectId: Option.none(),
-        }),
-        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
-      }),
-      Layer.succeed(YesFlag, false),
-      Stdio.layerTest({
-        args: Effect.succeed([
-          "functions",
-          "deploy",
-          "hello-world",
-          "--use-api",
-          "--project-ref",
-          "qrstuvwxyzabcdefghij",
-        ]),
-      }),
-    );
-
-    return Effect.gen(function* () {
-      yield* writeCliConfig(tempRoot.current);
-      yield* writeLocalFunction(tempRoot.current, "hello-world");
-
-      yield* functionsDeploy({
-        ...baseFlags,
-        projectRef: Option.some("qrstuvwxyzabcdefghij"),
+  describe("project selection", () => {
+    const selectionHarness = (args: ReadonlyArray<string>) => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({
+        handler: (request) =>
+          Effect.succeed(
+            request.url.endsWith("/branches")
+              ? jsonResponse(request, 200, [branchRow("feature-x")])
+              : request.method === "GET"
+                ? jsonResponse(request, 200, [])
+                : jsonResponse(request, 201, deployedFunction("hello-world")),
+          ),
       });
-
-      const deployRequest = api.requests.find(
-        (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
+      const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current, projectId: Option.none() }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        commandRuntimeLayer(["functions", "deploy"]).pipe(Layer.provide(BunServices.layer)),
+        approvedHostedMutation,
+        cliArgsLayer(prepareCliArgs(rootCommandForFeatures(), args)).pipe(
+          Layer.provideMerge(Stdio.layerTest({ args: Effect.succeed(args) })),
+        ),
       );
-      expect(deployRequest?.url).toContain("/projects/qrstuvwxyzabcdefghij/functions/deploy");
-    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+      const deployedTo = () =>
+        api.requests
+          .filter(
+            (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
+          )
+          .map((request) => request.url);
+      return { layer, deployedTo };
+    };
+
+    const linkParent = Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(`${tempRoot.current}/supabase/.temp`, { recursive: true });
+      yield* fs.writeFileString(`${tempRoot.current}/supabase/.temp/project-ref`, VALID_REF);
+    }).pipe(Effect.provide(BunServices.layer));
+
+    it.effect("fails with the branches that exist when no branch has that name", () => {
+      const { layer, deployedTo } = selectionHarness([
+        "functions",
+        "deploy",
+        "hello-world",
+        "--remote=feature-y",
+      ]);
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* linkParent;
+
+        const error = yield* functionsDeploy({
+          ...baseFlags,
+          remote: Option.some({ _tag: "Branch", name: "feature-y" }),
+        }).pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "LinkBranchNotFoundError",
+          message: expect.stringContaining("Available branches: feature-x"),
+        });
+        expect(deployedTo()).toEqual([]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("stops a bare --remote that swallowed a function name that is also a branch", () => {
+      const { layer, deployedTo } = selectionHarness([
+        "functions",
+        "deploy",
+        "--remote",
+        "feature-x",
+      ]);
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "feature-x");
+        yield* linkParent;
+
+        const error = yield* functionsDeploy({
+          ...baseFlags,
+          functionNames: ["feature-x"],
+          remote: Option.some({ _tag: "Linked" }),
+        }).pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "TargetRemoteAmbiguousError",
+          message: `"feature-x" is a branch of project ${VALID_REF}. For the branch: supabase functions deploy --remote=feature-x. For the linked project: supabase functions deploy feature-x --remote`,
+        });
+        expect(deployedTo()).toEqual([]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
   });
 
   it.effect("resolves --import-map relative to the caller cwd", () => {
@@ -533,7 +577,7 @@ describe("functions deploy", () => {
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: callerDir }),
       }),
-      Layer.succeed(YesFlag, false),
+      approvedHostedMutation,
       Stdio.layerTest({
         args: Effect.succeed([
           "functions",
@@ -595,7 +639,7 @@ describe("functions deploy", () => {
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: callerDir }),
       }),
-      Layer.succeed(YesFlag, false),
+      approvedHostedMutation,
       Stdio.layerTest({
         args: Effect.succeed(["functions", "deploy", "--use-api"]),
       }),
@@ -670,7 +714,7 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir }),
           runtimeInfo: mockRuntimeInfo({ cwd: workdir }),
         }),
-        Layer.succeed(YesFlag, false),
+        approvedHostedMutation,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
         }),
@@ -750,7 +794,7 @@ describe("functions deploy", () => {
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
-      Layer.succeed(YesFlag, false),
+      approvedHostedMutation,
       Stdio.layerTest({ args: Effect.succeed(args) }),
     );
     return { out, api, layer };
@@ -840,7 +884,7 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(YesFlag, false),
+        approvedHostedMutation,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
         }),
@@ -1090,7 +1134,7 @@ describe("functions deploy", () => {
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
-      Layer.succeed(YesFlag, false),
+      approvedHostedMutation,
       Stdio.layerTest({
         args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
       }),
@@ -1298,7 +1342,7 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(YesFlag, false),
+        approvedHostedMutation,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
@@ -1363,7 +1407,7 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(YesFlag, false),
+        approvedHostedMutation,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "bye-world"]),
@@ -1429,7 +1473,7 @@ describe("functions deploy", () => {
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
-      Layer.succeed(YesFlag, false),
+      approvedHostedMutation,
       child.layer,
       Stdio.layerTest({
         args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
@@ -1491,7 +1535,7 @@ describe("functions deploy", () => {
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
-      Layer.succeed(YesFlag, false),
+      approvedHostedMutation,
       Stdio.layerTest({
         args: Effect.succeed(["functions", "deploy", "--use-api"]),
       }),
@@ -1538,92 +1582,200 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
-  it.effect("honors global --yes when pruning remote functions", () => {
-    const out = mockOutput({ format: "text", promptConfirmFail: true });
-    const api = mockCommandPlatformApi({
-      handler: (request) => {
-        if (request.method === "POST") {
-          return Effect.succeed(
-            jsonResponse(request, 201, {
-              id: "function-id",
-              slug: "hello-world",
-              name: "hello-world",
-              status: "ACTIVE",
-              version: 2,
-              created_at: 1_687_423_025_152,
-              updated_at: 1_687_423_025_152,
-              verify_jwt: true,
-              import_map: true,
-              entrypoint_path: "functions/hello-world/index.ts",
-              import_map_path: "functions/hello-world/deno.json",
-            }),
+  describe("--prune consent", () => {
+    const pruneArgs = ["functions", "deploy", "hello-world", "--use-api", "--prune"];
+    const pruneApiHandler: ApiHandler = (request) => {
+      if (request.method === "POST") {
+        return Effect.succeed(jsonResponse(request, 201, deployedFunction("hello-world")));
+      }
+      if (request.method === "GET") {
+        return Effect.succeed(
+          jsonResponse(request, 200, [{ ...deployedFunction("remote-only"), version: 1 }]),
+        );
+      }
+      return Effect.succeed(jsonResponse(request, 200, {}));
+    };
+
+    const setupPrune = (opts: {
+      readonly yes: boolean;
+      readonly interactive?: boolean;
+      readonly confirmResponses?: ReadonlyArray<boolean>;
+      readonly format?: "text" | "json";
+      readonly handler?: ApiHandler;
+    }) => {
+      const out = mockOutput({
+        format: opts.format ?? "text",
+        interactive: opts.interactive,
+        promptConfirmResponses: opts.confirmResponses,
+      });
+      const api = mockCommandPlatformApi({ handler: opts.handler ?? pruneApiHandler });
+      const layer = Layer.mergeAll(
+        cliConfigValuesTestLayer,
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+          tty: mockTty({
+            stdinIsTty: opts.interactive ?? false,
+            stdoutIsTty: opts.interactive ?? false,
+          }),
+        }),
+        Layer.succeed(YesFlag, opts.yes),
+        Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+        Stdio.layerTest({ args: Effect.succeed(opts.yes ? [...pruneArgs, "--yes"] : pruneArgs) }),
+      );
+      return { out, api, layer };
+    };
+
+    const mutations = (api: { readonly requests: ReadonlyArray<{ readonly method: string }> }) =>
+      api.requests.filter((request) => request.method !== "GET");
+
+    it.effect(
+      "deletes pruned functions under --yes after echoing one combined confirmation",
+      () => {
+        const { out, api, layer } = setupPrune({ yes: true });
+
+        return Effect.gen(function* () {
+          yield* writeCliConfig(tempRoot.current);
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+          yield* functionsDeploy({ ...baseFlags, prune: true });
+
+          expect(stripControlSequences(out.stderrText)).toContain(
+            "Confirmed by --yes: Deploy 1 Function and delete 1 Function with --prune on project",
           );
-        }
-        if (request.method === "GET") {
-          return Effect.succeed(
-            jsonResponse(request, 200, [
-              {
-                id: "remote-id",
-                slug: "remote-only",
-                name: "remote-only",
-                status: "ACTIVE",
-                version: 1,
-                created_at: 1_687_423_025_152,
-                updated_at: 1_687_423_025_152,
-                verify_jwt: true,
-                import_map: false,
-              },
-            ]),
-          );
-        }
-        return Effect.succeed(jsonResponse(request, 200, {}));
+          expect(out.promptConfirmCalls).toHaveLength(0);
+          expect(api.requests.some((request) => request.method === "DELETE")).toBe(true);
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
       },
-    });
-    const layer = Layer.mergeAll(
-      cliConfigValuesTestLayer,
-      buildTestRuntime({
-        out,
-        api,
-        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
-      }),
-      Layer.succeed(YesFlag, true),
-      Stdio.layerTest({
-        args: Effect.succeed([
-          "functions",
-          "deploy",
-          "hello-world",
-          "--use-api",
-          "--prune",
-          "--yes",
-        ]),
-      }),
     );
 
-    return Effect.gen(function* () {
-      yield* writeCliConfig(tempRoot.current);
-      yield* writeLocalFunction(tempRoot.current, "hello-world");
-
-      yield* functionsDeploy({ ...baseFlags, prune: true });
-
-      expect(out.promptConfirmCalls).toHaveLength(0);
-      expect(stripControlSequences(out.stderrText)).toContain(
-        "Do you want to delete the following Functions from your project?\n • remote-only\n\n [y/N] y\n",
-      );
-      expect(api.requests.some((request) => request.method === "DELETE")).toBe(true);
-      expect(requestLines(api.requests)).toEqual([
-        `GET https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
-        `POST https://api.supabase.com/v1/projects/${VALID_REF}/functions/deploy`,
-        `GET https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
-        `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/functions/remote-only`,
-      ]);
-      assertPermissionDrift({
-        command: "functions deploy",
-        activeFlags: { ...apiPathFlags, prune: true },
-        requests: api.requests,
-        exact: true,
+    it.effect("asks one question covering the deploy and the prune before deploying", () => {
+      const { out, api, layer } = setupPrune({
+        yes: false,
+        interactive: true,
+        confirmResponses: [true],
       });
-    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        yield* functionsDeploy({ ...baseFlags, prune: true });
+
+        expect(out.promptConfirmCalls).toHaveLength(1);
+        expect(out.promptConfirmCalls[0]?.message).toContain(
+          "Deploy 1 Function and delete 1 Function with --prune",
+        );
+        expect(out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
+        expect(stripControlSequences(out.stderrText)).toContain(
+          "Functions to deploy:\n • hello-world\nFunctions to delete (not found locally):\n • remote-only\n",
+        );
+        expect(mutations(api).map((request) => request.method)).toEqual(["POST", "DELETE"]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("emits one json success envelope once the prune has finished", () => {
+      let messagesWhenDeleting: number | undefined;
+      const { out, layer } = setupPrune({
+        yes: true,
+        format: "json",
+        handler: (request, recorded) => {
+          if (request.method === "DELETE") messagesWhenDeleting = out.messages.length;
+          return pruneApiHandler(request, recorded);
+        },
+      });
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        yield* functionsDeploy({ ...baseFlags, prune: true }).pipe(withJsonErrorHandling);
+
+        expect(messagesWhenDeleting).toBe(0);
+        expect(out.messages).toEqual([
+          {
+            type: "success",
+            message: "Deployed Functions.",
+            data: {
+              project_ref: VALID_REF,
+              functions: ["hello-world"],
+              dashboard_url: `https://supabase.com/dashboard/project/${VALID_REF}/functions`,
+            },
+          },
+        ]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("emits only the failure envelope when the prune fails after a deploy", () => {
+      const { out, api, layer } = setupPrune({
+        yes: true,
+        format: "json",
+        handler: (request, recorded) =>
+          request.method === "DELETE"
+            ? Effect.succeed(jsonResponse(request, 500, { message: "boom" }))
+            : pruneApiHandler(request, recorded),
+      });
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        yield* functionsDeploy({ ...baseFlags, prune: true }).pipe(withJsonErrorHandling);
+
+        expect(api.requests.some((request) => request.method === "POST")).toBe(true);
+        expect(out.messages.map((message) => message.type)).toEqual(["fail"]);
+        expect(out.failures[0]?.message).toContain("unexpected delete function status 500");
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("emits the up-to-date json envelope after pruning when nothing is enabled", () => {
+      let messagesWhenDeleting: number | undefined;
+      const { out, layer } = setupPrune({
+        yes: true,
+        format: "json",
+        handler: (request, recorded) => {
+          if (request.method === "DELETE") messagesWhenDeleting = out.messages.length;
+          return pruneApiHandler(request, recorded);
+        },
+      });
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(
+          tempRoot.current,
+          ['project_id = "test-project"', '[functions."hello-world"]', "enabled = false", ""].join(
+            "\n",
+          ),
+        );
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        yield* functionsDeploy({ ...baseFlags, prune: true }).pipe(withJsonErrorHandling);
+
+        expect(messagesWhenDeleting).toBe(0);
+        expect(out.messages.map((message) => [message.type, message.message])).toEqual([
+          ["success", "All Functions are up to date."],
+        ]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.effect("deploys and deletes nothing when the combined question is declined", () => {
+      const { api, layer } = setupPrune({
+        yes: false,
+        interactive: true,
+        confirmResponses: [false],
+      });
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        const error = yield* functionsDeploy({ ...baseFlags, prune: true }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(HostedMutationDeclinedError);
+        expect(mutations(api)).toEqual([]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
   });
 
   it.effect("lists remote functions only for --prune when --no-verify-jwt is passed", () => {
@@ -1649,7 +1801,7 @@ describe("functions deploy", () => {
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
-      Layer.succeed(YesFlag, true),
+      approvedHostedMutation,
       Stdio.layerTest({
         args: Effect.succeed([
           "functions",
@@ -1670,8 +1822,8 @@ describe("functions deploy", () => {
       yield* functionsDeploy({ ...baseFlags, noVerifyJwt: true, prune: true });
 
       expect(requestLines(api.requests)).toEqual([
-        `POST https://api.supabase.com/v1/projects/${VALID_REF}/functions/deploy`,
         `GET https://api.supabase.com/v1/projects/${VALID_REF}/functions`,
+        `POST https://api.supabase.com/v1/projects/${VALID_REF}/functions/deploy`,
         `DELETE https://api.supabase.com/v1/projects/${VALID_REF}/functions/remote-only`,
       ]);
       assertPermissionDrift({
@@ -1745,7 +1897,7 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(YesFlag, false),
+        approvedHostedMutation,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "bye-world", "--use-api"]),
         }),
@@ -1889,7 +2041,7 @@ describe("functions deploy", () => {
         cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
-      Layer.succeed(YesFlag, false),
+      approvedHostedMutation,
       Stdio.layerTest({
         args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api", "--use-docker"]),
       }),
@@ -1923,7 +2075,7 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(YesFlag, false),
+        approvedHostedMutation,
         Stdio.layerTest({ args: Effect.succeed(rawArgs) }),
       );
       return { out, api, layer };
@@ -2000,7 +2152,7 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(YesFlag, false),
+        approvedHostedMutation,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api", "--jobs", "2"]),
         }),
@@ -2054,7 +2206,7 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(YesFlag, false),
+        approvedHostedMutation,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "--jobs", "0"]),
         }),
@@ -2113,7 +2265,7 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(YesFlag, false),
+        approvedHostedMutation,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
@@ -2172,7 +2324,7 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(YesFlag, false),
+        approvedHostedMutation,
         Stdio.layerTest({ args: Effect.succeed(["functions", "deploy"]) }),
       );
       const deployNoFunctions = Effect.gen(function* () {
@@ -2188,10 +2340,9 @@ describe("functions deploy", () => {
             supabaseDir: path.join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
             localConfigLoader: functionsLocalConfigLoader,
-            yes: false,
             rawArgs: ["functions", "deploy"],
             edgeRuntimeVersion: "1.69.12",
-            resolveProjectRef: () => Effect.succeed("abcdefghijklmnopqrst"),
+            resolveProjectRef: Effect.succeed("abcdefghijklmnopqrst"),
             styleEmphasis: (text) => `<sgr>${text}</sgr>`,
           },
         );
@@ -2245,7 +2396,7 @@ describe("functions deploy", () => {
             cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
-          Layer.succeed(YesFlag, false),
+          approvedHostedMutation,
           Stdio.layerTest({
             args: Effect.succeed(["functions", "deploy", "hello-world"]),
           }),
@@ -2277,7 +2428,7 @@ describe("functions deploy", () => {
             cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
-          Layer.succeed(YesFlag, false),
+          approvedHostedMutation,
           Stdio.layerTest({
             args: Effect.succeed(["functions", "deploy", "hello-world"]),
           }),
@@ -2313,7 +2464,7 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(YesFlag, false),
+        approvedHostedMutation,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "1-invalid-slug"]),
         }),
@@ -2344,7 +2495,7 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(YesFlag, false),
+        approvedHostedMutation,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "1-invalid-slug"]),
         }),
@@ -2403,7 +2554,7 @@ describe("functions deploy", () => {
             cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
-          Layer.succeed(YesFlag, false),
+          approvedHostedMutation,
           child.layer,
           Stdio.layerTest({
             args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
@@ -2440,7 +2591,7 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(YesFlag, false),
+        approvedHostedMutation,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
@@ -2473,7 +2624,7 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(YesFlag, false),
+        approvedHostedMutation,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
@@ -2509,7 +2660,7 @@ describe("functions deploy", () => {
             cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
-          Layer.succeed(YesFlag, false),
+          approvedHostedMutation,
           child.layer,
           Stdio.layerTest({
             args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
@@ -2548,7 +2699,7 @@ describe("functions deploy", () => {
             cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
-          Layer.succeed(YesFlag, false),
+          approvedHostedMutation,
           child.layer,
           Stdio.layerTest({
             args: Effect.succeed([
@@ -2593,7 +2744,7 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(YesFlag, false),
+        approvedHostedMutation,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
@@ -2648,7 +2799,7 @@ describe("functions deploy", () => {
             cliSettings: mockCommandSettings({ workdir: nestedWorkdir }),
             runtimeInfo: mockRuntimeInfo({ cwd: nestedWorkdir }),
           }),
-          Layer.succeed(YesFlag, false),
+          approvedHostedMutation,
           child.layer,
           Stdio.layerTest({
             args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
@@ -2710,7 +2861,7 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: nestedWorkdir }),
           runtimeInfo: mockRuntimeInfo({ cwd: nestedWorkdir }),
         }),
-        Layer.succeed(YesFlag, false),
+        approvedHostedMutation,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
         }),
@@ -2776,7 +2927,7 @@ describe("functions deploy", () => {
           cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
-        Layer.succeed(YesFlag, false),
+        approvedHostedMutation,
         child.layer,
         Stdio.layerTest({
           args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
@@ -2799,10 +2950,9 @@ describe("functions deploy", () => {
             supabaseDir: path.join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
             localConfigLoader: functionsLocalConfigLoader,
-            yes: false,
             rawArgs: ["functions", "deploy", "hello-world", "--use-api=false"],
             edgeRuntimeVersion: "1.69.12",
-            resolveProjectRef: () => Effect.succeed("abcdefghijklmnopqrst"),
+            resolveProjectRef: Effect.succeed("abcdefghijklmnopqrst"),
             styleWarning: (text) => `<warn>${text}</warn>`,
           },
         );
@@ -2811,4 +2961,50 @@ describe("functions deploy", () => {
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
   });
+});
+
+describeHostedTargetSelection("functions deploy", {
+  operands: ["hello-world"],
+  activeFlags: apiPathFlags,
+  files: {
+    "supabase/config.toml": 'project_id = "test-project"\n',
+    "supabase/functions/hello-world/index.ts": "Deno.serve(() => new Response())\n",
+    "supabase/functions/hello-world/deno.json": '{"imports":{}}\n',
+  },
+  respond: (request) =>
+    Effect.succeed(
+      request.method === "GET"
+        ? jsonResponse(request, 200, [])
+        : jsonResponse(request, 201, deployedFunction("hello-world")),
+    ),
+  run: (flags) =>
+    functionsDeploy({ ...baseFlags, ...flags }).pipe(Effect.provide(cliConfigValuesTestLayer)),
+});
+
+describeHostedConsent("functions deploy", {
+  api: {
+    handler: (request) =>
+      Effect.succeed(
+        request.method === "POST"
+          ? jsonResponse(request, 201, deployedFunction("hello-world"))
+          : jsonResponse(request, 200, []),
+      ),
+  },
+  setup: (workdir) =>
+    Effect.gen(function* () {
+      yield* writeCliConfig(workdir);
+      yield* writeLocalFunction(workdir, "hello-world");
+    }).pipe(Effect.provide(BunServices.layer)),
+  invoke: () => ({
+    run: functionsDeploy(baseFlags).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          cliConfigValuesTestLayer,
+          Stdio.layerTest({
+            args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+          }),
+        ),
+      ),
+    ),
+  }),
 });

@@ -1,19 +1,22 @@
 # `supabase inspect report`
 
+Target: selectable, no consent — see [Command target](../../../../docs/command-target.md)
+
 Runs every inspect query against the target Postgres database, writes one CSV per
 query into `<output-dir>/<YYYY-MM-DD>/`, then prints a "rules" summary table
 validating those CSVs.
 
 ## Files Read
 
-| Path                                       | Format     | When                                                                                   |
-| ------------------------------------------ | ---------- | -------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`           | TOML       | always — `[experimental.inspect.rules]` (custom rules) + `[db]` subtree                |
-| `<workdir>/supabase/.env*` (nested)        | dotenv     | always — `env(VAR)` expansion for `[db]` and rule string fields                        |
-| `<workdir>/supabase/.temp/pooler-url`      | plain text | `--linked` path (pooler connection string)                                             |
-| `<workdir>/supabase/.temp/project-ref`     | plain text | `--linked` path, without `--project-ref` or `SUPABASE_PROJECT_ID` (linked project ref) |
-| `~/.supabase/access-token`                 | plain text | `--linked` path, when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable            |
-| `<output-dir>/<YYYY-MM-DD>/<name>.csv` ×14 | CSV        | read back in-memory for rule evaluation                                                |
+| Path                                           | Format     | When                                                                                                                                                                                   |
+| ---------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`               | TOML       | always — `[experimental.inspect.rules]` (custom rules) and the `[db]` subtree, with a matched `[remotes.<ref>]` block over the base for a remote project                               |
+| `<workdir>/supabase/.env*` (nested)            | dotenv     | always — `env(VAR)` expansion for `[db]` and rule string fields                                                                                                                        |
+| `<workdir>/supabase/.temp/pooler-url`          | plain text | remote project (pooler connection string)                                                                                                                                              |
+| `<workdir>/supabase/.temp/project-ref`         | plain text | a remote project: resolves the ref (bare `--remote` with no `SUPABASE_PROJECT_ID`) and tells whether it is the linked project; with no selector, only to word the linked-checkout hint |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON       | to name the project in the `Target:` banner and the linked-checkout hint, and as the parent project for `--remote=<branch>`                                                            |
+| `~/.supabase/access-token`                     | plain text | when `SUPABASE_ACCESS_TOKEN` unset and the target is a remote project (or a branch is looked up)                                                                                       |
+| `<output-dir>/<YYYY-MM-DD>/<name>.csv` ×14     | CSV        | read back in-memory for rule evaluation                                                                                                                                                |
 
 A **missing** `config.toml` is fine (defaults apply); a
 **malformed** file, an invalid value (including a non-string rule field such as `query = 123` or
@@ -52,22 +55,35 @@ wasn't refreshed this run.
 
 ## API Routes
 
-| Method | Path | Auth | Request body | Response (used fields) |
-| ------ | ---- | ---- | ------------ | ---------------------- |
-| —      | —    | —    | —            | —                      |
+Local targets and database URLs make none.
+
+| Method   | Path                                        | Auth         | Request body                              | Response (used fields)                                                                                                                                                                                                                                                                                                                                                                                    |
+| -------- | ------------------------------------------- | ------------ | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/v1/projects`                              | Bearer token | none                                      | `[{id, name, organization_slug, region}]` — project picker: bare `--remote` with no ref from `SUPABASE_PROJECT_ID` or `.temp/project-ref`, with stdin and stdout TTYs and a non-JSON output format                                                                                                                                                                                                        |
+| `GET`    | `/v1/projects/{parent}/branches`            | Bearer token | none                                      | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>` (or the deprecated `--project-ref=<branch>`), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project                                                                                                                                                  |
+| `GET`    | `/v1/branches/{id}`                         | Bearer token | none                                      | `{ref, status, …}` — only for `--remote=<branch UUID>` when no project is linked                                                                                                                                                                                                                                                                                                                          |
+| `POST`   | `/v1/projects/{ref}/cli/login-role`         | Bearer token | `{ read_only: false }`                    | temporary `role` and `password` — remote project with no database password                                                                                                                                                                                                                                                                                                                                |
+| `GET`    | `/v1/projects/{ref}/config/database/pooler` | Bearer token | none                                      | primary pooler `connection_string` — remote project on an IPv4-only network (direct host unreachable), only when there is no usable saved `.temp/pooler-url` and an access token is available; a ref that differs from the linked project ignores the saved URL                                                                                                                                           |
+| `POST`   | `/v1/projects/{ref}/network-bans/retrieve`  | Bearer token | none                                      | `banned_ipv4_addresses` — remote project, from the 3rd failed temporary-role connect                                                                                                                                                                                                                                                                                                                      |
+| `DELETE` | `/v1/projects/{ref}/network-bans`           | Bearer token | `{ ipv4_addresses, requester_ip: false }` | none — remote project, only when bans are listed and `--yes` or a shell `SUPABASE_YES` is set (clears every listed address, announced on stderr as `Removing network bans (...)`); otherwise the connect keeps retrying and fails with `LinkedDbNetworkBannedError` once the retries run out while bans are still listed; under `--yes` a failed listing or removal fails the run with that error instead |
 
 Queries run directly against Postgres (server-side `COPY (<query>) TO STDOUT WITH
-CSV HEADER`). The Management API is used lazily only on the `--linked` path, to
-resolve the connection (via `DbConfigResolver`).
+CSV HEADER`). The Management API is used lazily only for a remote project or a branch lookup, to
+resolve the connection (via `DbConfigResolver`); a network ban is cleared there only under
+`--yes` or a shell `SUPABASE_YES`, otherwise the command fails with `LinkedDbNetworkBannedError` once the
+connect retries run out while bans are still listed. Under `--yes` a failed listing or removal fails the run
+with that error instead.
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                              |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------ |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no                                                     |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`) |
-| `SUPABASE_DB_*`         | override `[db]` port / shadow_port / password        | no                                                     |
-| `SUPABASE_ENV`          | selects which project `.env` files load              | no                                                     |
+| Variable                | Purpose                                                                           | Required?                                              |
+| ----------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `SUPABASE_PROJECT_ID`   | project ref for a bare `--remote`, and the parent project for `--remote=<branch>` | no                                                     |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                              | no                                                     |
+| `SUPABASE_YES`          | shell value lets a remote connection clear a network ban                          | no                                                     |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                           | no (falls back to `~/.supabase/profile` -> `supabase`) |
+| `SUPABASE_DB_*`         | override `[db]` port / shadow_port / password                                     | no                                                     |
+| `SUPABASE_ENV`          | selects which project `.env` files load                                           | no                                                     |
 
 ## Exit Codes
 
@@ -78,8 +94,6 @@ resolve the connection (via `DbConfigResolver`).
 | `1`  | DB connection / resolution failure (not linked, invalid ref, dial failure)                   |
 | `1`  | COPY failure (`failed to copy output`) / file-write failure (`failed to create output file`) |
 | `1`  | malformed `config.toml`                                                                      |
-| `1`  | more than one of `--db-url` / `--linked` / `--local`                                         |
-| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                     |
 
 A **per-rule** csvq evaluation error does **not** fail the command — it becomes the
 rule's STATUS cell.
@@ -91,7 +105,7 @@ rule's STATUS cell.
 stderr progress, in order:
 
 ```
-Connecting to <local|remote> database...
+Target: <resolved target>
 Running queries...
 Reports saved to <output-dir>/<date>    (path bolded when stdout is a TTY)
 Loading default rules...                (only when no custom config.toml rules)
@@ -110,17 +124,8 @@ count.
 ### `--output-format json` / `stream-json` (additive; there is no other machine output)
 
 The CSVs are still written. Progress lines are suppressed and no table is printed;
-instead a structured result is emitted:
+instead a structured result is emitted. The stderr `Target:` banner is still printed.
 
 ```json
-{ "outputDir": "<abs path>", "files": [{ "name": "locks", "path": "..." }, ...], "rules": [{ "name": "...", "status": "...", "matches": "..." }, ...] }
+{ "outputDir": "<abs path>", "files": [{ "name": "locks", "path": "..." }, ...], "rules": [{ "name": "...", "status": "...", "matches": "..." }, ...], "target": { ... } }
 ```
-
-## Notes
-
-- **`--project-ref`** overrides ONLY the linked-ref resolution `DbConfigResolver` performs
-  (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies
-  `--linked`: passing it with a resolved `--local`/`--db-url` target is a hard
-  error rather than a silently discarded flag (stricter than
-  `SUPABASE_PROJECT_ID`, which is simply left unused on
-  a non-linked target).

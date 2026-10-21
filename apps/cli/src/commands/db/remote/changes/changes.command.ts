@@ -7,6 +7,7 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { telemetryStateLayer } from "../../../../telemetry/telemetry-state.layer.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const config = {
   schema: Flag.String("schema").pipe(
@@ -26,20 +27,20 @@ const config = {
     name: "password",
     alias: "p",
     description:
-      "Database password for the linked project (--linked/--project-ref). Not used with --local or --db-url.",
+      "Database password for the project selected with --remote. Not used for the local database or a database URL.",
   }),
 } as const;
 
 export const dbRemoteChangesCommand = Command.make("changes", config).pipe(
-  Command.withDescription("Removed: use `supabase db diff --linked` instead."),
-  Command.withShortDescription("Removed: use `db diff --linked` instead"),
+  Command.withDescription("Removed: use `supabase db diff --remote` instead."),
+  Command.withShortDescription("Removed: use `db diff --remote` instead"),
   // Removed: fails before any Management API call, so no flag changes what it calls.
   withPermissions({
     operations: [],
     noApiEffectFlags: ["db-url", "linked", "password", "schema"],
   }),
   Command.withHandler(() =>
-    removedCommand("Use `supabase db diff --linked` instead.").pipe(
+    removedCommand("Use `supabase db diff --remote` instead.").pipe(
       withCommandTelemetry(),
       withJsonErrorHandling,
     ),
@@ -47,4 +48,5 @@ export const dbRemoteChangesCommand = Command.make("changes", config).pipe(
   Command.provide(commandRuntimeLayer(["db", "remote", "changes"])),
   Command.provide(telemetryStateLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "removed", consent: "none" }),
 );

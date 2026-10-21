@@ -1,26 +1,25 @@
 import { Clock, Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 
-import {
-  DebugFlag,
-  DnsResolverFlag,
-  NetworkIdFlag,
-  resolveYesWithProjectEnv,
-} from "./global-flags.ts";
+import { DebugFlag, DnsResolverFlag, NetworkIdFlag } from "./global-flags.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../config/project-ref.service.ts";
 import { CliConfigKeys } from "../config/cli-config-keys.ts";
 import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import { bold } from "./colors.ts";
-import { promptYesNo } from "./prompt-yes-no.ts";
 import { ipv6Suggestion, isIPv6ConnectivityError } from "./connect-errors.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
+import {
+  hostedMutationPreapproval,
+  requireTargetMutationConsent,
+} from "./hosted-consent/hosted-consent.ts";
+import type { HostedMutationConsent } from "./hosted-consent/hosted-consent.token.ts";
+import type { ResolvedTarget } from "./target/resolve-target.ts";
+import { flagsForTarget } from "./target/target-flags.ts";
 import { resolveDbImage } from "./db-image.ts";
 import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
 import { loadProjectEnvValues, readDbToml, resolveDeclarativeDir } from "./db-config.toml-read.ts";
-import type { DbConnType } from "./db-target-flags.ts";
 import { makeDir } from "./make-dir.ts";
 import { toPostgresURL } from "./postgres-url.ts";
 import { buildLocalDbContainerInputs } from "./db-bootstrap/local-container-inputs.ts";
@@ -45,6 +44,7 @@ import {
 import {
   emitPoolerFallbackWarning,
   isDirectLinkedHost,
+  orNoPoolerFallback,
   runWithPoolerFallback,
 } from "../commands/db/shared/pooler-fallback.ts";
 import { dumpSchemaScript } from "./pg-dump.scripts.ts";
@@ -60,12 +60,7 @@ import { currentStackBackend } from "./stack-backend.ts";
 import { stackRejectNativeDockerDiffEngine } from "./stack-local-database.ts";
 import { stackPrepareShadowSource, stackWithShadowDatabase } from "./stack-shadow.ts";
 import type { DbPullFlags as DbPullCommandFlags } from "../commands/db/pull/pull.command.ts";
-import {
-  DbPullDumpError,
-  DbPullEngineConflictError,
-  DbPullTargetFlagsError,
-  DbPullWriteError,
-} from "../commands/db/pull/pull.errors.ts";
+import { DbPullDumpError, DbPullWriteError } from "../commands/db/pull/pull.errors.ts";
 import { DbPullInSyncError, DbPullMigrationConflictError } from "./db-pull-run.errors.ts";
 import {
   listRemoteMigrations,
@@ -76,10 +71,13 @@ import { updateMigrationHistory } from "../commands/db/pull/pull.sync.ts";
 
 /**
  * `runDbPull`'s parameter type: the `db pull` command flags without the tombstoned
- * `--use-pg-delta`, so an in-process caller (`pull`) can build one without reaching into
- * `commands/db/**` directly.
+ * `--use-pg-delta` and the target selectors, so an in-process caller (`pull`) can build one
+ * without reaching into `commands/db/**` directly.
  */
-export type DbPullRunFlags = Omit<DbPullCommandFlags, "usePgDelta">;
+export type DbPullRunFlags = Omit<
+  DbPullCommandFlags,
+  "usePgDelta" | "remote" | "dbUrl" | "linked" | "local" | "projectRef"
+>;
 
 /**
  * Explains the in-sync non-zero exit instead of the generic "Try rerunning the command with
@@ -93,11 +91,10 @@ const MIGRATION_FILE_MODE = 0o644;
 
 export type DbPullInvoke = {
   /**
-   * Overrides `--yes`/`SUPABASE_YES`/`supabase/.env` resolution for an
-   * in-process caller that already ran its own aggregated confirmation.
-   * `undefined` keeps the existing resolution.
+   * The consent an in-process caller already collected for the remote history update; `Some`
+   * skips this run's own question.
    */
-  readonly assumeYes?: boolean;
+  readonly preapproved?: Option.Option<HostedMutationConsent>;
   /** Project `.env*` values the caller already loaded; `undefined` loads them here. */
   readonly projectEnv?: Record<string, string>;
 };
@@ -116,13 +113,14 @@ export type DbPullOutcome =
     };
 
 /**
- * Runs `db pull`'s target resolution and pull (declarative or migration mode)
- * without emitting the final `output.success`/"Finished" line — the caller
- * (`dbPull` for the standalone command, or an in-process orchestrator)
- * owns that emission based on the returned {@link DbPullOutcome}.
+ * Runs `db pull` against an already-resolved target (declarative or migration mode) without
+ * emitting the final `output.success`/"Finished" line — the caller (`dbPull` for the
+ * standalone command, or an in-process orchestrator) owns that emission based on the returned
+ * {@link DbPullOutcome}.
  */
 export const runDbPull = Effect.fn("db.pull.run")(function* (
   flags: DbPullRunFlags,
+  target: ResolvedTarget,
   invoke?: DbPullInvoke,
 ) {
   const output = yield* Output;
@@ -138,71 +136,25 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
   const debug = yield* DebugFlag;
   const configValues = yield* CliConfigValues;
 
-  // `--yes` or `SUPABASE_YES`. The project `.env` is loaded before the migration
-  // history prompt, so a `SUPABASE_YES` set only in `supabase/.env` auto-confirms
-  // the native initial-migra history repair too.
   const projectEnv =
     invoke?.projectEnv ?? (yield* loadProjectEnvValues(fs, path, cliSettings.workdir));
-  const yes = yield* resolveYesWithProjectEnv(projectEnv);
+  const preapproved = invoke?.preapproved ?? Option.none<HostedMutationConsent>();
 
-  let linkedRefForCache: string | undefined;
+  const connType = target.kind;
+  // `--local`/`--db-url` never merge a `[remotes.*]` block, so only a linked target has a ref.
+  const linkedRef = target.kind === "linked" ? target.ref : undefined;
 
   return yield* Effect.gen(function* () {
     const name = Option.getOrElse(flags.name, () => "remote_schema");
     const useDeclarative = Option.getOrElse(flags.declarative, () => false);
 
-    // Mutually exclusive flag groups: `[db-url linked local]`, `[declarative diff-engine]`.
-    // "set" means the flag was explicitly passed.
-    const targetSet: Array<string> = [];
-    if (Option.isSome(flags.dbUrl)) targetSet.push("db-url");
-    if (Option.isSome(flags.linked)) targetSet.push("linked");
-    if (Option.isSome(flags.local)) targetSet.push("local");
-    if (targetSet.length > 1) {
-      return yield* new DbPullTargetFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${[...targetSet].sort().join(" ")}] were all set`,
-      });
-    }
-    if (Option.isSome(flags.declarative) && Option.isSome(flags.diffEngine)) {
-      return yield* new DbPullEngineConflictError({
-        message:
-          "if any flags in the group [declarative diff-engine] are set none of the others can be; [declarative diff-engine] were all set",
-      });
-    }
-
-    const connType: DbConnType = Option.isSome(flags.dbUrl)
-      ? "db-url"
-      : Option.isSome(flags.local)
-        ? "local"
-        : "linked";
     yield* Effect.annotateCurrentSpan({
       "db.conn_type": connType,
       "db.pull.mode": useDeclarative ? "declarative" : "migration",
     });
 
-    // `--project-ref` never implies `--linked` and must not be silently
-    // discarded on a non-linked target — see push.handler.ts's identical guard
-    // for the full TS-only rationale.
-    if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* new DbPullTargetFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      });
-    }
-
-    // Pre-load the ref and re-read config here, before `resolver.resolve()` below, so the
-    // override print and merged-config validation happen before the connection attempt: a
-    // `resolve()` failure (bad password, unreachable host, network-ban lookup, …) must still
-    // tell the user which `[remotes.*]` block matched. `--local`/`--db-url` never merge a
-    // remote block, so only the linked path pre-resolves a ref.
-    let linkedRef: string | undefined;
-    if (connType === "linked") {
-      const projectRefResolver = yield* ProjectRefResolver;
-      linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
-      // Cache the ref the moment it's known, not after `toml`/`localInputs` below resolve
-      // (both fallible): the project cache should still be written even when a later step
-      // (config validation, connection, the pull itself) fails.
-      linkedRefForCache = linkedRef;
-    }
+    // Read the config for the matching `[remotes.<ref>]` block before connecting, so a
+    // connection failure still reports which override matched.
     const toml = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
@@ -224,20 +176,27 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
       debug,
       // So the shadow's own container spec reflects the matching `[remotes.<ref>]`
       // override, same as `toml` above.
-      connType === "linked" ? linkedRef : undefined,
+      linkedRef,
     );
 
-    const resolved = yield* resolver.resolve({
-      dbUrl: flags.dbUrl,
-      connType,
+    const connectionInput = {
+      target,
       dnsResolver,
       password: flags.password ?? Option.none(),
-      linkedProjectRef: flags.projectRef,
-    });
-    if (linkedRef === undefined) {
-      linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
-    }
-    if (linkedRef !== undefined) linkedRefForCache = linkedRef;
+      hasPasswordFlag: true,
+      networkBanRemoval: yield* hostedMutationPreapproval,
+    };
+    const resolved = yield* resolver.resolveConnection(connectionInput);
+    const requireHistoryConsent = (migrations: number) =>
+      Option.isSome(preapproved)
+        ? Effect.void
+        : requireTargetMutationConsent(resolved, {
+            action: "Update the remote migration history table",
+            details: [
+              `Write ${migrations} migration file${migrations === 1 ? "" : "s"} to supabase/migrations.`,
+              "Record them as applied in the remote migration history.",
+            ],
+          }).pipe(Effect.asVoid);
     const targetUrl = toPostgresURL(resolved.conn);
     const ctx: PgDeltaContext = {
       projectId: (yield* resolvedConfig.get(CliConfigKeys.projectId)).value,
@@ -270,17 +229,9 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               }) &&
               isIPv6ConnectivityError(error.message)
             ) {
-              // A pooler resolution failure is treated as "no fallback" (re-fail the
-              // original diff error), not surfaced as its own error.
-              const pooler = yield* resolver
-                .resolvePoolerFallback({
-                  dbUrl: flags.dbUrl,
-                  connType: "linked",
-                  dnsResolver,
-                  password: flags.password ?? Option.none(),
-                  linkedProjectRef: flags.projectRef,
-                })
-                .pipe(Effect.orElseSucceed(() => Option.none()));
+              const pooler = yield* orNoPoolerFallback(
+                resolver.resolvePoolerFallback(connectionInput),
+              );
               if (Option.isSome(pooler)) {
                 yield* emitPoolerFallbackWarning(resolved.conn.host);
                 return yield* attempt({
@@ -309,13 +260,8 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
     const diffEngine = usePgDeltaDiff ? "pg-delta" : "migra";
     const pgDeltaDebug = yield* isPgDeltaDebugEnabled;
 
-    // Connectivity check, run before dialing.
     return yield* Effect.scoped(
       Effect.gen(function* () {
-        yield* output.raw(
-          `Connecting to ${resolved.isLocal ? "local" : "remote"} database...\n`,
-          "stderr",
-        );
         const session = yield* connection.connect(resolved.conn, {
           isLocal: resolved.isLocal,
           dnsResolver,
@@ -331,9 +277,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               target,
               schema: flags.schema,
               formatOptions,
-              ...(connType === "linked" && linkedRef !== undefined
-                ? { projectRef: linkedRef }
-                : {}),
+              ...(linkedRef !== undefined ? { projectRef: linkedRef } : {}),
               debug: pgDeltaDebug,
               strictCoverage: flags.strictCoverage,
             });
@@ -383,7 +327,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           path,
           path.join(cliSettings.workdir, "supabase", "migrations"),
         );
-        const sync = reconcileMigrations(remote, local, connType === "local");
+        const sync = reconcileMigrations(remote, local, flagsForTarget(target));
         if (sync.kind === "conflict") {
           return yield* new DbPullMigrationConflictError({
             message:
@@ -402,6 +346,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
         let seedWroteBytes = false;
 
         if (seededFromDump) {
+          yield* requireHistoryConsent(1);
           yield* makeDir(fs, path.dirname(migrationPath)).pipe(
             Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })),
           );
@@ -498,15 +443,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             isLocal: resolved.isLocal,
             projectHost: cliSettings.projectHost,
             resolvePooler: () =>
-              resolver
-                .resolvePoolerFallback({
-                  dbUrl: flags.dbUrl,
-                  connType: "linked",
-                  dnsResolver,
-                  password: flags.password ?? Option.none(),
-                  linkedProjectRef: flags.projectRef,
-                })
-                .pipe(Effect.orElseSucceed(() => Option.none())),
+              orNoPoolerFallback(resolver.resolvePoolerFallback(connectionInput)),
             runWithConn: runSchemaDump,
             reprintOnRetry: Effect.void,
           });
@@ -644,6 +581,11 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           });
         }
 
+        // The initial migra pull asked before its dump wrote the file.
+        if (!seededFromDump) {
+          yield* requireHistoryConsent(usePgDeltaDiff ? (diffOutcome.files?.length ?? 0) : 1);
+        }
+
         // Build the list of migration files to record in the remote history. The
         // migra engine writes exactly one file (the dump-seeded or freshly written
         // migrationPath); the pg-delta engine writes one ordered file per
@@ -734,34 +676,18 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           );
         }
 
-        // Prompt to update the remote migration history table. Returns the default
-        // (`true`) on `--yes`, on an empty non-interactive stdin, or on any prompt error —
-        // it never fails the command.
-        let remoteHistoryUpdated = false;
-        const updateHistoryTitle = "Update remote migration history table?";
-        // `invoke?.assumeYes` overrides this resolution entirely for an in-process
-        // caller that already ran its own aggregated confirmation. Otherwise, honors
-        // `--yes`, scans piped stdin on a non-TTY before falling back to the default,
-        // and otherwise prompts on a real TTY.
-        const shouldUpdate =
-          invoke?.assumeYes !== undefined
-            ? invoke.assumeYes
-            : yield* promptYesNo(output, yes, updateHistoryTitle, true);
-        if (shouldUpdate) {
-          // The migration file(s) in `writtenMigrations` are already on disk at this point, so
-          // a failure here must still report them as written: re-raise the same
-          // `DbPullWriteError` `updateMigrationHistory` fails with, carrying their paths.
-          yield* updateMigrationHistory(session, fs, path, writtenMigrations).pipe(
-            Effect.mapError(
-              (cause) =>
-                new DbPullWriteError({
-                  message: cause.message,
-                  writtenSoFar: writtenMigrations.map((written) => written.path),
-                }),
-            ),
-          );
-          remoteHistoryUpdated = true;
-        }
+        // The migration file(s) in `writtenMigrations` are already on disk at this point, so
+        // a failure here must still report them as written: re-raise the same
+        // `DbPullWriteError` `updateMigrationHistory` fails with, carrying their paths.
+        yield* updateMigrationHistory(session, fs, path, writtenMigrations).pipe(
+          Effect.mapError(
+            (cause) =>
+              new DbPullWriteError({
+                message: cause.message,
+                writtenSoFar: writtenMigrations.map((written) => written.path),
+              }),
+          ),
+        );
 
         return {
           kind: "migration",
@@ -769,17 +695,13 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           // writes one file per unit); `dbPull`'s emission derives the released `schemaWritten`
           // string field from its first entry.
           schemaFiles: writtenMigrations.map((written) => written.path),
-          remoteHistoryUpdated,
+          remoteHistoryUpdated: true,
           engine: diffEngine,
         } as const;
       }),
     );
   }).pipe(
-    Effect.ensuring(
-      Effect.suspend(() =>
-        linkedRefForCache !== undefined ? linkedProjectCache.cache(linkedRefForCache) : Effect.void,
-      ),
-    ),
+    Effect.ensuring(linkedRef !== undefined ? linkedProjectCache.cache(linkedRef) : Effect.void),
     Effect.ensuring(telemetryState.flush),
   );
 });

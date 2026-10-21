@@ -9,6 +9,7 @@ import {
   argvBoolValue,
   argvEnumValue,
   argvProfileValue,
+  argvRemoteValue,
   argvWorkdirValue,
   resolveArgvProfile,
   validateArgvWorkdir,
@@ -24,6 +25,38 @@ const NAME_ID_FORMATS = [
 
 const occ = (entries: ReadonlyArray<readonly [string, ReadonlyArray<string>]>) =>
   new Map(entries.map(([name, values]) => [name, [...values]]));
+
+describe("argvRemoteValue", () => {
+  it("is none when --remote never occurs", () => {
+    expect(argvRemoteValue(occ([]))).toEqual(Option.none());
+  });
+
+  it('reads a bare occurrence (recorded as "true") as the linked project', () => {
+    expect(argvRemoteValue(occ([["remote", ["true"]]]))).toEqual(Option.some({ _tag: "Linked" }));
+  });
+
+  it("classifies a ref, a database URL and a branch name like the flag's parser", () => {
+    expect(argvRemoteValue(occ([["remote", ["abcdefghijklmnopqrst"]]]))).toEqual(
+      Option.some({ _tag: "Ref", ref: "abcdefghijklmnopqrst" }),
+    );
+    expect(argvRemoteValue(occ([["remote", ["postgresql://u:p@h:5432/db"]]]))).toEqual(
+      Option.some({ _tag: "DbUrl", url: "postgresql://u:p@h:5432/db" }),
+    );
+    expect(argvRemoteValue(occ([["remote", ["feature-x"]]]))).toEqual(
+      Option.some({ _tag: "Branch", name: "feature-x" }),
+    );
+  });
+
+  it("resolves repeats last-wins", () => {
+    expect(argvRemoteValue(occ([["remote", ["feature-x", "true"]]]))).toEqual(
+      Option.some({ _tag: "Linked" }),
+    );
+  });
+
+  it("is none for an off switch", () => {
+    expect(argvRemoteValue(occ([["remote", ["false"]]]))).toEqual(Option.none());
+  });
+});
 
 describe("argvBoolValue", () => {
   it("is false when the flag never occurs", () => {

@@ -34,7 +34,7 @@ export interface PullConfigStepOutcome {
 
 /**
  * `config` step: `unchanged` with no work at all, `planned` when work exists but was skipped
- * (dry run or a declined confirmation), and `changed` once the plan applied. `detail` is always
+ * (dry run), and `changed` once the plan applied. `detail` is always
  * the payload passed in, since `config pull` computes a diff report even when nothing applied.
  */
 export function pullConfigStepResult(
@@ -54,12 +54,11 @@ export function pullConfigStepResult(
 export type PullMigrationHistoryStepOutcome =
   | {
       /**
-       * Never attempted: `"not_needed"` when migrations already existed and
-       * `--with-migration-history` wasn't passed, or `"declined"` when the aggregated
-       * confirmation was declined before this step could run.
+       * Never attempted: migrations already existed and `--with-migration-history` wasn't
+       * passed.
        */
       readonly kind: "skipped";
-      readonly reason: "not_needed" | "declined";
+      readonly reason: "not_needed";
     }
   | {
       /**
@@ -265,12 +264,12 @@ export function pullRetryHint(
 ): string {
   const remoteLabelFlag = pullRemoteLabelFlag(remoteLabel);
   const commandByStep: Record<PullStepId, string> = {
-    config: `supabase config pull --project-ref ${ref}${remoteLabelFlag}`,
-    migration_history: `supabase migration fetch --project-ref ${ref}`,
+    config: `supabase config pull${remoteLabelFlag} --remote=${ref}`,
+    migration_history: `supabase migration fetch --remote=${ref}`,
     // `db pull` rejects an ambient `--experimental`/`SUPABASE_EXPERIMENTAL` without `--declarative`;
     // `--experimental=false` keeps this suggested command from failing on it.
-    db: `supabase db pull --project-ref ${ref} --experimental=false`,
-    functions: `supabase functions download --project-ref ${ref}`,
+    db: `supabase db pull --experimental=false --remote=${ref}`,
+    functions: `supabase functions download --remote=${ref}`,
   };
   return `To retry just this step, run: ${commandByStep[step]}`;
 }
@@ -284,7 +283,7 @@ export function pullWithMigrationHistoryCommand(
   ref: string,
   remoteLabel: string | undefined,
 ): string {
-  return `supabase pull --with-migration-history --project-ref ${ref}${pullRemoteLabelFlag(remoteLabel)}`;
+  return `supabase pull --with-migration-history${pullRemoteLabelFlag(remoteLabel)} --remote=${ref}`;
 }
 
 /**

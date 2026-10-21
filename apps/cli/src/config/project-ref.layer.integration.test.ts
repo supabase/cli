@@ -11,6 +11,7 @@ import {
 } from "../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockTty } from "../../tests/helpers/mocks.ts";
 import { assertBlockDrift } from "../../tests/helpers/permission-drift.ts";
+import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
 import { projectRefLayer, projectRefPicker } from "./project-ref.layer.ts";
 import { ProjectRefResolver } from "./project-ref.service.ts";
 
@@ -48,6 +49,7 @@ describe("projectRefLayer Management API requests", () => {
       ),
       Layer.provide(mockTty({ stdinIsTty: true })),
       Layer.provide(output.layer),
+      Layer.provide(commandTargetLayer.pipe(Layer.provide(output.layer))),
       Layer.provide(api.factoryLayer),
       Layer.provide(BunServices.layer),
     );

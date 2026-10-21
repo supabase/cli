@@ -3,6 +3,7 @@ import type { CliConfigKey } from "../../config/cli-config-key.ts";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 import { describeConfigLoadFailure } from "../../command-internal/resolved-config-context.ts";
+import { describeConfigParseError } from "../../command-internal/workdir-project.ts";
 import { assertDecodableJwkAlgorithm } from "../../command-internal/local-jwt.ts";
 import { jsonKindName } from "../../command-internal/html-safe-json.ts";
 
@@ -322,7 +323,7 @@ export const resolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
       Effect.mapError((cause) =>
         onConfigParseError(
           cause._tag === "CliConfigParseError"
-            ? `failed to parse ${cause.path}: ${String(cause.cause)}`
+            ? describeConfigParseError(cwd, cause)
             : describeConfigLoadFailure(cause),
         ),
       ),

@@ -69,6 +69,7 @@ export const dbLintRuntimeLayer = Layer.mergeAll(
   credentials,
   projectRef,
   linkedProjectCache,
+  platformApiFactory,
   // Exposed at top level so `withCommandTelemetry` can read `stitchedDistinctId()`.
   identityStitchLayer,
   telemetryStateLayer,

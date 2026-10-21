@@ -114,6 +114,7 @@ export class GenTypesLocalDbNotRunningError extends Data.TaggedError(
   "GenTypesLocalDbNotRunningError",
 )<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.startStack;
@@ -123,6 +124,7 @@ export class GenTypesLocalDbNotRunningError extends Data.TaggedError(
 export class GenTypesLocalDbInspectError extends Data.TaggedError("GenTypesLocalDbInspectError")<{
   readonly message: string;
   readonly daemonDown: boolean;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     if (this.daemonDown) {

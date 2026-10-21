@@ -1,7 +1,7 @@
 import { Command } from "effect/cli";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
-import { withDbTarget } from "../../../command-internal/command-permissions/model.ts";
+import { compose } from "../../../command-internal/command-permissions/model.ts";
 import { dbConfig } from "../../../command-internal/db-config.layer.ts";
 import {
   TEST_DB_DESCRIPTION,
@@ -12,23 +12,18 @@ import {
 import { testDbRuntimeLayer } from "../../../command-internal/test-db.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
-/**
- * `db test` is a hidden alias for `test db`, registered hidden by the parent
- * (`../db.command.ts`'s `dbTestCommand.pipe(Command.unlisted)`). Both commands share one
- * implementation, hoisted to `command-internal/` since `commands/<family>/` files may not
- * import another family's internals (`code-structure.unit.test.ts`).
- */
+/** Hidden alias of `test db`; the shared implementation lives in `command-internal/`. */
 export const dbTestCommand = Command.make("test", testDbConfig).pipe(
   Command.withDescription(TEST_DB_DESCRIPTION),
   Command.withShortDescription(TEST_DB_SHORT),
-  withPermissions(withDbTarget(dbConfig, { default: "local" })),
+  withPermissions(compose(dbConfig, branchResolution)),
   Command.withHandler(runTestDbCommand),
-  // `["db", "test"]`, not `["test", "db"]`: the `cli_command_executed`
-  // telemetry records the actual invoked command path, which differs by
-  // entry point even though the handler is identical — see
-  // `testDbRuntimeLayer`'s doc comment.
+  // `cli_command_executed` records the invoked path, so this entry point passes `["db", "test"]`.
   Command.provide(testDbRuntimeLayer(["db", "test"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(testDbConfig),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

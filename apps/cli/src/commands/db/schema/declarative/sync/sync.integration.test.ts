@@ -12,28 +12,12 @@ import {
   Stream,
   Redacted,
 } from "effect";
-import { vi } from "vitest";
-
-const fixtureNet = vi.hoisted(() => ({ directHostReachable: false }));
-
-vi.mock("node:net", (importOriginal) =>
-  Promise.all([
-    import("../../../../../../tests/helpers/refuse-invalid-db-hosts.ts"),
-    importOriginal<typeof import("node:net")>(),
-  ]).then(([helper, net]) => helper.refuseInvalidDbHosts(net, fixtureNet)),
-);
-
-const reachableDirectHost = withReachableDirectHost(fixtureNet);
 
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
-import { withReachableDirectHost } from "../../../../../../tests/helpers/refuse-invalid-db-hosts.ts";
 import { assertPermissionDrift } from "../../../../../../tests/helpers/permission-drift.ts";
 import {
-  asRecordedRequests,
   provideEnv,
   realDbConfigResolver,
-  realLinkedProjectCache,
-  recordingProjectHttpClient,
   serveLinkedDatabase,
   stubManagementApi,
   type StubbedRequest,
@@ -58,7 +42,6 @@ import {
   VALID_REF,
   VALID_TOKEN,
   mockCommandSettings,
-  mockLinkedProjectCacheTracked,
   mockLocalDockerEngineUnavailableLayer,
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
@@ -128,7 +111,7 @@ interface SetupOpts {
   removals?: PgDeltaRemovalSummary;
   planErrors?: ReadonlyArray<PgDeltaEngineError>;
   stackBackend?: boolean;
-  /** Runs the real resolver and linked-project cache; `workdir` must be a real directory. */
+  /** Runs the real db-config resolver; `workdir` must be a real directory. */
   realLayers?: boolean;
 }
 
@@ -233,7 +216,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     promptTextResponses: opts.promptTextResponses,
   });
   const telemetry = mockTelemetryStateTracked();
-  const cache = mockLinkedProjectCacheTracked();
   const localPostgresImageChecks: Array<true> = [];
   const platformApi = mockCommandPlatformApiService({});
   // Backs `resetLocalDatabase`'s real, native container-recreate, reached when the
@@ -303,19 +285,19 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       });
     },
   });
-  // The no-files bootstrap delegates to the shared smart-target resolver; its
-  // local path never calls `resolve`, but the linked/custom branches would.
   const resolver = Layer.succeed(DbConfigResolver, {
-    resolve: () =>
+    resolveConnection: ({ target }) =>
       Effect.succeed({
         conn: {
-          host: "db.remote",
-          port: 5432,
+          host: "127.0.0.1",
+          port: opts.stackBackend === true ? STACK_APPLY_PORT : 54322,
           user: "postgres",
-          password: "x",
+          password: "postgres",
           database: "postgres",
         },
-        isLocal: false,
+        isLocal: true,
+        ref: Option.none(),
+        target,
       }),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
@@ -391,7 +373,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         }).pipe(Effect.provide(BunServices.layer)),
     }),
   );
-  const projectHttp = recordingProjectHttpClient(VALID_REF);
   const layer = Layer.mergeAll(
     out.layer,
     configValuesLayer({
@@ -402,12 +383,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
     }),
     telemetry.layer,
-    opts.realLayers === true
-      ? realLinkedProjectCache({
-          httpClient: projectHttp.layer,
-          cliSettings: mockCommandSettings({ workdir }),
-        })
-      : cache.layer,
     seam,
     engine,
     mockLocalDockerEngineUnavailableLayer,
@@ -454,9 +429,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dbExec,
     dbBatches,
     dbConnectPorts,
-    cache,
     telemetry,
-    projectHttp,
     localPostgresImageChecks,
     declarativeExportCalls,
     planDebug,
@@ -821,75 +794,62 @@ describe("db schema declarative sync integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("bootstrap with migrations offers the smart target choice (not local-only)", () => {
-    // `projectId: "test"` is an invalid ref, so the linked choice is hidden.
+  it.effect("bootstrap with migrations offers a local reset and never a target choice", () => {
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
       diffSql: "",
       promptConfirmResponses: [true, false], // [generate a new one? yes][reset? no]
-      promptSelectResponses: ["local"],
     });
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current);
-      yield* Effect.exit(dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })));
-      const options = s.out.promptSelectCalls[0]?.options ?? [];
-      expect(options.map((o) => o.value)).toEqual(["local", "custom"]);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("bootstrap linked target does not run the local Postgres image check", () => {
-    const s = setup(tmp.current, {
-      experimental: true,
-      stdinIsTty: true,
-      staleLocalImage: true,
-      projectId: Option.some("abcdefghijklmnopqrst"),
-      promptConfirmResponses: [true], // generate a new one? yes
-      promptSelectResponses: ["linked"],
-    });
-    return Effect.gen(function* () {
-      yield* seedMigration(tmp.current);
-      const exit = yield* Effect.exit(
-        dbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) })),
-      );
-      expect(s.localPostgresImageChecks).toEqual([]);
-      const causeText = Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "";
-      expect(causeText).not.toContain("local Postgres container image is stale");
-      expect((s.out.promptSelectCalls[0]?.options ?? []).map((o) => o.value)).toEqual([
-        "local",
-        "linked",
-        "custom",
+      yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect(s.out.promptSelectCalls).toEqual([]);
+      expect(s.out.promptConfirmCalls.map((call) => call.message)).toEqual([
+        "No declarative schema found. Generate a new one ?",
+        "Reset local database to match migrations first? (local data will be lost)",
       ]);
+      expect(localResetRemovedContainers(s.child.spawned)).toEqual([]);
+      expect(s.declarativeExportCalls).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("bootstrap linked target checks the local Postgres image before apply", () => {
+  it.effect(
+    "bootstrap without migrations generates from the local database without a reset offer",
+    () => {
+      const s = setup(tmp.current, {
+        experimental: true,
+        stdinIsTty: true,
+        diffSql: "",
+        promptConfirmResponses: [true],
+      });
+      return Effect.gen(function* () {
+        yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+        expect(s.out.promptConfirmCalls).toHaveLength(1);
+        expect(s.localPostgresImageChecks).toHaveLength(1);
+        expect(s.declarativeExportCalls).toHaveLength(1);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("bootstrap --yes with migrations resets the local database without prompting", () => {
     const s = setup(tmp.current, {
       experimental: true,
-      stdinIsTty: true,
-      staleLocalImage: true,
-      projectId: Option.some("abcdefghijklmnopqrst"),
-      diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
-      promptConfirmResponses: [true], // generate a new one? yes
-      promptSelectResponses: ["linked"],
+      stdinIsTty: false,
+      yes: true,
+      diffSql: "",
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       yield* seedMigration(tmp.current);
-      const error = yield* Effect.flip(
-        dbSchemaDeclarativeSync(
-          flags({
-            noCache: true,
-            apply: Option.some(true),
-            name: Option.some("bootstrap_apply"),
-          }),
-        ),
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        'project_id = "test"\n',
       );
-      expect(error).toMatchObject({
-        _tag: "DeclarativeShadowDbError",
-        message: "local Postgres container image is stale",
-      });
-      expect(s.localPostgresImageChecks).toHaveLength(1);
-      expect(s.dbExec).toEqual([]);
+      yield* dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect(localResetRemovedContainers(s.child.spawned)).toContain("supabase_db_test");
+      expect(s.declarativeExportCalls).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -899,7 +859,6 @@ describe("db schema declarative sync integration", () => {
       stdinIsTty: true,
       staleLocalImage: true,
       promptConfirmResponses: [true], // generate a new one? yes
-      promptSelectResponses: ["local"],
     });
     return Effect.gen(function* () {
       yield* seedMigration(tmp.current);
@@ -941,67 +900,6 @@ describe("db schema declarative sync integration", () => {
           path.join(tmp.current, "supabase", "schemas", "public", "tables", "players.sql"),
         ),
       ).toBe(true);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("bootstrap: an unreadable ref file just omits the linked choice", () => {
-    // Seeding `.temp/project-ref` as a directory makes the read fail.
-    const s = setup(tmp.current, {
-      experimental: true,
-      stdinIsTty: true,
-      diffSql: "",
-      projectId: Option.none(),
-      promptConfirmResponses: [true, false], // [generate a new one? yes][reset? no]
-      promptSelectResponses: ["local"],
-    });
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* seedMigration(tmp.current);
-      yield* fs.makeDirectory(path.join(tmp.current, "supabase", ".temp", "project-ref"), {
-        recursive: true,
-      });
-      const exit = yield* Effect.exit(
-        dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
-      );
-      expect((s.out.promptSelectCalls[0]?.options ?? []).map((o) => o.value)).toEqual([
-        "local",
-        "custom",
-      ]);
-      const causeText = Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "";
-      expect(causeText).not.toContain("failed to load project ref");
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("bootstrap caches the linked project after resolving the ref", () => {
-    const s = setup(tmp.current, {
-      experimental: true,
-      stdinIsTty: true,
-      diffSql: "",
-      projectId: Option.some("abcdefghijklmnopqrst"),
-      promptConfirmResponses: [true, false], // [generate a new one? yes][reset? no]
-      promptSelectResponses: ["local"],
-    });
-    return Effect.gen(function* () {
-      yield* seedMigration(tmp.current);
-      yield* Effect.exit(dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })));
-      expect(s.cache.cached).toBe(true);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("does not cache when the workdir is not linked", () => {
-    const s = setup(tmp.current, {
-      experimental: true,
-      stdinIsTty: true,
-      diffSql: "",
-      projectId: Option.none(),
-      promptConfirmResponses: [true, false],
-      promptSelectResponses: ["local"],
-    });
-    return Effect.gen(function* () {
-      yield* seedMigration(tmp.current);
-      yield* Effect.exit(dbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })));
-      expect(s.cache.cached).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1103,9 +1001,7 @@ describe("db schema declarative sync integration", () => {
       });
       expect(error).toMatchObject({
         message: expect.stringContaining("uuid-ossp"),
-        suggestion: expect.stringContaining(
-          "supabase db schema declarative generate --local --overwrite",
-        ),
+        suggestion: expect.stringContaining("supabase db schema declarative generate --overwrite"),
       });
       expect(
         yield* Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(error),
@@ -1623,64 +1519,15 @@ describe("db schema declarative sync integration", () => {
   });
 });
 
-describe("db schema declarative sync permissions through the real resolver and cache", () => {
+describe("db schema declarative sync permissions through the real resolver", () => {
   const tmp = useTempWorkdir();
-  const asLines = (requests: ReadonlyArray<StubbedRequest>) =>
-    requests.map(({ method, path }) => `${method} ${path}`);
-  const loginRoleRequest = `POST /v1/projects/${VALID_REF}/cli/login-role`;
-  const cacheRequest = `GET https://api.supabase.com/v1/projects/${VALID_REF}`;
-  const cacheCalls = (calls: ReadonlyArray<{ readonly method: string; readonly url: string }>) =>
-    calls.map(({ method, url }) => `${method} ${url}`);
   const saveLinkedRef = Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     yield* fs.makeDirectory(`${tmp.current}/supabase/.temp`, { recursive: true });
     yield* fs.writeFileString(`${tmp.current}/supabase/.temp/project-ref`, VALID_REF);
   });
 
-  it.effect(
-    "the bootstrap mints a login role and fills the cache when it picks the linked project",
-    () => {
-      const s = setup(tmp.current, {
-        realLayers: true,
-        experimental: true,
-        stdinIsTty: true,
-        diffSql: "",
-        projectId: Option.some(VALID_REF),
-        promptConfirmResponses: [true], // generate a new one? yes
-        promptSelectResponses: ["linked"],
-      });
-      const requests: Array<StubbedRequest> = [];
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        yield* reachableDirectHost;
-        yield* saveLinkedRef;
-        yield* seedMigration(tmp.current);
-        yield* stubManagementApi(requests, serveLinkedDatabase(VALID_REF));
-        const exit = yield* Effect.exit(
-          dbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) })),
-        ).pipe(Effect.provide(s.layer));
-        expect(Exit.isSuccess(exit)).toBe(true);
-        expect(s.declarativeExportCalls).toHaveLength(1);
-        // The bootstrap's calls carry a prerequisite, so the exact check skips them: assert them
-        // directly.
-        expect(asLines(requests)).toEqual([loginRoleRequest]);
-        expect(cacheCalls(s.projectHttp.calls)).toEqual([cacheRequest]);
-        expect(yield* fs.exists(`${tmp.current}/supabase/.temp/linked-project.json`)).toBe(true);
-        assertPermissionDrift({
-          command: "db schema declarative sync",
-          activeFlags: { "no-cache": true, "no-apply": true },
-          requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
-          exact: true,
-        });
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(BunServices.layer),
-        provideEnv({ SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
-      );
-    },
-  );
-
-  it.effect("the bootstrap fills the cache but mints no login role when it picks local", () => {
+  it.effect("the bootstrap makes no Management API request", () => {
     const s = setup(tmp.current, {
       realLayers: true,
       experimental: true,
@@ -1688,7 +1535,6 @@ describe("db schema declarative sync permissions through the real resolver and c
       diffSql: "",
       projectId: Option.some(VALID_REF),
       promptConfirmResponses: [true, false], // [generate a new one? yes][reset? no]
-      promptSelectResponses: ["local"],
     });
     const requests: Array<StubbedRequest> = [];
     return Effect.gen(function* () {
@@ -1701,11 +1547,10 @@ describe("db schema declarative sync permissions through the real resolver and c
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(s.declarativeExportCalls).toHaveLength(1);
       expect(requests).toEqual([]);
-      expect(cacheCalls(s.projectHttp.calls)).toEqual([cacheRequest]);
       assertPermissionDrift({
         command: "db schema declarative sync",
         activeFlags: { "no-apply": true },
-        requests: [...asRecordedRequests(requests), ...s.projectHttp.calls],
+        requests: [],
         exact: true,
       });
     }).pipe(

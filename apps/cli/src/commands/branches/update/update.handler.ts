@@ -11,8 +11,9 @@ import {
   encodeStructToml,
   encodeStructYaml,
 } from "../../../command-internal/struct-output.encoders.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
 import { BRANCH_RESPONSE_SHAPE } from "../branches.response-shape.ts";
 import {
@@ -42,12 +43,27 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
 
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
-  const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  const ref = yield* resolveProjectTarget(
+    { remote: flags.remote, projectRef: flags.projectRef },
+    { parent: true },
+  );
   yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
     const branchInput = yield* promptBranchId(flags.branchId, ref);
     const branchRef = yield* resolveBranchProjectRef(branchInput, ref);
+
+    yield* requireHostedMutationConsent({
+      action: `Update preview branch ${branchInput}`,
+      details: [
+        `Branch project ref: ${branchRef}`,
+        ...(Option.isSome(flags.name) ? [`Rename to: ${flags.name.value}`] : []),
+        ...(Option.isSome(flags.gitBranch) ? [`Git branch: ${flags.gitBranch.value}`] : []),
+        ...(Option.isSome(flags.persistent) ? [`Persistent: ${flags.persistent.value}`] : []),
+        ...(Option.isSome(flags.status) ? [`Status: ${flags.status.value}`] : []),
+        ...(Option.isSome(flags.notifyUrl) ? [`Notify URL: ${flags.notifyUrl.value}`] : []),
+      ],
+    });
 
     const patching =
       output.format === "text" ? yield* output.task("Updating branch...") : undefined;

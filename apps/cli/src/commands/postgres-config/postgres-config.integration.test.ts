@@ -1,9 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { makeApiClient } from "@supabase/api/effect";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Schema } from "effect";
-import * as HttpClientResponse from "effect/http/HttpClientResponse";
-
+import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
+import { describeHostedConsent } from "../../../tests/helpers/hosted-consent.ts";
+import { describeHostedTargetSelection } from "../../../tests/helpers/hosted-target-selection.ts";
 import { mockOutput, mockTty } from "../../../tests/helpers/mocks.ts";
+import { makeApiClient } from "@supabase/api/effect";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import {
   DEFAULT_API_URL,
@@ -17,7 +18,10 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../tests/helpers/command-mocks.ts";
+import { YesFlag } from "../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../command-internal/target/target-policy.ts";
 import {
   assertBlockDrift,
   assertPermissionDrift,
@@ -46,6 +50,10 @@ const failure = (
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const tempRoot = useTempWorkdir("supabase-postgres-config-int-");
+
+const confirmedBy = (action: string) => `Confirmed by --yes: ${action} on project ${VALID_REF}\n`;
+const UPDATE_CONFIRMED = confirmedBy("Update the Postgres config overrides");
+const DELETE_CONFIRMED = confirmedBy("Delete Postgres config overrides");
 
 const PROJECTS_URL = "https://api.supabase.com/v1/projects";
 const PROJECT_URL = `${PROJECTS_URL}/${VALID_REF}`;
@@ -76,13 +84,17 @@ function composedRuntime(opts: {
     workdir: tempRoot.current,
     projectId: Option.none(),
   });
-  const layer = buildTestRuntime({
-    out,
-    api,
-    cliSettings,
-    tty: mockTty({ stdinIsTty: true }),
-    linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
-  });
+  const layer = Layer.mergeAll(
+    buildTestRuntime({
+      out,
+      api,
+      cliSettings,
+      tty: mockTty({ stdinIsTty: true }),
+      linkedProjectCache: realLinkedProjectCache({ httpClient: api.httpClientLayer, cliSettings }),
+    }),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
   return { out, api, layer };
 }
 
@@ -115,14 +127,18 @@ function runtimeWith(opts: {
   readonly linkedProjectCache?: ReturnType<typeof mockLinkedProjectCacheTracked>["layer"];
   readonly outputFlag?: OutputFlagValue;
 }) {
-  return buildTestRuntime({
-    out: opts.out,
-    api: opts.api,
-    cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-    telemetry: opts.telemetry,
-    linkedProjectCache: opts.linkedProjectCache,
-    outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
-  });
+  return Layer.mergeAll(
+    buildTestRuntime({
+      out: opts.out,
+      api: opts.api,
+      cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+      telemetry: opts.telemetry,
+      linkedProjectCache: opts.linkedProjectCache,
+      outputFlag: opts.outputFlag === undefined ? Option.none() : Option.some(opts.outputFlag),
+    }),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
 }
 
 describe("postgres-config get", () => {
@@ -134,10 +150,11 @@ describe("postgres-config get", () => {
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
-      yield* postgresConfigGet({ projectRef: Option.none() });
+      yield* postgresConfigGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.progressEvents[0]?.message).toBe("Fetching Postgres config...");
       expect(out.stderrText).toBe(
-        "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
+        unverifiedTargetBanner() +
+          "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
       );
       expect(out.stdoutText).toContain("Parameter");
       expect(out.stdoutText).toContain("max_connections");
@@ -159,7 +176,7 @@ describe("postgres-config get", () => {
     });
 
     return Effect.gen(function* () {
-      yield* postgresConfigGet({ projectRef: Option.none() });
+      yield* postgresConfigGet({ remote: Option.none(), projectRef: Option.none() });
       expect(requestLines(api)).toEqual([
         `GET ${PROJECTS_URL}`,
         `GET ${CONFIG_URL}`,
@@ -187,7 +204,7 @@ describe("postgres-config get", () => {
       const layer = runtimeWith({ out, api });
 
       return Effect.gen(function* () {
-        yield* postgresConfigGet({ projectRef: Option.none() });
+        yield* postgresConfigGet({ remote: Option.none(), projectRef: Option.none() });
         expect(out.stdoutText).toContain("1e+06");
         expect(out.stdoutText).not.toContain("1000000");
       }).pipe(Effect.provide(layer));
@@ -202,9 +219,9 @@ describe("postgres-config get", () => {
     const layer = runtimeWith({ out, api, outputFlag: "toml" });
 
     return Effect.gen(function* () {
-      yield* postgresConfigGet({ projectRef: Option.none() });
+      yield* postgresConfigGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toBe("max_connections = 100.0\n");
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 
@@ -220,7 +237,7 @@ describe("postgres-config get", () => {
       const prettyApi = mockCommandPlatformApi({
         response: { status: 200, body: responseBody },
       });
-      yield* postgresConfigGet({ projectRef: Option.none() }).pipe(
+      yield* postgresConfigGet({ remote: Option.none(), projectRef: Option.none() }).pipe(
         Effect.provide(runtimeWith({ out: prettyOut, api: prettyApi })),
       );
 
@@ -235,7 +252,7 @@ describe("postgres-config get", () => {
       const tomlApi = mockCommandPlatformApi({
         response: { status: 200, body: responseBody },
       });
-      yield* postgresConfigGet({ projectRef: Option.none() }).pipe(
+      yield* postgresConfigGet({ remote: Option.none(), projectRef: Option.none() }).pipe(
         Effect.provide(runtimeWith({ out: tomlOut, api: tomlApi, outputFlag: "toml" })),
       );
 
@@ -253,7 +270,7 @@ describe("postgres-config get", () => {
     const layer = runtimeWith({ out, api, outputFlag: "env" });
 
     return Effect.gen(function* () {
-      yield* postgresConfigGet({ projectRef: Option.none() });
+      yield* postgresConfigGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toBe('TRACK_COMMIT_TIMESTAMP="true"\n');
     }).pipe(Effect.provide(layer));
   });
@@ -269,9 +286,11 @@ describe("postgres-config get", () => {
           response: { status: 200, body: { max_connections: 100 } },
         });
         const layer = runtimeWith({ out, api, outputFlag });
-        yield* postgresConfigGet({ projectRef: Option.none() }).pipe(Effect.provide(layer));
+        yield* postgresConfigGet({ remote: Option.none(), projectRef: Option.none() }).pipe(
+          Effect.provide(layer),
+        );
         expect(out.stdoutText).toContain(expected);
-        expect(out.stderrText).toBe("");
+        expect(out.stderrText).toBe(unverifiedTargetBanner());
       }
     }),
   );
@@ -284,7 +303,7 @@ describe("postgres-config get", () => {
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
-      yield* postgresConfigGet({ projectRef: Option.none() });
+      yield* postgresConfigGet({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((message) => message.type === "success");
       expect(success?.data).toEqual({ max_connections: 100 });
     }).pipe(Effect.provide(layer));
@@ -298,7 +317,7 @@ describe("postgres-config get", () => {
     const layer = runtimeWith({ out, api, outputFlag: "toml" });
 
     return Effect.gen(function* () {
-      yield* postgresConfigGet({ projectRef: Option.none() });
+      yield* postgresConfigGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stdoutText).toBe("max_connections = 100.0\n");
       expect(out.messages.some((message) => message.type === "success")).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -312,9 +331,10 @@ describe("postgres-config get", () => {
     const layer = runtimeWith({ out, api, outputFlag: "pretty" });
 
     return Effect.gen(function* () {
-      yield* postgresConfigGet({ projectRef: Option.none() });
+      yield* postgresConfigGet({ remote: Option.none(), projectRef: Option.none() });
       expect(out.stderrText).toBe(
-        "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
+        unverifiedTargetBanner() +
+          "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
       );
       expect(out.stdoutText).toContain("Parameter");
       expect(out.stdoutText).toContain("max_connections");
@@ -329,7 +349,7 @@ describe("postgres-config get", () => {
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
-      yield* postgresConfigGet({ projectRef: Option.none() });
+      yield* postgresConfigGet({ remote: Option.none(), projectRef: Option.none() });
       const success = out.messages.find((message) => message.type === "success");
       expect(success?.data).toEqual({ max_connections: 100, stored_only_key: "x" });
     }).pipe(Effect.provide(layer));
@@ -341,7 +361,9 @@ describe("postgres-config get", () => {
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(postgresConfigGet({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        postgresConfigGet({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -357,7 +379,9 @@ describe("postgres-config get", () => {
     const layer = runtimeWith({ out, api });
 
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(postgresConfigGet({ projectRef: Option.none() }));
+      const exit = yield* Effect.exit(
+        postgresConfigGet({ remote: Option.none(), projectRef: Option.none() }),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const causeText = Cause.pretty(exit.cause);
@@ -391,6 +415,7 @@ describe("postgres-config update", () => {
 
     return Effect.gen(function* () {
       yield* postgresConfigUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         config: [
           "max_connections=100",
@@ -413,7 +438,9 @@ describe("postgres-config update", () => {
         restart_database: false,
       });
       expect(out.stderrText).toBe(
-        "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
+        unverifiedTargetBanner() +
+          UPDATE_CONFIRMED +
+          "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
       );
       assertPermissionDrift({
         command: "postgres-config update",
@@ -432,6 +459,7 @@ describe("postgres-config update", () => {
 
     return Effect.gen(function* () {
       yield* postgresConfigUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         config: ["max_connections=100"],
         replaceExistingOverrides: false,
@@ -466,6 +494,7 @@ describe("postgres-config update", () => {
 
     return Effect.gen(function* () {
       yield* postgresConfigUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         config: ["max_connections=100"],
         replaceExistingOverrides: true,
@@ -521,13 +550,14 @@ describe("postgres-config update", () => {
         });
         const layer = runtimeWith({ out, api, outputFlag: testCase.outputFlag });
         yield* postgresConfigUpdate({
+          remote: Option.none(),
           projectRef: Option.none(),
           config: ["max_connections=100"],
           replaceExistingOverrides: true,
           noRestart: false,
         }).pipe(Effect.provide(layer));
         expect(out.stdoutText).toContain(testCase.expected);
-        expect(out.stderrText).toBe("");
+        expect(out.stderrText).toBe(unverifiedTargetBanner() + UPDATE_CONFIRMED);
       }
     }),
   );
@@ -543,6 +573,7 @@ describe("postgres-config update", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         postgresConfigUpdate({
+          remote: Option.none(),
           projectRef: Option.none(),
           config: ["max_conections=100", "bogus=1", "max_connections=100"],
           replaceExistingOverrides: false,
@@ -582,6 +613,7 @@ describe("postgres-config update", () => {
 
       return Effect.gen(function* () {
         yield* postgresConfigUpdate({
+          remote: Option.none(),
           projectRef: Option.none(),
           config: ["max_connections=100"],
           replaceExistingOverrides: false,
@@ -610,6 +642,7 @@ describe("postgres-config update", () => {
 
     return Effect.gen(function* () {
       yield* postgresConfigUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         config: ["max_connections=100"],
         replaceExistingOverrides: false,
@@ -627,6 +660,7 @@ describe("postgres-config update", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         postgresConfigUpdate({
+          remote: Option.none(),
           projectRef: Option.none(),
           config: ["max_connections=lots"],
           replaceExistingOverrides: true,
@@ -648,6 +682,7 @@ describe("postgres-config update", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         postgresConfigUpdate({
+          remote: Option.none(),
           projectRef: Option.none(),
           config: ["work_mem=4096"],
           replaceExistingOverrides: true,
@@ -671,6 +706,7 @@ describe("postgres-config update", () => {
 
     return Effect.gen(function* () {
       yield* postgresConfigUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         config: ["work_mem=4096kB"],
         replaceExistingOverrides: true,
@@ -691,6 +727,7 @@ describe("postgres-config update", () => {
 
     return Effect.gen(function* () {
       yield* postgresConfigUpdate({
+        remote: Option.none(),
         projectRef: Option.none(),
         config: ["max_connections=100"],
         replaceExistingOverrides: true,
@@ -711,6 +748,7 @@ describe("postgres-config update", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         postgresConfigUpdate({
+          remote: Option.none(),
           projectRef: Option.none(),
           config: ["max_connections=100"],
           replaceExistingOverrides: true,
@@ -738,6 +776,7 @@ describe("postgres-config update", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         postgresConfigUpdate({
+          remote: Option.none(),
           projectRef: Option.none(),
           config: ["broken=value=again"],
           replaceExistingOverrides: false,
@@ -771,6 +810,7 @@ describe("postgres-config update", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         postgresConfigUpdate({
+          remote: Option.none(),
           projectRef: Option.none(),
           config: ["max_connections=100"],
           replaceExistingOverrides: false,
@@ -795,6 +835,7 @@ describe("postgres-config update", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         postgresConfigUpdate({
+          remote: Option.none(),
           projectRef: Option.none(),
           config: [],
           replaceExistingOverrides: false,
@@ -826,6 +867,7 @@ describe("postgres-config update", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         postgresConfigUpdate({
+          remote: Option.none(),
           projectRef: Option.none(),
           config: [],
           replaceExistingOverrides: false,
@@ -855,6 +897,7 @@ describe("postgres-config delete", () => {
 
     return Effect.gen(function* () {
       yield* postgresConfigDelete({
+        remote: Option.none(),
         projectRef: Option.none(),
         config: [" max_connections "],
         noRestart: true,
@@ -869,7 +912,9 @@ describe("postgres-config delete", () => {
       });
       expect(out.stdoutText).toContain("shared_buffers");
       expect(out.stderrText).toBe(
-        "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
+        unverifiedTargetBanner() +
+          DELETE_CONFIRMED +
+          "- Custom Postgres Config -\n- End of Custom Postgres Config -\n",
       );
       assertPermissionDrift({
         command: "postgres-config delete",
@@ -890,6 +935,7 @@ describe("postgres-config delete", () => {
 
     return Effect.gen(function* () {
       yield* postgresConfigDelete({
+        remote: Option.none(),
         projectRef: Option.none(),
         config: ["max_connections"],
         noRestart: false,
@@ -923,6 +969,7 @@ describe("postgres-config delete", () => {
 
     return Effect.gen(function* () {
       yield* postgresConfigDelete({
+        remote: Option.none(),
         projectRef: Option.none(),
         config: ["stored_only_key"],
         noRestart: false,
@@ -943,6 +990,7 @@ describe("postgres-config delete", () => {
 
     return Effect.gen(function* () {
       yield* postgresConfigDelete({
+        remote: Option.none(),
         projectRef: Option.none(),
         config: ["max_connections"],
         noRestart: true,
@@ -964,6 +1012,7 @@ describe("postgres-config delete", () => {
 
     return Effect.gen(function* () {
       yield* postgresConfigDelete({
+        remote: Option.none(),
         projectRef: Option.none(),
         config: ["max_connections"],
         noRestart: false,
@@ -1004,12 +1053,13 @@ describe("postgres-config delete", () => {
         });
         const layer = runtimeWith({ out, api, outputFlag: testCase.outputFlag });
         yield* postgresConfigDelete({
+          remote: Option.none(),
           projectRef: Option.none(),
           config: ["max_connections"],
           noRestart: false,
         }).pipe(Effect.provide(layer));
         expect(out.stdoutText).toContain(testCase.expected);
-        expect(out.stderrText).toBe("");
+        expect(out.stderrText).toBe(unverifiedTargetBanner() + DELETE_CONFIRMED);
       }
     }),
   );
@@ -1036,6 +1086,7 @@ describe("postgres-config delete", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         postgresConfigDelete({
+          remote: Option.none(),
           projectRef: Option.none(),
           config: ["max_connections"],
           noRestart: false,
@@ -1067,6 +1118,7 @@ describe("postgres-config delete", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         postgresConfigDelete({
+          remote: Option.none(),
           projectRef: Option.none(),
           config: ["max_connections"],
           noRestart: false,
@@ -1088,6 +1140,7 @@ describe("postgres-config delete", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         postgresConfigDelete({
+          remote: Option.none(),
           projectRef: Option.none(),
           config: ["max_connections"],
           noRestart: false,
@@ -1119,6 +1172,7 @@ describe("postgres-config delete", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         postgresConfigDelete({
+          remote: Option.none(),
           projectRef: Option.none(),
           config: ["max_connections"],
           noRestart: false,
@@ -1132,4 +1186,75 @@ describe("postgres-config delete", () => {
       }
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedTargetSelection("postgres-config get", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, { max_connections: 100 })),
+  run: (flags) => postgresConfigGet(flags),
+});
+
+describeHostedTargetSelection("postgres-config update", {
+  operands: ["--config", "max_connections=100"],
+  activeFlags: { "replace-existing-overrides": false },
+  respond: (request) =>
+    Effect.succeed(
+      jsonResponse(request, 200, request.method === "PUT" ? { max_connections: 100 } : {}),
+    ),
+  run: (flags) =>
+    postgresConfigUpdate({
+      ...flags,
+      config: ["max_connections=100"],
+      replaceExistingOverrides: false,
+      noRestart: false,
+    }),
+});
+
+describeHostedTargetSelection("postgres-config delete", {
+  operands: ["--config", "max_connections"],
+  activeFlags: { config: true, "no-restart": false },
+  respond: (request) =>
+    Effect.succeed(
+      jsonResponse(request, 200, request.method === "PUT" ? {} : { max_connections: 100 }),
+    ),
+  run: (flags) =>
+    postgresConfigDelete({
+      ...flags,
+      config: ["max_connections"],
+      noRestart: false,
+    }),
+});
+
+describeHostedConsent("postgres-config update", {
+  api: {
+    byMethod: {
+      GET: { status: 200, body: { wal_keep_size: "1GB" } },
+      PUT: { status: 200, body: { wal_keep_size: "1GB", max_connections: 100 } },
+    },
+  },
+  invoke: () => ({
+    run: postgresConfigUpdate({
+      remote: Option.some({ _tag: "Ref", ref: VALID_REF }),
+      projectRef: Option.none(),
+      config: ["max_connections=100"],
+      replaceExistingOverrides: false,
+      noRestart: false,
+    }),
+  }),
+});
+
+describeHostedConsent("postgres-config delete", {
+  api: {
+    byMethod: {
+      GET: { status: 200, body: { max_connections: 100, shared_buffers: "1GB" } },
+      PUT: { status: 200, body: { shared_buffers: "1GB" } },
+    },
+  },
+  invoke: () => ({
+    run: postgresConfigDelete({
+      remote: Option.some({ _tag: "Ref", ref: VALID_REF }),
+      projectRef: Option.none(),
+      config: ["max_connections"],
+      noRestart: false,
+    }),
+  }),
 });

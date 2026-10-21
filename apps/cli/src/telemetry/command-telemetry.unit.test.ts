@@ -29,6 +29,7 @@ import { DbDumpRunError } from "../commands/db/dump/dump.errors.ts";
 import { StdoutClosedError } from "../shared/output/errors.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import { RemovedSurfaceError } from "../command-internal/removed-command.ts";
+import { TargetPolicy, type TargetGroup } from "../command-internal/target/target-policy.ts";
 import { withCommandTelemetry } from "./command-telemetry.ts";
 import { recordCommandTelemetry } from "./command-telemetry-attributes.ts";
 import { stackBackendLayer } from "../command-internal/stack-backend.ts";
@@ -601,6 +602,156 @@ describe("withCommandTelemetry", () => {
           });
         }),
       ),
+    );
+  });
+
+  describe("target flags", () => {
+    const REF = "abcdefghijklmnopqrst";
+    const DB_URL = "postgresql://postgres:secret@db.example.com:5432/postgres";
+
+    const recordedFlags = (
+      group: TargetGroup,
+      args: ReadonlyArray<string>,
+      options?: {
+        readonly flags: Record<string, unknown>;
+        readonly safeFlags?: ReadonlyArray<string>;
+      },
+    ) => {
+      const analytics = mockContextualAnalytics();
+      return Effect.void.pipe(
+        options === undefined ? withCommandTelemetry() : withCommandTelemetry(options),
+        Effect.provide(
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Layer.succeed(TargetPolicy, { group, consent: "none" }),
+            Stdio.layerTest({ args: Effect.succeed(["functions", "list", ...args]) }),
+            commandRuntimeLayer(["functions", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+          ),
+        ),
+        Effect.map(() => analytics.captured[0]?.properties.flags),
+      );
+    };
+
+    describe.each(["hosted", "selectable"] as const)("on a %s command", (group) => {
+      it.live.each([
+        { name: "a bare --remote as true", args: ["--remote"], expected: { remote: true } },
+        { name: "--remote=true as true", args: ["--remote=true"], expected: { remote: true } },
+        {
+          name: "a project ref in --remote verbatim",
+          args: [`--remote=${REF}`],
+          expected: { remote: REF },
+        },
+        {
+          name: "a branch name in --remote as redacted",
+          args: ["--remote=customer-acme"],
+          expected: { remote: "<redacted>" },
+        },
+        {
+          name: "a database URL in --remote as redacted",
+          args: [`--remote=${DB_URL}`],
+          expected: { remote: "<redacted>" },
+        },
+        {
+          name: "--linked and --local as booleans",
+          args: ["--linked", "--local=false"],
+          expected: { linked: true, local: false },
+        },
+        {
+          name: "a space-separated boolean literal after --linked",
+          args: ["--linked", "false", "--local"],
+          expected: { linked: false, local: true },
+        },
+        {
+          name: "a ref-shaped --project-ref verbatim",
+          args: ["--project-ref", REF],
+          expected: { "project-ref": REF },
+        },
+        {
+          name: "a ref-shaped --project-ref=<ref> verbatim",
+          args: [`--project-ref=${REF}`],
+          expected: { "project-ref": REF },
+        },
+        {
+          name: "a branch-shaped --project-ref as redacted",
+          args: ["--project-ref", "customer-acme"],
+          expected: { "project-ref": "<redacted>" },
+        },
+        {
+          name: "a ref-shaped --project-id verbatim",
+          args: ["--project-id", REF],
+          expected: { "project-id": REF },
+        },
+        {
+          name: "--db-url as redacted",
+          args: ["--db-url", DB_URL],
+          expected: { "db-url": "<redacted>" },
+        },
+        {
+          name: "--db-url=<url> as redacted",
+          args: [`--db-url=${DB_URL}`],
+          expected: { "db-url": "<redacted>" },
+        },
+      ] as const)("records $name from a leaf that lists no target flags", ({ args, expected }) =>
+        Effect.gen(function* () {
+          const recorded = yield* recordedFlags(group, args);
+          expect(recorded).toEqual(expected);
+          const recordedJson = yield* encodeJson(recorded);
+          expect(recordedJson).not.toContain(DB_URL);
+          expect(recordedJson).not.toContain("customer-acme");
+        }),
+      );
+
+      it.live("records the target flags next to the command's own flags", () =>
+        Effect.gen(function* () {
+          const recorded = yield* recordedFlags(
+            group,
+            ["--remote", "--password", "s3cret", "--version", "20240101000000"],
+            {
+              flags: { password: Option.some("s3cret"), version: "20240101000000" },
+              safeFlags: ["version"],
+            },
+          );
+          expect(recorded).toEqual({
+            remote: true,
+            password: "<redacted>",
+            version: "20240101000000",
+          });
+        }),
+      );
+
+      it.live("records a repeated target flag from its first occurrence", () =>
+        Effect.gen(function* () {
+          const recorded = yield* recordedFlags(group, [
+            "--linked=false",
+            "--linked",
+            "--project-ref",
+            "customer-acme",
+            "--project-ref",
+            REF,
+          ]);
+          expect(recorded).toEqual({ linked: false, "project-ref": "<redacted>" });
+        }),
+      );
+
+      it.live("does not read an operand after -- as a target flag", () =>
+        Effect.gen(function* () {
+          const recorded = yield* recordedFlags(group, ["--", "--linked", `--remote=${REF}`]);
+          expect(recorded).toBeUndefined();
+        }),
+      );
+    });
+
+    it.live.each(["account", "local-only"] as const)(
+      "redacts a ref-shaped --project-ref on a %s command, where it is not a target",
+      (group) =>
+        Effect.gen(function* () {
+          const recorded = yield* recordedFlags(group, ["--project-ref", REF], {
+            flags: { projectRef: Option.some(REF) },
+          });
+          expect(recorded).toEqual({ "project-ref": "<redacted>" });
+        }),
     );
   });
 

@@ -1,79 +1,35 @@
-import { Effect, Layer, type Option } from "effect";
-import { Command, Flag } from "effect/cli";
+import { Effect, Layer } from "effect";
+import { Command } from "effect/cli";
 
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
-import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import {
-  compose,
-  withCondition,
-  withDbTarget,
-} from "../../../command-internal/command-permissions/model.ts";
-import { storageCredentials } from "../../../command-internal/storage-credentials.ts";
-import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
+  readSeedTargetFlags,
+  type TargetFlagValues,
+} from "../../../command-internal/target/target-flags.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
-import { SeedLinkedFlag, SeedLocalFlag } from "../seed.flags.ts";
-import { assertSeedTargetsExclusive } from "./buckets.flags.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
+import { storagePermissions } from "../../../command-internal/storage-permissions.ts";
 import { storageGatewayRuntimeLayer } from "../../../command-internal/storage-runtime.layer.ts";
 import { seedBuckets } from "./buckets.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
-const config = {
-  // TS-only flag; see push.command.ts (db push) for the same pattern.
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
-};
+export type BucketsFlags = TargetFlagValues;
 
-// `--linked`/`--local` are scoped globals on the `seed` group (`seed.flags.ts`); the handler
-// selects the target from the changed argv set, not these parsed values.
-export type BucketsFlags = {
-  readonly linked: boolean;
-  readonly local: boolean;
-  readonly projectRef: Option.Option<string>;
-};
-
-export const bucketsCommand = Command.make("buckets", config).pipe(
+export const bucketsCommand = Command.make("buckets").pipe(
   Command.withDescription("Seed buckets declared in [storage.buckets]."),
   Command.withShortDescription("Seed buckets declared in [storage.buckets]"),
-  withPermissions(
-    withDbTarget(
-      compose(
-        { operations: [], noApiEffectFlags: ["project-ref"] },
-        withCondition(compose(storageCredentials, linkedProjectCache), { dbTarget: ["linked"] }),
-      ),
-      { default: "local" },
-    ),
-  ),
-  Command.withHandler((leafFlags) =>
+  withPermissions(storagePermissions([])),
+  Command.withHandler(() =>
     Effect.gen(function* () {
-      // Enforce --local/--linked mutual exclusivity before instrumentation, so a
-      // flag-validation rejection doesn't emit `cli_command_executed`.
-      const cliArgs = yield* CliArgs;
-      yield* assertSeedTargetsExclusive(cliArgs.args);
-      // Persistent seed-group flags for the telemetry flags map; target selection
-      // itself uses the changed set above.
-      const flags: BucketsFlags = {
-        linked: yield* SeedLinkedFlag,
-        local: yield* SeedLocalFlag,
-        projectRef: leafFlags.projectRef,
-      };
-      return yield* seedBuckets(flags).pipe(
-        withCommandTelemetry({
-          flags: {
-            linked: flags.linked,
-            local: flags.local,
-            "project-ref": flags.projectRef,
-          },
-          // Not in the safe-flags allowlist, so this stays redacted.
-        }),
-      );
+      const flags: BucketsFlags = yield* readSeedTargetFlags();
+      return yield* seedBuckets(flags).pipe(withCommandTelemetry());
     }).pipe(withJsonErrorHandling),
   ),
   Command.provide(Layer.mergeAll(storageGatewayRuntimeLayer(["seed", "buckets"]), stdinLayer)),
   Command.provide(cliConfigValuesLayer),
-  withCliConfigFlags(config),
+  withCliConfigFlags({}),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );

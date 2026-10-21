@@ -1,5 +1,7 @@
 # `supabase projects create`
 
+Target: account, consent default Yes — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                       | Format                    | When                                                       |
@@ -38,6 +40,8 @@
 | `1`  | required flags missing in non-interactive mode                          |
 | `1`  | empty project name (interactive prompt left blank)                      |
 | `1`  | `--release-channel` or `--postgres-engine` set without `--experimental` |
+| `1`  | confirmation declined                                                   |
+| `1`  | confirmation needed but this run can't prompt, and no `--yes`           |
 
 ## Telemetry Events Fired
 
@@ -90,6 +94,8 @@ One `result` event on success.
 
 ## Notes
 
+- Before the `POST /v1/projects`, the command asks `create project "<name>" in organization <org>?`
+  (default **Yes**). Without consent the run makes no `POST`.
 - In interactive mode (default when stdin is a TTY), the user is prompted for any missing
   required fields (`--org-id`, `--db-password`, `--region`, project name).
 - In non-interactive mode (when stdin is not a TTY or `--interactive=false`), all three

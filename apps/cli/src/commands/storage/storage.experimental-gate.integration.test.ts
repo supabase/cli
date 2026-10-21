@@ -10,13 +10,16 @@ import {
   mockAnalytics,
   mockOutput,
   mockProcessControl,
+  mockRuntimeInfo,
   mockTelemetryRuntime,
   mockTty,
+  processEnvLayer,
 } from "../../../tests/helpers/mocks.ts";
-import { isolatedHomeLayer, useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
+import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { ExperimentalRequiredError } from "../../command-internal/experimental-gate.ts";
 import { storageCommand } from "./storage.command.ts";
-import { StorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
+import { TargetSelectorConflictError } from "../../command-internal/target/target.errors.ts";
+import { commandTargetLayer } from "../../shared/output/command-target.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-storage-experimental-int-");
 
@@ -31,10 +34,11 @@ function setup(args: ReadonlyArray<string>) {
     BunServices.layer,
     CliOutput.layer(textCliOutputFormatter()),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     Layer.succeed(CliArgs, { args }),
-    // Isolates ambient env/homeDir defensively even though neither check here reaches
-    // storageGatewayRuntimeLayer's lazy cliSettings/credentials factory.
-    isolatedHomeLayer(tempRoot.current, { SUPABASE_NO_KEYRING: "1" }),
+    // The cwd is a real directory so the handler's workdir check passes before the target conflict.
+    mockRuntimeInfo({ homeDir: tempRoot.current, cwd: tempRoot.current }),
+    processEnvLayer({ SUPABASE_NO_KEYRING: "1" }),
     mockProcessControl().layer,
     mockTty({ stdinIsTty: false, stdoutIsTty: false }),
     mockAnalytics().layer,
@@ -54,10 +58,10 @@ describe("storage experimental gate vs mutual-exclusivity ordering", () => {
   ];
 
   for (const { name, args } of leaves) {
-    const conflictingArgs = [...args, "--linked", "--local"];
+    const conflictingArgs = [...args, "--remote", "--local"];
 
     it.effect(
-      `${name} --linked --local without --experimental fails with the gate error, not the mutex error`,
+      `${name} --remote --local without --experimental fails with the gate error, not the mutex error`,
       () => {
         const { layer } = setup(conflictingArgs);
         return Effect.gen(function* () {
@@ -75,7 +79,7 @@ describe("storage experimental gate vs mutual-exclusivity ordering", () => {
       },
     );
 
-    it.effect(`${name} --linked --local with --experimental fails with the mutex error`, () => {
+    it.effect(`${name} --remote --local with --experimental fails with the mutex error`, () => {
       const withExperimental = [...conflictingArgs, "--experimental"];
       const { layer } = setup(withExperimental);
       return Effect.gen(function* () {
@@ -86,7 +90,7 @@ describe("storage experimental gate vs mutual-exclusivity ordering", () => {
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
           expect(
-            Option.isSome(failure) && failure.value instanceof StorageMutuallyExclusiveFlagsError,
+            Option.isSome(failure) && failure.value instanceof TargetSelectorConflictError,
           ).toBe(true);
         }
       }).pipe(Effect.provide(layer));

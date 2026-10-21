@@ -11,12 +11,12 @@ import { managementApiRuntimeLayer } from "../../../command-internal/management-
 import { rejectIncludeRawOutput } from "../domains.removed-flag.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { domainsGet } from "./get.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   // Kept parsed (and hidden) only so using it produces the removal error instead of an
   // unknown-flag parse error.
   includeRawOutput: Flag.Boolean("include-raw-output").pipe(
@@ -38,7 +38,7 @@ export const domainsGetCommand = Command.make("get", config).pipe(
   Command.withShortDescription("Get the current custom hostname config"),
   Command.withExamples([
     {
-      command: "supabase domains get --project-ref abcdefghijklmnopqrst",
+      command: "supabase domains get --remote=abcdefghijklmnopqrst",
       description: "Get the custom hostname config for a project",
     },
   ]),
@@ -50,6 +50,7 @@ export const domainsGetCommand = Command.make("get", config).pipe(
       },
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
@@ -61,4 +62,5 @@ export const domainsGetCommand = Command.make("get", config).pipe(
           Effect.provide(managementApiLayer),
         ),
   ),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

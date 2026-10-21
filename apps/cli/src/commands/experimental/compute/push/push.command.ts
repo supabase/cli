@@ -16,6 +16,9 @@ import { COMPUTE_EXPOSURES } from "../../../../shared/compute/compute-runtimes.t
 import { managementApiRuntimeLayer } from "../../../../command-internal/management-api-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { computePush } from "./push.handler.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
+import { branchResolution } from "../../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../../command-internal/target/target-flags.ts";
 
 const config = {
   names: Argument.String("name").pipe(
@@ -55,10 +58,7 @@ const config = {
     ),
     Flag.withDefault(false),
   ),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
 } as const;
 
 export type ComputePushFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -106,6 +106,7 @@ export const computePushCommand = Command.make("push", config).pipe(
       ),
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
@@ -114,4 +115,5 @@ export const computePushCommand = Command.make("push", config).pipe(
   Command.provide(managementApiRuntimeLayer(["compute", "push"])),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

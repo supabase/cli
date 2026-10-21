@@ -219,9 +219,7 @@ describe("live branch lifecycle helpers", () => {
       const exit = yield* Effect.exit(createLiveBranchEffect(cli, project, branch.name));
       if (!Exit.isFailure(exit)) throw new Error("expected create failure");
       expect(String(exit.cause)).toContain("branch quota exceeded");
-      expect(state.calls).toContain(
-        `branches delete ${branch.name} --project-ref ${project.ref} --yes`,
-      );
+      expect(state.calls).toContain(`branches delete ${branch.name} --remote=${project.ref} --yes`);
       expect(state.listed).toBe(false);
     }),
   );

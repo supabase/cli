@@ -3,6 +3,8 @@ import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
 import { compose } from "../../../command-internal/command-permissions/model.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { upgradeSuggestion } from "../../../command-internal/upgrade-suggest.ts";
@@ -12,6 +14,7 @@ import { stringSliceFlag } from "../../../command-internal/string-slice-flag.ts"
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
 import { ssoUpdate } from "./update.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 // All three domain flags are CSV string-slice flags; malformed CSV reports
 // a diagnostic (see `stringSliceFlag`).
@@ -31,10 +34,7 @@ export const ssoUpdateRemoveDomainsFlag = stringSliceFlag(
 );
 
 const config = {
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   domains: ssoUpdateDomainsFlag,
   addDomains: ssoUpdateAddDomainsFlag,
   removeDomains: ssoUpdateRemoveDomainsFlag,
@@ -84,7 +84,7 @@ export const ssoUpdateCommand = Command.make("update", config).pipe(
   Command.withExamples([
     {
       command:
-        "supabase sso update b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --project-ref mwjylndxudmiehsxhmmz --add-domains example.com",
+        "supabase sso update b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8 --add-domains example.com --remote=mwjylndxudmiehsxhmmz",
       description: "Update an SSO provider's domains",
     },
   ]),
@@ -109,13 +109,12 @@ export const ssoUpdateCommand = Command.make("update", config).pipe(
       upgradeSuggestion,
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
-    ssoUpdate(flags).pipe(
-      withCommandTelemetry({ flags, safeFlags: ["project-ref"], config }),
-      withJsonErrorHandling,
-    ),
+    ssoUpdate(flags).pipe(withCommandTelemetry({ flags, config }), withJsonErrorHandling),
   ),
   Command.provide(managementApiRuntimeLayer(["sso", "update"])),
+  withTargetPolicy({ group: "hosted", consent: "no" }),
 );

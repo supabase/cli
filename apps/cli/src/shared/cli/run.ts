@@ -20,6 +20,7 @@ import {
 import { CliError, CliOutput, Command } from "effect/cli";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
+import { REMOTE_FLAG_NAME } from "../../command-internal/target/remote-vocabulary.ts";
 import { CLI_VERSION } from "./version.ts";
 import type { CliProjectHome } from "../config/cli-project-home.service.ts";
 import type { CliSettings } from "../config/cli-settings.service.ts";
@@ -53,17 +54,25 @@ import {
   withDebugConsole,
   withTraceExport,
 } from "../telemetry/trace-export.layer.ts";
-import { CliArgs } from "./cli-args.service.ts";
+import { CliArgs, type CliArgsShape } from "./cli-args.service.ts";
 import { GLOBAL_VALUE_FLAG_TOKENS } from "./flag-groups.ts";
 import {
   BOOLEAN_FLAG_VALUES,
   resolveAgentOutputFormatFromArgs,
   ROOT_BOOLEAN_FLAGS,
 } from "./agent-output.ts";
+import {
+  bareRemoteOperand,
+  hasConflictingRemotes,
+  joinRemoteOperands,
+  remoteOperandCapacity,
+  type RemoteArgvLeaf,
+} from "./remote-argv.ts";
 import { SuccessTrailer, successTrailerLayer } from "./success-trailer.ts";
 import type { CliErrorSuggestionContext } from "./subcommand-flag-suggestions.ts";
 import {
   flagAliasesFor,
+  isRemoteFlagMisuse,
   isValueTakingFlagTokenFor,
   resolvedCommandPathForArgv,
 } from "./subcommand-flag-suggestions.ts";
@@ -187,6 +196,60 @@ function valueTakingFlagTokenPredicateForArgv(
   );
   return (token) => isGlobalValueFlagToken(token) || leafPredicate(token);
 }
+
+/** How the resolved command reads operands; `undefined` unless `--remote` is given and accepted. */
+export function remoteArgvLeafFor(
+  rootCommand: Command.Command.Any,
+  args: ReadonlyArray<string>,
+): RemoteArgvLeaf | undefined {
+  if (!args.some((arg) => arg === "--remote" || arg.startsWith("--remote="))) return undefined;
+  const path = resolvedCommandPathForArgv(rootCommand, extractCommandPath(args));
+  const operandCapacity = remoteOperandCapacity(rootCommand, path);
+  if (operandCapacity === undefined) return undefined;
+  const isValueTakingToken = valueTakingFlagTokenPredicateForArgv(rootCommand, args);
+  return {
+    pathLength: path.length - 1,
+    operandCapacity,
+    consumesNextToken: (token) => {
+      const [flag] = token.split("=", 1);
+      return (
+        (!token.includes("=") && flag !== undefined && isValueTakingToken(flag)) ||
+        shortClusterConsumesNextToken(token, isValueTakingToken)
+      );
+    },
+  };
+}
+
+/**
+ * `rawArgs` with a bare `--remote <word>` joined to `--remote=<word>` wherever the command's
+ * operands leave no other reading, plus the word a bare `--remote` is still followed by and
+ * whether `--remote` is given more than once with different values.
+ */
+export function prepareCliArgs(
+  rootCommand: Command.Command.Any,
+  rawArgs: ReadonlyArray<string>,
+): CliArgsShape {
+  const leaf = remoteArgvLeafFor(rootCommand, rawArgs);
+  if (leaf === undefined) return { args: rawArgs };
+  const args = joinRemoteOperands(rawArgs, leaf);
+  return {
+    args,
+    bareRemoteOperand: bareRemoteOperand(args, leaf),
+    remoteConflict: hasConflictingRemotes(args, leaf),
+  };
+}
+
+/** `CliArgs` and a `Stdio` sharing one argv, so every reader sees the rewritten command line. */
+export const cliArgsLayer = (cliArgs: CliArgsShape) =>
+  Layer.mergeAll(
+    Layer.succeed(CliArgs, cliArgs),
+    Layer.effect(
+      Stdio.Stdio,
+      Effect.map(Stdio.Stdio, (stdio) =>
+        Stdio.make({ ...stdio, args: Effect.succeed(cliArgs.args) }),
+      ),
+    ),
+  );
 
 /** Whether `token` is an occurrence of the long or exact-short boolean flag `name`, bare or valued (`--help`, `--help=false`). */
 function isFlagOccurrence(token: string, name: string): boolean {
@@ -469,7 +532,14 @@ export function classifyParseErrorConsoleOutput(
       flagAliasesFor(context.rootCommand, error.commandPath, inner.option),
       isValueTakingToken,
     );
-  return error.errors.every(isSuppressedMissingFlag) ? "drop" : "flush-help-doc-to-stderr";
+  const isRemoteFlagError = (inner: (typeof error.errors)[number]) =>
+    (Predicate.isTagged(inner, "InvalidValue") &&
+      inner.kind === "flag" &&
+      inner.option === REMOTE_FLAG_NAME) ||
+    isRemoteFlagMisuse(inner, context.rootCommand);
+  return error.errors.every((inner) => isSuppressedMissingFlag(inner) || isRemoteFlagError(inner))
+    ? "drop"
+    : "flush-help-doc-to-stderr";
 }
 
 /**
@@ -559,7 +629,7 @@ export interface RunCliOptions<BeforeParseError = never> {
   ) => Effect.Effect<void, never, FileSystem.FileSystem | Path.Path | RuntimeInfo>;
 }
 
-function cliProgramFor<
+export function cliProgramFor<
   Name extends string,
   Input,
   ContextInput,
@@ -568,10 +638,11 @@ function cliProgramFor<
   BeforeParseError,
 >(
   rootCommand: Command.Command<Name, Input, ContextInput, E, R>,
-  args: ReadonlyArray<string>,
+  cliArgs: CliArgsShape,
   options: RunCliOptions<BeforeParseError>,
   outputFormat: OutputFormat,
 ) {
+  const { args } = cliArgs;
   const runtimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
   const fallbackCommandLayer = Layer.mergeAll(
     // Root command env inference leaks some subcommand-provided services; these stand-ins die
@@ -600,7 +671,7 @@ function cliProgramFor<
     Layer.provideMerge(projectLinkStateLayer),
     Layer.provideMerge(runtimeLayer),
     Layer.provideMerge(fallbackCommandLayer),
-    Layer.provideMerge(Layer.succeed(CliArgs, { args })),
+    Layer.provideMerge(cliArgsLayer(cliArgs)),
     Layer.provideMerge(BunServices.layer),
   );
   return withoutParseErrorHelpDump(
@@ -636,10 +707,12 @@ export const runCli = Effect.fnUntraced(function* <
   options: RunCliOptions<BeforeParseError>,
 ) {
   const bootMs = Math.round(performance.now());
-  const args = yield* Effect.gen(function* () {
+  const rawArgs = yield* Effect.gen(function* () {
     const stdio = yield* Stdio.Stdio;
     return yield* stdio.args;
   }).pipe(Effect.provide(BunServices.layer));
+  const cliArgs = prepareCliArgs(rootCommand, rawArgs);
+  const { args } = cliArgs;
 
   // Same shape `formatterLayerFor` builds below, so `normalizeCause`'s fallback path can reuse
   // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the formatters would.
@@ -649,7 +722,7 @@ export const runCli = Effect.fnUntraced(function* <
     const aiTool = yield* AiTool;
     return resolveAgentOutputFormatFromArgs(args, aiTool.name, options.agentDefaultOutputFormat);
   }).pipe(Effect.provide(aiToolLayer));
-  const cliProgram = cliProgramFor(rootCommand, args, options, outputFormat);
+  const cliProgram = cliProgramFor(rootCommand, cliArgs, options, outputFormat);
 
   const signalAwareLayer = processControlLayer.pipe(
     Layer.provideMerge(runtimeInfoLayer),

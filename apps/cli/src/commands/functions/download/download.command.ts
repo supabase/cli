@@ -8,7 +8,6 @@ import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts
 import { projectRefPicker } from "../../../config/project-ref.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { functionsDownload as functionsDownloadCalls } from "../../../shared/functions/download.ts";
-import { FUNCTIONS_PROJECT_REF_SAFE_FLAGS } from "../../../shared/functions/functions.shared.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { managementApiRuntimeLayer } from "../../../command-internal/management-api-runtime.layer.ts";
@@ -16,16 +15,16 @@ import { removedFlag } from "../../../command-internal/removed-command.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 import { functionsDownload } from "./download.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { projectTargetFlags } from "../../../command-internal/target/target-flags.ts";
 
 const config = {
   functionName: Argument.String("Function name").pipe(
     Argument.withDescription("Name of the Function to download. Downloads all if omitted."),
     Argument.optional,
   ),
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...projectTargetFlags(),
   useApi: Flag.Boolean("use-api").pipe(
     Flag.withDescription("Unbundle functions server-side without using Docker."),
     Flag.withDefault(false),
@@ -46,13 +45,8 @@ const config = {
 
 export type FunctionsDownloadFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// Exported so integration tests can drive the exact wiring `Command.withHandler`
-// uses below, instead of re-asserting the generic instrumentation mechanism.
-export const functionsDownloadHandler = (flags: FunctionsDownloadFlags) =>
-  functionsDownload(flags).pipe(
-    withCommandTelemetry({ flags, safeFlags: FUNCTIONS_PROJECT_REF_SAFE_FLAGS }),
-    withJsonErrorHandling,
-  );
+const functionsDownloadHandler = (flags: FunctionsDownloadFlags) =>
+  functionsDownload(flags).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling);
 
 const COMMAND_PATH = ["functions", "download"];
 const managementApiLayer = managementApiRuntimeLayer(COMMAND_PATH);
@@ -65,11 +59,7 @@ const functionsDownloadLegacyBundleHandler = (flags: FunctionsDownloadFlags) => 
   return removedFlag(
     "--legacy-bundle",
     `Retry with \`supabase functions download --use-api ${slug}\` to unbundle server-side without Docker. If that also fails and the Function was deployed with a CLI older than 1.120.0, redeploy it with the current CLI.`,
-  ).pipe(
-    withCommandTelemetry({ flags, safeFlags: FUNCTIONS_PROJECT_REF_SAFE_FLAGS }),
-    withJsonErrorHandling,
-    Effect.provide(removedFlagLayer),
-  );
+  ).pipe(withCommandTelemetry({ flags }), withJsonErrorHandling, Effect.provide(removedFlagLayer));
 };
 
 export const functionsDownloadCommand = Command.make("download", config).pipe(
@@ -83,7 +73,7 @@ export const functionsDownloadCommand = Command.make("download", config).pipe(
       description: "Download a single function from the linked project",
     },
     {
-      command: "supabase functions download --project-ref abcdefghijklmnopqrst",
+      command: "supabase functions download --remote=abcdefghijklmnopqrst",
       description: "Download all functions from a specific project",
     },
   ]),
@@ -96,6 +86,7 @@ export const functionsDownloadCommand = Command.make("download", config).pipe(
       functionsDownloadCalls,
       projectRefPicker,
       linkedProjectCache,
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) =>
@@ -105,4 +96,5 @@ export const functionsDownloadCommand = Command.make("download", config).pipe(
   ),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "hosted", consent: "none" }),
 );

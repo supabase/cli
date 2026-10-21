@@ -18,13 +18,7 @@ const makeProjectDir = Effect.fnUntraced(function* (prefix: string) {
   return projectDir;
 });
 
-/**
- * Golden-path e2e: exercises the real compiled-binary boundary for the two
- * network-free paths of `seed buckets`:
- *  - an empty `[storage]` config is a no-op (exit 0, no stdout);
- *  - `--local --linked` is rejected by the mutually-exclusive flag check.
- * Bucket/object seeding is covered by the integration and unit suites.
- */
+/** Network-free golden paths only; the integration and unit suites cover seeding itself. */
 describe("supabase seed buckets", () => {
   it.live(
     "is a no-op with exit 0 when no buckets are configured",
@@ -41,26 +35,26 @@ describe("supabase seed buckets", () => {
   );
 
   it.live(
-    "rejects passing both --local and --linked",
+    "rejects passing both --local and --remote",
     () =>
       Effect.gen(function* () {
         const projectDir = yield* makeProjectDir("supabase-seed-buckets-e2e-both-");
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["seed", "buckets", "--local", "--linked"],
+          ["seed", "buckets", "--local", "--remote"],
           { cwd: projectDir },
         );
         expect(exitCode).toBe(1);
         expect(`${stdout}${stderr}`).toContain(
-          "if any flags in the group [local linked] are set none of the others can be",
+          "Only one of --remote, --linked and --local can be set; got --remote and --local.",
         );
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     E2E_TIMEOUT_MS,
   );
 
-  // --linked/--local are accepted before the subcommand token too; these two
+  // Selector flags are accepted before the subcommand token too; these two
   // cases exercise the real parser boundary, which the in-process suites bypass.
   it.live(
-    "accepts --local before the subcommand",
+    "accepts the deprecated --local before the subcommand and warns it is not needed",
     () =>
       Effect.gen(function* () {
         const projectDir = yield* makeProjectDir("supabase-seed-buckets-e2e-prelocal-");
@@ -69,24 +63,24 @@ describe("supabase seed buckets", () => {
           { cwd: projectDir },
         );
         expect(`${stdout}${stderr}`).not.toContain("Unrecognized flag");
+        expect(`${stdout}${stderr}`).toContain("--local isn't needed");
         expect(exitCode).toBe(0);
-        expect(stdout.trim()).toBe("");
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     E2E_TIMEOUT_MS,
   );
 
   it.live(
-    "rejects --local --linked before the subcommand",
+    "rejects --local --remote before the subcommand",
     () =>
       Effect.gen(function* () {
         const projectDir = yield* makeProjectDir("supabase-seed-buckets-e2e-preboth-");
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["seed", "--local", "--linked", "buckets"],
+          ["seed", "--local", "--remote", "buckets"],
           { cwd: projectDir },
         );
         expect(exitCode).toBe(1);
         expect(`${stdout}${stderr}`).toContain(
-          "if any flags in the group [local linked] are set none of the others can be",
+          "Only one of --remote, --linked and --local can be set; got --remote and --local.",
         );
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     E2E_TIMEOUT_MS,

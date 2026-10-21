@@ -6,18 +6,6 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 /**
- * Conflicting database-target flags (`db-url`/`linked`/`local`); message text
- * is an established output contract.
- */
-export class DbPushTargetFlagsError extends Data.TaggedError("DbPushTargetFlagsError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
  * Remote migration versions are missing from the local directory; message
  * text is an established output contract. The `migration repair` / `db pull`
  * suggestion is attached.
@@ -42,19 +30,6 @@ export class DbPushMissingRemoteError extends Data.TaggedError("DbPushMissingRem
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.migrationDrift;
-  }
-}
-
-/**
- * The user declined a confirmation prompt; message text (`context canceled`)
- * is an established output contract.
- */
-export class DbPushCancelledError extends Data.TaggedError("DbPushCancelledError")<{
-  readonly message: string;
-  readonly suggestion?: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
   }
 }
 

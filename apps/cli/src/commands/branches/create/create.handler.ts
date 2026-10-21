@@ -4,24 +4,21 @@ import { Effect, Option } from "effect";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { OutputFlag, resolveYes } from "../../../command-internal/global-flags.ts";
-import { promptYesNo } from "../../../command-internal/prompt-yes-no.ts";
-import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
+import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { detectGitBranch } from "../../../shared/git/git-branch.ts";
-import { aqua } from "../../../command-internal/colors.ts";
 import { encodeEnv, encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
   encodeStructToml,
   encodeStructYaml,
 } from "../../../command-internal/struct-output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { resolveParentScopedProjectRef } from "../../../command-internal/parent-project-ref.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { gateMapError } from "../../../command-internal/upgrade-suggest.ts";
 import { BRANCH_RESPONSE_SHAPE } from "../branches.response-shape.ts";
 import {
   BranchesBranchNameEmptyError,
-  BranchesCreateCancelledError,
   BranchesCreateNetworkError,
   BranchesCreateUnexpectedStatusError,
 } from "../branches.errors.ts";
@@ -44,30 +41,17 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
-  // Branch-name resolution defaults to the current git branch when the arg is omitted, after a
-  // Y/N prompt. Declining short-circuits before resolving the project ref, so the linked-project
-  // cache write never fires.
+  // The name defaults to the current git branch when the arg is omitted.
   let branchName = Option.getOrElse(flags.name, () => "");
   // An explicit `--git-branch` flag takes precedence over the auto-detected branch.
   let gitBranchForBody = Option.getOrUndefined(flags.gitBranch);
+  let nameFromGitBranch = false;
 
   if (branchName.length === 0) {
     const gitBranch = yield* detectGitBranch();
     if (Option.isSome(gitBranch) && gitBranch.value.length > 0) {
-      // `--yes`/`SUPABASE_YES` auto-confirms with a `<title> [Y/n] y` stderr echo; non-TTY
-      // stdin scans one piped line (100ms): empty or EOF takes Yes, anything but y/yes
-      // declines — `echo n | supabase branches create` cancels.
-      const yes = yield* resolveYes;
-      const confirmed = yield* promptYesNo(
-        output,
-        yes,
-        `Do you want to create a branch named ${aqua(gitBranch.value)}?`,
-        true,
-      );
-      if (!confirmed) {
-        return yield* new BranchesCreateCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
-      }
       branchName = gitBranch.value;
+      nameFromGitBranch = true;
       if (gitBranchForBody === undefined) {
         gitBranchForBody = gitBranch.value;
       }
@@ -83,10 +67,24 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, and the platform 403s on that ref for every branches-management
   // endpoint.
-  const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  const ref = yield* resolveProjectTarget(
+    { remote: flags.remote, projectRef: flags.projectRef },
+    { parent: true },
+  );
   yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
+    yield* requireHostedMutationConsent({
+      action: `Create preview branch ${branchName}`,
+      details: [
+        ...(nameFromGitBranch ? ["Branch name taken from the current git branch"] : []),
+        ...(Option.isSome(flags.region) ? [`Region: ${flags.region.value}`] : []),
+        ...(Option.isSome(flags.size) ? [`Instance size: ${flags.size.value}`] : []),
+        ...(Option.isSome(flags.persistent) ? [`Persistent: ${flags.persistent.value}`] : []),
+        ...(Option.isSome(flags.withData) ? [`With production data: ${flags.withData.value}`] : []),
+      ],
+    });
+
     const creating =
       output.format === "text" ? yield* output.task("Creating branch...") : undefined;
 

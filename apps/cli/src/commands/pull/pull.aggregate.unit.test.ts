@@ -53,21 +53,6 @@ describe("pullConfigStepResult", () => {
     });
   });
 
-  it("reports planned for a declined confirmation that has work, identically to a dry run", () => {
-    const outcome: PullConfigStepOutcome = {
-      dryRun: false,
-      hasWork: true,
-      confirmed: false,
-      configFilePath: "supabase/config.toml",
-    };
-    expect(pullConfigStepResult(outcome, payload)).toEqual({
-      step: "config",
-      status: "planned",
-      written: [],
-      detail: payload,
-    });
-  });
-
   it("reports changed and writes the config file path once actually applied", () => {
     const outcome: PullConfigStepOutcome = {
       dryRun: false,
@@ -107,17 +92,6 @@ describe("pullMigrationHistoryStepResult", () => {
       written: [],
       detail: { files: [] },
       reason: "not_needed",
-    });
-  });
-
-  it("reports skipped with reason declined", () => {
-    const outcome: PullMigrationHistoryStepOutcome = { kind: "skipped", reason: "declined" };
-    expect(pullMigrationHistoryStepResult(outcome)).toEqual({
-      step: "migration_history",
-      status: "skipped",
-      written: [],
-      detail: { files: [] },
-      reason: "declined",
     });
   });
 
@@ -434,51 +408,51 @@ describe("pullFailedStepResult", () => {
 describe("pullRetryHint", () => {
   const ref = "abcdefghijklmnopqrst";
 
-  it("names 'supabase config pull --project-ref <ref>' for the config step", () => {
+  it("names 'supabase config pull --remote=<ref>' for the config step", () => {
     expect(pullRetryHint("config", ref, undefined)).toBe(
-      "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst",
+      "To retry just this step, run: supabase config pull --remote=abcdefghijklmnopqrst",
     );
   });
 
   it("appends a shell-quoted --remote-label to the config hint when one was passed", () => {
     expect(pullRetryHint("config", ref, "staging-remote")).toBe(
-      "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst --remote-label 'staging-remote'",
+      "To retry just this step, run: supabase config pull --remote-label 'staging-remote' --remote=abcdefghijklmnopqrst",
     );
   });
 
   it("shell-quotes a --remote-label containing whitespace, so the suggested command stays copy-pasteable", () => {
     expect(pullRetryHint("config", ref, "staging remote")).toBe(
-      "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst --remote-label 'staging remote'",
+      "To retry just this step, run: supabase config pull --remote-label 'staging remote' --remote=abcdefghijklmnopqrst",
     );
   });
 
   it("escapes an embedded single quote in --remote-label using the POSIX '\"'\"' pattern", () => {
     expect(pullRetryHint("config", ref, "o'brien")).toBe(
-      "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst --remote-label 'o'\"'\"'brien'",
+      "To retry just this step, run: supabase config pull --remote-label 'o'\"'\"'brien' --remote=abcdefghijklmnopqrst",
     );
   });
 
   it("strips control characters from --remote-label before quoting it (CWE-117)", () => {
     expect(pullRetryHint("config", ref, "staging\r\nFAKE")).toBe(
-      "To retry just this step, run: supabase config pull --project-ref abcdefghijklmnopqrst --remote-label 'staging FAKE'",
+      "To retry just this step, run: supabase config pull --remote-label 'staging FAKE' --remote=abcdefghijklmnopqrst",
     );
   });
 
-  it("names 'supabase migration fetch --project-ref <ref>' for the migration_history step", () => {
+  it("names 'supabase migration fetch --remote=<ref>' for the migration_history step", () => {
     expect(pullRetryHint("migration_history", ref, undefined)).toBe(
-      "To retry just this step, run: supabase migration fetch --project-ref abcdefghijklmnopqrst",
+      "To retry just this step, run: supabase migration fetch --remote=abcdefghijklmnopqrst",
     );
   });
 
-  it("names 'supabase db pull --project-ref <ref> --experimental=false' so the db step avoids the structured-dump rejection", () => {
+  it("names 'supabase db pull --experimental=false --remote=<ref>' so the db step avoids the structured-dump rejection", () => {
     expect(pullRetryHint("db", ref, undefined)).toBe(
-      "To retry just this step, run: supabase db pull --project-ref abcdefghijklmnopqrst --experimental=false",
+      "To retry just this step, run: supabase db pull --experimental=false --remote=abcdefghijklmnopqrst",
     );
   });
 
-  it("names 'supabase functions download --project-ref <ref>' for the functions step", () => {
+  it("names 'supabase functions download --remote=<ref>' for the functions step", () => {
     expect(pullRetryHint("functions", ref, undefined)).toBe(
-      "To retry just this step, run: supabase functions download --project-ref abcdefghijklmnopqrst",
+      "To retry just this step, run: supabase functions download --remote=abcdefghijklmnopqrst",
     );
   });
 
@@ -494,15 +468,15 @@ describe("pullRetryHint", () => {
 describe("pullWithMigrationHistoryCommand", () => {
   const ref = "abcdefghijklmnopqrst";
 
-  it("names the resolved --project-ref, so a blind rerun can never silently retarget the linked project", () => {
+  it("names the resolved --remote=<ref>, so a blind rerun can never silently retarget the linked project", () => {
     expect(pullWithMigrationHistoryCommand(ref, undefined)).toBe(
-      "supabase pull --with-migration-history --project-ref abcdefghijklmnopqrst",
+      "supabase pull --with-migration-history --remote=abcdefghijklmnopqrst",
     );
   });
 
   it("appends a shell-quoted --remote-label when one was passed, matching pullRetryHint's own rendering", () => {
     expect(pullWithMigrationHistoryCommand(ref, "staging remote")).toBe(
-      "supabase pull --with-migration-history --project-ref abcdefghijklmnopqrst --remote-label 'staging remote'",
+      "supabase pull --with-migration-history --remote-label 'staging remote' --remote=abcdefghijklmnopqrst",
     );
   });
 });

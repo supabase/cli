@@ -5,6 +5,7 @@ import {
   INSPECT_DB_FLAGS,
   INSPECT_DB_PERMISSIONS,
   inspectDbCommandHandler,
+  withInspectDbTargetPolicy,
 } from "../inspect-db-command.ts";
 import { inspectDbRuntimeLayer } from "../db.layers.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
@@ -23,4 +24,5 @@ export const inspectDbTableRecordCountsCommand = Command.make(
   Command.provide(inspectDbRuntimeLayer("table-record-counts")),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(INSPECT_DB_FLAGS),
+  withInspectDbTargetPolicy,
 );

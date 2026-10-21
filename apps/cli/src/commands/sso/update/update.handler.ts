@@ -4,8 +4,9 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import {
   mutuallyExclusiveFlagsMessage,
   PERSISTENT_VALUE_FLAG_NAMES,
@@ -13,6 +14,7 @@ import {
   scanArgvFlags,
 } from "../../../shared/cli/flag-groups.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import type { OutputTask } from "../../../shared/output/output.service.ts";
 import { encodeSortedJson } from "../../../command-internal/output.encoders.ts";
 import {
   encodeStructToml,
@@ -28,6 +30,7 @@ import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-
 import {
   argvBoolValue,
   argvEnumValue,
+  argvRemoteValue,
   argvSliceValue,
   argvStringValue,
   resolveArgvProfile,
@@ -213,7 +216,6 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
   const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const stdio = yield* Stdio.Stdio;
@@ -295,6 +297,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
     // Everything below reads values from the scan rather
     // than the TS-parsed flags — see `add.handler.ts` and `argv-flag-reconcile.ts`.
     const projectRefFlag = argvStringValue(occurrences, "project-ref");
+    const remote = argvRemoteValue(occurrences);
     const metadataFile = argvStringValue(occurrences, "metadata-file");
     const metadataUrl = argvStringValue(occurrences, "metadata-url");
     const attributeMappingFile = argvStringValue(occurrences, "attribute-mapping-file");
@@ -304,7 +307,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
 
     const providerId = yield* Effect.fromResult(validateUuid(flags.providerId));
 
-    const ref = yield* resolver.resolve(projectRefFlag);
+    const ref = yield* resolveProjectTarget({ remote, projectRef: projectRefFlag });
 
     // Use the argv-reconciled profile's host when it disagreed with
     // `--profile`, otherwise the config layer's.
@@ -334,8 +337,10 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
           : { baseUrl: apiUrl, accessToken: reconciledToken };
       const gate = { ref, apiUrl, tokenForAux: reconciledTokenForAux };
 
-      const fetching =
-        output.format === "text" ? yield* output.task("Updating SSO provider...") : undefined;
+      const startTask = Effect.suspend((): Effect.Effect<OutputTask | undefined> =>
+        output.format === "text" ? output.task("Updating SSO provider...") : Effect.undefined,
+      );
+      const fetching = yield* startTask;
 
       // Always GETs first, regardless of which flags are set.
       const existing = yield* api.v1
@@ -371,18 +376,31 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         body.attribute_mapping = mapping;
       }
 
-      if (domains.length > 0) {
-        body.domains = [...domains];
-      } else {
-        // `domains` is always recomputed and sent, even when no domain flag
-        // was passed; an empty merged set serializes as `"domains":[]`, never omitted.
-        body.domains = mergeDomains(existing.domains, addDomains, removeDomains);
-      }
+      // `domains` is always recomputed and sent, even when no domain flag
+      // was passed; an empty merged set serializes as `"domains":[]`, never omitted.
+      const finalDomains =
+        domains.length > 0
+          ? [...domains]
+          : mergeDomains(existing.domains, addDomains, removeDomains);
+      body.domains = [...finalDomains];
 
       if (Option.isSome(nameIdFormat)) {
         const format = toNameIdFormat(nameIdFormat.value);
         if (format !== undefined) body.name_id_format = format;
       }
+
+      yield* fetching?.clear ?? Effect.void;
+      yield* requireHostedMutationConsent({
+        action: `Update SSO provider ${providerId}`,
+        details: [
+          ...(Option.isSome(metadataFile) ? ["Metadata: from a file"] : []),
+          ...(Option.isSome(metadataUrl) ? ["Metadata: from a URL"] : []),
+          ...(Option.isSome(attributeMappingFile) ? ["Attribute mapping: replaced"] : []),
+          ...(Option.isSome(nameIdFormat) ? [`Name ID format: ${nameIdFormat.value}`] : []),
+          `Domains: ${finalDomains.join(", ") || "(none)"}`,
+        ],
+      });
+      const updating = yield* startTask;
 
       // `executeRaw` keeps the response body intact so structured output emits it as the API
       // returned it; the typed schema decodes a copy for the table view.
@@ -398,9 +416,9 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
         return { rawBody, provider: yield* decodeProvider(rawBody) };
       }).pipe(
         Effect.catch((cause) => handlePutError(gate, cause)),
-        Effect.tapError(() => fetching?.fail() ?? Effect.void),
+        Effect.tapError(() => updating?.fail() ?? Effect.void),
       );
-      yield* fetching?.clear ?? Effect.void;
+      yield* updating?.clear ?? Effect.void;
 
       const outputFlagFormat = Option.getOrUndefined(outputFlag);
 

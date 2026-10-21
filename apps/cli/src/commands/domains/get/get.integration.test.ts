@@ -12,7 +12,9 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedTargetSelection } from "../../../../tests/helpers/hosted-target-selection.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import {
   projectResponse,
@@ -87,7 +89,11 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, analytics, telemetry, linkedProjectCache };
 }
 
-const baseFlags = { projectRef: Option.none<string>(), includeRawOutput: Option.none<boolean>() };
+const baseFlags = {
+  remote: Option.none(),
+  projectRef: Option.none<string>(),
+  includeRawOutput: Option.none<boolean>(),
+};
 
 describe("domains get integration", () => {
   it.effect("prints the hostname status to stderr in text mode", () => {
@@ -129,7 +135,7 @@ describe("domains get integration", () => {
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stdoutText).toContain('"custom_hostname": "shop.acme.dev"');
       // Structured -o output: human status is suppressed entirely — see emit.
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner());
     }).pipe(Effect.provide(layer));
   });
 
@@ -176,7 +182,8 @@ describe("domains get integration", () => {
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stderrText).toBe(
-        "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
+        unverifiedTargetBanner() +
+          "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
       );
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
@@ -242,7 +249,8 @@ describe("domains get integration", () => {
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stderrText).toBe(
-        "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
+        unverifiedTargetBanner() +
+          "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
       );
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
@@ -278,7 +286,8 @@ describe("domains get integration", () => {
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stderrText).toBe(
-        "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n" +
+        unverifiedTargetBanner() +
+          "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n" +
           "Required outstanding validation records:\n" +
           "\t_acme-challenge.sbstg4.thewheatfield.org TXT -> i6XyXv3kU4SRX9YcCE8h4LExoHE6y_poV1-5R1cjpk4\n",
       );
@@ -305,7 +314,8 @@ describe("domains get integration", () => {
     return Effect.gen(function* () {
       yield* domainsGet(baseFlags);
       expect(out.stderrText).toBe(
-        "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n" +
+        unverifiedTargetBanner() +
+          "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n" +
           "Required outstanding validation records:\n",
       );
       expect(out.stderrText).not.toContain("undefined");
@@ -479,4 +489,9 @@ describe("domains get integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describeHostedTargetSelection("domains get", {
+  respond: (request) => Effect.succeed(jsonResponse(request, 200, HOSTNAME_RESPONSE)),
+  run: (flags) => domainsGet({ ...baseFlags, ...flags }),
 });

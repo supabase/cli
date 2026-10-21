@@ -8,12 +8,12 @@ import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import * as Pg from "pg";
 import { to as pgCopyTo } from "pg-copy-streams";
 import {
-  SUGGEST_LOCAL_STACK,
   connectFailureMessage,
   connectSuggestion,
   isDialFailure,
   isIPv6ConnectivityErrorCause,
   isSqlState,
+  localStackSuggestion,
 } from "./connect-errors.ts";
 import { DbConnectError, DbCopyError, DbExecError } from "./db-connection.errors.ts";
 import { makePoolSqlClient } from "./db-connection.pool-client.ts";
@@ -199,13 +199,14 @@ export function batchFailureError(
   error: Error,
   batch: { readonly completed: number; readonly outcome: BatchOutcome } | undefined,
   isLocal: boolean,
+  linkedCheckout?: boolean,
 ): DbExecError | DbConnectError {
   if (batch === undefined || batch.outcome === "unsent") {
     return new DbConnectError({
       message: `${BATCH_CONNECTION_LOST}: ${error.message}`,
       // The checkout failure a tick earlier carries this same hint, so losing the
       // connection mid-batch must not silently drop it.
-      ...(isLocal ? { suggestion: SUGGEST_LOCAL_STACK } : {}),
+      ...(isLocal ? { suggestion: localStackSuggestion(linkedCheckout) } : {}),
     });
   }
   const mapped = toExecError(error);
@@ -960,7 +961,16 @@ const connect = (
                 resume(Effect.void);
                 return;
               }
-              resume(Effect.fail(batchFailureError(error, batchQuery, options.isLocal)));
+              resume(
+                Effect.fail(
+                  batchFailureError(
+                    error,
+                    batchQuery,
+                    options.isLocal,
+                    cfg.suggestionContext?.linkedCheckout,
+                  ),
+                ),
+              );
             };
             batchQuery = new PgBatchQuery(statements, finish);
             try {

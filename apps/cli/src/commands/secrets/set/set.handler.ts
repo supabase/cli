@@ -11,13 +11,14 @@ import {
   type ResolvedCliConfig,
 } from "../../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
-import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
+import { mapHttpError, sanitizeInlineName } from "../../../command-internal/http-errors.ts";
 import {
   InvalidSecretPairError,
   SecretsEnvFileOpenError,
@@ -98,7 +99,6 @@ const noConfigSecrets: ConfigSecretSource = { edgeRuntime: undefined, resolvedCo
 export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetFlags) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const debugLogger = yield* DebugLogger;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
@@ -108,7 +108,7 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  const ref = yield* resolveProjectTarget(flags);
 
   yield* Effect.gen(function* () {
     // Source 1: `[edge_runtime.secrets]` from `supabase/config.toml`. Only resolved values are
@@ -299,6 +299,11 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
         (cause) => new SecretsSetInputError({ message: `failed to set secrets: ${String(cause)}` }),
       ),
     );
+
+    yield* requireHostedMutationConsent({
+      action: `Set ${body.length} ${body.length === 1 ? "secret" : "secrets"}`,
+      details: ["Secrets to set:", ...body.map(({ name }) => ` • ${sanitizeInlineName(name)}`)],
+    });
 
     const setting = output.format === "text" ? yield* output.task("Setting secrets...") : undefined;
     yield* Effect.forEach(batches, (batch) => api.v1.bulkCreateSecrets({ ref, body: batch }), {

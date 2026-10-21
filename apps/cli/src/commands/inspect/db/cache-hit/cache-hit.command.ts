@@ -5,6 +5,7 @@ import {
   INSPECT_DB_FLAGS,
   INSPECT_DB_PERMISSIONS,
   inspectDbCommandHandler,
+  withInspectDbTargetPolicy,
 } from "../inspect-db-command.ts";
 import { inspectDbRuntimeLayer } from "../db.layers.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
@@ -20,4 +21,5 @@ export const inspectDbCacheHitCommand = Command.make("cache-hit", INSPECT_DB_FLA
   Command.provide(inspectDbRuntimeLayer("cache-hit")),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(INSPECT_DB_FLAGS),
+  withInspectDbTargetPolicy,
 );

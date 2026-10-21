@@ -1,7 +1,7 @@
 import { Effect, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import { gateResponse, suggestUpgrade } from "../../../command-internal/upgrade-suggest.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -14,6 +14,7 @@ import {
   shapeString,
   shapeStruct,
 } from "../../../command-internal/struct-output.encoders.ts";
+import { requireHostedMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import {
   DesiredSubdomainRequiredError,
@@ -38,12 +39,11 @@ export const vanitySubdomainsActivate = Effect.fn("vanity-subdomains.activate")(
   const output = yield* Output;
   const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
-  const resolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    const ref = yield* resolver.resolve(flags.projectRef);
+    const ref = yield* resolveProjectTarget(flags);
 
     yield* Effect.gen(function* () {
       // This check sits inside both `Effect.ensuring` wrappers so telemetry and the
@@ -55,6 +55,10 @@ export const vanitySubdomainsActivate = Effect.fn("vanity-subdomains.activate")(
         });
       }
       const desiredSubdomain = flags.desiredSubdomain.value;
+      yield* requireHostedMutationConsent({
+        action: `Activate vanity subdomain ${desiredSubdomain}`,
+        details: ["Auth services stop working on the project's default hostname."],
+      });
       const activating =
         output.format === "text" ? yield* output.task("Activating vanity subdomain...") : undefined;
       const response = yield* api.v1

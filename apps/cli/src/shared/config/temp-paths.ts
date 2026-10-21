@@ -63,8 +63,6 @@ export const readProjectRefFile = (
 ): Effect.Effect<Option.Option<string>, ProjectRefReadError> =>
   Effect.gen(function* () {
     const refPath = tempPaths(path, workdir).projectRef;
-    // A `NotFound` PlatformError means unlinked (fall through); any other
-    // read error fails.
     const content = yield* fs.readFileString(refPath).pipe(
       Effect.catchTag("PlatformError", (error) =>
         error.reason._tag === "NotFound"
@@ -79,3 +77,17 @@ export const readProjectRefFile = (
     const trimmed = content.trim();
     return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
   });
+
+/** Whether `SUPABASE_PROJECT_ID` or `project-ref` names a project; unreadable is unlinked. */
+export const isCheckoutLinked = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  projectId: Option.Option<string> = Option.none(),
+): Effect.Effect<boolean> =>
+  Option.isSome(projectId)
+    ? Effect.succeed(true)
+    : readProjectRefFile(fs, path, workdir).pipe(
+        Effect.map(Option.isSome),
+        Effect.orElseSucceed(() => false),
+      );

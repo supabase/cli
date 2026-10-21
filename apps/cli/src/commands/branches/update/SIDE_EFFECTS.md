@@ -1,5 +1,7 @@
 # `supabase branches update`
 
+Target: hosted, consent default No — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 Same auth fallback chain as every Management-API command. Project-ref discovery (for the PARENT) is PARENT-scoped (CLI-2167 follow-up): env `SUPABASE_PROJECT_ID` → `<workdir>/supabase/.temp/linked-project.json`'s `ref` → `<workdir>/supabase/.temp/project-ref`, first ref-shaped candidate wins — see `branches list/SIDE_EFFECTS.md` for the full chain and rationale.
@@ -13,29 +15,33 @@ Same auth fallback chain as every Management-API command. Project-ref discovery 
 
 ## API Routes
 
-| Method  | Path                                            | Auth         | When                                                                                                                                                        | Request body                                                                              | Response                                          |
-| ------- | ----------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| `GET`   | `/v1/projects/{ref}/branches/{name}`            | Bearer token | branch input is not a UUID and not a `^[a-z]{20}$` ref pattern                                                                                              | none                                                                                      | `{project_ref}`                                   |
-| `GET`   | `/v1/branches/{branch_id_or_ref}`               | Bearer token | branch input is a UUID                                                                                                                                      | none                                                                                      | `{ref}`                                           |
-| `PATCH` | `/v1/branches/{branch_id_or_ref}`               | Bearer token | always                                                                                                                                                      | `{branch_name?, git_branch?, persistent?, status?, notify_url?}` (only set flags emitted) | full `BranchResponse`                             |
-| `GET`   | `/v1/projects/{ref}` (on 4xx gated)             | Bearer token | upgrade-suggest path                                                                                                                                        | none                                                                                      | `{organization_slug}`                             |
-| `GET`   | `/v1/organizations/{slug}/entitlements` (gated) | Bearer token | upgrade-suggest path                                                                                                                                        | none                                                                                      | `[{feature: {key}, hasAccess, ...}]`              |
-| `GET`   | `/v1/projects/{ref}/branches`                   | Bearer token | branch argument omitted or empty and stdin is a TTY (branch picker)                                                                                         | none                                                                                      | `[{name, project_ref, …}]`                        |
-| `GET`   | `/v1/projects`                                  | Bearer token | no project ref from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref`, with stdin and stdout TTYs and a non-JSON output format (project picker) | none                                                                                      | `[{id, name, organization_slug, region, …}]`      |
-| `GET`   | `/v1/projects/{ref}`                            | Bearer token | linked-project cache miss only (best-effort, after the command)                                                                                             | none                                                                                      | `{ref, name, organization_id, organization_slug}` |
+| Method  | Path                                            | Auth         | When                                                                                                                                                         | Request body                                                                              | Response                                          |
+| ------- | ----------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `GET`   | `/v1/projects/{ref}/branches/{name}`            | Bearer token | branch input is not a UUID and not a `^[a-z]{20}$` ref pattern                                                                                               | none                                                                                      | `{project_ref}`                                   |
+| `GET`   | `/v1/branches/{branch_id_or_ref}`               | Bearer token | branch input is a UUID                                                                                                                                       | none                                                                                      | `{ref}`                                           |
+| `PATCH` | `/v1/branches/{branch_id_or_ref}`               | Bearer token | always                                                                                                                                                       | `{branch_name?, git_branch?, persistent?, status?, notify_url?}` (only set flags emitted) | full `BranchResponse`                             |
+| `GET`   | `/v1/projects/{ref}` (on 4xx gated)             | Bearer token | upgrade-suggest path                                                                                                                                         | none                                                                                      | `{organization_slug}`                             |
+| `GET`   | `/v1/organizations/{slug}/entitlements` (gated) | Bearer token | upgrade-suggest path                                                                                                                                         | none                                                                                      | `[{feature: {key}, hasAccess, ...}]`              |
+| `GET`   | `/v1/projects/{ref}/branches`                   | Bearer token | branch argument omitted or empty and stdin is a TTY (branch picker)                                                                                          | none                                                                                      | `[{name, project_ref, …}]`                        |
+| `GET`   | `/v1/projects`                                  | Bearer token | no project ref from `--remote=<ref>`, `SUPABASE_PROJECT_ID` or `.temp/project-ref`, with stdin and stdout TTYs and a non-JSON output format (project picker) | none                                                                                      | `[{id, name, organization_slug, region, …}]`      |
+| `GET`   | `/v1/projects/{ref}`                            | Bearer token | linked-project cache miss only (best-effort, after the command)                                                                                              | none                                                                                      | `{ref, name, organization_id, organization_slug}` |
 
 ## Environment Variables
 
 `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROFILE`, `SUPABASE_PROJECT_ID`, `SUPABASE_WORKDIR` — same semantics as `branches list` (including the CLI-2167 PARENT-scoped resolution chain).
 
+`SUPABASE_YES` — approves the hosted-mutation confirmation like `--yes`; read from the shell environment only, never `supabase/.env`.
+
 ## Exit Codes
 
-| Code | Condition                                                                         |
-| ---- | --------------------------------------------------------------------------------- |
-| `0`  | success — branch updated                                                          |
-| `1`  | `BranchesUpdateUnexpectedStatusError` — non-200 response from the update endpoint |
-| `1`  | `BranchesUpdateNetworkError` — transport-level network failure                    |
-| `1`  | Branch-id resolution errors (find / config endpoints failed)                      |
+| Code | Condition                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — branch updated                                                                                               |
+| `1`  | `BranchesUpdateUnexpectedStatusError` — non-200 response from the update endpoint                                      |
+| `1`  | `BranchesUpdateNetworkError` — transport-level network failure                                                         |
+| `1`  | Branch-id resolution errors (find / config endpoints failed)                                                           |
+| `1`  | `HostedMutationConsentRequiredError` — no `--yes` / shell `SUPABASE_YES` and the run cannot prompt; nothing is changed |
+| `1`  | `HostedMutationDeclinedError` — the confirmation prompt was declined                                                   |
 
 ## Telemetry Events Fired
 
@@ -54,4 +60,6 @@ For `--output {json,yaml,toml,env}`, the header goes to stderr followed by the e
 
 ## Notes
 
-The upgrade-suggest call uses the branch's own resolved project ref (`resolveBranchProjectRef`) — not the parent `--project-ref` value — so the entitlements check is scoped to the branch's org.
+- `--remote=<ref>` names the parent project; with no selector or a bare `--remote` the parent comes from the chain above. A branch name or UUID is rejected with `` `supabase branches update` acts on a parent project, so --remote takes its project ref, not a branch name. Use --remote=<ref>. `` The branch itself stays a positional argument.
+- The upgrade-suggest call uses the branch's own resolved project ref (`resolveBranchProjectRef`) — not the parent `--remote=<ref>` value — so the entitlements check is scoped to the branch's org.
+- **Consent.** Asks once, after the branch name or ID is resolved to its ref and before the PATCH, with default No: `Update preview branch <name-or-id>`. The question also shows the branch project ref and each change that was requested (`--name`, `--git-branch`, `--persistent`, `--status`, `--notify-url`).

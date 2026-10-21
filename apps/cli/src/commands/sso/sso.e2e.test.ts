@@ -15,7 +15,7 @@ describe("supabase sso", () => {
         const fs = yield* FileSystem.FileSystem;
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "sso-e2e-" });
         const { exitCode, stdout } = yield* runSupabaseEffect(
-          ["sso", "info", "--project-ref", TEST_PROJECT_REF, "--output-format", "json"],
+          ["sso", "info", "--output-format", "json", `--remote=${TEST_PROJECT_REF}`],
           { cwd, env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
         );
         expect(exitCode).toBe(0);
@@ -35,7 +35,7 @@ describe("supabase sso", () => {
         const fs = yield* FileSystem.FileSystem;
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "sso-e2e-" });
         const { exitCode, stdout } = yield* runSupabaseEffect(
-          ["sso", "info", "--project-ref", TEST_PROJECT_REF],
+          ["sso", "info", `--remote=${TEST_PROJECT_REF}`],
           { cwd, env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
         );
         expect(exitCode).toBe(0);
@@ -54,7 +54,7 @@ describe("supabase sso", () => {
         const fs = yield* FileSystem.FileSystem;
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "sso-e2e-" });
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["sso", "show", "not-a-uuid", "--project-ref", TEST_PROJECT_REF],
+          ["sso", "show", "not-a-uuid", `--remote=${TEST_PROJECT_REF}`],
           { cwd, env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
         );
         expect(exitCode).toBe(1);
@@ -70,7 +70,7 @@ describe("supabase sso", () => {
         const fs = yield* FileSystem.FileSystem;
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "sso-e2e-" });
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["sso", "remove", "not-a-uuid", "--project-ref", TEST_PROJECT_REF],
+          ["sso", "remove", "not-a-uuid", "--yes", `--remote=${TEST_PROJECT_REF}`],
           { cwd, env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
         );
         expect(exitCode).toBe(1);
@@ -86,7 +86,7 @@ describe("supabase sso", () => {
         const fs = yield* FileSystem.FileSystem;
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "sso-e2e-" });
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["sso", "update", "not-a-uuid", "--project-ref", TEST_PROJECT_REF],
+          ["sso", "update", "not-a-uuid", "--yes", `--remote=${TEST_PROJECT_REF}`],
           { cwd, env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
         );
         expect(exitCode).toBe(1);
@@ -106,7 +106,7 @@ describe("supabase sso", () => {
         const fs = yield* FileSystem.FileSystem;
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "sso-e2e-" });
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["sso", "add", "--project-ref", TEST_PROJECT_REF],
+          ["sso", "add", `--remote=${TEST_PROJECT_REF}`],
           { cwd },
         );
         expect(exitCode).toBe(1);
@@ -125,7 +125,7 @@ describe("supabase sso", () => {
         const fs = yield* FileSystem.FileSystem;
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "sso-e2e-" });
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["sso", "add", "--type", "bogus", "--project-ref", TEST_PROJECT_REF],
+          ["sso", "add", "--type", "bogus", `--remote=${TEST_PROJECT_REF}`],
           { cwd },
         );
         expect(exitCode).toBe(1);

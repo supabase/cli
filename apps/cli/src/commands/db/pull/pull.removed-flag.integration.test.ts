@@ -17,6 +17,7 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import { isolatedHomeLayer } from "../../../../tests/helpers/command-mocks.ts";
 import { dbCommand } from "../db.command.ts";
+import { commandTargetLayer } from "../../../shared/output/command-target.layer.ts";
 
 const testRoot = Command.make("supabase").pipe(
   Command.withSubcommands([dbCommand]),
@@ -53,6 +54,7 @@ const runDbPull = (
       Layer.succeed(CliArgs, { args: argv }),
       Stdio.layerTest({ args: Effect.succeed(argv) }),
       out.layer,
+      commandTargetLayer.pipe(Layer.provide(out.layer)),
       analytics.layer,
       mockTelemetryRuntime({ configDir: path.join(workdir, ".supabase") }),
       mockTty(),
@@ -175,7 +177,7 @@ describe("db pull removed surfaces through command dispatch", () => {
 
   it.live("does not reject a plain db pull", () =>
     Effect.gen(function* () {
-      const { exit } = yield* runDbPull([]);
+      const { exit } = yield* runDbPull(["--remote"]);
 
       expectNotLinked(exit);
     }),
@@ -183,7 +185,7 @@ describe("db pull removed surfaces through command dispatch", () => {
 
   it.live("does not reject --experimental=false over SUPABASE_EXPERIMENTAL=true", () =>
     Effect.gen(function* () {
-      const { exit } = yield* runDbPull(["--experimental=false"], {
+      const { exit } = yield* runDbPull(["--remote", "--experimental=false"], {
         env: { SUPABASE_EXPERIMENTAL: "true" },
       });
 
@@ -193,7 +195,7 @@ describe("db pull removed surfaces through command dispatch", () => {
 
   it.live("does not reject --experimental --declarative", () =>
     Effect.gen(function* () {
-      const { exit } = yield* runDbPull(["--experimental", "--declarative"]);
+      const { exit } = yield* runDbPull(["--remote", "--experimental", "--declarative"]);
 
       expectNotLinked(exit);
     }),

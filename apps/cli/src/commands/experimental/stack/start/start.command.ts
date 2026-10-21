@@ -11,6 +11,7 @@ import { stackStart } from "./start.handler.ts";
 import { STACK_START_EXCLUDABLE_CAPABILITIES } from "./start.options.ts";
 import { withCliConfigFlags } from "../../../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../../../config/cli-config-values.layer.ts";
+import { withTargetPolicy } from "../../../../command-internal/target/target-policy.ts";
 
 const excludeFlag = stringSliceFlag(
   "exclude",
@@ -80,4 +81,5 @@ export const stackStartCommand = Command.make("start", config).pipe(
   Command.provide(Layer.mergeAll(stdinLayer, machineErrorContextLayer)),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

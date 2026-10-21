@@ -33,14 +33,6 @@ export class NoFunctionsToDeployError extends Data.TaggedError("NoFunctionsToDep
   }
 }
 
-export class FunctionDeployCancelledError extends Data.TaggedError("FunctionDeployCancelledError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.cancelled;
-  }
-}
-
 export class FunctionImportNotDirectoryError extends Data.TaggedError(
   "FunctionImportNotDirectoryError",
 )<{

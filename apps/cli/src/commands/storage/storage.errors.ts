@@ -172,17 +172,6 @@ export class StorageFileError extends Data.TaggedError("StorageFileError")<{
   }
 }
 
-/** Conflicting target flags: `--linked` with `--local`, or `--project-ref` with `--local`. */
-export class StorageMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "StorageMutuallyExclusiveFlagsError",
-)<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
 /**
  * The resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a
  * directory (`validateWorkdirIsDirectory`). Only reachable when the

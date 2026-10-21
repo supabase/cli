@@ -3,11 +3,7 @@ import { Argument, Command, Flag } from "effect/cli";
 import type * as CliCommand from "effect/cli/Command";
 
 import { withPermissions } from "../../../command-internal/command-permissions/command-permissions.annotation.ts";
-import {
-  compose,
-  withCondition,
-  withDbTarget,
-} from "../../../command-internal/command-permissions/model.ts";
+import { compose, withCondition } from "../../../command-internal/command-permissions/model.ts";
 import { dbConfig, dbConfigPoolerFallback } from "../../../command-internal/db-config.layer.ts";
 import { linkedProjectCache } from "../../../telemetry/linked-project-cache.layer.ts";
 import { withCliConfigFlags } from "../../../config/cli-config-flags.ts";
@@ -21,6 +17,9 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { dbPull, resolveRemovedExperimental } from "./pull.handler.ts";
 import { dbPullRuntimeLayer } from "./pull.layers.ts";
 import { cliConfigValuesLayer } from "../../../config/cli-config-values.layer.ts";
+import { branchResolution } from "../../../command-internal/target/branch-resolution.ts";
+import { targetFlags } from "../../../command-internal/target/target-flags.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const config = {
   name: Argument.String("migration name").pipe(
@@ -61,30 +60,12 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  dbUrl: Flag.String("db-url").pipe(
-    Flag.withDescription(
-      "Pulls from the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.Boolean("linked").pipe(
-    Flag.withDescription("Pulls from the linked project."),
-    Flag.optional,
-  ),
-  local: Flag.Boolean("local").pipe(
-    Flag.withDescription("Pulls from the local database."),
-    Flag.optional,
-  ),
-  // TS-only override of the linked project ref — see push.command.ts.
-  projectRef: Flag.String("project-ref").pipe(
-    Flag.withDescription("Project ref of the Supabase project."),
-    Flag.optional,
-  ),
+  ...targetFlags({ subject: "database", dbUrl: true }),
   password: CliConfigKeys.linkedDb.password.flag({
     name: "password",
     alias: "p",
     description:
-      "Database password for the linked project (--linked/--project-ref). Not used with --local or --db-url.",
+      "Database password for the project selected with --remote. Not used for the local database or a database URL.",
   }),
 } as const;
 
@@ -107,41 +88,34 @@ const telemetryOptions = (flags: DbPullFlags) => ({
     "diff-engine": flags.diffEngine,
     "strict-coverage": flags.strictCoverage,
     schema: flags.schema,
-    "db-url": flags.dbUrl,
-    linked: flags.linked,
-    local: flags.local,
-    "project-ref": flags.projectRef,
     // `password` is a credential — always reaches telemetry as `<redacted>`.
     password: flags.password,
   },
-  // Not on the established `--project-ref` safeFlags allowlist, so it stays redacted.
   aliases: { s: "schema", p: "password" },
   config,
 });
 
 export const dbPullCommand = Command.make("pull", config).pipe(
   Command.withDescription(
-    "Migration mode compares supabase/migrations with the selected live database (--linked by default), writes the complete difference as migration files, and may record them in that database's migration history. --declarative instead replaces the declarative schema tree and does not create migrations or update migration history.",
+    "Migration mode compares supabase/migrations with the selected live database (the local database by default, or the one --remote selects), writes the complete difference as migration files, and records them in that database's migration history; a hosted database asks for confirmation first, or needs --yes in a non-interactive run. --declarative instead replaces the declarative schema tree and does not create migrations or update migration history.",
   ),
-  Command.withShortDescription("Pull schema from the remote database"),
+  Command.withShortDescription("Pull schema from a database"),
   withPermissions(
-    withDbTarget(
-      compose(
-        {
-          operations: [],
-          noApiEffectFlags: [
-            "declarative",
-            "use-pg-delta",
-            "diff-engine",
-            "strict-coverage",
-            "schema",
-          ],
-        },
-        dbConfig,
-        dbConfigPoolerFallback,
-        withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
-      ),
-      { default: "linked" },
+    compose(
+      {
+        operations: [],
+        noApiEffectFlags: [
+          "declarative",
+          "use-pg-delta",
+          "diff-engine",
+          "strict-coverage",
+          "schema",
+        ],
+      },
+      dbConfig,
+      dbConfigPoolerFallback,
+      withCondition(linkedProjectCache, { dbTarget: ["linked"] }),
+      branchResolution,
     ),
   ),
   Command.withHandler((flags) => {
@@ -176,4 +150,5 @@ export const dbPullCommand = Command.make("pull", config).pipe(
   }),
   Command.provide(cliConfigValuesLayer),
   withCliConfigFlags(config),
+  withTargetPolicy({ group: "selectable", consent: "no" }),
 );
