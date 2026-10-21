@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
+import { getRequestLog } from "./request-log.ts";
 import { testBehaviour } from "./test-context.ts";
 
 const BUCKET = "cli-e2e-bucket";
@@ -13,18 +14,6 @@ function setupStorageWorkspace(dir: string, relayUrl: string): void {
     ['project_id = "test-project"', "", "[api]", `external_url = "${relayUrl}"`].join("\n"),
   );
   writeFileSync(join(dir, "upload.txt"), "test upload content");
-}
-
-interface RequestEntry {
-  method: string;
-  pathname: string;
-  headers: Record<string, string>;
-  body: unknown;
-}
-
-async function getRequestLog(apiUrl: string): Promise<RequestEntry[]> {
-  const res = await fetch(`${apiUrl}/_ctrl/requests`);
-  return res.json() as Promise<RequestEntry[]>;
 }
 
 async function injectGlobalError(apiUrl: string, status: number, message: string): Promise<void> {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { deprecationMessages, refFromDbUrl, remoteFlagText } from "./target-deprecation.ts";
+import { deprecationMessages, remoteFlagText } from "./target-deprecation.ts";
 import type { TargetDeprecation } from "./target-selector.ts";
 
 const REF = "abcdefghijklmnopqrst";
@@ -17,21 +17,6 @@ describe("remoteFlagText", () => {
     { remote: { _tag: "DbUrl", url: "postgresql://u:pw@h/db" }, expected: "--remote=<db-url>" },
   ] as const)("spells $remote as $expected", ({ remote, expected }) => {
     expect(remoteFlagText(remote)).toBe(expected);
-  });
-});
-
-describe("refFromDbUrl", () => {
-  it.each([
-    { url: `postgresql://postgres:pw@db.${REF}.supabase.co:5432/postgres`, expected: REF },
-    {
-      url: `postgresql://postgres.${REF}:pw@aws-0-eu-west-1.pooler.supabase.com:6543/postgres`,
-      expected: REF,
-    },
-    { url: "postgresql://postgres:pw@db.example.com:5432/postgres", expected: undefined },
-    { url: "postgresql://postgres:pw@127.0.0.1:54322/postgres", expected: undefined },
-    { url: "not a url", expected: undefined },
-  ])("reads $expected from $url", ({ url, expected }) => {
-    expect(refFromDbUrl(url, HOST)).toBe(expected);
   });
 });
 
@@ -91,6 +76,35 @@ describe("deprecationMessages", () => {
       `--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead, or --remote=${REF} with an access token set`,
     );
     expect(message).not.toContain("hunter2");
+  });
+
+  it.each([
+    {
+      name: "a pooler URL whose user names the project",
+      url: `postgresql://postgres.${REF}:pw@aws-0-eu-west-1.pooler.supabase.com:6543/postgres`,
+      alternative: `, or --remote=${REF} with an access token set`,
+    },
+    {
+      name: "a database host outside the project domain",
+      url: "postgresql://postgres:pw@db.example.com:5432/postgres",
+      alternative: "",
+    },
+    {
+      name: "a loopback address",
+      url: "postgresql://postgres:pw@127.0.0.1:54322/postgres",
+      alternative: "",
+    },
+    {
+      name: "a URL that does not parse",
+      url: "postgresql://postgres:pw@host:notaport/postgres",
+      alternative: "",
+    },
+  ])("reads the project ref out of $name only when it names one", ({ url, alternative }) => {
+    expect(
+      messages([{ kind: "remote-alias", flags: ["--db-url"], remote: { _tag: "DbUrl", url } }]),
+    ).toEqual([
+      `--db-url is deprecated and will be removed in v4. Use --remote=<db-url> instead${alternative}`,
+    ]);
   });
 
   it("asks for a postgresql:// URL when --db-url held a keyword connection string", () => {

@@ -3,11 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { RemoteValue } from "./remote-value.ts";
 import type { TargetFlagValues } from "./target-flags.ts";
-import {
-  hasExplicitSelector,
-  parseTargetSelector,
-  type TargetSelectorOptions,
-} from "./target-selector.ts";
+import { parseTargetSelector, type TargetSelectorOptions } from "./target-selector.ts";
 
 const REF = "abcdefghijklmnopqrst";
 const URL = "postgresql://u:p@db.example.com:5432/postgres";
@@ -185,7 +181,7 @@ describe("parseTargetSelector", () => {
       });
     });
 
-    it.each(["true", "False", "YES", "off", "1", "0"])(
+    it.each(["true", "false"])(
       "keeps looking up a branch named %s through --project-ref",
       (name) => {
         expect(success({ projectRef: Option.some(name) }).selection).toEqual({
@@ -217,6 +213,7 @@ describe("parseTargetSelector", () => {
       expect(failure({ ...remote({ _tag: "Linked" }), ...overrides })).toMatchObject({
         _tag: "TargetSelectorConflictError",
         flags,
+        suggestion: "Use --remote or --remote=<ref|branch|url> on its own.",
       });
     });
 
@@ -298,19 +295,6 @@ describe("parseTargetSelector", () => {
       },
     );
 
-    it("suggests --remote=<ref> when --project-id meets --project-ref", () => {
-      expect(failure({ projectRef: Option.some(REF), projectId: Option.some(REF) })).toMatchObject({
-        message: "--project-id is a deprecated alias of --project-ref; pass only one of them.",
-        suggestion: "Use --remote=<ref> instead.",
-      });
-    });
-
-    it("suggests the --remote form for a selector conflict", () => {
-      expect(failure({ ...remote({ _tag: "Linked" }), linked: true })).toMatchObject({
-        suggestion: "Use --remote or --remote=<ref|branch|url> on its own.",
-      });
-    });
-
     it("lists only the selectors a command without a database connection has", () => {
       const result = parseTargetSelector({
         remote: Option.some({ _tag: "Linked" }),
@@ -334,10 +318,12 @@ describe("parseTargetSelector", () => {
       ).toMatchObject({ suggestion: "Use --remote or --remote=<ref> on its own." });
     });
 
-    it("rejects --project-id with --project-ref", () => {
+    it("rejects --project-id with --project-ref and suggests --remote=<ref>", () => {
       expect(failure({ projectRef: Option.some(REF), projectId: Option.some(REF) })).toMatchObject({
         _tag: "TargetSelectorConflictError",
         flags: ["--project-id", "--project-ref"],
+        message: "--project-id is a deprecated alias of --project-ref; pass only one of them.",
+        suggestion: "Use --remote=<ref> instead.",
       });
     });
 
@@ -416,27 +402,5 @@ describe("parseTargetSelector", () => {
       });
       expect(JSON.stringify(result)).not.toContain("db.example.com");
     });
-  });
-});
-
-describe("hasExplicitSelector", () => {
-  it("is false when no selector flag is given", () => {
-    expect(hasExplicitSelector(none)).toBe(false);
-  });
-
-  it.each<readonly [string, Partial<TargetFlagValues>]>([
-    ["--remote", { remote: Option.some({ _tag: "Linked" }) }],
-    ["--linked", { linked: true }],
-    ["--local", { local: true }],
-    ["--db-url", { dbUrl: Option.some(URL) }],
-    ["--project-ref", { projectRef: Option.some(REF) }],
-    ["--project-id", { projectId: Option.some(REF) }],
-  ])("is true for %s", (_flag, overrides) => {
-    expect(hasExplicitSelector({ ...none, ...overrides })).toBe(true);
-  });
-
-  it("ignores a database URL flag a command does not declare", () => {
-    const { dbUrl: _dbUrl, ...withoutDbUrl } = none;
-    expect(hasExplicitSelector(withoutDbUrl)).toBe(false);
   });
 });

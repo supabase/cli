@@ -45,9 +45,12 @@ describe("parseRemoteValue", () => {
 });
 
 describe("parseNamedRemote", () => {
-  it("treats the words an off switch uses as branch names", () => {
-    expect(parseNamedRemote("false")).toEqual(Result.succeed({ _tag: "Branch", name: "false" }));
-  });
+  it.each(["true", "false", "False", "YES", "off", "1", "0"])(
+    "treats the boolean literal %s as a branch name",
+    (name) => {
+      expect(parseNamedRemote(name)).toEqual(Result.succeed({ _tag: "Branch", name }));
+    },
+  );
 });
 
 describe("couldNameBranch", () => {

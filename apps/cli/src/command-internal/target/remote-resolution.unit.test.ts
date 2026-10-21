@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Sink, Stdio, Stream } from "effect";
+import { Effect, Layer, Option, Sink, Stdio, Stream } from "effect";
 import { vi } from "vitest";
 
 import { stripAnsi } from "../../../tests/helpers/ansi.ts";
@@ -12,8 +12,8 @@ import {
 } from "../../shared/output/output.layer.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import type { Tty } from "../../shared/runtime/tty.service.ts";
-import { warnTargetDeprecations } from "./remote-resolution.ts";
-import type { TargetDeprecation } from "./target-selector.ts";
+import { selectTarget } from "./remote-resolution.ts";
+import type { TargetFlagValues } from "./target-flags.ts";
 
 const clack = vi.hoisted(() => ({
   log: { message: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), step: vi.fn() },
@@ -36,15 +36,17 @@ const sink = (chunks: Array<string>) =>
   );
 
 const PAYLOAD = "export type Database = {}\n";
-const linkedAlias: TargetDeprecation = {
-  kind: "remote-alias",
-  flags: ["--linked"],
-  remote: { _tag: "Linked" },
-};
+const flags = (overrides: Partial<TargetFlagValues>): TargetFlagValues => ({
+  remote: Option.none(),
+  local: false,
+  linked: false,
+  projectRef: Option.none(),
+  ...overrides,
+});
 
 const runWith = (
   outputLayer: Layer.Layer<Output, never, Stdio.Stdio | Tty>,
-  deprecations: ReadonlyArray<TargetDeprecation>,
+  selector: TargetFlagValues,
 ) => {
   const stdout: Array<string> = [];
   const stderr: Array<string> = [];
@@ -58,7 +60,7 @@ const runWith = (
     }),
   );
   return Effect.gen(function* () {
-    yield* warnTargetDeprecations(deprecations);
+    yield* selectTarget(selector);
     const output = yield* Output;
     yield* output.raw(PAYLOAD);
   }).pipe(
@@ -71,15 +73,15 @@ const runWith = (
   );
 };
 
-describe("warnTargetDeprecations", () => {
+describe("selectTarget deprecation warnings", () => {
   it.effect.each([
     { format: "text", layer: textOutputLayer },
     { format: "json", layer: jsonOutputLayer },
     { format: "stream-json", layer: streamJsonOutputLayer },
   ])("leaves stdout to the payload in $format mode", ({ layer }) =>
     Effect.gen(function* () {
-      const remoteRun = yield* runWith(layer, []);
-      const aliasRun = yield* runWith(layer, [linkedAlias]);
+      const remoteRun = yield* runWith(layer, flags({ remote: Option.some({ _tag: "Linked" }) }));
+      const aliasRun = yield* runWith(layer, flags({ linked: true }));
 
       expect(aliasRun.stdout).toBe(PAYLOAD);
       expect(aliasRun.stdout).toBe(remoteRun.stdout);

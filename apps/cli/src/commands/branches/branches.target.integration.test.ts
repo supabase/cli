@@ -2,6 +2,7 @@ import { Effect, Option } from "effect";
 
 import { jsonResponse } from "../../../tests/helpers/command-mocks.ts";
 import { describeHostedTargetSelection } from "../../../tests/helpers/hosted-target-selection.ts";
+import { branchRow } from "../../../tests/helpers/remote-selection.ts";
 import { branchesCreate } from "./create/create.handler.ts";
 import { branchesDelete } from "./delete/delete.handler.ts";
 import { branchesDisable } from "./disable/disable.handler.ts";
@@ -14,18 +15,12 @@ import { branchesUpdate } from "./update/update.handler.ts";
 const BRANCH_UUID = "11111111-1111-4111-8111-111111111111";
 const BRANCH_PROJECT_REF = "cccccccccccccccccccc";
 
-const branchRow = (projectRef: string) => ({
-  id: BRANCH_UUID,
-  name: "feat-x",
-  project_ref: projectRef,
-  parent_project_ref: "bbbbbbbbbbbbbbbbbbbb",
-  is_default: false,
-  persistent: false,
-  status: "MIGRATIONS_PASSED",
-  created_at: "2026-05-27T01:02:03Z",
-  updated_at: "2026-05-27T01:02:04Z",
-  with_data: false,
-});
+const featBranch = (projectRef: string) =>
+  branchRow("feat-x", {
+    id: BRANCH_UUID,
+    project_ref: projectRef,
+    parent_project_ref: "bbbbbbbbbbbbbbbbbbbb",
+  });
 
 const BRANCH_CONFIG = {
   ref: BRANCH_UUID,
@@ -43,13 +38,13 @@ const respondWithBranch = (lookupRef: string) => (request: Parameters<typeof jso
   const reply = (status: number, body: unknown) =>
     Effect.succeed(jsonResponse(request, status, body));
   if (request.method === "GET" && /^\/v1\/projects\/[a-z]{20}\/branches\/feat-x$/.test(pathname)) {
-    return reply(200, branchRow(lookupRef));
+    return reply(200, featBranch(lookupRef));
   }
   if (request.method === "GET" && /^\/v1\/projects\/[a-z]{20}\/branches$/.test(pathname)) {
-    return reply(200, [branchRow(lookupRef)]);
+    return reply(200, [featBranch(lookupRef)]);
   }
   if (request.method === "POST" && /^\/v1\/projects\/[a-z]{20}\/branches$/.test(pathname)) {
-    return reply(201, branchRow(lookupRef));
+    return reply(201, featBranch(lookupRef));
   }
   if (request.method === "GET" && pathname.startsWith("/v1/branches/")) {
     return reply(200, BRANCH_CONFIG);
@@ -58,7 +53,7 @@ const respondWithBranch = (lookupRef: string) => (request: Parameters<typeof jso
     return reply(200, { message: "ok" });
   }
   if (request.method === "PATCH" && pathname.startsWith("/v1/branches/")) {
-    return reply(200, branchRow(BRANCH_PROJECT_REF));
+    return reply(200, featBranch(BRANCH_PROJECT_REF));
   }
   return reply(200, null);
 };

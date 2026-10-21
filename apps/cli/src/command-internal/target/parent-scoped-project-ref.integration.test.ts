@@ -11,6 +11,7 @@ import {
 } from "../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import { assertBlockDrift } from "../../../tests/helpers/permission-drift.ts";
+import { branchRow } from "../../../tests/helpers/remote-selection.ts";
 import { branchesParentTarget } from "../../commands/branches/branches.target.ts";
 import type { RemoteValue } from "./remote-value.ts";
 import { resolveProjectTarget } from "./resolve-project-target.ts";
@@ -29,22 +30,12 @@ interface Listing {
   readonly body: unknown;
 }
 
-const branchRow = (projectRef: string) => ({
-  id: "11111111-2222-4333-8444-555555555555",
-  name: `branch-${projectRef}`,
-  project_ref: projectRef,
-  parent_project_ref: CACHED_PARENT,
-  is_default: false,
-  persistent: false,
-  status: "MIGRATIONS_PASSED",
-  created_at: "2026-05-27T01:02:03Z",
-  updated_at: "2026-05-27T01:02:04Z",
-  with_data: true,
-});
+const parentBranch = (projectRef: string) =>
+  branchRow(`branch-${projectRef}`, { project_ref: projectRef, parent_project_ref: CACHED_PARENT });
 
 const branches = (...refs: ReadonlyArray<string>): Listing => ({
   status: 200,
-  body: refs.map(branchRow),
+  body: refs.map(parentBranch),
 });
 
 const failure = (status: number): Listing => ({ status, body: { message: "failed" } });
