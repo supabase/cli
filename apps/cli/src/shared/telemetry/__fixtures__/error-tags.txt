@@ -170,6 +170,7 @@ DbQueryNoSqlError
 DbQueryNoStdinSqlError
 DbQueryReadFileError
 DbQueryReadOnlyStatementError
+DbQuerySqlSourceConflictError
 DbQueryUnexpectedStatusError
 DbResetApplyError
 DbResetInvalidVersionError

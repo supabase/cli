@@ -39,6 +39,7 @@ import {
   DbQueryNoStdinSqlError,
   DbQueryReadFileError,
   DbQueryReadOnlyStatementError,
+  DbQuerySqlSourceConflictError,
   DbQueryUnexpectedStatusError,
 } from "./query.errors.ts";
 import {
@@ -268,6 +269,14 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     });
 
   yield* Effect.gen(function* () {
+    // Checked before the target resolves: `--file` would silently override the positional SQL,
+    // which is how `-f x.sql --remote <branch>` would otherwise target the linked project.
+    if (Option.isSome(flags.file) && Option.isSome(flags.sql)) {
+      return yield* new DbQuerySqlSourceConflictError({
+        message: "Pass SQL as an argument or with --file, not both.",
+        suggestion: "To select a branch or project with --remote, write --remote=<value>.",
+      });
+    }
     const target = yield* resolveTarget(flags);
     // Recorded now so the cache finalizer still fires if a later step fails.
     if (target.kind === "linked") yield* Ref.set(linkedRefForCache, target.ref);
@@ -298,7 +307,7 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
       return { kind: "direct", connection } satisfies QueryRoute;
     });
 
-    // 1. Resolve SQL: --file > positional arg > piped stdin.
+    // 1. Resolve SQL: --file or the positional arg (never both), else piped stdin.
     const sql = yield* Effect.gen(function* () {
       if (Option.isSome(flags.file)) {
         // A relative `--file` path resolves against the workdir, not the

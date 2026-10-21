@@ -523,6 +523,31 @@ describe("db query integration", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  it.effect(
+    "rejects --file together with a word after a bare --remote before any request or banner",
+    () => {
+      const { layer, out, telemetry, platformApi, resolvedTargets } = setup({
+        result: SELECT_RESULT,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbQuery(
+          flags({
+            sql: Option.some("feature"),
+            file: Option.some("x.sql"),
+            remote: REMOTE_LINKED,
+          }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failMessage(exit)).toBe("Pass SQL as an argument or with --file, not both.");
+        expect(platformApi.requests).toEqual([]);
+        expect(resolvedTargets).toEqual([]);
+        expect(out.stderrText).not.toContain("Target:");
+        expect(out.stdoutText).toBe("");
+        expect(telemetry.flushed).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("errors when --file cannot be read", () => {
     const { layer } = setup();
     return Effect.gen(function* () {

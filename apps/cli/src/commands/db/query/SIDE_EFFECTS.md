@@ -15,7 +15,7 @@ stack never prompts.
 
 | Path                                 | Format     | When                                                                                                                                          |
 | ------------------------------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<path>` (from `--file`)             | SQL        | when `--file` / `-f` is set (takes precedence over arg/stdin)                                                                                 |
+| `<path>` (from `--file`)             | SQL        | when `--file` / `-f` is set (rejected together with positional SQL)                                                                           |
 | stdin                                | SQL        | when piped (not a TTY) and no `--file`/positional SQL                                                                                         |
 | `supabase/config.toml`               | TOML       | local / `--remote=<url>` connection resolution                                                                                                |
 | `~/.supabase/access-token`           | plain text | a remote project or branch when `SUPABASE_ACCESS_TOKEN` unset                                                                                 |
@@ -51,6 +51,7 @@ stack never prompts.
 | Code | Condition                                                                                                                                                                                                                                 |
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success                                                                                                                                                                                                                                   |
+| `1`  | `--file` together with positional SQL (`DbQuerySqlSourceConflictError`: `Pass SQL as an argument or with --file, not both.`); no API call and no `Target:` line                                                                           |
 | `1`  | no SQL provided; empty stdin; unreadable `--file`; remote project or branch without login; query exec failure; non-201 remote status                                                                                                      |
 | `1`  | hosted target without `--read-only` in a JSON, piped, agent or non-TTY run without `--yes` or a shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`); nothing is sent                                                              |
 | `1`  | `--read-only` with a statement that does not start with `SELECT`, `WITH`, `VALUES`, `TABLE`, `SHOW`, `EXPLAIN` or `(`, or with input that ends inside a comment, quote or dollar quote (`DbQueryReadOnlyStatementError`); nothing is sent |
@@ -95,6 +96,10 @@ from the environment. Agent mode defaults the format to JSON (table for humans).
     See `output-formats.ts`.
 - **Local DDL command tags** use the raw `commandComplete` protocol tag (so
   `CREATE TABLE` etc. survive node-postgres' first-word-only parse of the tag).
+- **One SQL source.** `--file` and positional SQL are mutually exclusive and fail before the target
+  resolves, so `db query -f x.sql --remote feature` (where `feature` is read as the SQL) fails with
+  the suggestion `To select a branch or project with --remote, write --remote=<value>.` instead of
+  running against the linked project.
 - **Hosted consent.** A remote project, branch or remote `--remote=<url>` asks once, after the SQL is known and
   before it is sent: `Run a SQL statement`, with the statement (collapsed to one line, at most 120
   characters) as the detail and default No. Reading a missing SQL source (no SQL, empty stdin, unreadable
