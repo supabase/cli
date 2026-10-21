@@ -103,6 +103,23 @@ describe("permission help section across the command tree", () => {
         }
       });
 
+      it("never tests the presence of a text flag that has a default", () => {
+        for (const [path, node] of leaves) {
+          const declared = Option.getOrUndefined(readPermissions(node.command));
+          if (declared?.status !== "mapped") continue;
+          const catalog = catalogFor(path);
+          for (const entry of declared.operations) {
+            for (const condition of entry.when ?? []) {
+              if (condition.flag === undefined || condition.present === undefined) continue;
+              expect(
+                catalog.get(condition.flag)?.default,
+                `"${path}" tests whether --${condition.flag} is given, but it has a default`,
+              ).toBeUndefined();
+            }
+          }
+        }
+      });
+
       it("never turns on by default a switch a condition tests", async () => {
         for (const [path, node] of leaves) {
           const declared = Option.getOrUndefined(readPermissions(node.command));

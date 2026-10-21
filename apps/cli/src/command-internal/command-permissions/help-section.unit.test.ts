@@ -731,7 +731,7 @@ describe("permission help section", () => {
       );
     });
 
-    it("wraps a row that does not fit the help width", () => {
+    it("keeps alternatives on one line while they fit the help width", () => {
       const text = render({
         operations: [{ operationId: "v1-list-all-branches", kind: "required" }],
       });
@@ -743,6 +743,24 @@ describe("permission help section", () => {
           "    Required:",
           "      branching_development_read or branching_production_read",
         ),
+      );
+    });
+
+    it("puts each alternative on its own line once together they exceed the help width", () => {
+      const first = ["a".repeat(30)];
+      const second = ["b".repeat(30)];
+      const scheme: PermissionScheme = {
+        ...fgaScheme,
+        requirement: () => [{ requirement: { anyOf: [first, second] }, hedged: false }],
+      };
+      const text = render(
+        { operations: [{ operationId: "v1-get-project", kind: "required" }] },
+        catalogOf(),
+        [scheme],
+      );
+
+      expect(text).toBe(
+        lines("PERMISSIONS", fga, "    Required:", `      ${first[0]}`, `        or ${second[0]}`),
       );
     });
 
