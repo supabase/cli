@@ -1675,6 +1675,81 @@ describe("db diff", () => {
       });
     });
 
+    describe("a --from/--to value that reads as a branch name no branch matches", () => {
+      const accepted = (flag: string) =>
+        `${flag} accepts local, migrations, remote, a project ref, a branch of the linked project, or a postgresql:// URL.`;
+      const failWith = (
+        value: string,
+        side: "from" | "to",
+        opts: { readonly linked: boolean; readonly branch?: string },
+      ) => {
+        const branchApi = branchListApi(opts.branch);
+        const s = setup(tmp.current, {
+          isLocal: false,
+          projectId: opts.linked ? Option.some(VALID_REF) : Option.none(),
+          diffSql: "create table e ();\n",
+        });
+        const other = side === "from" ? "to" : "from";
+        return dbDiff(
+          flags({ [side]: Option.some(value), [other]: Option.some("migrations") }),
+        ).pipe(Effect.provide(Layer.merge(s.layer, branchApi.layer)), Effect.flip);
+      };
+
+      it.effect.each([
+        { side: "from", value: "lcoal", keyword: "local" },
+        { side: "to", value: "lcoal", keyword: "local" },
+        { side: "from", value: "migraitons", keyword: "migrations" },
+        { side: "to", value: "remtoe", keyword: "remote" },
+        { side: "from", value: "Locall", keyword: "local" },
+      ] as const)(
+        "--$side $value suggests --$side=$keyword before listing what it accepts",
+        ({ side, value, keyword }) =>
+          Effect.gen(function* () {
+            const error = yield* failWith(value, side, { linked: true });
+            expect(error).toMatchObject({
+              _tag: "LinkBranchNotFoundError",
+              suggestion: `Did you mean --${side}=${keyword}? ${accepted(`--${side}`)}`,
+            });
+          }),
+      );
+
+      it.effect("lists what --from accepts when the value is not near a keyword", () =>
+        Effect.gen(function* () {
+          const error = yield* failWith("feature-y", "from", { linked: true });
+          expect(error).toMatchObject({
+            _tag: "LinkBranchNotFoundError",
+            suggestion: accepted("--from"),
+          });
+        }),
+      );
+
+      it.effect("adds the same suggestion when no project is linked to look the branch up in", () =>
+        Effect.gen(function* () {
+          const error = yield* failWith("lcoal", "to", { linked: false });
+          expect(error).toMatchObject({
+            _tag: "LinkBranchNotLinkedError",
+            suggestion: `Did you mean --to=local? ${accepted("--to")}`,
+          });
+        }),
+      );
+
+      it.effect("still resolves a real branch whose name is near a keyword", () => {
+        const s = setup(tmp.current, {
+          isLocal: false,
+          projectId: Option.some(VALID_REF),
+          diffSql: "create table e ();\n",
+        });
+        return Effect.gen(function* () {
+          yield* dbDiff(flags({ from: Option.some("locale"), to: Option.some("migrations") })).pipe(
+            Effect.provide(Layer.merge(s.layer, branchListApi("locale").layer)),
+          );
+          expect(s.resolverCalls.map((call) => call.target)).toEqual([
+            expect.objectContaining({ kind: "linked", ref: BRANCH_PROJECT_REF, source: "flag" }),
+          ]);
+        });
+      });
+    });
+
     describe("when the project's database is unreachable over IPv6 and has no pooler URL", () => {
       const message = "IPv6 is not supported on your current network";
 

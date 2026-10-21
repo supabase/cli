@@ -255,7 +255,12 @@ a postgresql:// URL; convert a connection string to a postgresql:// URL and pass
   resolves, and the default `Target:` hint is not printed. The linked project resolves once, so
   `--from remote --to remote` announces it once, and a branch or ref used on both sides shares
   one connection. A branch endpoint looks the name up in the branch list of
-  `SUPABASE_PROJECT_ID`, else the linked project. `--use-pgadmin` honors the same selection
+  `SUPABASE_PROJECT_ID`, else the linked project. When no such branch exists, or no usable link
+  can be searched, the error's suggestion is
+  `--from accepts local, migrations, remote, a project ref, a branch of the linked project, or a postgresql:// URL.`
+  (`--to` for the other side), led by `Did you mean --from=local?` when the value is within two
+  edits of `local`, `migrations` or `remote`; a branch that does exist, `locale` included, still
+  resolves. `--use-pgadmin` honors the same selection
   (CLI-1968 — same target resolve);
   `--use-pg-schema` is removed and rejects before any target resolution happens (see Notes
   below).

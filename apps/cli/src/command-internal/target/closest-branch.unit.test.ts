@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { closestByName, nearMissByName } from "./closest-branch.ts";
+import { closestByName, closestWord, nearMissByName } from "./closest-branch.ts";
 
 const branches = ["feature-x", "staging", "Main", "add_profiles", "db"].map((name) => ({ name }));
 
@@ -74,5 +74,33 @@ describe("nearMissByName", () => {
 
   it("finds nothing among no branches", () => {
     expect(nearMissByName([], "staging", () => false)).toBeUndefined();
+  });
+});
+
+describe("closestWord", () => {
+  const words = ["local", "migrations", "remote"];
+
+  it.each([
+    { word: "lcoal", expected: "local" },
+    { word: "LOCAL", expected: "local" },
+    { word: "loc", expected: "local" },
+    { word: "locall", expected: "local" },
+    { word: "remove", expected: "remote" },
+    { word: "migraitons", expected: "migrations" },
+    { word: "  remtoe ", expected: "remote" },
+  ])("finds $expected for $word within two edits", ({ word, expected }) => {
+    expect(closestWord(words, word, 2)).toBe(expected);
+  });
+
+  it.each(["lo", "main", "feature-x", "migrate", ""])(
+    "finds nothing for %s, which is more than two edits from every word",
+    (word) => {
+      expect(closestWord(words, word, 2)).toBeUndefined();
+    },
+  );
+
+  it("takes the nearest word, then the earlier one", () => {
+    expect(closestWord(["abcd", "abce"], "abcf", 2)).toBe("abcd");
+    expect(closestWord(["abxx", "abcx"], "abcd", 2)).toBe("abcx");
   });
 });

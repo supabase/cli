@@ -1,6 +1,7 @@
 import { Result } from "effect";
 
 import { DbConfigIpv6Error } from "../../../command-internal/db-config.errors.ts";
+import { closestWord } from "../../../command-internal/target/closest-branch.ts";
 import {
   parseNamedRemote,
   type NamedRemoteRejection,
@@ -52,6 +53,17 @@ export function classifyExplicitRef(ref: string): ExplicitRef {
     }
   }
 }
+
+const KEYWORDS = ["local", "migrations", "remote"];
+
+const KEYWORD_TYPO_EDITS = 2;
+
+/** The suggestion for a `--from`/`--to` value read as a branch name that no branch matches. */
+export const unresolvedBranchSuggestion = (flag: "--from" | "--to", value: string): string => {
+  const accepted = `${flag} accepts local, migrations, remote, a project ref, a branch of the linked project, or a postgresql:// URL.`;
+  const keyword = closestWord(KEYWORDS, value, KEYWORD_TYPO_EDITS);
+  return keyword === undefined ? accepted : `Did you mean ${flag}=${keyword}? ${accepted}`;
+};
 
 const replacementOf = (remote: RemoteValue): string => {
   switch (remote._tag) {
