@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { commandTreeFor } from "../../../tests/helpers/command-flags.ts";
 import type { PermissionVariant } from "../../../tests/helpers/permission-registry.ts";
 import { readPermissions } from "./command-permissions.annotation.ts";
-import { fgaRequestSets, fgaSetForQuery } from "./fga-request-sets.ts";
+import { fgaOperationNotes, fgaRequestSets, fgaSetForQuery } from "./fga-request-sets.ts";
 
 const VARIANTS: ReadonlyArray<PermissionVariant> = [
   undefined,
@@ -26,6 +26,13 @@ describe("FGA request sets", () => {
         ),
         `${operationId} spec sets do not include ${permissions.join(" + ")}`,
       ).toBe(true);
+    }
+  });
+
+  it("only add a note for an operation the API spec lists no FGA set for", () => {
+    expect(fgaOperationNotes.size).toBeGreaterThan(0);
+    for (const operationId of fgaOperationNotes.keys()) {
+      expect(operationPermissions[operationId]?.fga, `${operationId} spec sets`).toEqual([]);
     }
   });
 

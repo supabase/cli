@@ -1,6 +1,6 @@
 import { operationPermissions } from "@supabase/api/permissions";
 
-import { fgaSetForQuery } from "./fga-request-sets.ts";
+import { fgaOperationNotes, fgaSetForQuery } from "./fga-request-sets.ts";
 import type { OperationEntry } from "./model.ts";
 
 type PermissionKind = OperationEntry["kind"];
@@ -41,14 +41,14 @@ function withoutSupersets(sets: Alternatives): Alternatives {
 
 export const fgaScheme: PermissionScheme = {
   id: "fga",
-  title: "Personal access token (FGA)",
+  title: "Scoped access token",
   requirement: (operationId, request) => {
     const forRequest = fgaSetForQuery(operationId, request?.query);
     if (forRequest !== undefined) return [forRequest];
     const sets = operationPermissions[operationId]?.fga ?? [];
     return sets.length === 0 ? undefined : withoutSupersets(sets);
   },
-  missing: () => NO_LISTING,
+  missing: (_kind, operationId) => fgaOperationNotes.get(operationId) ?? NO_LISTING,
 };
 
 /** Resolves OAuth scopes; register it in {@link permissionSchemes} to show them in help. */

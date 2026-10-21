@@ -56,20 +56,58 @@ describe("permission help section across the command tree", () => {
         return new Map([...rootFlags, ...inherited, ...ownFlags].map((flag) => [flag.name, flag]));
       };
 
+      const paramsFor = (path: string) => {
+        const parts = path.split(" ");
+        return new Map(
+          [
+            ...userGlobalFlagParams(rootCommandForFeatures(variant)),
+            ...parts.flatMap((_, index) => {
+              const ancestor = tree.get(parts.slice(0, index + 1).join(" "));
+              return ancestor === undefined ? [] : ownParams(ancestor.command);
+            }),
+          ].map((param) => [unwrapParam(param)?.single.name, param] as const),
+        );
+      };
+
+      it("gives a flag a default only when parsing no arguments yields that value", async () => {
+        for (const [path, node] of leaves) {
+          const declared = Option.getOrUndefined(readPermissions(node.command));
+          if (declared?.status !== "mapped") continue;
+          const params = paramsFor(path);
+          // Help rebuilds a parent group's flags without defaults, so only these carry one.
+          const known = new Map(
+            [...rootFlags, ...permissionFlagsOf(ownParams(node.command))].map((flag) => [
+              flag.name,
+              flag,
+            ]),
+          );
+          const tested = new Set(
+            declared.operations.flatMap((entry) =>
+              (entry.when ?? []).flatMap((condition) =>
+                condition.oneOf === undefined ? [] : [condition.flag],
+              ),
+            ),
+          );
+          for (const flag of tested) {
+            const param = params.get(flag);
+            if (flag === undefined || param === undefined) continue;
+            const exit = await Effect.runPromiseExit(
+              param.parse({ flags: {}, arguments: [] }).pipe(Effect.provide(BunServices.layer)),
+            );
+            const parsed = Exit.isSuccess(exit) ? exit.value[1] : undefined;
+            expect(
+              known.get(flag)?.default,
+              `"${path}" --${flag} default differs from parsing no arguments`,
+            ).toBe(typeof parsed === "string" ? parsed : undefined);
+          }
+        }
+      });
+
       it("never turns on by default a switch a condition tests", async () => {
         for (const [path, node] of leaves) {
           const declared = Option.getOrUndefined(readPermissions(node.command));
           if (declared?.status !== "mapped") continue;
-          const parts = path.split(" ");
-          const params = new Map(
-            [
-              ...userGlobalFlagParams(rootCommandForFeatures(variant)),
-              ...parts.flatMap((_, index) => {
-                const ancestor = tree.get(parts.slice(0, index + 1).join(" "));
-                return ancestor === undefined ? [] : ownParams(ancestor.command);
-              }),
-            ].map((param) => [unwrapParam(param)?.single.name, param] as const),
-          );
+          const params = paramsFor(path);
           const tested = new Set(
             declared.operations.flatMap((entry) =>
               (entry.when ?? []).flatMap((condition) =>

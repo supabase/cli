@@ -296,7 +296,8 @@ function textOfVariable(
       ? flag.choices.filter((value) => values.has(value))
       : [...values].filter((value) => ![ABSENT, EMPTY, SET].includes(value)).sort();
   if (literals.length > 0) {
-    return { positive: [`${name}=${literals.join("|")}${values.has(ABSENT) ? " or unset" : ""}`] };
+    const shown = literals.map((value) => (value === flag?.default ? `${value} (default)` : value));
+    return { positive: [`${name}=${shown.join("|")}${values.has(ABSENT) ? " or unset" : ""}`] };
   }
   if (values.has(ABSENT)) return values.has(SET) ? {} : { negative: [name] };
   if (values.has(EMPTY) && !values.has(SET)) return { positive: [`${name}=""`] };
@@ -388,7 +389,12 @@ export function commonConditions(
 
 /** One restriction as data: a flag takes one of `values`, or the database target is one of `target`. */
 export type ConditionData =
-  | { readonly flag: string; readonly values: ReadonlyArray<string> }
+  | {
+      readonly flag: string;
+      readonly values: ReadonlyArray<string>;
+      /** The flag's value when absent, present only when `values` includes it. */
+      readonly default?: string;
+    }
   | { readonly target: ReadonlyArray<string> };
 
 /** One way a group can apply: every condition holds. */
@@ -413,7 +419,11 @@ function conditionData(
     return rank === 0 ? a.localeCompare(b) : rank;
   });
   const names = ordered.map((value) => SENTINEL_NAMES.get(value) ?? value);
-  return variable === TARGET ? { target: names } : { flag: variable, values: names };
+  if (variable === TARGET) return { target: names };
+  const fallback = context.catalog.get(variable)?.default;
+  return fallback !== undefined && names.includes(fallback)
+    ? { flag: variable, values: names, default: fallback }
+    : { flag: variable, values: names };
 }
 
 /** The condition as the alternatives it allows, or `undefined` when it always holds. */

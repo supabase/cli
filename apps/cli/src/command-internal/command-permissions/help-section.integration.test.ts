@@ -59,7 +59,7 @@ describe("token permissions in command help", () => {
       expect(text.slice(text.indexOf("PERMISSIONS"))).toContain(
         [
           "PERMISSIONS",
-          "  Personal access token (FGA):",
+          "  Scoped access token:",
           "    Required with --reveal:",
           "      api_gateway_keys_read + api_gateway_keys_secret_read",
           "    Required without --reveal:",
@@ -84,7 +84,7 @@ describe("token permissions in command help", () => {
         schemes: [
           {
             scheme: "fga",
-            title: "Personal access token (FGA)",
+            title: "Scoped access token",
             groups: [
               {
                 heading: "Required with --reveal",

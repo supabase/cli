@@ -31,7 +31,7 @@ function render(
 }
 
 const lines = (...text: ReadonlyArray<string>) => text.join("\n");
-const fga = "  Personal access token (FGA):";
+const fga = "  Scoped access token:";
 
 describe("permission help section", () => {
   describe("conditions", () => {
@@ -160,6 +160,38 @@ describe("permission help section", () => {
           "      project_admin_read",
         ),
       );
+    });
+
+    it("marks a flag's default value in text and in data, only when the condition includes it", () => {
+      const lang = Flag.Literals("lang", ["typescript", "go", "swift"] as const).pipe(
+        Flag.withDefault("typescript" as const),
+      );
+      const declaration = (values: ReadonlyArray<string>): Declaration => ({
+        operations: [
+          { operationId: "v1-list-all-projects", kind: "required" },
+          {
+            operationId: "v1-get-project",
+            kind: "required",
+            when: [{ flag: "lang", oneOf: values }],
+          },
+        ],
+      });
+      const catalog = catalogOf(lang);
+      const groupOf = (values: ReadonlyArray<string>) => {
+        const section = resolvePermissionSection(mapped(declaration(values)), catalog);
+        if (section?.status !== "mapped") throw new Error("expected a mapped section");
+        return section.schemes[0]?.groups[1];
+      };
+
+      expect(groupOf(["typescript"])).toMatchObject({
+        heading: "Required with --lang=typescript (default)",
+        when: [{ all: [{ flag: "lang", values: ["typescript"], default: "typescript" }] }],
+      });
+      expect(groupOf(["typescript", "go"])).toMatchObject({
+        heading: "Required with --lang=typescript (default)|go",
+      });
+      expect(groupOf(["go"])?.when).toEqual([{ all: [{ flag: "lang", values: ["go"] }] }]);
+      expect(groupOf(["go"])?.heading).toBe("Required with --lang=go");
     });
 
     it("ignores a condition on a flag the command lacks when it holds for an unset flag", () => {
@@ -672,7 +704,9 @@ describe("permission help section", () => {
     });
 
     it("says when the spec lists no token permission for an operation", () => {
-      const text = render({ operations: [{ operationId: "v1-get-profile", kind: "required" }] });
+      const text = render({
+        operations: [{ operationId: "v1-authorize-user", kind: "required" }],
+      });
 
       expect(text).toBe(
         lines(
@@ -680,6 +714,19 @@ describe("permission help section", () => {
           fga,
           "    Required:",
           "      no token permission listed in the API spec",
+        ),
+      );
+    });
+
+    it("asks for a user-scoped token where the profile endpoint rejects other tokens", () => {
+      const text = render({ operations: [{ operationId: "v1-get-profile", kind: "required" }] });
+
+      expect(text).toBe(
+        lines(
+          "PERMISSIONS",
+          fga,
+          "    Required:",
+          "      a user-scoped token (project- and organization-scoped tokens are rejected)",
         ),
       );
     });

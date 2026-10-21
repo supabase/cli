@@ -1,7 +1,8 @@
 /**
- * The FGA permission set an operation needs for a request detail the API spec does not describe.
- * The spec lists the secret-read set for the api-keys operation but not which request needs it;
- * `reveal=true`, which returns full secret keys, is taken to be that request.
+ * A CLI-side correction to the API spec's FGA permissions: the set an operation needs for a request
+ * detail the spec does not describe. The spec lists the secret-read set for the api-keys operation
+ * but not which request needs it; `reveal=true`, which returns full secret keys, is taken to be that
+ * request.
  */
 interface FgaRequestSet {
   readonly operationId: string;
@@ -16,6 +17,14 @@ export const fgaRequestSets: ReadonlyArray<FgaRequestSet> = [
     permissions: ["api_gateway_keys_read", "api_gateway_keys_secret_read"],
   },
 ];
+
+/**
+ * What to say about an operation for which the spec lists no FGA set. The profile endpoint rejects
+ * project- and organization-scoped tokens.
+ */
+export const fgaOperationNotes: ReadonlyMap<string, string> = new Map([
+  ["v1-get-profile", "a user-scoped token (project- and organization-scoped tokens are rejected)"],
+]);
 
 /** The set an operation needs for `query`, or `undefined` when the spec's own sets apply. */
 export function fgaSetForQuery(

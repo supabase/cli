@@ -14,6 +14,8 @@ export interface PermissionFlag {
   readonly choices: ReadonlyArray<string>;
   /** Declared with `Flag.optional` outermost, so it can be unset; a flag with a default is not. */
   readonly optional: boolean;
+  /** The value a `choice` or `text` flag takes when absent, when it is declared with `Flag.withDefault`. */
+  readonly default?: string;
 }
 
 /** The flags a command accepts, by name. */
@@ -28,6 +30,24 @@ export class CommandFlagsAnnotation extends Context.Service<
   () => ReadonlyArray<PermissionFlag>
 >()("supabase/CommandFlags") {}
 
+function isMapParam(param: Param.Any): param is Param.Map<Param.ParamKind, unknown, unknown> {
+  return param._tag === "Map" && "param" in param && "f" in param && typeof param.f === "function";
+}
+
+/**
+ * The value `Flag.withDefault` gives an absent flag, read from the `Map` over `Optional` it builds.
+ * Any other shape, a throwing mapper or a non-string result yields no default.
+ */
+function defaultOf(param: Param.Any): string | undefined {
+  if (!isMapParam(param) || param.param._tag !== "Optional") return undefined;
+  try {
+    const value = param.f(Option.none());
+    return typeof value === "string" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function permissionFlagsOf(
   params: ReadonlyArray<Param.AnyFlag>,
 ): ReadonlyArray<PermissionFlag> {
@@ -41,6 +61,8 @@ export function permissionFlagsOf(
         : choices === undefined
           ? "text"
           : "choice";
+    const fallback = kind === "boolean" ? undefined : defaultOf(param);
+    const known = fallback !== undefined && (choices === undefined || choices.includes(fallback));
     return [
       {
         name: single.name,
@@ -48,6 +70,7 @@ export function permissionFlagsOf(
         hidden: single.hidden,
         choices: choices ?? [],
         optional: param._tag === "Optional",
+        ...(known ? { default: fallback } : {}),
       },
     ];
   });
