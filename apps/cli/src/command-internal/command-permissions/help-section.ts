@@ -3,6 +3,7 @@ import type { HelpDoc } from "effect/cli";
 
 import { CommandPermissionsAnnotation } from "./command-permissions.annotation.ts";
 import {
+  alternativesOf,
   conditionContext,
   commonConditions,
   conditionImplies,
@@ -15,7 +16,13 @@ import {
   termOf,
   withoutVariables,
 } from "./permission-conditions.ts";
-import type { Condition, ConditionContext, Term } from "./permission-conditions.ts";
+import type {
+  Alternative,
+  Condition,
+  ConditionContext,
+  ConditionData,
+  Term,
+} from "./permission-conditions.ts";
 import { CommandFlagsAnnotation, flagCatalogFor } from "./permission-flags.ts";
 import type { FlagCatalog } from "./permission-flags.ts";
 import { permissionSchemes } from "./permission-schemes.ts";
@@ -33,6 +40,8 @@ interface PermissionGroup {
   readonly kind: PermissionKind;
   /** Whether the group depends on a prerequisite that isn't a flag. */
   readonly situational: boolean;
+  /** The ways the group applies, any one of which suffices; absent when it always applies. */
+  readonly when?: ReadonlyArray<Alternative>;
   readonly rows: ReadonlyArray<PermissionRow>;
 }
 
@@ -47,7 +56,10 @@ export type PermissionSection =
   | { readonly status: "unmapped" }
   | {
       readonly status: "mapped";
+      /** What the whole section depends on, in words. */
       readonly note?: string;
+      /** The conditions behind `note`, all of which must hold for any group to apply. */
+      readonly when?: ReadonlyArray<ConditionData>;
       readonly schemes: ReadonlyArray<SchemeSection>;
     };
 
@@ -136,33 +148,48 @@ function schemeSection(
   const groups = new Map<
     string,
     {
+      heading: string;
       kind: PermissionKind;
       situational: boolean;
       unconditional: boolean;
+      when: ReadonlyArray<Alternative> | undefined;
       rows: Array<PermissionRow>;
     }
   >();
   for (const bucket of shown) {
     const { flags, remote } = conditionText(bucket.condition, context);
     const heading = headingFor(bucket.kind, bucket.situational, flags, remote);
+    const when = alternativesOf(bucket.condition, context);
     const group = groups.get(heading) ?? {
+      heading,
       kind: bucket.kind,
       situational: bucket.situational,
       unconditional: flags === "" && !remote,
+      when,
       rows: [],
     };
+    // Conditions that read the same in the heading, such as `--linked` as a flag and as the
+    // database target, share one group, so the group applies under either.
+    if (group.when !== undefined && when !== undefined) {
+      const known = new Set(group.when.map((alternative) => JSON.stringify(alternative)));
+      group.when = [
+        ...group.when,
+        ...when.filter((alternative) => !known.has(JSON.stringify(alternative))),
+      ];
+    }
     group.rows.push(bucket.row);
     groups.set(heading, group);
   }
   return {
     scheme: scheme.id,
     title: scheme.title,
-    groups: [...groups]
-      .sort(([, a], [, b]) => rank(a) - rank(b))
-      .map(([heading, group]) => ({
-        heading,
+    groups: [...groups.values()]
+      .sort((a, b) => rank(a) - rank(b))
+      .map((group) => ({
+        heading: group.heading,
         kind: group.kind,
         situational: group.situational,
+        ...(group.when === undefined ? {} : { when: group.when }),
         rows: group.rows,
       })),
   };
@@ -212,9 +239,14 @@ export function resolvePermissionSection(
   ]
     .filter((sentence) => sentence !== "")
     .join(" ");
+  const when: ReadonlyArray<ConditionData> = [
+    ...(liftTarget ? [{ target: ["linked"] }] : []),
+    ...common.conditions,
+  ];
   return {
     status: "mapped",
     ...(note === "" ? {} : { note }),
+    ...(when.length === 0 ? {} : { when }),
     schemes: schemes.map((scheme) => schemeSection(scheme, terms, context)),
   };
 }

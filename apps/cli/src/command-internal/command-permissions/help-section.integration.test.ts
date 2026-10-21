@@ -90,18 +90,21 @@ describe("token permissions in command help", () => {
                 heading: "Required with --reveal",
                 kind: "required",
                 situational: false,
+                when: [{ all: [{ flag: "reveal", values: ["true"] }] }],
                 rows: [{ anyOf: [["api_gateway_keys_read", "api_gateway_keys_secret_read"]] }],
               },
               {
                 heading: "Required without --reveal",
                 kind: "required",
                 situational: false,
+                when: [{ all: [{ flag: "reveal", values: ["false"] }] }],
                 rows: [{ anyOf: [["api_gateway_keys_read"]] }],
               },
               {
                 heading: "May be required (without --project-ref)",
                 kind: "required",
                 situational: true,
+                when: [{ all: [{ flag: "project-ref", values: ["unset", "empty"] }] }],
                 rows: [{ anyOf: [["projects_read"]] }],
               },
               {

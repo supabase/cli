@@ -764,6 +764,171 @@ describe("permission help section", () => {
     });
   });
 
+  describe("structured conditions", () => {
+    const whenOf = (declaration: Declaration, catalog: FlagCatalog) => {
+      const section = resolvePermissionSection(mapped(declaration), catalog);
+      if (section?.status !== "mapped") throw new Error("expected a mapped section");
+      return {
+        shared: section.when,
+        groups: section.schemes.flatMap((scheme) =>
+          scheme.groups.map((group) => [group.heading, group.when] as const),
+        ),
+      };
+    };
+
+    it("gives each group the flag values it applies to, naming an unset or empty flag", () => {
+      const { groups } = whenOf(
+        {
+          operations: [
+            { operationId: "v1-list-all-projects", kind: "required" },
+            {
+              operationId: "v1-get-project",
+              kind: "required",
+              when: [{ flag: "dry", is: false }],
+            },
+            {
+              operationId: "v1-get-pooler-config",
+              kind: "required",
+              when: [{ flag: "project-ref", present: false }],
+            },
+          ],
+        },
+        catalogOf(switchFlag("dry"), projectRef),
+      );
+
+      expect(groups).toEqual([
+        ["Required", undefined],
+        ["Required without --dry", [{ all: [{ flag: "dry", values: ["false"] }] }]],
+        [
+          "Required without --project-ref",
+          [{ all: [{ flag: "project-ref", values: ["unset", "empty"] }] }],
+        ],
+      ]);
+    });
+
+    it("lists each way a group can apply as its own alternative", () => {
+      const operation = { operationId: "v1-get-pooler-config", kind: "required" } as const;
+      const { groups } = whenOf(
+        {
+          operations: [
+            { operationId: "v1-list-all-projects", kind: "required" },
+            { ...operation, when: [{ flag: "from", oneOf: ["linked"] }] },
+            {
+              ...operation,
+              when: [
+                { flag: "to", oneOf: ["linked"] },
+                { flag: "dry", is: true },
+              ],
+            },
+          ],
+        },
+        catalogOf(
+          Flag.String("from").pipe(Flag.optional),
+          Flag.String("to").pipe(Flag.optional),
+          switchFlag("dry"),
+        ),
+      );
+
+      expect(groups[1]?.[1]).toEqual([
+        { all: [{ flag: "from", values: ["linked"] }] },
+        {
+          all: [
+            { flag: "to", values: ["linked"] },
+            { flag: "dry", values: ["true"] },
+          ],
+        },
+      ]);
+    });
+
+    it("reports what holds for every group as one shared condition", () => {
+      const { shared, groups } = whenOf(
+        {
+          operations: [
+            {
+              operationId: "v1-list-all-projects",
+              kind: "required",
+              when: [{ flag: "local", is: false }],
+            },
+            {
+              operationId: "v1-get-project",
+              kind: "best-effort",
+              when: [{ flag: "local", is: false }],
+            },
+          ],
+        },
+        catalogOf(switchFlag("local")),
+      );
+
+      expect(shared).toEqual([{ flag: "local", values: ["false"] }]);
+      expect(groups.map(([, when]) => when)).toEqual([undefined, undefined]);
+    });
+
+    it("names the linked project as the shared target when it is the default", () => {
+      const { shared } = whenOf(
+        {
+          dbTargetDefault: "linked",
+          operations: [
+            {
+              operationId: "v1-list-all-projects",
+              kind: "required",
+              when: [{ dbTarget: ["linked"] }],
+            },
+          ],
+        },
+        catalogOf(switchFlag("local"), switchFlag("linked")),
+      );
+
+      expect(shared).toEqual([{ target: ["linked"] }]);
+    });
+
+    it("combines conditions that read the same in one heading", () => {
+      const { groups } = whenOf(
+        {
+          dbTargetDefault: "local",
+          operations: [
+            { operationId: "v1-list-all-projects", kind: "required" },
+            {
+              operationId: "v1-get-project",
+              kind: "required",
+              when: [{ dbTarget: ["linked"] }],
+            },
+            {
+              operationId: "v1-get-pooler-config",
+              kind: "required",
+              when: [{ flag: "linked", is: true }],
+            },
+          ],
+        },
+        catalogOf(switchFlag("local"), switchFlag("linked")),
+      );
+
+      expect(groups[1]).toEqual([
+        "Required with --linked",
+        [{ all: [{ target: ["linked"] }] }, { all: [{ flag: "linked", values: ["true"] }] }],
+      ]);
+    });
+
+    it("names a target in a group's condition when not every entry depends on it", () => {
+      const { shared, groups } = whenOf(
+        {
+          dbTargetDefault: "local",
+          operations: [
+            {
+              operationId: "v1-list-all-projects",
+              kind: "required",
+              when: [{ dbTarget: ["linked"] }],
+            },
+            { operationId: "v1-get-project", kind: "required" },
+          ],
+        },
+        catalogOf(switchFlag("local"), switchFlag("linked")),
+      );
+
+      expect(shared).toBeUndefined();
+      expect(groups[1]).toEqual(["Required with --linked", [{ all: [{ target: ["linked"] }] }]]);
+    });
+  });
+
   describe("status", () => {
     it("says a command's permissions are not documented when it is unmapped", () => {
       const unmapped: CommandPermissions = { status: "unmapped", reason: "go-delegated" };

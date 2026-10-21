@@ -346,6 +346,7 @@ export function commonConditions(
   context: ConditionContext,
 ): {
   variables: ReadonlyArray<string>;
+  conditions: ReadonlyArray<ConditionData>;
   positive: ReadonlyArray<string>;
   negative: ReadonlyArray<string>;
 } {
@@ -365,7 +366,52 @@ export function commonConditions(
   );
   return {
     variables: usable.map(({ variable }) => variable),
+    conditions: usable.flatMap(({ variable }) => {
+      const values = first?.get(variable);
+      return values === undefined ? [] : [conditionData(variable, values, context)];
+    }),
     positive: usable.flatMap(({ text }) => text.positive ?? []),
     negative: usable.flatMap(({ text }) => text.negative ?? []),
   };
+}
+
+/** One restriction as data: a flag takes one of `values`, or the database target is one of `target`. */
+export type ConditionData =
+  | { readonly flag: string; readonly values: ReadonlyArray<string> }
+  | { readonly target: ReadonlyArray<string> };
+
+/** One way a group can apply: every condition holds. */
+export interface Alternative {
+  readonly all: ReadonlyArray<ConditionData>;
+}
+
+const SENTINEL_NAMES = new Map([
+  [ABSENT, "unset"],
+  [EMPTY, "empty"],
+  [SET, "set"],
+]);
+
+function conditionData(
+  variable: string,
+  values: ReadonlySet<string>,
+  context: ConditionContext,
+): ConditionData {
+  const domain = context.domainOf(variable) ?? [];
+  const ordered = [...values].sort((a, b) => {
+    const rank = domain.indexOf(a) - domain.indexOf(b);
+    return rank === 0 ? a.localeCompare(b) : rank;
+  });
+  const names = ordered.map((value) => SENTINEL_NAMES.get(value) ?? value);
+  return variable === TARGET ? { target: names } : { flag: variable, values: names };
+}
+
+/** The condition as the alternatives it allows, or `undefined` when it always holds. */
+export function alternativesOf(
+  condition: Condition,
+  context: ConditionContext,
+): ReadonlyArray<Alternative> | undefined {
+  if (condition.some((term) => term.size === 0)) return undefined;
+  return condition.map((term) => ({
+    all: [...term].map(([variable, values]) => conditionData(variable, values, context)),
+  }));
 }
