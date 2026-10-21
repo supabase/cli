@@ -87,13 +87,12 @@ export const ignoredYesFiles = Effect.gen(function* () {
   });
   const projectEnv = yield* envNameFrom("SUPABASE_ENV");
 
-  const definitions = [
-    ...(yield* autoloadedDefinitions(host.value)),
+  const projectDefinitions = [
     ...(yield* definitionsIn(host.value, path.join(workdir, "supabase"), projectEnv)),
     ...(yield* definitionsIn(host.value, workdir, projectEnv)),
-  ];
-  const files = definitions
-    .filter(({ value }) => Option.isNone(value) || parseEnvBool(value.value))
-    .map(({ file }) => path.relative(cwd, file));
+  ].filter(({ value }) => Option.isNone(value) || parseEnvBool(value.value));
+  const files = [...(yield* autoloadedDefinitions(host.value)), ...projectDefinitions].map(
+    ({ file }) => path.relative(cwd, file),
+  );
   return [...new Set(files)];
 });

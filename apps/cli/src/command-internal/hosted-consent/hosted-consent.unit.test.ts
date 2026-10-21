@@ -290,7 +290,13 @@ describe("requireHostedMutationConsent", () => {
         withDotenvDir({ ".env": contents }, (cwd) =>
           Effect.gen(function* () {
             const exit = yield* consent({ shellYes: "1", cwd }).exit;
-            expect(failureOf(exit)).toBeInstanceOf(HostedMutationConsentRequiredError);
+            const error = failureOf(exit);
+            expect(error).toBeInstanceOf(HostedMutationConsentRequiredError);
+            expect(error).toMatchObject({
+              suggestion: expect.stringContaining(
+                "SUPABASE_YES in .env does not confirm hosted changes",
+              ),
+            });
           }),
         ),
     );
