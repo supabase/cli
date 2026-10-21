@@ -9,6 +9,7 @@ import {
 } from "../../../tests/helpers/command-mocks.ts";
 import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import { branchRow } from "../../../tests/helpers/remote-selection.ts";
 import { ProjectRefNotLinkedError } from "../../config/project-ref.errors.ts";
 import { ProjectRefResolver } from "../../config/project-ref.service.ts";
 import { rootCommandForFeatures } from "../../cli/root.ts";
@@ -28,18 +29,8 @@ const FILE_REF = "filefilefilefilefile";
 const FLAG_REF = "flagflagflagflagflag";
 const BRANCH_REF = "branchprojectrefabcd";
 
-const branchRow = (name: string) => ({
-  id: "11111111-2222-4333-8444-555555555555",
-  name,
-  project_ref: BRANCH_REF,
-  parent_project_ref: FILE_REF,
-  is_default: false,
-  persistent: false,
-  status: "MIGRATIONS_PASSED",
-  created_at: "2026-05-27T01:02:03Z",
-  updated_at: "2026-05-27T01:02:04Z",
-  with_data: true,
-});
+const fileBranch = (name: string, overrides: Parameters<typeof branchRow>[1] = {}) =>
+  branchRow(name, { parent_project_ref: FILE_REF, ...overrides });
 
 const BRANCH_UUID = "11111111-2222-4333-8444-555555555555";
 
@@ -59,7 +50,7 @@ interface RunOptions {
   readonly linked?: boolean;
   readonly savedRef?: string;
   readonly args?: ReadonlyArray<string>;
-  readonly branches?: ReadonlyArray<ReturnType<typeof branchRow>>;
+  readonly branches?: ReadonlyArray<ReturnType<typeof fileBranch>>;
   readonly branchById?: { readonly status: number; readonly body: unknown };
   readonly interactive?: boolean;
 }
@@ -197,7 +188,7 @@ describe("resolveProjectTarget", () => {
         {
           savedRef: FILE_REF,
           args: ["functions", "deploy", "--remote=feature-x", `--remote=${FLAG_REF}`],
-          branches: [branchRow("feature-x")],
+          branches: [fileBranch("feature-x")],
         },
       );
       expect(failureOf(result.exit)).toMatchObject({
@@ -240,7 +231,7 @@ describe("resolveProjectTarget", () => {
     Effect.gen(function* () {
       const result = yield* run(
         { remote: { _tag: "Branch", name: "feature-x" } },
-        { savedRef: FILE_REF, branches: [branchRow("feature-x")] },
+        { savedRef: FILE_REF, branches: [fileBranch("feature-x")] },
       );
       expect(refOf(result.exit)).toBe(BRANCH_REF);
       expect(result.branchRequests).toBe(1);
@@ -253,7 +244,7 @@ describe("resolveProjectTarget", () => {
     Effect.gen(function* () {
       const result = yield* run(
         { remote: { _tag: "Branch", name: "feature-x" } },
-        { savedRef: FILE_REF, branches: [branchRow("feature-x")], interactive: true },
+        { savedRef: FILE_REF, branches: [fileBranch("feature-x")], interactive: true },
       );
       expect(refOf(result.exit)).toBe(BRANCH_REF);
       expect(result.progressEvents).toContainEqual({
@@ -267,7 +258,7 @@ describe("resolveProjectTarget", () => {
     Effect.gen(function* () {
       const result = yield* run(
         { remote: { _tag: "Branch", name: "feature-x" } },
-        { savedRef: FILE_REF, branches: [branchRow("feature-x")], interactive: false },
+        { savedRef: FILE_REF, branches: [fileBranch("feature-x")], interactive: false },
       );
       expect(refOf(result.exit)).toBe(BRANCH_REF);
       expect(result.progressEvents).toEqual([]);
@@ -279,7 +270,7 @@ describe("resolveProjectTarget", () => {
     Effect.gen(function* () {
       const result = yield* run(
         { projectRef: "feature-x" },
-        { savedRef: FILE_REF, branches: [branchRow("feature-x")] },
+        { savedRef: FILE_REF, branches: [fileBranch("feature-x")] },
       );
       expect(refOf(result.exit)).toBe(BRANCH_REF);
     }),
@@ -306,7 +297,7 @@ describe("resolveProjectTarget", () => {
         {
           savedRef: FILE_REF,
           args: ["functions", "deploy", "--remote", "feature-x"],
-          branches: [branchRow("feature-x")],
+          branches: [fileBranch("feature-x")],
         },
       );
       expect(failureOf(result.exit)).toMatchObject({
@@ -329,7 +320,7 @@ describe("resolveProjectTarget", () => {
       Effect.gen(function* () {
         const result = yield* run(
           { remote: { _tag: "Branch", name: BRANCH_UUID } },
-          { savedRef: FILE_REF, branches: [{ ...branchRow("feature-x"), id: BRANCH_UUID }] },
+          { savedRef: FILE_REF, branches: [fileBranch("feature-x", { id: BRANCH_UUID })] },
         );
         expect(refOf(result.exit)).toBe(BRANCH_REF);
         expect(result.requestedUrls).toEqual([
@@ -429,7 +420,7 @@ describe("resolveProjectTarget with detail", () => {
     Effect.gen(function* () {
       const result = yield* runDetailed(
         { remote: { _tag: "Branch", name: "feature-x" } },
-        { savedRef: FILE_REF, branches: [branchRow("feature-x")] },
+        { savedRef: FILE_REF, branches: [fileBranch("feature-x")] },
       );
       expect(successOf(result.exit)).toEqual({
         kind: "linked",
@@ -449,7 +440,7 @@ describe("resolveProjectTarget with detail", () => {
         { remote: { _tag: "Branch", name: "main" } },
         {
           savedRef: FILE_REF,
-          branches: [{ ...branchRow("main"), project_ref: FILE_REF, is_default: true }],
+          branches: [fileBranch("main", { project_ref: FILE_REF, is_default: true })],
         },
       );
       expect(successOf(result.exit)).toMatchObject({ ref: FILE_REF, isDefault: true });
@@ -460,7 +451,7 @@ describe("resolveProjectTarget with detail", () => {
     Effect.gen(function* () {
       const result = yield* runDetailed(
         { remote: { _tag: "Branch", name: "feature-x" } },
-        { savedRef: BRANCH_REF, branches: [branchRow("feature-x")] },
+        { savedRef: BRANCH_REF, branches: [fileBranch("feature-x")] },
       );
       expect(successOf(result.exit)).toMatchObject({ ref: BRANCH_REF, matchesLinkedRef: true });
     }),

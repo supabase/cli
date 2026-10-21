@@ -11,6 +11,7 @@ import {
 } from "../../../tests/helpers/command-mocks.ts";
 import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import { branchRow } from "../../../tests/helpers/remote-selection.ts";
 import { AccessTokenRequiredError, InvalidAccessTokenError } from "../../auth/errors.ts";
 import { CommandPlatformApiFactory } from "../../auth/command-platform-api-factory.service.ts";
 import { rootCommandForFeatures } from "../../cli/root.ts";
@@ -55,18 +56,8 @@ const GONE_REF = "gonegonegonegonegone";
 const SECRET_URL =
   "postgresql://postgres:hunter2@db.abcdefghijklmnopqrst.supabase.co:5432/postgres";
 
-const branchRow = (name: string, projectRef = BRANCH_REF, isDefault = false) => ({
-  id: "11111111-2222-4333-8444-555555555555",
-  name,
-  project_ref: projectRef,
-  parent_project_ref: FILE_REF,
-  is_default: isDefault,
-  persistent: false,
-  status: "MIGRATIONS_PASSED",
-  created_at: "2026-05-27T01:02:03Z",
-  updated_at: "2026-05-27T01:02:04Z",
-  with_data: true,
-});
+const fileBranch = (name: string, overrides: Parameters<typeof branchRow>[1] = {}) =>
+  branchRow(name, { parent_project_ref: FILE_REF, ...overrides });
 
 const failingListings = {
   unavailable: { status: 500, message: "boom" },
@@ -75,7 +66,7 @@ const failingListings = {
   missing: { status: 404, message: "Not found" },
 } as const;
 
-type Listing = ReadonlyArray<ReturnType<typeof branchRow>> | keyof typeof failingListings;
+type Listing = ReadonlyArray<ReturnType<typeof fileBranch>> | keyof typeof failingListings;
 
 const root = rootCommandForFeatures();
 
@@ -285,7 +276,10 @@ describe("resolveTarget", () => {
         const result = yield* run(
           "selectable",
           { ...none, ...remote({ _tag: "Branch", name: "feature-x" }) },
-          { savedRef: FILE_REF, branches: [branchRow("feature-x"), branchRow("other", FLAG_REF)] },
+          {
+            savedRef: FILE_REF,
+            branches: [fileBranch("feature-x"), fileBranch("other", { project_ref: FLAG_REF })],
+          },
         );
         expect(succeeded(result.exit)).toEqual({
           kind: "linked",
@@ -310,7 +304,7 @@ describe("resolveTarget", () => {
           {
             savedRef: FILE_REF,
             cache: { ref: FILE_REF, name: "alpha" },
-            branches: [branchRow("feature-x")],
+            branches: [fileBranch("feature-x")],
           },
         );
         expect(result.stderr).toContain(
@@ -327,7 +321,9 @@ describe("resolveTarget", () => {
           {
             savedRef: BRANCH_REF,
             cache: { ref: FILE_REF },
-            listings: { [FILE_REF]: [branchRow("feature-x"), branchRow("other", FLAG_REF)] },
+            listings: {
+              [FILE_REF]: [fileBranch("feature-x"), fileBranch("other", { project_ref: FLAG_REF })],
+            },
           },
         );
         expect(succeeded(result.exit)).toMatchObject({ ref: BRANCH_REF, parentRef: FILE_REF });
@@ -344,8 +340,8 @@ describe("resolveTarget", () => {
             savedRef: FILE_REF,
             cache: { ref: STALE_REF },
             listings: {
-              [STALE_REF]: [branchRow("feature-x", FLAG_REF)],
-              [FILE_REF]: [branchRow("feature-x")],
+              [STALE_REF]: [fileBranch("feature-x", { project_ref: FLAG_REF })],
+              [FILE_REF]: [fileBranch("feature-x")],
             },
           },
         );
@@ -365,7 +361,7 @@ describe("resolveTarget", () => {
           {
             savedRef: GONE_REF,
             cache: { ref: FILE_REF },
-            listings: { [FILE_REF]: [branchRow("feature-x")], [GONE_REF]: "missing" },
+            listings: { [FILE_REF]: [fileBranch("feature-x")], [GONE_REF]: "missing" },
           },
         );
         expect(succeeded(result.exit)).toMatchObject({ ref: BRANCH_REF, parentRef: FILE_REF });
@@ -380,7 +376,7 @@ describe("resolveTarget", () => {
           {
             savedRef: FILE_REF,
             cache: { ref: FILE_REF, name: "alpha" },
-            branches: [branchRow("main", FILE_REF, true)],
+            branches: [fileBranch("main", { project_ref: FILE_REF, is_default: true })],
           },
         );
         expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FILE_REF });
@@ -394,7 +390,7 @@ describe("resolveTarget", () => {
         const result = yield* run(
           "selectable",
           { ...none, ...remote({ _tag: "Branch", name: "main" }) },
-          { savedRef: FILE_REF, branches: [branchRow("main", FILE_REF)] },
+          { savedRef: FILE_REF, branches: [fileBranch("main", { project_ref: FILE_REF })] },
         );
         expect(result.stderr).toContain(`Target: project ${FILE_REF} · production\n`);
       }),
@@ -405,7 +401,7 @@ describe("resolveTarget", () => {
         const result = yield* run(
           "selectable",
           { ...none, ...remote({ _tag: "Branch", name: "other-name" }) },
-          { savedRef: FILE_REF, branches: [branchRow("feature-x")] },
+          { savedRef: FILE_REF, branches: [fileBranch("feature-x")] },
         );
         expect(failureOf(result.exit)).toMatchObject({
           _tag: "LinkBranchNotFoundError",
@@ -419,7 +415,7 @@ describe("resolveTarget", () => {
         const result = yield* run(
           "selectable",
           { ...none, ...remote({ _tag: "Branch", name: "feature-y" }) },
-          { savedRef: FILE_REF, branches: [branchRow("feature-x"), branchRow("main")] },
+          { savedRef: FILE_REF, branches: [fileBranch("feature-x"), fileBranch("main")] },
         );
         expect(failureOf(result.exit)).toMatchObject({
           _tag: "LinkBranchNotFoundError",
@@ -433,7 +429,10 @@ describe("resolveTarget", () => {
         const result = yield* run(
           "selectable",
           { ...none, ...remote({ _tag: "Branch", name: "mian" }) },
-          { savedRef: FILE_REF, branches: [branchRow("main", FILE_REF, true)] },
+          {
+            savedRef: FILE_REF,
+            branches: [fileBranch("main", { project_ref: FILE_REF, is_default: true })],
+          },
         );
         expect(failureOf(result.exit)).toMatchObject({ _tag: "LinkBranchNotFoundError" });
         expect(String((failureOf(result.exit) as Error).message)).toContain(
@@ -447,7 +446,7 @@ describe("resolveTarget", () => {
         const result = yield* run(
           "selectable",
           { ...none, ...remote({ _tag: "Branch", name: "ABCDEFGHIJKLMNOPQRST" }) },
-          { savedRef: FILE_REF, branches: [branchRow("main")] },
+          { savedRef: FILE_REF, branches: [fileBranch("main")] },
         );
         expect(failureOf(result.exit)).toMatchObject({
           _tag: "LinkBranchNotFoundError",
@@ -461,7 +460,7 @@ describe("resolveTarget", () => {
         const result = yield* run(
           "selectable",
           { ...none, ...remote({ _tag: "Branch", name: "ABCDEFGHIJKLMNOPQRS" }) },
-          { savedRef: FILE_REF, branches: [branchRow("main")] },
+          { savedRef: FILE_REF, branches: [fileBranch("main")] },
         );
         expect(String((failureOf(result.exit) as Error).message)).not.toContain(
           "If you meant a project ref",
@@ -535,7 +534,7 @@ describe("resolveTarget", () => {
           args,
           command,
           savedRef: FILE_REF,
-          branches: [branchRow("feature-x")],
+          branches: [fileBranch("feature-x")],
         });
         expect(failureOf(result.exit)).toMatchObject({
           _tag: "TargetRemoteAmbiguousError",
@@ -553,8 +552,8 @@ describe("resolveTarget", () => {
           savedRef: FILE_REF,
           cache: { ref: STALE_REF },
           listings: {
-            [STALE_REF]: [branchRow("other", FLAG_REF)],
-            [FILE_REF]: [branchRow("feature-x")],
+            [STALE_REF]: [fileBranch("other", { project_ref: FLAG_REF })],
+            [FILE_REF]: [fileBranch("feature-x")],
           },
         });
         expect(failureOf(result.exit)).toMatchObject({
@@ -569,7 +568,7 @@ describe("resolveTarget", () => {
         const result = yield* run("selectable", bare, {
           args,
           savedRef: FILE_REF,
-          branches: [branchRow("other")],
+          branches: [fileBranch("other")],
         });
         expect(succeeded(result.exit)).toMatchObject({ kind: "linked", ref: FILE_REF });
       }),
@@ -586,7 +585,7 @@ describe("resolveTarget", () => {
             ...linkState,
             args: ["db", "pull", "--remote", FLAG_REF],
             command,
-            branches: [branchRow("feature-x")],
+            branches: [fileBranch("feature-x")],
           });
           expect(failureOf(result.exit)).toMatchObject({
             _tag: "TargetRemoteAmbiguousError",
@@ -604,7 +603,7 @@ describe("resolveTarget", () => {
           command,
           savedRef: FILE_REF,
           cache: { ref: FILE_REF, name: "alpha" },
-          branches: [branchRow("feature-x")],
+          branches: [fileBranch("feature-x")],
         });
         expect(failureOf(result.exit)).toMatchObject({
           message: `"feature-x" is a branch of alpha (${FILE_REF}). ${options}`,
@@ -810,7 +809,7 @@ describe("resolveTarget", () => {
           args: ["db", "pull", "--remote", "feature-y"],
           command,
           savedRef: FILE_REF,
-          branches: [branchRow("feature-x"), branchRow("main")],
+          branches: [fileBranch("feature-x"), fileBranch("main")],
         });
         expect(failureOf(result.exit)).toMatchObject({
           _tag: "TargetRemoteAmbiguousError",
@@ -821,12 +820,12 @@ describe("resolveTarget", () => {
     );
 
     it.effect.each([
-      { name: "two edits from a branch", word: "feature-yz", branches: [branchRow("feature-x")] },
-      { name: "one edit from a short branch", word: "den", branches: [branchRow("dev")] },
+      { name: "two edits from a branch", word: "feature-yz", branches: [fileBranch("feature-x")] },
+      { name: "one edit from a short branch", word: "den", branches: [fileBranch("dev")] },
       {
         name: "one edit from the default branch",
         word: "mail",
-        branches: [branchRow("main", FILE_REF, true)],
+        branches: [fileBranch("main", { project_ref: FILE_REF, is_default: true })],
       },
     ])("keeps a word that is $name as an operand", ({ word, branches }) =>
       Effect.gen(function* () {
@@ -846,7 +845,7 @@ describe("resolveTarget", () => {
           args: ["db", "pull", "--remote", "stagign"],
           command,
           savedRef: FILE_REF,
-          branches: [branchRow("staging")],
+          branches: [fileBranch("staging")],
         });
         expect(failureOf(result.exit)).toMatchObject({
           _tag: "TargetRemoteAmbiguousError",
@@ -861,7 +860,7 @@ describe("resolveTarget", () => {
           args: ["db", "pull", "--remote", "Main"],
           command,
           savedRef: FILE_REF,
-          branches: [branchRow("main", FILE_REF, true)],
+          branches: [fileBranch("main", { project_ref: FILE_REF, is_default: true })],
         });
         expect(failureOf(result.exit)).toMatchObject({
           message: `"Main" isn't a branch, but "main" is. For the branch: supabase db pull --remote=main. For the linked project: supabase db pull Main --remote`,
@@ -875,7 +874,7 @@ describe("resolveTarget", () => {
           args: ["db", "pull", "--remote", "Feature-X"],
           command,
           savedRef: FILE_REF,
-          branches: [branchRow("feature-x")],
+          branches: [fileBranch("feature-x")],
         });
         expect(failureOf(result.exit)).toMatchObject({
           message: `"Feature-X" isn't a branch, but "feature-x" is. For the branch: supabase db pull --remote=feature-x. For the linked project: supabase db pull Feature-X --remote`,
@@ -889,7 +888,7 @@ describe("resolveTarget", () => {
           args: ["db", "pull", "--remote", "hunter2:pw@feature-x"],
           command,
           savedRef: FILE_REF,
-          branches: [branchRow("feature-x")],
+          branches: [fileBranch("feature-x")],
         });
         const message = String((failureOf(result.exit) as Error).message);
         expect(message).toContain(`"feature-x" is a branch`);
@@ -907,7 +906,7 @@ describe("resolveTarget", () => {
         const result = yield* run("selectable", bare, {
           args: tokens,
           savedRef: FILE_REF,
-          branches: [branchRow("feature-x")],
+          branches: [fileBranch("feature-x")],
         });
         expect(succeeded(result.exit)).toMatchObject({ kind: "linked" });
         expect(result.apiRequests).toEqual([]);
@@ -935,7 +934,7 @@ describe("resolveTarget", () => {
           args: ["db", "pull", "--remote", "feature-x"],
           command,
           savedRef: FILE_REF,
-          branches: [branchRow("feature-x")],
+          branches: [fileBranch("feature-x")],
         });
         expect(failureOf(result.exit)).toMatchObject({
           _tag: "TargetRemoteAmbiguousError",
@@ -946,7 +945,10 @@ describe("resolveTarget", () => {
 
     it.effect("does not look up branches when no project is linked", () =>
       Effect.gen(function* () {
-        const result = yield* run("selectable", bare, { args, branches: [branchRow("feature-x")] });
+        const result = yield* run("selectable", bare, {
+          args,
+          branches: [fileBranch("feature-x")],
+        });
         expect(succeeded(result.exit)).toMatchObject({ kind: "linked" });
         expect(result.apiRequests).toEqual([]);
       }),
@@ -966,7 +968,7 @@ describe("resolveTarget", () => {
             args: ["db", "push", "--remote=feature-x", "--remote"],
             command,
             savedRef: FILE_REF,
-            branches: [branchRow("feature-x")],
+            branches: [fileBranch("feature-x")],
           },
         );
         const error = failureOf(result.exit);

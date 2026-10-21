@@ -24,7 +24,11 @@ import {
 } from "./notebooks.errors.ts";
 import { notebooksPullHandler } from "./pull/pull.command.ts";
 import { notebooksPushHandler } from "./push/push.command.ts";
-import { warningsOf } from "../../../tests/helpers/remote-selection.ts";
+import {
+  BRANCH_PROJECT_REF,
+  branchRow,
+  warningsOf,
+} from "../../../tests/helpers/remote-selection.ts";
 
 const temp = useTempWorkdir("supabase-notebooks-regression-");
 const ID = "44444444-4444-4444-8444-444444444444";
@@ -635,28 +639,15 @@ describe.each(commands)("notebooks %s command wiring", (command) => {
 });
 
 describe.each(commands)("notebooks %s project selection", (command) => {
-  const BRANCH_REF = "branchprojectrefabcd";
   const none = { remote: Option.none(), projectRef: Option.none() } satisfies Selector;
   const branchesRoute = `GET /v1/projects/${NOTEBOOKS_PROJECT_REF}/branches`;
-  const branchRow = {
-    id: "11111111-2222-4333-8444-555555555555",
-    name: "feature-x",
-    project_ref: BRANCH_REF,
-    parent_project_ref: NOTEBOOKS_PROJECT_REF,
-    is_default: false,
-    persistent: false,
-    status: "MIGRATIONS_PASSED",
-    created_at: "2026-05-27T01:02:03Z",
-    updated_at: "2026-05-27T01:02:04Z",
-    with_data: true,
-  };
 
   it.effect("acts on the project of the branch --remote=<branch> names", () => {
     const { layer, http } = setup(command, {
       args: ["notebooks", command, "--remote=feature-x"],
       routes: {
-        [branchesRoute]: { status: 200, body: [branchRow] },
-        [`GET /v2/projects/${BRANCH_REF}/notebooks`]: {
+        [branchesRoute]: { status: 200, body: [branchRow("feature-x")] },
+        [`GET /v2/projects/${BRANCH_PROJECT_REF}/notebooks`]: {
           status: 200,
           body: notebookListPage({ notebooks: [] }),
         },
@@ -667,7 +658,10 @@ describe.each(commands)("notebooks %s project selection", (command) => {
         ...none,
         remote: Option.some({ _tag: "Branch", name: "feature-x" }),
       });
-      expect(http.routeKeys).toEqual([branchesRoute, `GET /v2/projects/${BRANCH_REF}/notebooks`]);
+      expect(http.routeKeys).toEqual([
+        branchesRoute,
+        `GET /v2/projects/${BRANCH_PROJECT_REF}/notebooks`,
+      ]);
       assertPermissionDrift({
         command: `notebooks ${command}`,
         activeFlags: { remote: "feature-x" },

@@ -6,10 +6,8 @@ import type { mockOutput } from "./mocks.ts";
 
 export const BRANCH_PROJECT_REF = "branchprojectrefabcd";
 
-/** A branch of the project {@link VALID_REF} whose own project is {@link BRANCH_PROJECT_REF}. */
-export const branchRow = (name: string) => ({
+const BRANCH_ROW_DEFAULTS = {
   id: "11111111-2222-4333-8444-555555555555",
-  name,
   project_ref: BRANCH_PROJECT_REF,
   parent_project_ref: VALID_REF,
   is_default: false,
@@ -18,7 +16,15 @@ export const branchRow = (name: string) => ({
   created_at: "2026-05-27T01:02:03Z",
   updated_at: "2026-05-27T01:02:04Z",
   with_data: true,
-});
+};
+
+type BranchRow = typeof BRANCH_ROW_DEFAULTS & { readonly name: string };
+
+/** A branch of the project {@link VALID_REF} whose own project is {@link BRANCH_PROJECT_REF}. */
+export const branchRow = (
+  name: string,
+  overrides: Partial<typeof BRANCH_ROW_DEFAULTS> = {},
+): BranchRow => ({ ...BRANCH_ROW_DEFAULTS, name, ...overrides });
 
 /** A platform API that only answers the linked project's branch list, with one branch `name`. */
 export const branchListApi = (name = "feature-x") =>
