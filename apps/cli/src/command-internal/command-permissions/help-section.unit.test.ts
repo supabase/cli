@@ -849,7 +849,7 @@ describe("permission help section", () => {
       );
     });
 
-    it("keeps a per-resource row apart from an any-of row over the same permissions", () => {
+    it("drops an any-of row that a per-resource row over the same permissions already covers", () => {
       const text = render({
         operations: [
           { operationId: "v1-list-all-branches", kind: "required" },
@@ -862,9 +862,28 @@ describe("permission help section", () => {
           "PERMISSIONS",
           fga,
           "    Required:",
-          "      branching_development_read or branching_production_read",
           "      branching_development_read for a preview branch",
           "        or branching_production_read for the main branch",
+        ),
+      );
+    });
+
+    it("keeps an any-of row when the per-resource row asks for different permissions", () => {
+      const text = render({
+        operations: [
+          { operationId: "v1-list-all-branches", kind: "required" },
+          { operationId: "v1-delete-a-branch", kind: "required" },
+        ],
+      });
+
+      expect(text).toBe(
+        lines(
+          "PERMISSIONS",
+          fga,
+          "    Required:",
+          "      branching_development_read or branching_production_read",
+          "      branching_development_delete for a preview branch",
+          "        or branching_production_delete for the main branch",
         ),
       );
     });

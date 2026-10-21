@@ -101,12 +101,24 @@ const sameOrBroader = (bucket: Bucket, other: Bucket) =>
   conditionImplies(bucket.condition, other.condition);
 
 /**
+ * Whether holding what `other` lists always satisfies `row`: the same row, or an any-of row whose
+ * alternatives are exactly the per-resource cases of `other`.
+ */
+function rowImpliedBy(row: PermissionRow, other: PermissionRow): boolean {
+  if (rowKey(row) === rowKey(other)) return true;
+  if (!("anyOf" in row) || !("cases" in other)) return false;
+  return other.cases.every(({ allOf }) =>
+    row.anyOf.some((alternative) => JSON.stringify(alternative) === JSON.stringify(allOf)),
+  );
+}
+
+/**
  * Whether `other` already shows this bucket's row: under a condition at least as broad or, for an
  * optional row, as required under any condition, so no heading says the command still runs
  * without a permission that another heading requires.
  */
 function absorbedBy(bucket: Bucket, other: Bucket): boolean {
-  if (other === bucket || rowKey(other.row) !== rowKey(bucket.row)) return false;
+  if (other === bucket || !rowImpliedBy(bucket.row, other.row)) return false;
   return (
     (bucket.kind === "best-effort" && other.kind === "required") || sameOrBroader(bucket, other)
   );
