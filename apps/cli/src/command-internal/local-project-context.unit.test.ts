@@ -267,6 +267,37 @@ describe("loadLocalProjectContext", () => {
     );
   });
 
+  it.effect("names the failing field when supabase/config.toml fails to decode", () => {
+    const workdir = tempRoot.current;
+    return Effect.gen(function* () {
+      yield* writeConfigToml(workdir, '[db]\nport = "abc"\n');
+
+      const error = yield* loadLocalProjectContext(
+        workdir,
+        (message) => new TestError({ message }),
+      ).pipe(Effect.flip);
+      expect(error.message).toBe('failed to read config: Expected number\n  at ["db"]["port"]');
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
+  });
+
+  it.effect("reports a TOML syntax error's position without quoting the file", () => {
+    const workdir = tempRoot.current;
+    return Effect.gen(function* () {
+      yield* writeConfigToml(
+        workdir,
+        '[edge_runtime.secrets]\nAPI_KEY = "sk_live_123"\nbroken =\n',
+      );
+
+      const error = yield* loadLocalProjectContext(
+        workdir,
+        (message) => new TestError({ message }),
+      ).pipe(Effect.flip);
+      expect(error.message).toBe(
+        "failed to read config: Invalid TOML document: incomplete declaration: value expected (line 3, column 9)",
+      );
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)));
+  });
+
   it.effect("keeps the Error: prefix when a project-root .env is malformed", () => {
     const workdir = tempRoot.current;
     return Effect.gen(function* () {

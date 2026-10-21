@@ -479,7 +479,9 @@ describe("config push integration", () => {
       const message = yield* configPush({ projectRef: Option.none() }).pipe(
         Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
       );
-      expect(message).toContain("failed to parse supabase/config.toml:");
+      expect(message).toBe(
+        "failed to parse supabase/config.toml: Invalid TOML document: incomplete key-value: cannot find end of key (line 1, column 1)",
+      );
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
@@ -504,7 +506,7 @@ describe("config push integration", () => {
       const message = yield* configPush({ projectRef: Option.none() }).pipe(
         Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
       );
-      expect(message).toContain("failed to parse supabase/config.json:");
+      expect(message).toBe("failed to parse supabase/config.json: JSON Parse error: Expected '}'");
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });

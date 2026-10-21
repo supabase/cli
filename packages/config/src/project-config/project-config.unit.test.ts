@@ -771,6 +771,13 @@ describe("fromApiProjectConfig — api section", () => {
     // default), not merely "not caller_misuse".
     expect((thrown as ProjectConfigParseError).reason ?? "api_response").toBe("api_response");
     expect((thrown as ProjectConfigParseError).apiPath).toEqual(["api", "max_rows"]);
+    expect(thrown).toHaveProperty(
+      "message",
+      expect.stringContaining(
+        "at data.attributes.api.max_rows: expected a finite number, got number",
+      ),
+    );
+    expect(thrown).not.toHaveProperty("detail");
   });
 });
 
@@ -2741,9 +2748,9 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     ["-0", -0],
     ["negative", -5],
     ["-Infinity", Number.NEGATIVE_INFINITY],
-    // TOML's `nan` literal is a real reachable document value (`smol-toml` parses
-    // `max_rows = nan` to `Number.NaN`); `NaN <= 0` is `false`, so a naive non-positive check
-    // would miss it, but `!(value > 0)` catches it since `NaN > 0` is also `false`.
+    // Config decode rejects TOML `nan`/`inf` (`Schema.Finite`), so `NaN` only reaches this arm
+    // through a caller-built `EffectiveConfig`; `NaN <= 0` is `false`, so a naive non-positive
+    // check would miss it, but `!(value > 0)` catches it since `NaN > 0` is also `false`.
     ["NaN", Number.NaN],
   ])("api.max_rows: %s is omitted on the document arm", (_description, value) => {
     const doc = fromConfigDocument({ api: { enabled: true, max_rows: value } });

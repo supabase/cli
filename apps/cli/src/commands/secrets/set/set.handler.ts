@@ -17,6 +17,7 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
+import { configParseCauseMessage } from "../../../shared/output/normalize-error.ts";
 import {
   InvalidSecretPairError,
   SecretsEnvFileOpenError,
@@ -129,13 +130,10 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
       }),
       Effect.catchTags({
         CliConfigParseError: (cause) => {
-          // `smol-toml` embeds a source codeblock (which can include real secret values) after a
-          // blank-line separator on a raw parse failure; truncate before it. A schema-decode
-          // error puts the rejected value inline instead, with no such separator, so use a fixed,
-          // content-free message there.
+          /* A schema-decode issue path names the failing entry, which can be a secret's name. */
           const shortMessage =
             cause.document === undefined
-              ? String(cause.cause).split("\n\n")[0]
+              ? configParseCauseMessage(cause.cause)
               : "schema validation failed";
           // Printed here too since a matching `[remotes.*]` block is found before decode runs,
           // even though decode then failed. Emitted ahead of the debug log below to preserve
@@ -146,7 +144,9 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
               : Effect.void
           ).pipe(
             Effect.andThen(
-              debugLogger.debug(`failed to parse supabase/config.toml: ${shortMessage}`),
+              debugLogger.debug(
+                `failed to parse supabase/${path.basename(cause.path)}: ${shortMessage}`,
+              ),
             ),
             Effect.as(recoverEdgeRuntimeConfig(cause)),
           );
