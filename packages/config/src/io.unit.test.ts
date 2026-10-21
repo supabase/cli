@@ -1,10 +1,5 @@
 import { afterEach, describe, expect, test, vi, type MockInstance } from "vitest";
 import { BunServices } from "@effect/platform-bun";
-import { mkdtempSync } from "node:fs";
-import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   Cause,
   Deferred,
@@ -18,6 +13,7 @@ import {
   PlatformError,
   Redacted,
   Schema,
+  type Scope,
 } from "effect";
 import { CliConfigSchema, toCliConfigJsonSchema } from "./base.ts";
 import { loadCliConfig as loadCliConfigFromBun } from "./bun.ts";
@@ -45,21 +41,40 @@ import { cliConfigStoreLayer } from "./cli-config.layer.ts";
 import { CliConfigStore } from "./cli-config.service.ts";
 import { CLI_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
 
-function makeTempProject(): string {
-  return mkdtempSync(join(tmpdir(), "supabase-config-"));
+function makeTempProject() {
+  return FileSystem.FileSystem.use((fs) =>
+    fs.makeTempDirectoryScoped({ prefix: "supabase-config-" }),
+  );
 }
 
-const legacyFixturePath = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "../testdata/legacy-config.toml",
-);
+const legacyFixturePath = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  return path.join(
+    path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
+    "../testdata/legacy-config.toml",
+  );
+});
 
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function runConfigEffect<A, E>(
-  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
 ): Promise<A> {
-  return Effect.runPromise(effect.pipe(Effect.provide(BunServices.layer)));
+  return Effect.runPromise(effect.pipe(Effect.scoped, Effect.provide(BunServices.layer)));
+}
+
+function stubEnv(name: string, value: string) {
+  return Effect.acquireRelease(
+    Effect.sync(() => {
+      vi.stubEnv(name, value);
+    }),
+    () =>
+      Effect.sync(() => {
+        vi.unstubAllEnvs();
+      }),
+  );
 }
 
 const sampleConfig = decodeCliConfig({
@@ -72,131 +87,138 @@ const sampleConfig = decodeCliConfig({
 });
 
 describe("config io", () => {
-  test("saves JSON by default when no config exists", async () => {
-    const cwd = makeTempProject();
+  test("saves JSON by default when no config exists", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const cwd = yield* makeTempProject();
 
-    try {
-      const saved = await runConfigEffect(saveCliConfig({ cwd, config: sampleConfig }));
-      expect(saved.format).toBe("json");
-      expect(saved.path).toBe(await runConfigEffect(configJsonPath(cwd)));
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const saved = yield* saveCliConfig({ cwd, config: sampleConfig });
+        expect(saved.format).toBe("json");
+        expect(saved.path).toBe(yield* configJsonPath(cwd));
+      }),
+    ));
 
-  test("loads strict JSON", async () => {
-    const cwd = makeTempProject();
-    const path = await runConfigEffect(configJsonPath(cwd));
+  test("loads strict JSON", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const path = yield* configJsonPath(cwd);
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        path,
-        JSON.stringify({
-          project_id: "abc123",
-          db: {
-            major_version: 16,
-          },
-          experimental: { stack: true },
-        }),
-      );
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path,
+          yield* encodeJson({
+            project_id: "abc123",
+            db: {
+              major_version: 16,
+            },
+            experimental: { stack: true },
+          }),
+        );
 
-      const loaded = await runConfigEffect(loadCliConfigFile(path));
-      expect(loaded.format).toBe("json");
-      expect(loaded.config.project_id).toBe("abc123");
-      expect(loaded.config.db.major_version).toBe(16);
-      expect(loaded.config.experimental.stack).toBe(true);
-      expect(loaded.config.api.enabled).toBe(true);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfigFile(path);
+        expect(loaded.format).toBe("json");
+        expect(loaded.config.project_id).toBe("abc123");
+        expect(loaded.config.db.major_version).toBe(16);
+        expect(loaded.config.experimental.stack).toBe(true);
+        expect(loaded.config.api.enabled).toBe(true);
+      }),
+    ));
 
-  test("populates rawDocument for a .json config", async () => {
-    const cwd = makeTempProject();
-    const path = await runConfigEffect(configJsonPath(cwd));
+  test("populates rawDocument for a .json config", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const path = yield* configJsonPath(cwd);
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        path,
-        JSON.stringify({
-          project_id: "abc123",
-          db: {
-            major_version: 16,
-          },
-        }),
-      );
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path,
+          yield* encodeJson({
+            project_id: "abc123",
+            db: {
+              major_version: 16,
+            },
+          }),
+        );
 
-      const loaded = await runConfigEffect(loadCliConfigFile(path));
-      expect(loaded.rawDocument).toEqual({ project_id: "abc123", db: { major_version: 16 } });
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfigFile(path);
+        expect(loaded.rawDocument).toEqual({ project_id: "abc123", db: { major_version: 16 } });
+      }),
+    ));
 
-  test("populates rawText with the exact on-disk bytes for a .json config", async () => {
-    const cwd = makeTempProject();
-    const path = await runConfigEffect(configJsonPath(cwd));
+  test("populates rawText with the exact on-disk bytes for a .json config", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const path = yield* configJsonPath(cwd);
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      const text = JSON.stringify({ project_id: "abc123", db: { major_version: 16 } });
-      await writeFile(path, text);
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        const text = yield* encodeJson({ project_id: "abc123", db: { major_version: 16 } });
+        yield* fs.writeFileString(path, text);
 
-      const loaded = await runConfigEffect(loadCliConfigFile(path));
-      expect(loaded.rawText).toBe(text);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfigFile(path);
+        expect(loaded.rawText).toBe(text);
+      }),
+    ));
 
-  test("populates rawText with the exact on-disk bytes for a .toml config", async () => {
-    const cwd = makeTempProject();
-    const path = await runConfigEffect(configTomlPath(cwd));
+  test("populates rawText with the exact on-disk bytes for a .toml config", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const path = yield* configTomlPath(cwd);
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      const text = 'project_id = "abc123"\n\n[db]\nmajor_version = 16\n';
-      await writeFile(path, text);
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        const text = 'project_id = "abc123"\n\n[db]\nmajor_version = 16\n';
+        yield* fs.writeFileString(path, text);
 
-      const loaded = await runConfigEffect(loadCliConfigFile(path));
-      expect(loaded.rawText).toBe(text);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfigFile(path);
+        expect(loaded.rawText).toBe(text);
+      }),
+    ));
 
-  test("loads top-level $schema metadata from JSON", async () => {
-    const cwd = makeTempProject();
-    const path = await runConfigEffect(configJsonPath(cwd));
+  test("loads top-level $schema metadata from JSON", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const path = yield* configJsonPath(cwd);
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        path,
-        JSON.stringify({
-          $schema: CLI_CONFIG_SCHEMA_URL,
-        }),
-      );
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path,
+          yield* encodeJson({
+            $schema: CLI_CONFIG_SCHEMA_URL,
+          }),
+        );
 
-      const loaded = await runConfigEffect(loadCliConfigFile(path));
-      expect(loaded.schemaRef).toBe(CLI_CONFIG_SCHEMA_URL);
-      expect(loaded.config.db.major_version).toBe(17);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfigFile(path);
+        expect(loaded.schemaRef).toBe(CLI_CONFIG_SCHEMA_URL);
+        expect(loaded.config.db.major_version).toBe(17);
+      }),
+    ));
 
-  test("rejects JSON comments and trailing commas", async () => {
-    const cwd = makeTempProject();
-    const path = await runConfigEffect(configJsonPath(cwd));
+  test("rejects JSON comments and trailing commas", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const path = yield* configJsonPath(cwd);
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        path,
-        `{
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path,
+          `{
   // project ref
   "project_id": "abc123",
   "db": {
@@ -204,17 +226,13 @@ describe("config io", () => {
   }
 }
 `,
-      );
+        );
 
-      const exit = await Effect.runPromiseExit(
-        loadCliConfigFile(path).pipe(Effect.provide(BunServices.layer)),
-      );
+        const exit = yield* Effect.exit(loadCliConfigFile(path));
 
-      expect(Exit.isFailure(exit)).toBe(true);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(Exit.isFailure(exit)).toBe(true);
+      }),
+    ));
 
   test("decodes legacy runtime defaults from an empty config", () => {
     const config = decodeCliConfig({});
@@ -351,96 +369,91 @@ describe("config io", () => {
     expect(encodeCliConfigToToml(config).trim()).toBe("");
   });
 
-  test("preserves hosted $schema when saving JSON", async () => {
-    const cwd = makeTempProject();
+  test("preserves hosted $schema when saving JSON", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempProject();
 
-    try {
-      const saved = await runConfigEffect(
-        saveCliConfig({
+        const saved = yield* saveCliConfig({
           cwd,
           config: decodeCliConfig({}),
           schemaRef: CLI_CONFIG_SCHEMA_URL,
-        }),
-      );
+        });
 
-      expect(saved.schemaRef).toBe(CLI_CONFIG_SCHEMA_URL);
+        expect(saved.schemaRef).toBe(CLI_CONFIG_SCHEMA_URL);
 
-      const content = await readFile(saved.path, "utf8");
-      expect(content).toContain(`"$schema": "${CLI_CONFIG_SCHEMA_URL}"`);
+        const content = yield* fs.readFileString(saved.path);
+        expect(content).toContain(`"$schema": "${CLI_CONFIG_SCHEMA_URL}"`);
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded?.schemaRef).toBe(CLI_CONFIG_SCHEMA_URL);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded?.schemaRef).toBe(CLI_CONFIG_SCHEMA_URL);
+      }),
+    ));
 
-  test("preserves local $schema when saving JSON over an existing config", async () => {
-    const cwd = makeTempProject();
-    const schemaRef = "./node_modules/@supabase/config/schema.json";
+  test("preserves local $schema when saving JSON over an existing config", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempProject();
+        const schemaRef = "./node_modules/@supabase/config/schema.json";
 
-    try {
-      await runConfigEffect(
-        saveCliConfig({
+        yield* saveCliConfig({
           cwd,
           config: decodeCliConfig({}),
           schemaRef,
-        }),
-      );
+        });
 
-      const saved = await runConfigEffect(
-        saveCliConfig({
+        const saved = yield* saveCliConfig({
           cwd,
           config: sampleConfig,
-        }),
-      );
+        });
 
-      expect(saved.schemaRef).toBe(schemaRef);
+        expect(saved.schemaRef).toBe(schemaRef);
 
-      const content = await readFile(saved.path, "utf8");
-      expect(content).toContain(`"$schema": "${schemaRef}"`);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const content = yield* fs.readFileString(saved.path);
+        expect(content).toContain(`"$schema": "${schemaRef}"`);
+      }),
+    ));
 
-  test("preserves $schema when saving TOML", async () => {
-    const cwd = makeTempProject();
-    const schemaRef = "./node_modules/@supabase/config/schema.json";
+  test("preserves $schema when saving TOML", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempProject();
+        const schemaRef = "./node_modules/@supabase/config/schema.json";
 
-    try {
-      const saved = await runConfigEffect(
-        saveCliConfig({
+        const saved = yield* saveCliConfig({
           cwd,
           config: decodeCliConfig({}),
           format: "toml",
           schemaRef,
-        }),
-      );
+        });
 
-      expect(saved.schemaRef).toBe(schemaRef);
+        expect(saved.schemaRef).toBe(schemaRef);
 
-      const content = await readFile(saved.path, "utf8");
-      expect(content).toContain(`"$schema" = "${schemaRef}"`);
+        const content = yield* fs.readFileString(saved.path);
+        expect(content).toContain(`"$schema" = "${schemaRef}"`);
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded?.schemaRef).toBe(schemaRef);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded?.schemaRef).toBe(schemaRef);
+      }),
+    ));
 
-  test("prefers JSON over TOML when both exist", async () => {
-    const cwd = makeTempProject();
-    const jsonPath = await runConfigEffect(configJsonPath(cwd));
-    const tomlPath = await runConfigEffect(configTomlPath(cwd));
+  test("prefers JSON over TOML when both exist", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsonPath = yield* configJsonPath(cwd);
+        const tomlPath = yield* configTomlPath(cwd);
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(jsonPath, encodeCliConfigToJson(sampleConfig));
-      await writeFile(
-        tomlPath,
-        `project_id = "toml-ref"
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsonPath, encodeCliConfigToJson(sampleConfig));
+        yield* fs.writeFileString(
+          tomlPath,
+          `project_id = "toml-ref"
 
 [db]
 major_version = 16
@@ -448,71 +461,31 @@ major_version = 16
 [experimental]
 stack = true
 `,
-      );
+        );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded?.format).toBe("json");
-      expect(loaded?.config.project_id).toBe("ref_123");
-      expect(loaded?.ignoredPaths).toEqual([tomlPath]);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded?.format).toBe("json");
+        expect(loaded?.config.project_id).toBe("ref_123");
+        expect(loaded?.ignoredPaths).toEqual([tomlPath]);
+      }),
+    ));
 
   // Go-parity callers (legacy `status`/`stop`) pass `tomlOnly: true` so a stray `config.json`
   // never wins over `config.toml`.
-  test("loads TOML instead of JSON when tomlOnly is set, even if JSON exists", async () => {
-    const cwd = makeTempProject();
-    const jsonPath = await runConfigEffect(configJsonPath(cwd));
-    const tomlPath = await runConfigEffect(configTomlPath(cwd));
+  test("loads TOML instead of JSON when tomlOnly is set, even if JSON exists", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsonPath = yield* configJsonPath(cwd);
+        const tomlPath = yield* configTomlPath(cwd);
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(jsonPath, encodeCliConfigToJson(sampleConfig));
-      await writeFile(
-        tomlPath,
-        `project_id = "toml-ref"
-
-[db]
-major_version = 16
-
-[experimental]
-stack = true
-`,
-      );
-
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { tomlOnly: true }));
-      expect(loaded?.format).toBe("toml");
-      expect(loaded?.config.project_id).toBe("toml-ref");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
-
-  test("returns null when tomlOnly is set and only JSON exists", async () => {
-    const cwd = makeTempProject();
-    const jsonPath = await runConfigEffect(configJsonPath(cwd));
-
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(jsonPath, encodeCliConfigToJson(sampleConfig));
-
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { tomlOnly: true }));
-      expect(loaded).toBeNull();
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
-
-  test("loads TOML when JSON is absent", async () => {
-    const cwd = makeTempProject();
-    const tomlPath = await runConfigEffect(configTomlPath(cwd));
-
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        tomlPath,
-        `project_id = "toml-ref"
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsonPath, encodeCliConfigToJson(sampleConfig));
+        yield* fs.writeFileString(
+          tomlPath,
+          `project_id = "toml-ref"
 
 [db]
 major_version = 16
@@ -520,287 +493,332 @@ major_version = 16
 [experimental]
 stack = true
 `,
-      );
+        );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded?.format).toBe("toml");
-      expect(loaded?.config.project_id).toBe("toml-ref");
-      expect(loaded?.config.db.major_version).toBe(16);
-      expect(loaded?.config.experimental.stack).toBe(true);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd, { tomlOnly: true });
+        expect(loaded?.format).toBe("toml");
+        expect(loaded?.config.project_id).toBe("toml-ref");
+      }),
+    ));
 
-  test("loads the CLI fixture", async () => {
-    const loaded = await runConfigEffect(loadCliConfigFile(legacyFixturePath));
-    const production = loaded.config.remotes.production;
-    const staging = loaded.config.remotes.staging;
+  test("returns null when tomlOnly is set and only JSON exists", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsonPath = yield* configJsonPath(cwd);
 
-    expect(loaded.format).toBe("toml");
-    expect(loaded.config.project_id).toBe("test");
-    expect(loaded.config.auth.hook.send_sms.secrets).toBe("env(AUTH_SEND_SMS_SECRETS)");
-    expect(loaded.config.edge_runtime.secrets?.test_key).toBe("test_value");
-    expect(loaded.config.storage.analytics.buckets).toEqual({ "my-warehouse": {} });
-    expect(production).toBeDefined();
-    expect(staging).toBeDefined();
-    if (!production || !staging) {
-      throw new Error("Expected legacy remotes to be loaded.");
-    }
-    expect(production.project_id).toBe("vpefcjyosynxeiebfscx");
-    expect(production.auth.site_url).toBe("http://feature-auth-branch.com/");
-    expect(staging.storage?.buckets?.images?.allowed_mime_types).toEqual(["image/png"]);
-  });
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsonPath, encodeCliConfigToJson(sampleConfig));
 
-  test("returns null when no config file exists", async () => {
-    const cwd = makeTempProject();
+        const loaded = yield* loadCliConfig(cwd, { tomlOnly: true });
+        expect(loaded).toBeNull();
+      }),
+    ));
 
-    try {
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded).toBeNull();
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+  test("loads TOML when JSON is absent", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const tomlPath = yield* configTomlPath(cwd);
 
-  test("does not ignore an invalid JSON config when TOML also exists", async () => {
-    const cwd = makeTempProject();
-    const jsonPath = await runConfigEffect(configJsonPath(cwd));
-    const tomlPath = await runConfigEffect(configTomlPath(cwd));
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          tomlPath,
+          `project_id = "toml-ref"
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(jsonPath, `{"project_id": 123}`);
-      await writeFile(
-        tomlPath,
-        `project_id = "toml-ref"
+[db]
+major_version = 16
+
+[experimental]
+stack = true
+`,
+        );
+
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded?.format).toBe("toml");
+        expect(loaded?.config.project_id).toBe("toml-ref");
+        expect(loaded?.config.db.major_version).toBe(16);
+        expect(loaded?.config.experimental.stack).toBe(true);
+      }),
+    ));
+
+  test("loads the CLI fixture", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const loaded = yield* loadCliConfigFile(yield* legacyFixturePath);
+        const production = loaded.config.remotes.production;
+        const staging = loaded.config.remotes.staging;
+
+        expect(loaded.format).toBe("toml");
+        expect(loaded.config.project_id).toBe("test");
+        expect(loaded.config.auth.hook.send_sms.secrets).toBe("env(AUTH_SEND_SMS_SECRETS)");
+        expect(loaded.config.edge_runtime.secrets?.test_key).toBe("test_value");
+        expect(loaded.config.storage.analytics.buckets).toEqual({ "my-warehouse": {} });
+        expect(production).toBeDefined();
+        expect(staging).toBeDefined();
+        if (!production || !staging) {
+          throw new Error("Expected legacy remotes to be loaded.");
+        }
+        expect(production.project_id).toBe("vpefcjyosynxeiebfscx");
+        expect(production.auth.site_url).toBe("http://feature-auth-branch.com/");
+        expect(staging.storage?.buckets?.images?.allowed_mime_types).toEqual(["image/png"]);
+      }),
+    ));
+
+  test("returns null when no config file exists", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const cwd = yield* makeTempProject();
+
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded).toBeNull();
+      }),
+    ));
+
+  test("does not ignore an invalid JSON config when TOML also exists", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsonPath = yield* configJsonPath(cwd);
+        const tomlPath = yield* configTomlPath(cwd);
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsonPath, `{"project_id": 123}`);
+        yield* fs.writeFileString(
+          tomlPath,
+          `project_id = "toml-ref"
 
 [db]
 major_version = 16
 `,
-      );
+        );
 
-      await expect(runConfigEffect(loadCliConfig(cwd))).rejects.toThrow();
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(Exit.isFailure(yield* Effect.exit(loadCliConfig(cwd)))).toBe(true);
+      }),
+    ));
 
-  test("returns a typed parse error for invalid JSON", async () => {
-    const cwd = makeTempProject();
-    const jsonPath = await runConfigEffect(configJsonPath(cwd));
+  test("returns a typed parse error for invalid JSON", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsonPath = yield* configJsonPath(cwd);
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(jsonPath, `{"project_id": 123}`);
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsonPath, `{"project_id": 123}`);
 
-      const exit = await Effect.runPromiseExit(
-        loadCliConfigFile(jsonPath).pipe(Effect.provide(BunServices.layer)),
-      );
+        const exit = yield* Effect.exit(loadCliConfigFile(jsonPath));
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const error = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(error)).toBe(true);
-        if (Option.isSome(error)) {
-          expect(error.value._tag).toBe("CliConfigParseError");
-          if (error.value._tag === "CliConfigParseError") {
-            expect(error.value.path).toBe(jsonPath);
-            expect(error.value.format).toBe("json");
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect(error.value._tag).toBe("CliConfigParseError");
+            if (error.value._tag === "CliConfigParseError") {
+              expect(error.value.path).toBe(jsonPath);
+              expect(error.value.format).toBe("json");
+            }
           }
         }
-      }
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+      }),
+    ));
 
-  test("redacts edge_runtime.secrets on the CliConfigParseError document", async () => {
-    const cwd = makeTempProject();
-    const tomlPath = await runConfigEffect(configTomlPath(cwd));
+  test("redacts edge_runtime.secrets on the CliConfigParseError document", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const tomlPath = yield* configTomlPath(cwd);
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      // `analytics.port` fails schema decode, which fails the whole `Schema.decodeUnknownSync`
-      // call while `edge_runtime.secrets` parses fine on its own. `MY_SUPER_SECRET_VALUE` stands
-      // in for a real secret so the assertion below can confirm it never appears in plaintext.
-      await writeFile(
-        tomlPath,
-        `[analytics]
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        // `analytics.port` fails schema decode, which fails the whole `Schema.decodeUnknownSync`
+        // call while `edge_runtime.secrets` parses fine on its own. `MY_SUPER_SECRET_VALUE` stands
+        // in for a real secret so the assertion below can confirm it never appears in plaintext.
+        yield* fs.writeFileString(
+          tomlPath,
+          `[analytics]
 port = "not-a-number"
 
 [edge_runtime.secrets]
 FOO = "MY_SUPER_SECRET_VALUE"
 `,
-      );
+        );
 
-      const exit = await Effect.runPromiseExit(
-        loadCliConfigFile(tomlPath).pipe(Effect.provide(BunServices.layer)),
-      );
+        const exit = yield* Effect.exit(loadCliConfigFile(tomlPath));
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (!Exit.isFailure(exit)) {
-        return;
-      }
-      const error = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(error)).toBe(true);
-      if (!Option.isSome(error) || error.value._tag !== "CliConfigParseError") {
-        return;
-      }
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) {
+          return;
+        }
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (!Option.isSome(error) || error.value._tag !== "CliConfigParseError") {
+          return;
+        }
 
-      const edgeRuntime = error.value.document?.edge_runtime;
-      const secrets =
-        edgeRuntime !== null && typeof edgeRuntime === "object" && edgeRuntime !== undefined
-          ? (edgeRuntime as Record<string, unknown>).secrets
-          : undefined;
-      expect(secrets).toBeDefined();
-      const foo = (secrets as Record<string, unknown>).FOO;
-      expect(Redacted.isRedacted(foo)).toBe(true);
-      expect(Redacted.value(foo as Redacted.Redacted<string>)).toBe("MY_SUPER_SECRET_VALUE");
-      // The whole point: a caller that doesn't know to unwrap `Redacted` never sees the raw
-      // secret, even via JSON.stringify.
-      expect(JSON.stringify(error.value.document)).not.toContain("MY_SUPER_SECRET_VALUE");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const edgeRuntime = error.value.document?.edge_runtime;
+        const secrets =
+          edgeRuntime !== null && typeof edgeRuntime === "object" && edgeRuntime !== undefined
+            ? (edgeRuntime as Record<string, unknown>).secrets
+            : undefined;
+        expect(secrets).toBeDefined();
+        const foo = (secrets as Record<string, unknown>).FOO;
+        expect(Redacted.isRedacted(foo)).toBe(true);
+        expect(Redacted.value(foo as Redacted.Redacted<string>)).toBe("MY_SUPER_SECRET_VALUE");
+        // The whole point: a caller that doesn't know to unwrap `Redacted` never sees the raw
+        // secret, even via JSON.stringify.
+        expect(yield* encodeJson(error.value.document)).not.toContain("MY_SUPER_SECRET_VALUE");
+      }),
+    ));
 
-  test("redacts a non-string edge_runtime.secrets value on the CliConfigParseError document", async () => {
-    const cwd = makeTempProject();
-    const tomlPath = await runConfigEffect(configTomlPath(cwd));
+  test("redacts a non-string edge_runtime.secrets value on the CliConfigParseError document", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const tomlPath = yield* configTomlPath(cwd);
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      // `FOO` is a TOML array, not a string, so its own schema decode fails, but the raw
-      // pre-decode value still carries `MY_SUPER_SECRET_VALUE` in plaintext —
-      // `redactEdgeRuntimeSecrets` must wrap it regardless of shape.
-      await writeFile(
-        tomlPath,
-        `[analytics]
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        // `FOO` is a TOML array, not a string, so its own schema decode fails, but the raw
+        // pre-decode value still carries `MY_SUPER_SECRET_VALUE` in plaintext —
+        // `redactEdgeRuntimeSecrets` must wrap it regardless of shape.
+        yield* fs.writeFileString(
+          tomlPath,
+          `[analytics]
 port = "not-a-number"
 
 [edge_runtime.secrets]
 FOO = ["MY_SUPER_SECRET_VALUE"]
 `,
-      );
+        );
 
-      const exit = await Effect.runPromiseExit(
-        loadCliConfigFile(tomlPath).pipe(Effect.provide(BunServices.layer)),
-      );
+        const exit = yield* Effect.exit(loadCliConfigFile(tomlPath));
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (!Exit.isFailure(exit)) {
-        return;
-      }
-      const error = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(error)).toBe(true);
-      if (!Option.isSome(error) || error.value._tag !== "CliConfigParseError") {
-        return;
-      }
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) {
+          return;
+        }
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (!Option.isSome(error) || error.value._tag !== "CliConfigParseError") {
+          return;
+        }
 
-      const edgeRuntime = error.value.document?.edge_runtime;
-      const secrets =
-        edgeRuntime !== null && typeof edgeRuntime === "object" && edgeRuntime !== undefined
-          ? (edgeRuntime as Record<string, unknown>).secrets
-          : undefined;
-      expect(secrets).toBeDefined();
-      const foo = (secrets as Record<string, unknown>).FOO;
-      expect(Redacted.isRedacted(foo)).toBe(true);
-      expect(Redacted.value(foo as Redacted.Redacted<unknown>)).toEqual(["MY_SUPER_SECRET_VALUE"]);
-      expect(JSON.stringify(error.value.document)).not.toContain("MY_SUPER_SECRET_VALUE");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const edgeRuntime = error.value.document?.edge_runtime;
+        const secrets =
+          edgeRuntime !== null && typeof edgeRuntime === "object" && edgeRuntime !== undefined
+            ? (edgeRuntime as Record<string, unknown>).secrets
+            : undefined;
+        expect(secrets).toBeDefined();
+        const foo = (secrets as Record<string, unknown>).FOO;
+        expect(Redacted.isRedacted(foo)).toBe(true);
+        expect(Redacted.value(foo as Redacted.Redacted<unknown>)).toEqual([
+          "MY_SUPER_SECRET_VALUE",
+        ]);
+        expect(yield* encodeJson(error.value.document)).not.toContain("MY_SUPER_SECRET_VALUE");
+      }),
+    ));
 
-  test("redacts a non-object edge_runtime.secrets field on the CliConfigParseError document", async () => {
-    const cwd = makeTempProject();
-    const tomlPath = await runConfigEffect(configTomlPath(cwd));
+  test("redacts a non-object edge_runtime.secrets field on the CliConfigParseError document", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const tomlPath = yield* configTomlPath(cwd);
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      // `secrets` itself is a TOML array here, not a table, so the whole field is malformed
-      // rather than a single bad entry — `redactEdgeRuntimeSecrets` must wrap the field as one
-      // unit instead of leaving it raw.
-      await writeFile(
-        tomlPath,
-        `[analytics]
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        // `secrets` itself is a TOML array here, not a table, so the whole field is malformed
+        // rather than a single bad entry — `redactEdgeRuntimeSecrets` must wrap the field as one
+        // unit instead of leaving it raw.
+        yield* fs.writeFileString(
+          tomlPath,
+          `[analytics]
 port = "not-a-number"
 
 [edge_runtime]
 secrets = ["MY_SUPER_SECRET_VALUE"]
 `,
-      );
+        );
 
-      const exit = await Effect.runPromiseExit(
-        loadCliConfigFile(tomlPath).pipe(Effect.provide(BunServices.layer)),
-      );
+        const exit = yield* Effect.exit(loadCliConfigFile(tomlPath));
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (!Exit.isFailure(exit)) {
-        return;
-      }
-      const error = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(error)).toBe(true);
-      if (!Option.isSome(error) || error.value._tag !== "CliConfigParseError") {
-        return;
-      }
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) {
+          return;
+        }
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (!Option.isSome(error) || error.value._tag !== "CliConfigParseError") {
+          return;
+        }
 
-      const edgeRuntime = error.value.document?.edge_runtime;
-      const secrets =
-        edgeRuntime !== null && typeof edgeRuntime === "object" && edgeRuntime !== undefined
-          ? (edgeRuntime as Record<string, unknown>).secrets
-          : undefined;
-      expect(Redacted.isRedacted(secrets)).toBe(true);
-      expect(Redacted.value(secrets as Redacted.Redacted<unknown>)).toEqual([
-        "MY_SUPER_SECRET_VALUE",
-      ]);
-      expect(JSON.stringify(error.value.document)).not.toContain("MY_SUPER_SECRET_VALUE");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const edgeRuntime = error.value.document?.edge_runtime;
+        const secrets =
+          edgeRuntime !== null && typeof edgeRuntime === "object" && edgeRuntime !== undefined
+            ? (edgeRuntime as Record<string, unknown>).secrets
+            : undefined;
+        expect(Redacted.isRedacted(secrets)).toBe(true);
+        expect(Redacted.value(secrets as Redacted.Redacted<unknown>)).toEqual([
+          "MY_SUPER_SECRET_VALUE",
+        ]);
+        expect(yield* encodeJson(error.value.document)).not.toContain("MY_SUPER_SECRET_VALUE");
+      }),
+    ));
 
-  test("preserves TOML as the active format on save", async () => {
-    const cwd = makeTempProject();
-    const tomlPath = await runConfigEffect(configTomlPath(cwd));
-    const jsonPath = await runConfigEffect(configJsonPath(cwd));
+  test("preserves TOML as the active format on save", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const tomlPath = yield* configTomlPath(cwd);
+        const jsonPath = yield* configJsonPath(cwd);
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        tomlPath,
-        `project_id = "old-ref"
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          tomlPath,
+          `project_id = "old-ref"
 
 [db]
 major_version = 16
 `,
-      );
+        );
 
-      const saved = await runConfigEffect(saveCliConfig({ cwd, config: sampleConfig }));
+        const saved = yield* saveCliConfig({ cwd, config: sampleConfig });
 
-      expect(saved.format).toBe("toml");
-      expect(saved.path).toBe(tomlPath);
-      expect(await Bun.file(jsonPath).exists()).toBe(false);
-      const content = await readFile(tomlPath, "utf8");
-      expect(content).toContain('project_id = "ref_123"');
-      expect(content).toContain("[db.pooler]");
-      expect(content).not.toContain("major_version");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(saved.format).toBe("toml");
+        expect(saved.path).toBe(tomlPath);
+        expect(yield* fs.exists(jsonPath)).toBe(false);
+        const content = yield* fs.readFileString(tomlPath);
+        expect(content).toContain('project_id = "ref_123"');
+        expect(content).toContain("[db.pooler]");
+        expect(content).not.toContain("major_version");
+      }),
+    ));
 
-  test("preserves JSON as the active format on save", async () => {
-    const cwd = makeTempProject();
-    const jsonPath = await runConfigEffect(configJsonPath(cwd));
+  test("preserves JSON as the active format on save", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsonPath = yield* configJsonPath(cwd);
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(jsonPath, encodeCliConfigToJson(sampleConfig));
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsonPath, encodeCliConfigToJson(sampleConfig));
 
-      const saved = await runConfigEffect(
-        saveCliConfig({
+        const saved = yield* saveCliConfig({
           cwd,
           config: decodeCliConfig({
             project_id: "updated-ref",
@@ -808,121 +826,112 @@ major_version = 16
               enable_signup: false,
             },
           }),
-        }),
-      );
+        });
 
-      expect(saved.format).toBe("json");
-      expect(saved.path).toBe(jsonPath);
-      const content = await readFile(jsonPath, "utf8");
-      expect(content).toContain('"project_id": "updated-ref"');
-      expect(content).toContain('"enable_signup": false');
-      expect(content).not.toContain('"jwt_expiry"');
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(saved.format).toBe("json");
+        expect(saved.path).toBe(jsonPath);
+        const content = yield* fs.readFileString(jsonPath);
+        expect(content).toContain('"project_id": "updated-ref"');
+        expect(content).toContain('"enable_signup": false');
+        expect(content).not.toContain('"jwt_expiry"');
+      }),
+    ));
 
-  test("supports explicit format override", async () => {
-    const cwd = makeTempProject();
-    const tomlPath = await runConfigEffect(configTomlPath(cwd));
-    const jsonPath = await runConfigEffect(configJsonPath(cwd));
+  test("supports explicit format override", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const tomlPath = yield* configTomlPath(cwd);
+        const jsonPath = yield* configJsonPath(cwd);
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(jsonPath, encodeCliConfigToJson(sampleConfig));
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(jsonPath, encodeCliConfigToJson(sampleConfig));
 
-      const saved = await runConfigEffect(
-        saveCliConfig({ cwd, config: sampleConfig, format: "toml" }),
-      );
+        const saved = yield* saveCliConfig({ cwd, config: sampleConfig, format: "toml" });
 
-      expect(saved.format).toBe("toml");
-      expect(saved.path).toBe(tomlPath);
-      expect(await Bun.file(jsonPath).exists()).toBe(false);
-      const content = await readFile(tomlPath, "utf8");
-      expect(content).toContain("[db.pooler]");
-      expect(content).not.toContain("[versions]");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(saved.format).toBe("toml");
+        expect(saved.path).toBe(tomlPath);
+        expect(yield* fs.exists(jsonPath)).toBe(false);
+        const content = yield* fs.readFileString(tomlPath);
+        expect(content).toContain("[db.pooler]");
+        expect(content).not.toContain("[versions]");
+      }),
+    ));
 
-  test("removes TOML when explicitly switching to JSON", async () => {
-    const cwd = makeTempProject();
-    const jsonPath = await runConfigEffect(configJsonPath(cwd));
-    const tomlPath = await runConfigEffect(configTomlPath(cwd));
+  test("removes TOML when explicitly switching to JSON", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const jsonPath = yield* configJsonPath(cwd);
+        const tomlPath = yield* configTomlPath(cwd);
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(tomlPath, encodeCliConfigToToml(sampleConfig));
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(tomlPath, encodeCliConfigToToml(sampleConfig));
 
-      const saved = await runConfigEffect(
-        saveCliConfig({ cwd, config: sampleConfig, format: "json" }),
-      );
+        const saved = yield* saveCliConfig({ cwd, config: sampleConfig, format: "json" });
 
-      expect(saved.format).toBe("json");
-      expect(saved.path).toBe(jsonPath);
-      expect(await Bun.file(tomlPath).exists()).toBe(false);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(saved.format).toBe("json");
+        expect(saved.path).toBe(jsonPath);
+        expect(yield* fs.exists(tomlPath)).toBe(false);
+      }),
+    ));
 
-  test("preserves the discovered project format when saving from a nested cwd", async () => {
-    const cwd = makeTempProject();
-    const nestedCwd = join(cwd, "apps", "web", "src");
-    const tomlPath = await runConfigEffect(configTomlPath(cwd));
-    const jsonPath = await runConfigEffect(configJsonPath(cwd));
+  test("preserves the discovered project format when saving from a nested cwd", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const nestedCwd = join(cwd, "apps", "web", "src");
+        const tomlPath = yield* configTomlPath(cwd);
+        const jsonPath = yield* configJsonPath(cwd);
 
-    try {
-      await mkdir(nestedCwd, { recursive: true });
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        tomlPath,
-        `project_id = "nested-ref"
+        yield* fs.makeDirectory(nestedCwd, { recursive: true });
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          tomlPath,
+          `project_id = "nested-ref"
 
 [db]
 major_version = 16
 `,
-      );
+        );
 
-      const saved = await runConfigEffect(
-        saveCliConfig({
+        const saved = yield* saveCliConfig({
           cwd: nestedCwd,
           config: decodeCliConfig({
             project_id: "nested-updated",
           }),
-        }),
-      );
+        });
 
-      expect(saved.format).toBe("toml");
-      expect(saved.path).toBe(tomlPath);
-      expect(await Bun.file(jsonPath).exists()).toBe(false);
-      const content = await readFile(tomlPath, "utf8");
-      expect(content).toContain('project_id = "nested-updated"');
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(saved.format).toBe("toml");
+        expect(saved.path).toBe(tomlPath);
+        expect(yield* fs.exists(jsonPath)).toBe(false);
+        const content = yield* fs.readFileString(tomlPath);
+        expect(content).toContain('project_id = "nested-updated"');
+      }),
+    ));
 
-  test("exposes a CliConfigStore service for the CLI", async () => {
-    const cwd = makeTempProject();
-    const layer = cliConfigStoreLayer.pipe(Layer.provide(BunServices.layer));
+  test("exposes a CliConfigStore service for the CLI", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const cwd = yield* makeTempProject();
+        const layer = cliConfigStoreLayer.pipe(Layer.provide(BunServices.layer));
 
-    try {
-      const loaded = await Effect.runPromise(
-        Effect.gen(function* () {
+        const loaded = yield* Effect.gen(function* () {
           const store = yield* CliConfigStore;
           yield* store.save({ cwd, config: sampleConfig });
           return yield* store.load(cwd);
-        }).pipe(Effect.provide(layer)),
-      );
+        }).pipe(Effect.provide(layer));
 
-      expect(loaded?.config.project_id).toBe("ref_123");
-      expect(loaded?.config.db.pooler.enabled).toBe(true);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(loaded?.config.project_id).toBe("ref_123");
+        expect(loaded?.config.db.pooler.enabled).toBe(true);
+      }),
+    ));
 
   test("encodes sparse TOML for fresh output", () => {
     const content = encodeCliConfigToToml(sampleConfig);
@@ -932,70 +941,62 @@ major_version = 16
     expect(content).not.toContain("[versions]");
   });
 
-  test("supports the Bun edge entrypoint", async () => {
-    const cwd = makeTempProject();
+  test("supports the Bun edge entrypoint", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const cwd = yield* makeTempProject();
 
-    try {
-      await saveCliConfig({ cwd, config: sampleConfig }).pipe(
-        Effect.provide(BunServices.layer),
-        Effect.runPromise,
-      );
-      const loaded = await loadCliConfigFromBun(cwd);
-      expect(loaded?.config.project_id).toBe("ref_123");
-      expect(loaded?.config.db.pooler.enabled).toBe(true);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        yield* saveCliConfig({ cwd, config: sampleConfig });
+        const loaded = yield* Effect.promise(() => loadCliConfigFromBun(cwd));
+        expect(loaded?.config.project_id).toBe("ref_123");
+        expect(loaded?.config.db.pooler.enabled).toBe(true);
+      }),
+    ));
 
-  test("supports the Node edge entrypoint", async () => {
-    const cwd = makeTempProject();
+  test("supports the Node edge entrypoint", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const cwd = yield* makeTempProject();
 
-    try {
-      await saveCliConfig({ cwd, config: sampleConfig }).pipe(
-        Effect.provide(BunServices.layer),
-        Effect.runPromise,
-      );
-      const loaded = await loadCliConfigFromNode(cwd);
-      expect(loaded?.config.project_id).toBe("ref_123");
-      expect(loaded?.config.db.pooler.enabled).toBe(true);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        yield* saveCliConfig({ cwd, config: sampleConfig });
+        const loaded = yield* Effect.promise(() => loadCliConfigFromNode(cwd));
+        expect(loaded?.config.project_id).toBe("ref_123");
+        expect(loaded?.config.db.pooler.enabled).toBe(true);
+      }),
+    ));
 
-  test("round-trip: save → load → save produces identical config and file content", async () => {
-    const cwd = makeTempProject();
+  test("round-trip: save → load → save produces identical config and file content", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempProject();
 
-    try {
-      const original = decodeCliConfig({
-        project_id: "roundtrip-ref",
-        db: {
-          major_version: 16,
-          pooler: { enabled: true },
-        },
-        auth: {
-          enable_signup: false,
-          site_url: "https://example.com",
-        },
-        analytics: { enabled: false },
-      });
+        const original = decodeCliConfig({
+          project_id: "roundtrip-ref",
+          db: {
+            major_version: 16,
+            pooler: { enabled: true },
+          },
+          auth: {
+            enable_signup: false,
+            site_url: "https://example.com",
+          },
+          analytics: { enabled: false },
+        });
 
-      const saved1 = await runConfigEffect(saveCliConfig({ cwd, config: original }));
-      const content1 = await readFile(saved1.path, "utf8");
+        const saved1 = yield* saveCliConfig({ cwd, config: original });
+        const content1 = yield* fs.readFileString(saved1.path);
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded).not.toBeNull();
-      expect(loaded!.config).toEqual(original);
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded).not.toBeNull();
+        expect(loaded!.config).toEqual(original);
 
-      const saved2 = await runConfigEffect(saveCliConfig({ cwd, config: loaded!.config }));
-      const content2 = await readFile(saved2.path, "utf8");
+        const saved2 = yield* saveCliConfig({ cwd, config: loaded!.config });
+        const content2 = yield* fs.readFileString(saved2.path);
 
-      expect(content2).toBe(content1);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(content2).toBe(content1);
+      }),
+    ));
 
   test("includes current keys in generated JSON schema", () => {
     const schema = toCliConfigJsonSchema();
@@ -1011,14 +1012,17 @@ major_version = 16
     expect(schemaString).not.toContain("versions");
   });
 
-  test("resolves env() on numeric port fields (CLI-1489)", async () => {
-    const cwd = makeTempProject();
+  test("resolves env() on numeric port fields (CLI-1489)", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "ref_123"
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "ref_123"
 
 [api]
 port = "env(SUPABASE_API_PORT)"
@@ -1029,44 +1033,46 @@ port = "env(SUPABASE_DB_PORT)"
 [analytics]
 port = "env(SUPABASE_ANALYTICS_PORT)"
 `,
-      );
-      await writeFile(
-        join(cwd, "supabase", ".env"),
-        "SUPABASE_API_PORT=54321\nSUPABASE_DB_PORT=54322\nSUPABASE_ANALYTICS_PORT=54327\n",
-      );
+        );
+        yield* fs.writeFileString(
+          join(cwd, "supabase", ".env"),
+          "SUPABASE_API_PORT=54321\nSUPABASE_DB_PORT=54322\nSUPABASE_ANALYTICS_PORT=54327\n",
+        );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
+        const loaded = yield* loadCliConfig(cwd);
 
-      expect(loaded).not.toBeNull();
-      expect(loaded!.config.api.port).toBe(54321);
-      expect(loaded!.config.db.port).toBe(54322);
-      expect(loaded!.config.analytics.port).toBe(54327);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(loaded).not.toBeNull();
+        expect(loaded!.config.api.port).toBe(54321);
+        expect(loaded!.config.db.port).toBe(54322);
+        expect(loaded!.config.analytics.port).toBe(54327);
+      }),
+    ));
 
-  test("resolves env() on boolean fields", async () => {
-    const cwd = makeTempProject();
+  test("resolves env() on boolean fields", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "ref_123"
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "ref_123"
 
 [analytics]
 enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
 `,
-      );
-      await writeFile(join(cwd, "supabase", ".env"), "SUPABASE_ANALYTICS_ENABLED=false\n");
+        );
+        yield* fs.writeFileString(
+          join(cwd, "supabase", ".env"),
+          "SUPABASE_ANALYTICS_ENABLED=false\n",
+        );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded!.config.analytics.enabled).toBe(false);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded!.config.analytics.enabled).toBe(false);
+      }),
+    ));
 
   test.each([
     ["1", true],
@@ -1078,228 +1084,238 @@ enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
     ["FALSE", false],
   ] as const)(
     "resolves env() on boolean fields using Go's strconv.ParseBool acceptance set (%s -> %s)",
-    async (envValue, expected) => {
-      const cwd = makeTempProject();
+    (envValue, expected) =>
+      runConfigEffect(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const { join } = yield* Path.Path;
+          const cwd = yield* makeTempProject();
 
-      try {
-        await mkdir(join(cwd, "supabase"), { recursive: true });
-        await writeFile(
-          join(cwd, "supabase", "config.toml"),
-          `project_id = "ref_123"
+          yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            join(cwd, "supabase", "config.toml"),
+            `project_id = "ref_123"
 
 [analytics]
 enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
 `,
-        );
-        await writeFile(join(cwd, "supabase", ".env"), `SUPABASE_ANALYTICS_ENABLED=${envValue}\n`);
+          );
+          yield* fs.writeFileString(
+            join(cwd, "supabase", ".env"),
+            `SUPABASE_ANALYTICS_ENABLED=${envValue}\n`,
+          );
 
-        const loaded = await runConfigEffect(loadCliConfig(cwd));
-        expect(loaded!.config.analytics.enabled).toBe(expected);
-      } finally {
-        await rm(cwd, { recursive: true, force: true });
-      }
-    },
+          const loaded = yield* loadCliConfig(cwd);
+          expect(loaded!.config.analytics.enabled).toBe(expected);
+        }),
+      ),
   );
 
-  test("splits a comma-separated string literal into a slice (Go's StringToSliceHookFunc)", async () => {
-    // A plain string value for a `[]string` field like `additional_redirect_urls` decodes fine
-    // when `goViperCompat` is set, not just via `env(...)`.
-    const cwd = makeTempProject();
+  test("splits a comma-separated string literal into a slice (Go's StringToSliceHookFunc)", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        // A plain string value for a `[]string` field like `additional_redirect_urls` decodes fine
+        // when `goViperCompat` is set, not just via `env(...)`.
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "ref_123"
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "ref_123"
 
 [auth]
 additional_redirect_urls = "http://a,http://b"
 `,
-      );
+        );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { goViperCompat: true }));
-      expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd, { goViperCompat: true });
+        expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
+      }),
+    ));
 
-  test("splits an env()-substituted comma-separated string into a slice", async () => {
-    const cwd = makeTempProject();
+  test("splits an env()-substituted comma-separated string into a slice", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "ref_123"
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "ref_123"
 
 [auth]
 additional_redirect_urls = "env(SUPABASE_REDIRECT_URLS)"
 `,
-      );
-      await writeFile(join(cwd, "supabase", ".env"), "SUPABASE_REDIRECT_URLS=http://a,http://b\n");
+        );
+        yield* fs.writeFileString(
+          join(cwd, "supabase", ".env"),
+          "SUPABASE_REDIRECT_URLS=http://a,http://b\n",
+        );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { goViperCompat: true }));
-      expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd, { goViperCompat: true });
+        expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
+      }),
+    ));
 
-  test("an empty string literal for a slice field decodes to an empty array", async () => {
-    const cwd = makeTempProject();
+  test("an empty string literal for a slice field decodes to an empty array", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "ref_123"
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "ref_123"
 
 [auth]
 additional_redirect_urls = ""
 `,
-      );
+        );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { goViperCompat: true }));
-      expect(loaded!.config.auth.additional_redirect_urls).toEqual([]);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd, { goViperCompat: true });
+        expect(loaded!.config.auth.additional_redirect_urls).toEqual([]);
+      }),
+    ));
 
-  test("an actual array value for a slice field is left untouched", async () => {
-    const cwd = makeTempProject();
+  test("an actual array value for a slice field is left untouched", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "ref_123"
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "ref_123"
 
 [auth]
 additional_redirect_urls = ["http://a", "http://b"]
 `,
-      );
+        );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
+      }),
+    ));
 
-  test("preserves env() literals on string fields when the var is unset (Go parity)", async () => {
-    const cwd = makeTempProject();
+  test("preserves env() literals on string fields when the var is unset (Go parity)", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "ref_123"
-
-[auth]
-jwt_secret = "env(MISSING_SECRET)"
-`,
-      );
-
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded!.config.auth.jwt_secret).toBe("env(MISSING_SECRET)");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
-
-  test("preserves env() literals on string fields when the var is set but empty (Go parity)", async () => {
-    const cwd = makeTempProject();
-
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "ref_123"
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "ref_123"
 
 [auth]
 jwt_secret = "env(MISSING_SECRET)"
 `,
-      );
-      await writeFile(join(cwd, "supabase", ".env"), "MISSING_SECRET=\n");
+        );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded!.config.auth.jwt_secret).toBe("env(MISSING_SECRET)");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded!.config.auth.jwt_secret).toBe("env(MISSING_SECRET)");
+      }),
+    ));
 
-  test("fails to decode a numeric field when env var is unset", async () => {
-    const cwd = makeTempProject();
+  test("preserves env() literals on string fields when the var is set but empty (Go parity)", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "ref_123"
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "ref_123"
+
+[auth]
+jwt_secret = "env(MISSING_SECRET)"
+`,
+        );
+        yield* fs.writeFileString(join(cwd, "supabase", ".env"), "MISSING_SECRET=\n");
+
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded!.config.auth.jwt_secret).toBe("env(MISSING_SECRET)");
+      }),
+    ));
+
+  test("fails to decode a numeric field when env var is unset", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "ref_123"
 
 [analytics]
 port = "env(MISSING_PORT)"
 `,
-      );
+        );
 
-      const exit = await Effect.runPromiseExit(
-        loadCliConfig(cwd).pipe(Effect.provide(BunServices.layer)),
-      );
+        const exit = yield* Effect.exit(loadCliConfig(cwd));
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure)).toBe(true);
-        if (Option.isSome(failure)) {
-          expect((failure.value as { _tag: string })._tag).toBe("CliConfigParseError");
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const failure = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure)) {
+            expect((failure.value as { _tag: string })._tag).toBe("CliConfigParseError");
+          }
         }
-      }
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+      }),
+    ));
 
-  test("falls back to ambient process.env when .env is missing", async () => {
-    const cwd = makeTempProject();
-    const previous = process.env.SUPABASE_DB_PORT_TEST;
-    process.env.SUPABASE_DB_PORT_TEST = "55555";
+  test("falls back to ambient process.env when .env is missing", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        yield* stubEnv("SUPABASE_DB_PORT_TEST", "55555");
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "ref_123"
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "ref_123"
 
 [db]
 port = "env(SUPABASE_DB_PORT_TEST)"
 `,
-      );
+        );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded!.config.db.port).toBe(55555);
-    } finally {
-      if (previous === undefined) {
-        delete process.env.SUPABASE_DB_PORT_TEST;
-      } else {
-        process.env.SUPABASE_DB_PORT_TEST = previous;
-      }
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded!.config.db.port).toBe(55555);
+      }),
+    ));
 
   // Pins pre-Go-parity default behavior, so `packages/stack` and the functions manifest (which
   // don't pass `goViperCompat`) don't inherit the Go-parity CLI's stricter/wider semantics.
-  test("loads successfully with a duplicate [remotes.*] project_id when goViperCompat is omitted", async () => {
-    const cwd = makeTempProject();
+  test("loads successfully with a duplicate [remotes.*] project_id when goViperCompat is omitted", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "baseref"
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "baseref"
 
 [remotes.a]
 project_id = "dupref"
@@ -1307,24 +1323,25 @@ project_id = "dupref"
 [remotes.b]
 project_id = "dupref"
 `,
-      );
+        );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded).not.toBeNull();
-      expect(loaded!.config.project_id).toBe("baseref");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded).not.toBeNull();
+        expect(loaded!.config.project_id).toBe("baseref");
+      }),
+    ));
 
-  test("loads a [remotes.*.compute] section alongside the project's own", async () => {
-    const cwd = makeTempProject();
+  test("loads a [remotes.*.compute] section alongside the project's own", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "baseref"
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "baseref"
 
 [compute.api]
 runtime = "node"
@@ -1335,166 +1352,159 @@ project_id = "abcdefghijklmnopqrst"
 [remotes.staging.compute.api]
 runtime = "deno"
 `,
-      );
+        );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded).not.toBeNull();
-      expect(loaded!.config.compute).toEqual({ api: { runtime: "node" } });
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded).not.toBeNull();
+        expect(loaded!.config.compute).toEqual({ api: { runtime: "node" } });
+      }),
+    ));
 
-  test("loads successfully with an invalid [remotes.*] project_id format when goViperCompat is omitted", async () => {
-    const cwd = makeTempProject();
+  test("loads successfully with an invalid [remotes.*] project_id format when goViperCompat is omitted", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "baseref"
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "baseref"
 
 [remotes.bad]
 project_id = "not-a-ref"
 `,
-      );
+        );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded).not.toBeNull();
-      expect(loaded!.config.project_id).toBe("baseref");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded).not.toBeNull();
+        expect(loaded!.config.project_id).toBe("baseref");
+      }),
+    ));
 
-  test("does not split a comma-separated string literal for an array field when goViperCompat is omitted", async () => {
-    const cwd = makeTempProject();
+  test("does not split a comma-separated string literal for an array field when goViperCompat is omitted", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "ref_123"
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "ref_123"
 
 [auth]
 additional_redirect_urls = "http://a,http://b"
 `,
-      );
+        );
 
-      const exit = await Effect.runPromiseExit(
-        loadCliConfig(cwd).pipe(Effect.provide(BunServices.layer)),
-      );
+        const exit = yield* Effect.exit(loadCliConfig(cwd));
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const error = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(error)).toBe(true);
-        if (Option.isSome(error)) {
-          expect((error.value as { _tag: string })._tag).toBe("CliConfigParseError");
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect((error.value as { _tag: string })._tag).toBe("CliConfigParseError");
+          }
         }
-      }
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+      }),
+    ));
 
-  test("does not warn on a deprecated provider (but still strips it) when goViperCompat is omitted", async () => {
-    const cwd = makeTempProject();
-    const warnings: Array<string> = [];
-    const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
-      warnings.push(args.map((a) => String(a)).join(" "));
-    });
+  test("does not warn on a deprecated provider (but still strips it) when goViperCompat is omitted", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const warnings: Array<string> = [];
+        const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+          warnings.push(args.map((a) => String(a)).join(" "));
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(() => errorSpy.mockRestore()));
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "abc123"
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "abc123"
 
 [auth.external.slack]
 enabled = true
 `,
-      );
+        );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect("slack" in loaded!.config.auth.external).toBe(false);
-      expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
-    } finally {
-      errorSpy.mockRestore();
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd);
+        expect("slack" in loaded!.config.auth.external).toBe(false);
+        expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+      }),
+    ));
 
-  test("does not resolve a lowercase-named env() reference when goViperCompat is omitted", async () => {
-    const previous = process.env.lowercase_ref_default_off_test;
-    process.env.lowercase_ref_default_off_test = "lowercase-ref-value";
-    const cwd = makeTempProject();
+  test("does not resolve a lowercase-named env() reference when goViperCompat is omitted", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        yield* stubEnv("lowercase_ref_default_off_test", "lowercase-ref-value");
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "env(lowercase_ref_default_off_test)"\n`,
-      );
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "env(lowercase_ref_default_off_test)"\n`,
+        );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded!.config.project_id).toBe("env(lowercase_ref_default_off_test)");
-    } finally {
-      if (previous === undefined) {
-        delete process.env.lowercase_ref_default_off_test;
-      } else {
-        process.env.lowercase_ref_default_off_test = previous;
-      }
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded!.config.project_id).toBe("env(lowercase_ref_default_off_test)");
+      }),
+    ));
 
-  test("resolves a lowercase-named env() reference when goViperCompat is true", async () => {
-    const previous = process.env.lowercase_ref_default_on_test;
-    process.env.lowercase_ref_default_on_test = "lowercase-ref-value";
-    const cwd = makeTempProject();
+  test("resolves a lowercase-named env() reference when goViperCompat is true", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        yield* stubEnv("lowercase_ref_default_on_test", "lowercase-ref-value");
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(
-        join(cwd, "supabase", "config.toml"),
-        `project_id = "env(lowercase_ref_default_on_test)"\n`,
-      );
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "env(lowercase_ref_default_on_test)"\n`,
+        );
 
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { goViperCompat: true }));
-      expect(loaded!.config.project_id).toBe("lowercase-ref-value");
-    } finally {
-      if (previous === undefined) {
-        delete process.env.lowercase_ref_default_on_test;
-      } else {
-        process.env.lowercase_ref_default_on_test = previous;
-      }
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd, { goViperCompat: true });
+        expect(loaded!.config.project_id).toBe("lowercase-ref-value");
+      }),
+    ));
 });
 
 describe("saveCliConfig atomic failures", () => {
-  async function prepareConfigFile() {
-    const cwd = makeTempProject();
-    const directory = join(cwd, "supabase");
-    const filePath = join(directory, "config.json");
-    await mkdir(directory, { recursive: true });
-    await writeFile(filePath, JSON.stringify({ project_id: "old-ref" }));
-    return { cwd, directory, filePath };
+  function prepareConfigFile() {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const cwd = yield* makeTempProject();
+      const directory = join(cwd, "supabase");
+      const filePath = join(directory, "config.json");
+      yield* fs.makeDirectory(directory, { recursive: true });
+      yield* fs.writeFileString(filePath, yield* encodeJson({ project_id: "old-ref" }));
+      return { cwd, directory, filePath };
+    });
   }
 
   function runSaveWithFileSystem(
     cwd: string,
     decorate: (fs: FileSystem.FileSystem) => FileSystem.FileSystem,
   ) {
-    return Effect.runPromiseExit(
+    return Effect.exit(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         return yield* saveCliConfig({ cwd, config: sampleConfig }).pipe(
           Effect.provideService(FileSystem.FileSystem, decorate(fs)),
         );
-      }).pipe(Effect.provide(BunServices.layer)),
+      }),
     );
   }
 
@@ -1508,103 +1518,115 @@ describe("saveCliConfig atomic failures", () => {
     });
   }
 
-  test("surfaces a typed PlatformError when the temp-file write fails and leaves the original intact", async () => {
-    const { cwd, directory, filePath } = await prepareConfigFile();
+  test("surfaces a typed PlatformError when the temp-file write fails and leaves the original intact", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { cwd, directory, filePath } = yield* prepareConfigFile();
 
-    try {
-      const injectedError = injectedFailure("writeFileString", filePath);
-      const exit = await runSaveWithFileSystem(cwd, (fs) => ({
-        ...fs,
-        writeFileString: (candidate, content, options) =>
-          candidate.startsWith(`${filePath}.tmp.`)
-            ? Effect.fail(injectedError)
-            : fs.writeFileString(candidate, content, options),
-      }));
+        const injectedError = injectedFailure("writeFileString", filePath);
+        const exit = yield* runSaveWithFileSystem(cwd, (fs) => ({
+          ...fs,
+          writeFileString: (candidate, content, options) =>
+            candidate.startsWith(`${filePath}.tmp.`)
+              ? Effect.fail(injectedError)
+              : fs.writeFileString(candidate, content, options),
+        }));
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (!Exit.isFailure(exit)) return;
-      const error = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(error)).toBe(true);
-      if (Option.isSome(error)) {
-        expect(error.value).toBe(injectedError);
-      }
-      expect(JSON.parse(await readFile(filePath, "utf8"))).toEqual({ project_id: "old-ref" });
-      expect(
-        (await readdir(directory)).filter((entry) => entry.startsWith("config.json.tmp.")),
-      ).toEqual([]);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) return;
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBe(injectedError);
+        }
+        expect(yield* decodeJson(yield* fs.readFileString(filePath))).toEqual({
+          project_id: "old-ref",
+        });
+        expect(
+          (yield* fs.readDirectory(directory)).filter((entry) =>
+            entry.startsWith("config.json.tmp."),
+          ),
+        ).toEqual([]);
+      }),
+    ));
 
-  test("surfaces a typed PlatformError when rename fails and cleans the temp file", async () => {
-    const { cwd, directory, filePath } = await prepareConfigFile();
+  test("surfaces a typed PlatformError when rename fails and cleans the temp file", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { cwd, directory, filePath } = yield* prepareConfigFile();
 
-    try {
-      const injectedError = injectedFailure("rename", filePath);
-      const exit = await runSaveWithFileSystem(cwd, (fs) => ({
-        ...fs,
-        rename: (from, to) => (to === filePath ? Effect.fail(injectedError) : fs.rename(from, to)),
-      }));
+        const injectedError = injectedFailure("rename", filePath);
+        const exit = yield* runSaveWithFileSystem(cwd, (fs) => ({
+          ...fs,
+          rename: (from, to) =>
+            to === filePath ? Effect.fail(injectedError) : fs.rename(from, to),
+        }));
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (!Exit.isFailure(exit)) return;
-      const error = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(error)).toBe(true);
-      if (Option.isSome(error)) {
-        expect(error.value).toBe(injectedError);
-      }
-      expect(JSON.parse(await readFile(filePath, "utf8"))).toEqual({ project_id: "old-ref" });
-      expect(
-        (await readdir(directory)).filter((entry) => entry.startsWith("config.json.tmp.")),
-      ).toEqual([]);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) return;
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBe(injectedError);
+        }
+        expect(yield* decodeJson(yield* fs.readFileString(filePath))).toEqual({
+          project_id: "old-ref",
+        });
+        expect(
+          (yield* fs.readDirectory(directory)).filter((entry) =>
+            entry.startsWith("config.json.tmp."),
+          ),
+        ).toEqual([]);
+      }),
+    ));
 
-  test("cleans the temp file when interrupted during rename", async () => {
-    const { cwd, directory, filePath } = await prepareConfigFile();
+  test("cleans the temp file when interrupted during rename", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { cwd, directory, filePath } = yield* prepareConfigFile();
 
-    try {
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const renameStarted = yield* Deferred.make<void>();
-          const interruptedFs: FileSystem.FileSystem = {
-            ...fs,
-            rename: (from, to) =>
-              to === filePath
-                ? Deferred.succeed(renameStarted, undefined).pipe(Effect.andThen(Effect.never))
-                : fs.rename(from, to),
-          };
-          const fiber = yield* Effect.forkChild(
-            saveCliConfig({ cwd, config: sampleConfig }).pipe(
-              Effect.provideService(FileSystem.FileSystem, interruptedFs),
-            ),
-            { startImmediately: true },
-          );
-          yield* Deferred.await(renameStarted);
-          yield* Fiber.interrupt(fiber);
-        }).pipe(Effect.provide(BunServices.layer)),
-      );
+        const renameStarted = yield* Deferred.make<void>();
+        const interruptedFs: FileSystem.FileSystem = {
+          ...fs,
+          rename: (from, to) =>
+            to === filePath
+              ? Deferred.succeed(renameStarted, undefined).pipe(Effect.andThen(Effect.never))
+              : fs.rename(from, to),
+        };
+        const fiber = yield* Effect.forkChild(
+          saveCliConfig({ cwd, config: sampleConfig }).pipe(
+            Effect.provideService(FileSystem.FileSystem, interruptedFs),
+          ),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(renameStarted);
+        yield* Fiber.interrupt(fiber);
 
-      expect(JSON.parse(await readFile(filePath, "utf8"))).toEqual({ project_id: "old-ref" });
-      expect(
-        (await readdir(directory)).filter((entry) => entry.startsWith("config.json.tmp.")),
-      ).toEqual([]);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(yield* decodeJson(yield* fs.readFileString(filePath))).toEqual({
+          project_id: "old-ref",
+        });
+        expect(
+          (yield* fs.readDirectory(directory)).filter((entry) =>
+            entry.startsWith("config.json.tmp."),
+          ),
+        ).toEqual([]);
+      }),
+    ));
 });
 
 describe("config io [remotes.*] merge", () => {
-  async function writeTomlProject(toml: string): Promise<string> {
-    const cwd = makeTempProject();
-    await mkdir(join(cwd, "supabase"), { recursive: true });
-    await writeFile(join(cwd, "supabase", "config.toml"), toml);
-    return cwd;
+  function writeTomlProject(toml: string) {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const cwd = yield* makeTempProject();
+      yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+      yield* fs.writeFileString(join(cwd, "supabase", "config.toml"), toml);
+      return cwd;
+    });
   }
 
   // Remote `project_id`s below are valid 20-lowercase-letter refs, since `Config.Validate`
@@ -1656,71 +1678,64 @@ enabled = false
     };
   }
 
-  test("tracks the source of effective local, remote, and environment values", async () => {
-    const localCwd = await writeTomlProject(`project_id = "baseref"
+  test("tracks the source of effective local, remote, and environment values", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const localCwd = yield* writeTomlProject(`project_id = "baseref"
 
 [api]
 port = 6001
 `);
-    const envCwd = await writeTomlProject(`project_id = "baseref"
+        const envCwd = yield* writeTomlProject(`project_id = "baseref"
 
 [api]
 port = "env(API_PORT)"
 `);
-    const remoteCwd = await writeTomlProject(`project_id = "baseref"
+        const remoteCwd = yield* writeTomlProject(`project_id = "baseref"
 
 [remotes.preview]
 project_id = "${PREVIEW_REF}"
 [remotes.preview.db]
 port = 6002
 `);
-    const remoteEnvCwd = await writeTomlProject(`project_id = "baseref"
+        const remoteEnvCwd = yield* writeTomlProject(`project_id = "baseref"
 
 [remotes.preview]
 project_id = "${PREVIEW_REF}"
 [remotes.preview.db]
 port = "env(REMOTE_DB_PORT)"
 `);
-    const omittedCwd = await writeTomlProject(`project_id = "baseref"
+        const omittedCwd = yield* writeTomlProject(`project_id = "baseref"
 `);
 
-    try {
-      const loaded = await runConfigEffect(loadCliConfig(localCwd));
-      const envLoaded = await runConfigEffect(
-        loadCliConfig(envCwd, { cliProjectEnv: injectedProjectEnv({ API_PORT: "6001" }) }),
-      );
-      const remoteLoaded = await runConfigEffect(
-        loadCliConfig(remoteCwd, { projectRef: PREVIEW_REF }),
-      );
-      const remoteEnvLoaded = await runConfigEffect(
-        loadCliConfig(remoteEnvCwd, {
+        const loaded = yield* loadCliConfig(localCwd);
+        const envLoaded = yield* loadCliConfig(envCwd, {
+          cliProjectEnv: injectedProjectEnv({ API_PORT: "6001" }),
+        });
+        const remoteLoaded = yield* loadCliConfig(remoteCwd, { projectRef: PREVIEW_REF });
+        const remoteEnvLoaded = yield* loadCliConfig(remoteEnvCwd, {
           projectRef: PREVIEW_REF,
           cliProjectEnv: injectedProjectEnv({ REMOTE_DB_PORT: "6003" }),
-        }),
-      );
-      const omittedLoaded = await runConfigEffect(loadCliConfig(omittedCwd));
+        });
+        const omittedLoaded = yield* loadCliConfig(omittedCwd);
 
-      expect(originAt(loaded, ["api", "port"])).toBe("local");
-      expect(originAt(envLoaded, ["api", "port"])).toBe("environment");
-      expect(originAt(remoteLoaded, ["db", "port"])).toBe("remote");
-      expect(originAt(remoteEnvLoaded, ["db", "port"])).toBe("environment");
-      expect(originAt(omittedLoaded, ["studio", "port"])).toBeUndefined();
-    } finally {
-      await Promise.all(
-        [localCwd, envCwd, remoteCwd, remoteEnvCwd, omittedCwd].map((cwd) =>
-          rm(cwd, { recursive: true, force: true }),
-        ),
-      );
-    }
-  });
+        expect(originAt(loaded, ["api", "port"])).toBe("local");
+        expect(originAt(envLoaded, ["api", "port"])).toBe("environment");
+        expect(originAt(remoteLoaded, ["db", "port"])).toBe("remote");
+        expect(originAt(remoteEnvLoaded, ["db", "port"])).toBe("environment");
+        expect(originAt(omittedLoaded, ["studio", "port"])).toBeUndefined();
+      }),
+    ));
 
-  test("tracks environment origins for local and selected-remote array leaves", async () => {
-    const localArrayCwd = await writeTomlProject(`project_id = "baseref"
+  test("tracks environment origins for local and selected-remote array leaves", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const localArrayCwd = yield* writeTomlProject(`project_id = "baseref"
 
 [api]
 schemas = ["env(LOCAL_SCHEMA)"]
 `);
-    const remoteArrayCwd = await writeTomlProject(`project_id = "baseref"
+        const remoteArrayCwd = yield* writeTomlProject(`project_id = "baseref"
 
 [remotes.preview]
 project_id = "${PREVIEW_REF}"
@@ -1728,49 +1743,41 @@ project_id = "${PREVIEW_REF}"
 schemas = ["env(REMOTE_SCHEMA)"]
 `);
 
-    try {
-      const localArrayLoaded = await runConfigEffect(
-        loadCliConfig(localArrayCwd, {
+        const localArrayLoaded = yield* loadCliConfig(localArrayCwd, {
           cliProjectEnv: injectedProjectEnv({ LOCAL_SCHEMA: "local_schema" }),
-        }),
-      );
-      const remoteArrayLoaded = await runConfigEffect(
-        loadCliConfig(remoteArrayCwd, {
+        });
+        const remoteArrayLoaded = yield* loadCliConfig(remoteArrayCwd, {
           projectRef: PREVIEW_REF,
           cliProjectEnv: injectedProjectEnv({ REMOTE_SCHEMA: "remote_schema" }),
-        }),
-      );
+        });
 
-      expect(originAt(localArrayLoaded, ["api", "schemas"])).toBe("environment");
-      expect(originAt(remoteArrayLoaded, ["api", "schemas"])).toBe("environment");
-    } finally {
-      await Promise.all(
-        [localArrayCwd, remoteArrayCwd].map((cwd) => rm(cwd, { recursive: true, force: true })),
-      );
-    }
-  });
+        expect(originAt(localArrayLoaded, ["api", "schemas"])).toBe("environment");
+        expect(originAt(remoteArrayLoaded, ["api", "schemas"])).toBe("environment");
+      }),
+    ));
 
-  test("merges the matching remote subtree over the base before decode", async () => {
-    const cwd = await writeTomlProject(BASE_WITH_REMOTES);
-    try {
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { projectRef: PREVIEW_REF }));
-      expect(loaded!.appliedRemote).toBe("preview");
-      expect(loaded!.config.project_id).toBe(PREVIEW_REF);
-      expect(loaded!.config.api.max_rows).toBe(999);
-      // Array replaced wholesale, not element-merged.
-      expect(loaded!.config.api.schemas).toEqual(["remote_only"]);
-      expect(loaded!.config.api.enabled).toBe(true);
-      expect(loaded!.config.db.major_version).toBe(15);
-      expect(loaded!.document?.remotes).toBeUndefined();
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+  test("merges the matching remote subtree over the base before decode", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const cwd = yield* writeTomlProject(BASE_WITH_REMOTES);
 
-  test("rawDocument stays pre-interpolation and pre-merge, with remotes intact, while document is resolved and merged", async () => {
-    const previous = process.env.SUPABASE_RAW_DOCUMENT_MAX_ROWS_TEST;
-    process.env.SUPABASE_RAW_DOCUMENT_MAX_ROWS_TEST = "555";
-    const cwd = await writeTomlProject(`project_id = "baseref"
+        const loaded = yield* loadCliConfig(cwd, { projectRef: PREVIEW_REF });
+        expect(loaded!.appliedRemote).toBe("preview");
+        expect(loaded!.config.project_id).toBe(PREVIEW_REF);
+        expect(loaded!.config.api.max_rows).toBe(999);
+        // Array replaced wholesale, not element-merged.
+        expect(loaded!.config.api.schemas).toEqual(["remote_only"]);
+        expect(loaded!.config.api.enabled).toBe(true);
+        expect(loaded!.config.db.major_version).toBe(15);
+        expect(loaded!.document?.remotes).toBeUndefined();
+      }),
+    ));
+
+  test("rawDocument stays pre-interpolation and pre-merge, with remotes intact, while document is resolved and merged", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        yield* stubEnv("SUPABASE_RAW_DOCUMENT_MAX_ROWS_TEST", "555");
+        const cwd = yield* writeTomlProject(`project_id = "baseref"
 
 [api]
 max_rows = "env(SUPABASE_RAW_DOCUMENT_MAX_ROWS_TEST)"
@@ -1780,155 +1787,135 @@ project_id = "${PREVIEW_REF}"
 [remotes.preview.api]
 max_rows = 999
 `);
-    try {
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { projectRef: PREVIEW_REF }));
+        const loaded = yield* loadCliConfig(cwd, { projectRef: PREVIEW_REF });
 
-      expect(loaded!.config.api.max_rows).toBe(999);
-      expect(loaded!.document?.remotes).toBeUndefined();
+        expect(loaded!.config.api.max_rows).toBe(999);
+        expect(loaded!.document?.remotes).toBeUndefined();
 
-      const rawApi = loaded!.rawDocument?.api;
-      expect(isObject(rawApi) ? rawApi.max_rows : undefined).toBe(
-        "env(SUPABASE_RAW_DOCUMENT_MAX_ROWS_TEST)",
-      );
-      const rawRemotes = loaded!.rawDocument?.remotes;
-      expect(isObject(rawRemotes) ? Object.keys(rawRemotes) : undefined).toEqual(["preview"]);
-      const rawPreview = isObject(rawRemotes) ? rawRemotes.preview : undefined;
-      expect(isObject(rawPreview) ? rawPreview.project_id : undefined).toBe(PREVIEW_REF);
-    } finally {
-      if (previous === undefined) {
-        delete process.env.SUPABASE_RAW_DOCUMENT_MAX_ROWS_TEST;
-      } else {
-        process.env.SUPABASE_RAW_DOCUMENT_MAX_ROWS_TEST = previous;
-      }
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const rawApi = loaded!.rawDocument?.api;
+        expect(isObject(rawApi) ? rawApi.max_rows : undefined).toBe(
+          "env(SUPABASE_RAW_DOCUMENT_MAX_ROWS_TEST)",
+        );
+        const rawRemotes = loaded!.rawDocument?.remotes;
+        expect(isObject(rawRemotes) ? Object.keys(rawRemotes) : undefined).toEqual(["preview"]);
+        const rawPreview = isObject(rawRemotes) ? rawRemotes.preview : undefined;
+        expect(isObject(rawPreview) ? rawPreview.project_id : undefined).toBe(PREVIEW_REF);
+      }),
+    ));
 
   // An unselected `remotes` table survives on `document` (interpolated), unlike the matched case
   // above where it's stripped; callers deciding where to write must still use `rawDocument`.
-  test("keeps an interpolated remotes table on document when no remote matches", async () => {
-    const previous = process.env.SUPABASE_UNMATCHED_REMOTE_REF_TEST;
-    process.env.SUPABASE_UNMATCHED_REMOTE_REF_TEST = STAGING_REF;
-    const cwd = await writeTomlProject(`project_id = "baseref"
+  test("keeps an interpolated remotes table on document when no remote matches", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        yield* stubEnv("SUPABASE_UNMATCHED_REMOTE_REF_TEST", STAGING_REF);
+        const cwd = yield* writeTomlProject(`project_id = "baseref"
 
 [remotes.staging]
 project_id = "env(SUPABASE_UNMATCHED_REMOTE_REF_TEST)"
 `);
-    try {
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded!.appliedRemote).toBeUndefined();
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded!.appliedRemote).toBeUndefined();
 
-      const documentRemotes = loaded!.document?.remotes;
-      const documentStaging = isObject(documentRemotes) ? documentRemotes.staging : undefined;
-      expect(isObject(documentStaging) ? documentStaging.project_id : undefined).toBe(STAGING_REF);
+        const documentRemotes = loaded!.document?.remotes;
+        const documentStaging = isObject(documentRemotes) ? documentRemotes.staging : undefined;
+        expect(isObject(documentStaging) ? documentStaging.project_id : undefined).toBe(
+          STAGING_REF,
+        );
 
-      const rawRemotes = loaded!.rawDocument?.remotes;
-      const rawStaging = isObject(rawRemotes) ? rawRemotes.staging : undefined;
-      expect(isObject(rawStaging) ? rawStaging.project_id : undefined).toBe(
-        "env(SUPABASE_UNMATCHED_REMOTE_REF_TEST)",
-      );
-    } finally {
-      if (previous === undefined) {
-        delete process.env.SUPABASE_UNMATCHED_REMOTE_REF_TEST;
-      } else {
-        process.env.SUPABASE_UNMATCHED_REMOTE_REF_TEST = previous;
-      }
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const rawRemotes = loaded!.rawDocument?.remotes;
+        const rawStaging = isObject(rawRemotes) ? rawRemotes.staging : undefined;
+        expect(isObject(rawStaging) ? rawStaging.project_id : undefined).toBe(
+          "env(SUPABASE_UNMATCHED_REMOTE_REF_TEST)",
+        );
+      }),
+    ));
 
-  test("interpolatedRemotes carries resolved project_id values distinct from the raw literal", async () => {
-    const previous = process.env.SUPABASE_INTERPOLATED_REMOTES_TEST;
-    process.env.SUPABASE_INTERPOLATED_REMOTES_TEST = STAGING_REF;
-    const cwd = await writeTomlProject(`project_id = "baseref"
+  test("interpolatedRemotes carries resolved project_id values distinct from the raw literal", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        yield* stubEnv("SUPABASE_INTERPOLATED_REMOTES_TEST", STAGING_REF);
+        const cwd = yield* writeTomlProject(`project_id = "baseref"
 
 [remotes.staging]
 project_id = "env(SUPABASE_INTERPOLATED_REMOTES_TEST)"
 `);
-    try {
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
+        const loaded = yield* loadCliConfig(cwd);
 
-      const interpolatedStaging = loaded!.interpolatedRemotes?.staging;
-      expect(isObject(interpolatedStaging) ? interpolatedStaging.project_id : undefined).toBe(
-        STAGING_REF,
-      );
+        const interpolatedStaging = loaded!.interpolatedRemotes?.staging;
+        expect(isObject(interpolatedStaging) ? interpolatedStaging.project_id : undefined).toBe(
+          STAGING_REF,
+        );
 
-      const rawRemotes = loaded!.rawDocument?.remotes;
-      const rawStaging = isObject(rawRemotes) ? rawRemotes.staging : undefined;
-      expect(isObject(rawStaging) ? rawStaging.project_id : undefined).toBe(
-        "env(SUPABASE_INTERPOLATED_REMOTES_TEST)",
-      );
-    } finally {
-      if (previous === undefined) {
-        delete process.env.SUPABASE_INTERPOLATED_REMOTES_TEST;
-      } else {
-        process.env.SUPABASE_INTERPOLATED_REMOTES_TEST = previous;
-      }
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const rawRemotes = loaded!.rawDocument?.remotes;
+        const rawStaging = isObject(rawRemotes) ? rawRemotes.staging : undefined;
+        expect(isObject(rawStaging) ? rawStaging.project_id : undefined).toBe(
+          "env(SUPABASE_INTERPOLATED_REMOTES_TEST)",
+        );
+      }),
+    ));
 
-  test("carries appliedRemote on CliConfigParseError when the matched remote's decode fails", async () => {
-    // The remote match/merge notice is owed even when the subsequent decode fails.
-    // `db.major_version` is an unrelated schema-decode error; the merge must still have
-    // happened (and be reported) ahead of it.
-    const cwd = await writeTomlProject(
-      `${BASE_WITH_REMOTES}
+  test("carries appliedRemote on CliConfigParseError when the matched remote's decode fails", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        // The remote match/merge notice is owed even when the subsequent decode fails.
+        // `db.major_version` is an unrelated schema-decode error; the merge must still have
+        // happened (and be reported) ahead of it.
+        const cwd = yield* writeTomlProject(
+          `${BASE_WITH_REMOTES}
 [remotes.preview.db]
 major_version = "not-a-number"
 `,
-    );
-    try {
-      const exit = await Effect.runPromiseExit(
-        loadCliConfig(cwd, { projectRef: PREVIEW_REF }).pipe(Effect.provide(BunServices.layer)),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (!Exit.isFailure(exit)) {
-        return;
-      }
-      const error = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(error)).toBe(true);
-      if (!Option.isSome(error) || error.value._tag !== "CliConfigParseError") {
-        return;
-      }
-      expect(error.value.appliedRemote).toBe("preview");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        );
 
-  test("loads the base config verbatim when no remote matches", async () => {
-    const cwd = await writeTomlProject(BASE_WITH_REMOTES);
-    try {
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { projectRef: "unknownref" }));
-      expect(loaded!.appliedRemote).toBeUndefined();
-      expect(loaded!.config.project_id).toBe("baseref");
-      expect(loaded!.config.api.max_rows).toBe(123);
-      expect(loaded!.config.api.schemas).toEqual(["public", "custom_base"]);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const exit = yield* Effect.exit(loadCliConfig(cwd, { projectRef: PREVIEW_REF }));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) {
+          return;
+        }
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (!Option.isSome(error) || error.value._tag !== "CliConfigParseError") {
+          return;
+        }
+        expect(error.value.appliedRemote).toBe("preview");
+      }),
+    ));
 
-  test("does not merge remotes when no projectRef is requested and none has an empty project_id", async () => {
-    // `projectRef` defaults to `""`, so this only stays unmerged because neither remote's
-    // `project_id` is empty.
-    const cwd = await writeTomlProject(BASE_WITH_REMOTES);
-    try {
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded!.appliedRemote).toBeUndefined();
-      expect(loaded!.config.api.max_rows).toBe(123);
-      expect(Object.keys(loaded!.config.remotes)).toEqual(["preview", "staging"]);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+  test("loads the base config verbatim when no remote matches", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const cwd = yield* writeTomlProject(BASE_WITH_REMOTES);
 
-  test("rejects duplicate project_id across remotes even when no projectRef is requested", async () => {
-    // The duplicate-project_id check runs unconditionally on every config load, in the same
-    // loop that resolves the `[remotes.*]` override — it is not gated on a caller actually
-    // selecting a remote.
-    const cwd = await writeTomlProject(`project_id = "baseref"
+        const loaded = yield* loadCliConfig(cwd, { projectRef: "unknownref" });
+        expect(loaded!.appliedRemote).toBeUndefined();
+        expect(loaded!.config.project_id).toBe("baseref");
+        expect(loaded!.config.api.max_rows).toBe(123);
+        expect(loaded!.config.api.schemas).toEqual(["public", "custom_base"]);
+      }),
+    ));
+
+  test("does not merge remotes when no projectRef is requested and none has an empty project_id", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        // `projectRef` defaults to `""`, so this only stays unmerged because neither remote's
+        // `project_id` is empty.
+        const cwd = yield* writeTomlProject(BASE_WITH_REMOTES);
+
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded!.appliedRemote).toBeUndefined();
+        expect(loaded!.config.api.max_rows).toBe(123);
+        expect(Object.keys(loaded!.config.remotes)).toEqual(["preview", "staging"]);
+      }),
+    ));
+
+  test("rejects duplicate project_id across remotes even when no projectRef is requested", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        // The duplicate-project_id check runs unconditionally on every config load, in the same
+        // loop that resolves the `[remotes.*]` override — it is not gated on a caller actually
+        // selecting a remote.
+        const cwd = yield* writeTomlProject(`project_id = "baseref"
 
 [remotes.a]
 project_id = "dupref"
@@ -1936,25 +1923,22 @@ project_id = "dupref"
 [remotes.b]
 project_id = "dupref"
 `);
-    try {
-      const message = await Effect.runPromise(
-        loadCliConfig(cwd, { goViperCompat: true }).pipe(
+
+        const message = yield* loadCliConfig(cwd, { goViperCompat: true }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
-          Effect.provide(BunServices.layer),
-        ),
-      );
-      expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        );
+        expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
+      }),
+    ));
 
   // `goViperCompat` is required even though `projectRef` is passed: the duplicate/format checks
   // are gated solely on `goViperCompat`, not on whether a remote is being selected.
-  test("rejects duplicate project_id across remotes with Go's message", async () => {
-    const cwd = await writeTomlProject(`project_id = "baseref"
+  test("rejects duplicate project_id across remotes with Go's message", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const cwd = yield* writeTomlProject(`project_id = "baseref"
 
 [remotes.a]
 project_id = "dupref"
@@ -1962,25 +1946,25 @@ project_id = "dupref"
 [remotes.b]
 project_id = "dupref"
 `);
-    try {
-      const message = await Effect.runPromise(
-        loadCliConfig(cwd, { projectRef: "dupref", goViperCompat: true }).pipe(
+
+        const message = yield* loadCliConfig(cwd, {
+          projectRef: "dupref",
+          goViperCompat: true,
+        }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
-          Effect.provide(BunServices.layer),
-        ),
-      );
-      expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        );
+        expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
+      }),
+    ));
 
-  test("rejects duplicate project_id among remotes that do not match projectRef", async () => {
-    // The duplicate map is built across all `[remotes.*]` blocks before applying the matching
-    // override, so a clash between two non-target remotes still fails.
-    const cwd = await writeTomlProject(`project_id = "baseref"
+  test("rejects duplicate project_id among remotes that do not match projectRef", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        // The duplicate map is built across all `[remotes.*]` blocks before applying the matching
+        // override, so a clash between two non-target remotes still fails.
+        const cwd = yield* writeTomlProject(`project_id = "baseref"
 
 [remotes.target]
 project_id = "previewref"
@@ -1991,25 +1975,25 @@ project_id = "dupref"
 [remotes.b]
 project_id = "dupref"
 `);
-    try {
-      const message = await Effect.runPromise(
-        loadCliConfig(cwd, { projectRef: "previewref", goViperCompat: true }).pipe(
+
+        const message = yield* loadCliConfig(cwd, {
+          projectRef: "previewref",
+          goViperCompat: true,
+        }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
-          Effect.provide(BunServices.layer),
-        ),
-      );
-      expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        );
+        expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
+      }),
+    ));
 
-  test("rejects two remotes that both omit project_id", async () => {
-    // A missing project_id reads as "", so two remotes that both omit it collide on the empty
-    // key.
-    const cwd = await writeTomlProject(`project_id = "baseref"
+  test("rejects two remotes that both omit project_id", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        // A missing project_id reads as "", so two remotes that both omit it collide on the empty
+        // key.
+        const cwd = yield* writeTomlProject(`project_id = "baseref"
 
 [remotes.a]
 [remotes.a.api]
@@ -2019,66 +2003,63 @@ max_rows = 1
 [remotes.b.api]
 max_rows = 2
 `);
-    try {
-      const message = await Effect.runPromise(
-        loadCliConfig(cwd, { projectRef: "previewref", goViperCompat: true }).pipe(
+
+        const message = yield* loadCliConfig(cwd, {
+          projectRef: "previewref",
+          goViperCompat: true,
+        }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
-          Effect.provide(BunServices.layer),
-        ),
-      );
-      expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        );
+        expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
+      }),
+    ));
 
-  test("rejects a remote project_id that is not a valid 20-letter ref, even with no projectRef requested", async () => {
-    // Every `[remotes.*].project_id` is checked against the ref pattern on every config load,
-    // not only the one that ends up selected, so this must fail closed even when the caller
-    // never selects a remote.
-    const cwd = await writeTomlProject(`project_id = "baseref"
+  test("rejects a remote project_id that is not a valid 20-letter ref, even with no projectRef requested", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        // Every `[remotes.*].project_id` is checked against the ref pattern on every config load,
+        // not only the one that ends up selected, so this must fail closed even when the caller
+        // never selects a remote.
+        const cwd = yield* writeTomlProject(`project_id = "baseref"
 
 [remotes.bad]
 project_id = "not-a-ref"
 `);
-    try {
-      const message = await Effect.runPromise(
-        loadCliConfig(cwd, { goViperCompat: true }).pipe(
-          Effect.catchTag("InvalidRemoteProjectIdError", (error) => Effect.succeed(error.message)),
-          Effect.provide(BunServices.layer),
-        ),
-      );
-      expect(message).toBe(
-        "Invalid config for remotes.bad.project_id. Must be like: abcdefghijklmnopqrst",
-      );
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
 
-  test("the merged document carries pointer sections introduced by the remote", async () => {
-    const cwd = await writeTomlProject(`project_id = "baseref"
+        const message = yield* loadCliConfig(cwd, { goViperCompat: true }).pipe(
+          Effect.catchTag("InvalidRemoteProjectIdError", (error) => Effect.succeed(error.message)),
+        );
+        expect(message).toBe(
+          "Invalid config for remotes.bad.project_id. Must be like: abcdefghijklmnopqrst",
+        );
+      }),
+    ));
+
+  test("the merged document carries pointer sections introduced by the remote", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const cwd = yield* writeTomlProject(`project_id = "baseref"
 
 [remotes.preview]
 project_id = "${PREVIEW_REF}"
 [remotes.preview.db.ssl_enforcement]
 enabled = true
 `);
-    try {
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { projectRef: PREVIEW_REF }));
-      // `presenceIn` reads `document` to detect optional pointer sections;
-      // a remote-introduced `db.ssl_enforcement` must be present there.
-      const db = loaded!.document?.db;
-      expect(typeof db === "object" && db !== null && "ssl_enforcement" in db).toBe(true);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
 
-  test("forces db.seed.enabled false when the matching remote omits it", async () => {
-    const cwd = await writeTomlProject(`project_id = "baseref"
+        const loaded = yield* loadCliConfig(cwd, { projectRef: PREVIEW_REF });
+        // `presenceIn` reads `document` to detect optional pointer sections;
+        // a remote-introduced `db.ssl_enforcement` must be present there.
+        const db = loaded!.document?.db;
+        expect(typeof db === "object" && db !== null && "ssl_enforcement" in db).toBe(true);
+      }),
+    ));
+
+  test("forces db.seed.enabled false when the matching remote omits it", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const cwd = yield* writeTomlProject(`project_id = "baseref"
 
 [db.seed]
 enabled = true
@@ -2088,55 +2069,47 @@ project_id = "${PREVIEW_REF}"
 [remotes.preview.api]
 max_rows = 5
 `);
-    try {
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { projectRef: PREVIEW_REF }));
-      expect(loaded!.config.db.seed.enabled).toBe(false);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
 
-  test("preserves db.seed.enabled when the matching remote sets it", async () => {
-    const cwd = await writeTomlProject(`project_id = "baseref"
+        const loaded = yield* loadCliConfig(cwd, { projectRef: PREVIEW_REF });
+        expect(loaded!.config.db.seed.enabled).toBe(false);
+      }),
+    ));
+
+  test("preserves db.seed.enabled when the matching remote sets it", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const cwd = yield* writeTomlProject(`project_id = "baseref"
 
 [remotes.preview]
 project_id = "${PREVIEW_REF}"
 [remotes.preview.db.seed]
 enabled = true
 `);
-    try {
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { projectRef: PREVIEW_REF }));
-      expect(loaded!.config.db.seed.enabled).toBe(true);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
 
-  test("resolves env() on a lowercase-named variable, matching Go's case-agnostic matcher", async () => {
-    // Env-var matching is case-agnostic when `goViperCompat` is set; without it, the strict
-    // SCREAMING_SNAKE_CASE matcher wouldn't match this lowercase name at all.
-    const previous = process.env.project_id;
-    process.env.project_id = "lowercase-ref";
-    const cwd = await writeTomlProject(`project_id = "env(project_id)"\n`);
-    try {
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { goViperCompat: true }));
-      expect(loaded!.config.project_id).toBe("lowercase-ref");
-    } finally {
-      if (previous === undefined) {
-        delete process.env.project_id;
-      } else {
-        process.env.project_id = previous;
-      }
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd, { projectRef: PREVIEW_REF });
+        expect(loaded!.config.db.seed.enabled).toBe(true);
+      }),
+    ));
 
-  test("does not match a remote whose project_id is env(REF) against the resolved ref (Go parity)", async () => {
-    // A `[remotes.x] project_id = "env(REF)"` never matches a caller-supplied, already-resolved
-    // `REF`: matching compares the literal `env(REF)` string, not what it resolves to.
-    const previous = process.env.SUPABASE_REMOTE_ENV_REF_TEST;
-    process.env.SUPABASE_REMOTE_ENV_REF_TEST = PREVIEW_REF;
-    const cwd = await writeTomlProject(`project_id = "baseref"
+  test("resolves env() on a lowercase-named variable, matching Go's case-agnostic matcher", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        // Env-var matching is case-agnostic when `goViperCompat` is set; without it, the strict
+        // SCREAMING_SNAKE_CASE matcher wouldn't match this lowercase name at all.
+        yield* stubEnv("project_id", "lowercase-ref");
+        const cwd = yield* writeTomlProject(`project_id = "env(project_id)"\n`);
+        const loaded = yield* loadCliConfig(cwd, { goViperCompat: true });
+        expect(loaded!.config.project_id).toBe("lowercase-ref");
+      }),
+    ));
+
+  test("does not match a remote whose project_id is env(REF) against the resolved ref (Go parity)", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        // A `[remotes.x] project_id = "env(REF)"` never matches a caller-supplied, already-resolved
+        // `REF`: matching compares the literal `env(REF)` string, not what it resolves to.
+        yield* stubEnv("SUPABASE_REMOTE_ENV_REF_TEST", PREVIEW_REF);
+        const cwd = yield* writeTomlProject(`project_id = "baseref"
 
 [api]
 max_rows = 1
@@ -2146,48 +2119,34 @@ project_id = "env(SUPABASE_REMOTE_ENV_REF_TEST)"
 [remotes.preview.api]
 max_rows = 999
 `);
-    try {
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { projectRef: PREVIEW_REF }));
-      expect(loaded!.appliedRemote).toBeUndefined();
-      expect(loaded!.config.api.max_rows).toBe(1);
-    } finally {
-      if (previous === undefined) {
-        delete process.env.SUPABASE_REMOTE_ENV_REF_TEST;
-      } else {
-        process.env.SUPABASE_REMOTE_ENV_REF_TEST = previous;
-      }
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd, { projectRef: PREVIEW_REF });
+        expect(loaded!.appliedRemote).toBeUndefined();
+        expect(loaded!.config.api.max_rows).toBe(1);
+      }),
+    ));
 
-  test("validates a remote's env(REF) project_id format against its resolved value, not the literal", async () => {
-    // Format validation runs after `env(...)` resolution, so it validates the resolved
-    // project_id against the pattern, not the literal `env(REF)` string.
-    const previous = process.env.SUPABASE_REMOTE_ENV_REF_FORMAT_TEST;
-    process.env.SUPABASE_REMOTE_ENV_REF_FORMAT_TEST = PREVIEW_REF;
-    const cwd = await writeTomlProject(`project_id = "baseref"
+  test("validates a remote's env(REF) project_id format against its resolved value, not the literal", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        // Format validation runs after `env(...)` resolution, so it validates the resolved
+        // project_id against the pattern, not the literal `env(REF)` string.
+        yield* stubEnv("SUPABASE_REMOTE_ENV_REF_FORMAT_TEST", PREVIEW_REF);
+        const cwd = yield* writeTomlProject(`project_id = "baseref"
 
 [remotes.preview]
 project_id = "env(SUPABASE_REMOTE_ENV_REF_FORMAT_TEST)"
 `);
-    try {
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded!.appliedRemote).toBeUndefined();
-      expect(loaded!.config.project_id).toBe("baseref");
-    } finally {
-      if (previous === undefined) {
-        delete process.env.SUPABASE_REMOTE_ENV_REF_FORMAT_TEST;
-      } else {
-        process.env.SUPABASE_REMOTE_ENV_REF_FORMAT_TEST = previous;
-      }
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded!.appliedRemote).toBeUndefined();
+        expect(loaded!.config.project_id).toBe("baseref");
+      }),
+    ));
 
-  test("resolves env() references inside the matching remote before merge", async () => {
-    const previous = process.env.SUPABASE_REMOTE_MAX_ROWS_TEST;
-    process.env.SUPABASE_REMOTE_MAX_ROWS_TEST = "777";
-    const cwd = await writeTomlProject(`project_id = "baseref"
+  test("resolves env() references inside the matching remote before merge", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        yield* stubEnv("SUPABASE_REMOTE_MAX_ROWS_TEST", "777");
+        const cwd = yield* writeTomlProject(`project_id = "baseref"
 
 [api]
 max_rows = 1
@@ -2197,25 +2156,19 @@ project_id = "${PREVIEW_REF}"
 [remotes.preview.api]
 max_rows = "env(SUPABASE_REMOTE_MAX_ROWS_TEST)"
 `);
-    try {
-      const loaded = await runConfigEffect(loadCliConfig(cwd, { projectRef: PREVIEW_REF }));
-      expect(loaded!.config.api.max_rows).toBe(777);
-    } finally {
-      if (previous === undefined) {
-        delete process.env.SUPABASE_REMOTE_MAX_ROWS_TEST;
-      } else {
-        process.env.SUPABASE_REMOTE_MAX_ROWS_TEST = previous;
-      }
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const loaded = yield* loadCliConfig(cwd, { projectRef: PREVIEW_REF });
+        expect(loaded!.config.api.max_rows).toBe(777);
+      }),
+    ));
 
   // Business-rule checks (`Auth.External.validate()`, etc.) run exactly once, against the
   // merged effective config, never iterated over every remote — a non-selected `[remotes.*]`
   // block's own business-rule violations must not fail the whole config load.
-  test("loads an unselected remote whose external provider is enabled without a secret", async () => {
-    const cwd = await writeTomlProject(
-      `project_id = "baseref"
+  test("loads an unselected remote whose external provider is enabled without a secret", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const cwd = yield* writeTomlProject(
+          `project_id = "baseref"
 
 [remotes.staging]
 project_id = "${STAGING_REF}"
@@ -2223,21 +2176,21 @@ project_id = "${STAGING_REF}"
 [remotes.staging.auth.external.github]
 enabled = true
 `,
-    );
-    try {
-      // [remotes.staging] is never selected/merged, so it's never business-rule-validated,
-      // even though it decodes fine structurally.
-      const loaded = await runConfigEffect(loadCliConfig(cwd));
-      expect(loaded!.appliedRemote).toBeUndefined();
-      expect(loaded!.config.remotes.staging?.auth.external.github.enabled).toBe(true);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        );
 
-  test("still validates the same remote's external provider once it is selected", async () => {
-    const cwd = await writeTomlProject(
-      `project_id = "baseref"
+        // [remotes.staging] is never selected/merged, so it's never business-rule-validated,
+        // even though it decodes fine structurally.
+        const loaded = yield* loadCliConfig(cwd);
+        expect(loaded!.appliedRemote).toBeUndefined();
+        expect(loaded!.config.remotes.staging?.auth.external.github.enabled).toBe(true);
+      }),
+    ));
+
+  test("still validates the same remote's external provider once it is selected", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const cwd = yield* writeTomlProject(
+          `project_id = "baseref"
 
 [remotes.staging]
 project_id = "${STAGING_REF}"
@@ -2245,39 +2198,33 @@ project_id = "${STAGING_REF}"
 [remotes.staging.auth.external.github]
 enabled = true
 `,
-    );
-    try {
-      // Selecting [remotes.staging] merges it into the effective config, which is
-      // business-rule-validated — a required `client_id`/`secret` is missing, so this must
-      // still fail.
-      const exit = await Effect.runPromiseExit(
-        loadCliConfig(cwd, { projectRef: STAGING_REF }).pipe(Effect.provide(BunServices.layer)),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        );
 
-  test("still fails on a structurally malformed value inside an unselected remote", async () => {
-    // Every remote is structurally decoded regardless of selection — only the
-    // merged-config-only business rules are skipped for a non-selected remote, not type/shape
-    // decoding.
-    const cwd = await writeTomlProject(
-      `${BASE_WITH_REMOTES}
+        // Selecting [remotes.staging] merges it into the effective config, which is
+        // business-rule-validated — a required `client_id`/`secret` is missing, so this must
+        // still fail.
+        const exit = yield* Effect.exit(loadCliConfig(cwd, { projectRef: STAGING_REF }));
+        expect(Exit.isFailure(exit)).toBe(true);
+      }),
+    ));
+
+  test("still fails on a structurally malformed value inside an unselected remote", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        // Every remote is structurally decoded regardless of selection — only the
+        // merged-config-only business rules are skipped for a non-selected remote, not type/shape
+        // decoding.
+        const cwd = yield* writeTomlProject(
+          `${BASE_WITH_REMOTES}
 [remotes.staging.db]
 major_version = "not-a-number"
 `,
-    );
-    try {
-      const exit = await Effect.runPromiseExit(
-        loadCliConfig(cwd).pipe(Effect.provide(BunServices.layer)),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        );
+
+        const exit = yield* Effect.exit(loadCliConfig(cwd));
+        expect(Exit.isFailure(exit)).toBe(true);
+      }),
+    ));
 });
 
 describe("config io deprecated [inbucket] back-compat", () => {
@@ -2298,62 +2245,71 @@ describe("config io deprecated [inbucket] back-compat", () => {
     errorSpy = undefined;
   });
 
-  async function loadToml(contents: string) {
-    const cwd = makeTempProject();
-    const path = await runConfigEffect(configTomlPath(cwd));
-    await mkdir(join(cwd, "supabase"), { recursive: true });
-    await writeFile(path, contents);
-    try {
-      return await runConfigEffect(loadCliConfigFile(path));
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
+  function loadToml(contents: string) {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const cwd = yield* makeTempProject();
+      const path = yield* configTomlPath(cwd);
+      yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path, contents);
+
+      return yield* loadCliConfigFile(path);
+    });
   }
 
-  test("loads a deprecated [inbucket] section as [local_smtp]", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
+  test("loads a deprecated [inbucket] section as [local_smtp]", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
 
 [inbucket]
 enabled = true
 port = 12345
 `,
-    );
+        );
 
-    expect(loaded.config.local_smtp.enabled).toBe(true);
-    expect(loaded.config.local_smtp.port).toBe(12345);
-    expect("inbucket" in loaded.config).toBe(false);
-    expect(loaded.document).not.toHaveProperty("inbucket");
-    expect(loaded.document).toHaveProperty("local_smtp");
-    expect(
-      warnings.some((m) =>
-        m.includes(
-          "WARN: config section [inbucket] is deprecated and will be removed in v3, use [local_smtp] instead.",
-        ),
-      ),
-    ).toBe(true);
-  });
+        expect(loaded.config.local_smtp.enabled).toBe(true);
+        expect(loaded.config.local_smtp.port).toBe(12345);
+        expect("inbucket" in loaded.config).toBe(false);
+        expect(loaded.document).not.toHaveProperty("inbucket");
+        expect(loaded.document).toHaveProperty("local_smtp");
+        expect(
+          warnings.some((m) =>
+            m.includes(
+              "WARN: config section [inbucket] is deprecated and will be removed in v3, use [local_smtp] instead.",
+            ),
+          ),
+        ).toBe(true);
+      }),
+    ));
 
-  test("fills schema defaults when a deprecated [inbucket] section is partial", async () => {
-    const loaded = await loadToml(
-      `project_id = "abc123"
+  test("fills schema defaults when a deprecated [inbucket] section is partial", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
 
 [inbucket]
 port = 9999
 `,
-    );
+        );
 
-    // enabled is omitted by the user; the schema default (true) must survive the
-    // inbucket -> local_smtp rewrite rather than collapsing to a zero value.
-    expect(loaded.config.local_smtp.enabled).toBe(true);
-    expect(loaded.config.local_smtp.port).toBe(9999);
-  });
+        // enabled is omitted by the user; the schema default (true) must survive the
+        // inbucket -> local_smtp rewrite rather than collapsing to a zero value.
+        expect(loaded.config.local_smtp.enabled).toBe(true);
+        expect(loaded.config.local_smtp.port).toBe(9999);
+      }),
+    ));
 
-  test("prefers an explicit [local_smtp] when both sections are present", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
+  test("prefers an explicit [local_smtp] when both sections are present", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
 
 [inbucket]
 enabled = true
@@ -2363,18 +2319,21 @@ port = 11111
 enabled = true
 port = 22222
 `,
-    );
+        );
 
-    expect(loaded.config.local_smtp.port).toBe(22222);
-    expect(loaded.document).not.toHaveProperty("inbucket");
-    // The deprecation warning still fires because the deprecated key was present.
-    expect(warnings.some((m) => m.includes("[inbucket] is deprecated"))).toBe(true);
-  });
+        expect(loaded.config.local_smtp.port).toBe(22222);
+        expect(loaded.document).not.toHaveProperty("inbucket");
+        // The deprecation warning still fires because the deprecated key was present.
+        expect(warnings.some((m) => m.includes("[inbucket] is deprecated"))).toBe(true);
+      }),
+    ));
 
-  test("normalizes a deprecated [remotes.*.inbucket] section", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
+  test("normalizes a deprecated [remotes.*.inbucket] section", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
 
 [remotes.staging]
 project_id = "stagingrefaaaaaaaaaa"
@@ -2383,34 +2342,38 @@ project_id = "stagingrefaaaaaaaaaa"
 enabled = true
 port = 33333
 `,
-    );
+        );
 
-    const staging = loaded.config.remotes.staging;
-    expect(staging?.local_smtp?.port).toBe(33333);
-    expect(staging).not.toHaveProperty("inbucket");
-    expect(
-      warnings.some((m) =>
-        m.includes(
-          "WARN: config section [remotes.staging.inbucket] is deprecated and will be removed in v3, use [remotes.staging.local_smtp] instead.",
-        ),
-      ),
-    ).toBe(true);
-  });
+        const staging = loaded.config.remotes.staging;
+        expect(staging?.local_smtp?.port).toBe(33333);
+        expect(staging).not.toHaveProperty("inbucket");
+        expect(
+          warnings.some((m) =>
+            m.includes(
+              "WARN: config section [remotes.staging.inbucket] is deprecated and will be removed in v3, use [remotes.staging.local_smtp] instead.",
+            ),
+          ),
+        ).toBe(true);
+      }),
+    ));
 
-  test("does not warn when only [local_smtp] is used", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
+  test("does not warn when only [local_smtp] is used", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
 
 [local_smtp]
 enabled = true
 port = 54324
 `,
-    );
+        );
 
-    expect(loaded.config.local_smtp.port).toBe(54324);
-    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
-  });
+        expect(loaded.config.local_smtp.port).toBe(54324);
+        expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+      }),
+    ));
 });
 
 describe("config io deprecated experimental.orioledb_version back-compat", () => {
@@ -2429,59 +2392,68 @@ describe("config io deprecated experimental.orioledb_version back-compat", () =>
     errorSpy = undefined;
   });
 
-  async function loadToml(contents: string) {
-    const cwd = makeTempProject();
-    const path = await runConfigEffect(configTomlPath(cwd));
-    await mkdir(join(cwd, "supabase"), { recursive: true });
-    await writeFile(path, contents);
-    try {
-      return await runConfigEffect(loadCliConfigFile(path));
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
+  function loadToml(contents: string) {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const cwd = yield* makeTempProject();
+      const path = yield* configTomlPath(cwd);
+      yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path, contents);
+
+      return yield* loadCliConfigFile(path);
+    });
   }
 
-  test("promotes a non-empty legacy experimental.orioledb_version to db.orioledb_version", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
+  test("promotes a non-empty legacy experimental.orioledb_version to db.orioledb_version", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
 
 [experimental]
 orioledb_version = "15.1.0.150"
 `,
-    );
+        );
 
-    expect(loaded.config.db.orioledb_version).toBe("15.1.0.150");
-    expect(loaded.config.experimental.orioledb_version).toBeUndefined();
-    expect(loaded.document).not.toHaveProperty("experimental.orioledb_version");
-    expect(
-      warnings.some((m) =>
-        m.includes(
-          "WARN: experimental.orioledb_version is deprecated and will be removed in v3, use db.orioledb_version instead.",
-        ),
-      ),
-    ).toBe(true);
-  });
+        expect(loaded.config.db.orioledb_version).toBe("15.1.0.150");
+        expect(loaded.config.experimental.orioledb_version).toBeUndefined();
+        expect(loaded.document).not.toHaveProperty("experimental.orioledb_version");
+        expect(
+          warnings.some((m) =>
+            m.includes(
+              "WARN: experimental.orioledb_version is deprecated and will be removed in v3, use db.orioledb_version instead.",
+            ),
+          ),
+        ).toBe(true);
+      }),
+    ));
 
-  test("does not warn and stays absent when the legacy value is an empty string", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
+  test("does not warn and stays absent when the legacy value is an empty string", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
 
 [experimental]
 orioledb_version = ""
 `,
-    );
+        );
 
-    expect(loaded.config.db.orioledb_version).toBeUndefined();
-    expect(loaded.config.experimental.orioledb_version).toBeUndefined();
-    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
-  });
+        expect(loaded.config.db.orioledb_version).toBeUndefined();
+        expect(loaded.config.experimental.orioledb_version).toBeUndefined();
+        expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+      }),
+    ));
 
-  test("promotes a non-empty legacy value when db.orioledb_version is present but empty", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
+  test("promotes a non-empty legacy value when db.orioledb_version is present but empty", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
 
 [db]
 orioledb_version = ""
@@ -2489,22 +2461,25 @@ orioledb_version = ""
 [experimental]
 orioledb_version = "15.1.0.150"
 `,
-    );
+        );
 
-    expect(loaded.config.db.orioledb_version).toBe("15.1.0.150");
-    expect(
-      warnings.some((m) =>
-        m.includes(
-          "WARN: experimental.orioledb_version is deprecated and will be removed in v3, use db.orioledb_version instead.",
-        ),
-      ),
-    ).toBe(true);
-  });
+        expect(loaded.config.db.orioledb_version).toBe("15.1.0.150");
+        expect(
+          warnings.some((m) =>
+            m.includes(
+              "WARN: experimental.orioledb_version is deprecated and will be removed in v3, use db.orioledb_version instead.",
+            ),
+          ),
+        ).toBe(true);
+      }),
+    ));
 
-  test("an explicit db.orioledb_version wins over a non-empty legacy value, but still warns", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
+  test("an explicit db.orioledb_version wins over a non-empty legacy value, but still warns", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
 
 [db]
 orioledb_version = "17.0.0.1"
@@ -2512,54 +2487,59 @@ orioledb_version = "17.0.0.1"
 [experimental]
 orioledb_version = "15.1.0.150"
 `,
-    );
+        );
 
-    expect(loaded.config.db.orioledb_version).toBe("17.0.0.1");
-    expect(
-      warnings.some((m) =>
-        m.includes(
-          "WARN: experimental.orioledb_version is deprecated and will be removed in v3, use db.orioledb_version instead.",
-        ),
-      ),
-    ).toBe(true);
-  });
+        expect(loaded.config.db.orioledb_version).toBe("17.0.0.1");
+        expect(
+          warnings.some((m) =>
+            m.includes(
+              "WARN: experimental.orioledb_version is deprecated and will be removed in v3, use db.orioledb_version instead.",
+            ),
+          ),
+        ).toBe(true);
+      }),
+    ));
 
-  test("rejects a non-string legacy experimental.orioledb_version instead of silently discarding it", async () => {
-    const cwd = makeTempProject();
-    const path = await runConfigEffect(configTomlPath(cwd));
-    await mkdir(join(cwd, "supabase"), { recursive: true });
-    await writeFile(
-      path,
-      `project_id = "abc123"
+  test("rejects a non-string legacy experimental.orioledb_version instead of silently discarding it", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const path = yield* configTomlPath(cwd);
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path,
+          `project_id = "abc123"
 
 [experimental]
 orioledb_version = 1
 `,
-    );
-    try {
-      const exit = await Effect.runPromiseExit(
-        loadCliConfigFile(path).pipe(Effect.provide(BunServices.layer)),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const error = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(error)).toBe(true);
-        if (Option.isSome(error)) {
-          expect(error.value._tag).toBe("CliConfigParseError");
-        }
-      }
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        );
 
-  test("rejects a non-string canonical db.orioledb_version beside a valid legacy value", async () => {
-    const cwd = makeTempProject();
-    const path = await runConfigEffect(configTomlPath(cwd));
-    await mkdir(join(cwd, "supabase"), { recursive: true });
-    await writeFile(
-      path,
-      `project_id = "abc123"
+        const exit = yield* Effect.exit(loadCliConfigFile(path));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect(error.value._tag).toBe("CliConfigParseError");
+          }
+        }
+      }),
+    ));
+
+  test("rejects a non-string canonical db.orioledb_version beside a valid legacy value", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const path = yield* configTomlPath(cwd);
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path,
+          `project_id = "abc123"
 
 [db]
 orioledb_version = 1
@@ -2567,28 +2547,26 @@ orioledb_version = 1
 [experimental]
 orioledb_version = "15.1.0.150"
 `,
-    );
-    try {
-      const exit = await Effect.runPromiseExit(
-        loadCliConfigFile(path).pipe(Effect.provide(BunServices.layer)),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const error = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(error)).toBe(true);
-        if (Option.isSome(error)) {
-          expect(error.value._tag).toBe("CliConfigParseError");
-        }
-      }
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        );
 
-  test("normalizes a deprecated remotes.*.experimental.orioledb_version", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
+        const exit = yield* Effect.exit(loadCliConfigFile(path));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(error)).toBe(true);
+          if (Option.isSome(error)) {
+            expect(error.value._tag).toBe("CliConfigParseError");
+          }
+        }
+      }),
+    ));
+
+  test("normalizes a deprecated remotes.*.experimental.orioledb_version", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
 
 [remotes.staging]
 project_id = "stagingrefaaaaaaaaaa"
@@ -2596,18 +2574,19 @@ project_id = "stagingrefaaaaaaaaaa"
 [remotes.staging.experimental]
 orioledb_version = "15.1.0.150"
 `,
-    );
+        );
 
-    const staging = loaded.config.remotes.staging;
-    expect(staging?.db?.orioledb_version).toBe("15.1.0.150");
-    expect(
-      warnings.some((m) =>
-        m.includes(
-          "WARN: remotes.staging.experimental.orioledb_version is deprecated and will be removed in v3, use remotes.staging.db.orioledb_version instead.",
-        ),
-      ),
-    ).toBe(true);
-  });
+        const staging = loaded.config.remotes.staging;
+        expect(staging?.db?.orioledb_version).toBe("15.1.0.150");
+        expect(
+          warnings.some((m) =>
+            m.includes(
+              "WARN: remotes.staging.experimental.orioledb_version is deprecated and will be removed in v3, use remotes.staging.db.orioledb_version instead.",
+            ),
+          ),
+        ).toBe(true);
+      }),
+    ));
 });
 
 describe("config io deprecated [auth.external.{linkedin,slack}] back-compat", () => {
@@ -2626,95 +2605,110 @@ describe("config io deprecated [auth.external.{linkedin,slack}] back-compat", ()
     errorSpy = undefined;
   });
 
-  async function loadToml(contents: string, options?: InternalLoadCliConfigOptions) {
-    const cwd = makeTempProject();
-    const path = await runConfigEffect(configTomlPath(cwd));
-    await mkdir(join(cwd, "supabase"), { recursive: true });
-    await writeFile(path, contents);
-    try {
-      return await runConfigEffect(loadCliConfigFile(path, options));
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
+  function loadToml(contents: string, options?: InternalLoadCliConfigOptions) {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const cwd = yield* makeTempProject();
+      const path = yield* configTomlPath(cwd);
+      yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path, contents);
+
+      return yield* loadCliConfigFile(path, options);
+    });
   }
 
-  test("loads a bare [auth.external.slack] block without required fields", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
+  test("loads a bare [auth.external.slack] block without required fields", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
 
 [auth.external.slack]
 enabled = true
 `,
-      { goViperCompat: true },
-    );
+          { goViperCompat: true },
+        );
 
-    expect("slack" in loaded.config.auth.external).toBe(false);
-    expect(loaded.document).not.toHaveProperty("auth.external.slack");
-    expect(
-      warnings.some((m) =>
-        m.includes(
-          'WARN: disabling deprecated "slack" provider. It will be removed in v3, use [auth.external.slack_oidc] instead.',
-        ),
-      ),
-    ).toBe(true);
-  });
+        expect("slack" in loaded.config.auth.external).toBe(false);
+        expect(loaded.document).not.toHaveProperty("auth.external.slack");
+        expect(
+          warnings.some((m) =>
+            m.includes(
+              'WARN: disabling deprecated "slack" provider. It will be removed in v3, use [auth.external.slack_oidc] instead.',
+            ),
+          ),
+        ).toBe(true);
+      }),
+    ));
 
-  test("loads a bare [auth.external.linkedin] block without required fields", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
+  test("loads a bare [auth.external.linkedin] block without required fields", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
 
 [auth.external.linkedin]
 enabled = true
 `,
-      { goViperCompat: true },
-    );
+          { goViperCompat: true },
+        );
 
-    expect("linkedin" in loaded.config.auth.external).toBe(false);
-    expect(
-      warnings.some((m) =>
-        m.includes(
-          'WARN: disabling deprecated "linkedin" provider. It will be removed in v3, use [auth.external.linkedin_oidc] instead.',
-        ),
-      ),
-    ).toBe(true);
-  });
+        expect("linkedin" in loaded.config.auth.external).toBe(false);
+        expect(
+          warnings.some((m) =>
+            m.includes(
+              'WARN: disabling deprecated "linkedin" provider. It will be removed in v3, use [auth.external.linkedin_oidc] instead.',
+            ),
+          ),
+        ).toBe(true);
+      }),
+    ));
 
-  test("does not warn when the deprecated section is present but disabled", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
+  test("does not warn when the deprecated section is present but disabled", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
 
 [auth.external.slack]
 enabled = false
 `,
-    );
+        );
 
-    expect("slack" in loaded.config.auth.external).toBe(false);
-    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
-  });
+        expect("slack" in loaded.config.auth.external).toBe(false);
+        expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+      }),
+    ));
 
-  test("does not warn when only [auth.external.slack_oidc] is used", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
+  test("does not warn when only [auth.external.slack_oidc] is used", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
 
 [auth.external.slack_oidc]
 enabled = true
 client_id = "abc"
 secret = "shh"
 `,
-    );
+        );
 
-    expect(loaded.config.auth.external.slack_oidc.enabled).toBe(true);
-    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
-  });
+        expect(loaded.config.auth.external.slack_oidc.enabled).toBe(true);
+        expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+      }),
+    ));
 
-  test("strips a deprecated [remotes.*.auth.external.slack] block without warning for an unselected remote", async () => {
-    captureWarnings();
-    const loaded = await loadToml(
-      `project_id = "abc123"
+  test("strips a deprecated [remotes.*.auth.external.slack] block without warning for an unselected remote", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        captureWarnings();
+        const loaded = yield* loadToml(
+          `project_id = "abc123"
 
 [remotes.staging]
 project_id = "stagingrefaaaaaaaaaa"
@@ -2722,13 +2716,14 @@ project_id = "stagingrefaaaaaaaaaa"
 [remotes.staging.auth.external.slack]
 enabled = true
 `,
-    );
+        );
 
-    // Not requesting `projectRef` means no remote is selected, so `remotes` survives
-    // decode verbatim (minus the deprecated key) rather than being merged/dropped.
-    expect(loaded.config.remotes.staging?.auth.external).not.toHaveProperty("slack");
-    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
-  });
+        // Not requesting `projectRef` means no remote is selected, so `remotes` survives
+        // decode verbatim (minus the deprecated key) rather than being merged/dropped.
+        expect(loaded.config.remotes.staging?.auth.external).not.toHaveProperty("slack");
+        expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+      }),
+    ));
 });
 
 describe("remoteNameForProjectRef / remoteProjectIdEntries", () => {
@@ -2789,286 +2784,313 @@ describe("remoteNameForProjectRef / remoteProjectIdEntries", () => {
 });
 
 describe("writeCliConfigDocumentText", () => {
-  async function tempFileTargets() {
-    const cwd = makeTempProject();
-    const dir = join(cwd, "supabase");
-    await mkdir(dir, { recursive: true });
-    return { cwd, filePath: join(dir, "config.toml") };
+  function tempFileTargets() {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const cwd = yield* makeTempProject();
+      const dir = join(cwd, "supabase");
+      yield* fs.makeDirectory(dir, { recursive: true });
+      return { cwd, filePath: join(dir, "config.toml") };
+    });
   }
 
-  async function tmpSurvivors(dir: string, baseName: string): Promise<Array<string>> {
-    const entries = await readdir(dir);
-    return entries.filter((entry) => entry.startsWith(`${baseName}.tmp.`));
+  function tmpSurvivors(dir: string, baseName: string) {
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const entries = yield* fs.readDirectory(dir);
+      return entries.filter((entry) => entry.startsWith(`${baseName}.tmp.`));
+    });
   }
 
-  test("replaces the file's content via a temp file in the same directory, then renames over the target", async () => {
-    const { cwd, filePath } = await tempFileTargets();
+  test("replaces the file's content via a temp file in the same directory, then renames over the target", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const { cwd, filePath } = yield* tempFileTargets();
 
-    try {
-      await writeFile(filePath, 'project_id = "old"\n');
+        yield* fs.writeFileString(filePath, 'project_id = "old"\n');
 
-      await runConfigEffect(writeCliConfigDocumentText(filePath, 'project_id = "new"\n'));
+        yield* writeCliConfigDocumentText(filePath, 'project_id = "new"\n');
 
-      const content = await readFile(filePath, "utf8");
-      expect(content).toBe('project_id = "new"\n');
-      expect(await tmpSurvivors(join(cwd, "supabase"), "config.toml")).toEqual([]);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const content = yield* fs.readFileString(filePath);
+        expect(content).toBe('project_id = "new"\n');
+        expect(yield* tmpSurvivors(join(cwd, "supabase"), "config.toml")).toEqual([]);
+      }),
+    ));
 
-  test("leaves no temp file behind after a successful write", async () => {
-    const { cwd, filePath } = await tempFileTargets();
+  test("leaves no temp file behind after a successful write", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const { cwd, filePath } = yield* tempFileTargets();
 
-    try {
-      await writeFile(filePath, 'project_id = "old"\n');
-      await runConfigEffect(writeCliConfigDocumentText(filePath, 'project_id = "new"\n'));
+        yield* fs.writeFileString(filePath, 'project_id = "old"\n');
+        yield* writeCliConfigDocumentText(filePath, 'project_id = "new"\n');
 
-      const entries = await readdir(join(cwd, "supabase"));
-      expect(entries).toEqual(["config.toml"]);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const entries = yield* fs.readDirectory(join(cwd, "supabase"));
+        expect(entries).toEqual(["config.toml"]);
+      }),
+    ));
 
-  test("preserves the target file's existing mode", async () => {
-    const { cwd, filePath } = await tempFileTargets();
+  test("preserves the target file's existing mode", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { filePath } = yield* tempFileTargets();
 
-    try {
-      await writeFile(filePath, 'project_id = "old"\n');
-      await chmod(filePath, 0o600);
+        yield* fs.writeFileString(filePath, 'project_id = "old"\n');
+        yield* fs.chmod(filePath, 0o600);
 
-      await runConfigEffect(writeCliConfigDocumentText(filePath, 'project_id = "new"\n'));
+        yield* writeCliConfigDocumentText(filePath, 'project_id = "new"\n');
 
-      const info = await stat(filePath);
-      expect(info.mode & 0o777).toBe(0o600);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        const info = yield* fs.stat(filePath);
+        expect(info.mode & 0o777).toBe(0o600);
+      }),
+    ));
 
-  test("fails with a typed CliConfigWriteError (not a defect) when the destination directory doesn't exist, leaving nothing behind", async () => {
-    const cwd = makeTempProject();
-    const filePath = join(cwd, "supabase", "config.toml");
+  test("fails with a typed CliConfigWriteError (not a defect) when the destination directory doesn't exist, leaving nothing behind", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const filePath = join(cwd, "supabase", "config.toml");
 
-    try {
-      const exit = await Effect.runPromiseExit(
-        writeCliConfigDocumentText(filePath, 'project_id = "new"\n').pipe(
-          Effect.provide(BunServices.layer),
-        ),
-      );
+        const exit = yield* Effect.exit(
+          writeCliConfigDocumentText(filePath, 'project_id = "new"\n'),
+        );
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (!Exit.isFailure(exit)) {
-        return;
-      }
-      // A typed failure, not a defect: findErrorOption only finds `Fail` reasons.
-      const error = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(error)).toBe(true);
-      if (Option.isSome(error)) {
-        expect((error.value as { _tag: string })._tag).toBe("CliConfigWriteError");
-        expect((error.value as { path: string }).path).toBe(filePath);
-      }
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) {
+          return;
+        }
+        // A typed failure, not a defect: findErrorOption only finds `Fail` reasons.
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect((error.value as { _tag: string })._tag).toBe("CliConfigWriteError");
+          expect((error.value as { path: string }).path).toBe(filePath);
+        }
 
-      await expect(readFile(filePath, "utf8")).rejects.toThrow();
-      await expect(readdir(join(cwd, "supabase"))).rejects.toThrow();
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(Exit.isFailure(yield* Effect.exit(fs.readFileString(filePath)))).toBe(true);
+        expect(Exit.isFailure(yield* Effect.exit(fs.readDirectory(join(cwd, "supabase"))))).toBe(
+          true,
+        );
+      }),
+    ));
 
   // The directory-missing case above fails before any temp file exists, so it never exercises
   // `Effect.ensuring`'s cleanup removing a real survivor. An existing directory as the
   // destination lets the temp file get created, so the rename step is what fails instead.
-  test("fails with a typed CliConfigWriteError when rename fails, and still cleans up the temp file it already created", async () => {
-    const { cwd, filePath } = await tempFileTargets();
+  test("fails with a typed CliConfigWriteError when rename fails, and still cleans up the temp file it already created", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const { cwd, filePath } = yield* tempFileTargets();
 
-    try {
-      await mkdir(filePath);
+        yield* fs.makeDirectory(filePath);
 
-      const exit = await Effect.runPromiseExit(
-        writeCliConfigDocumentText(filePath, 'project_id = "new"\n').pipe(
-          Effect.provide(BunServices.layer),
-        ),
-      );
+        const exit = yield* Effect.exit(
+          writeCliConfigDocumentText(filePath, 'project_id = "new"\n'),
+        );
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (!Exit.isFailure(exit)) {
-        return;
-      }
-      const error = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(error)).toBe(true);
-      if (Option.isSome(error)) {
-        expect((error.value as { _tag: string })._tag).toBe("CliConfigWriteError");
-        expect((error.value as { path: string }).path).toBe(filePath);
-      }
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) {
+          return;
+        }
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect((error.value as { _tag: string })._tag).toBe("CliConfigWriteError");
+          expect((error.value as { path: string }).path).toBe(filePath);
+        }
 
-      expect(await tmpSurvivors(join(cwd, "supabase"), "config.toml")).toEqual([]);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(yield* tmpSurvivors(join(cwd, "supabase"), "config.toml")).toEqual([]);
+      }),
+    ));
 });
 
 describe("decodeCliConfigDocumentForValidationEffect", () => {
-  test("decodes a valid document successfully", async () => {
-    const config = await runConfigEffect(
-      decodeCliConfigDocumentForValidationEffect(
-        { project_id: "abc123" },
-        { goViperCompat: true, path: "supabase/config.toml", format: "toml" },
-      ),
-    );
-    expect(config.project_id).toBe("abc123");
-  });
-
-  test("fails with a typed CliConfigParseError (SchemaError cause) when a root business-rule check fails", async () => {
-    const document = {
-      project_id: "abc123",
-      auth: { sms: { twilio: { enabled: true, account_sid: "", message_service_sid: "" } } },
-    };
-    const exit = await Effect.runPromiseExit(
-      decodeCliConfigDocumentForValidationEffect(document, {
-        goViperCompat: true,
-        path: "supabase/config.toml",
-        format: "toml",
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (!Exit.isFailure(exit)) {
-      return;
-    }
-    const error = Cause.findErrorOption(exit.cause);
-    expect(Option.isSome(error)).toBe(true);
-    if (Option.isSome(error)) {
-      expect((error.value as { _tag: string })._tag).toBe("CliConfigParseError");
-      expect(Schema.isSchemaError((error.value as { cause: unknown }).cause)).toBe(true);
-    }
-  });
-
-  test("does not apply business-rule checks to a [remotes.*] block when no remoteName is given (checks disabled)", async () => {
-    // The same `enabled: true` + empty `account_sid`/`message_service_sid` shape that fails at
-    // the root above decodes fine inside a `[remotes.*]` block, which decodes with
-    // `disableChecks: true` since business rules only apply to the merged effective config.
-    const document = {
-      project_id: "abc123",
-      remotes: {
-        staging: {
-          project_id: "stagingrefaaaaaaaaaa",
-          auth: { sms: { twilio: { enabled: true, account_sid: "", message_service_sid: "" } } },
-        },
-      },
-    };
-    const config = await runConfigEffect(
-      decodeCliConfigDocumentForValidationEffect(document, {
-        goViperCompat: true,
-        path: "supabase/config.toml",
-        format: "toml",
+  test("decodes a valid document successfully", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const config = yield* decodeCliConfigDocumentForValidationEffect(
+          { project_id: "abc123" },
+          { goViperCompat: true, path: "supabase/config.toml", format: "toml" },
+        );
+        expect(config.project_id).toBe("abc123");
       }),
-    );
-    expect(config.remotes["staging"]).toBeDefined();
-  });
+    ));
 
-  test("resolves env(VAR) from the project's own .env file, not just the ambient process environment", async () => {
-    // Resolves `env(VAR)` exactly like `loadCliConfigFile` — including a var that only exists
-    // in the project's own `.env` file, never in `process.env`.
-    const cwd = makeTempProject();
-    const path = await runConfigEffect(configTomlPath(cwd));
+  test("fails with a typed CliConfigParseError (SchemaError cause) when a root business-rule check fails", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const document = {
+          project_id: "abc123",
+          auth: { sms: { twilio: { enabled: true, account_sid: "", message_service_sid: "" } } },
+        };
+        const exit = yield* Effect.exit(
+          decodeCliConfigDocumentForValidationEffect(document, {
+            goViperCompat: true,
+            path: "supabase/config.toml",
+            format: "toml",
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) {
+          return;
+        }
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect((error.value as { _tag: string })._tag).toBe("CliConfigParseError");
+          expect(Schema.isSchemaError((error.value as { cause: unknown }).cause)).toBe(true);
+        }
+      }),
+    ));
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(path, 'project_id = "demo"\n');
-      await writeFile(join(cwd, "supabase", ".env"), "SUPABASE_VALIDATION_PG_VERSION_TEST=16\n");
+  test("does not apply business-rule checks to a [remotes.*] block when no remoteName is given (checks disabled)", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        // The same `enabled: true` + empty `account_sid`/`message_service_sid` shape that fails at
+        // the root above decodes fine inside a `[remotes.*]` block, which decodes with
+        // `disableChecks: true` since business rules only apply to the merged effective config.
+        const document = {
+          project_id: "abc123",
+          remotes: {
+            staging: {
+              project_id: "stagingrefaaaaaaaaaa",
+              auth: {
+                sms: { twilio: { enabled: true, account_sid: "", message_service_sid: "" } },
+              },
+            },
+          },
+        };
+        const config = yield* decodeCliConfigDocumentForValidationEffect(document, {
+          goViperCompat: true,
+          path: "supabase/config.toml",
+          format: "toml",
+        });
+        expect(config.remotes["staging"]).toBeDefined();
+      }),
+    ));
 
-      const config = await runConfigEffect(
-        decodeCliConfigDocumentForValidationEffect(
+  test("resolves env(VAR) from the project's own .env file, not just the ambient process environment", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        // Resolves `env(VAR)` exactly like `loadCliConfigFile` — including a var that only exists
+        // in the project's own `.env` file, never in `process.env`.
+        const cwd = yield* makeTempProject();
+        const path = yield* configTomlPath(cwd);
+
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path, 'project_id = "demo"\n');
+        yield* fs.writeFileString(
+          join(cwd, "supabase", ".env"),
+          "SUPABASE_VALIDATION_PG_VERSION_TEST=16\n",
+        );
+
+        const config = yield* decodeCliConfigDocumentForValidationEffect(
           {
             project_id: "abc123",
             db: { major_version: "env(SUPABASE_VALIDATION_PG_VERSION_TEST)" },
           },
           { goViperCompat: true, path, format: "toml" },
-        ),
-      );
-      expect(config.db.major_version).toBe(16);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        );
+        expect(config.db.major_version).toBe(16);
+      }),
+    ));
 
-  test("leaves an unresolved env(VAR) literal in place rather than failing the field's own required-non-empty check", async () => {
-    // A required string field spelled as `env(VAR)` with `VAR` unset decodes as the literal
-    // `env(VAR)` string, which is non-empty, so it still satisfies a required-field check even
-    // though it never actually resolved.
-    const document = {
-      project_id: "abc123",
-      auth: {
-        sms: {
-          twilio: {
-            enabled: true,
-            account_sid: "AC123",
-            message_service_sid: "MG123",
-            auth_token: "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)",
+  test("leaves an unresolved env(VAR) literal in place rather than failing the field's own required-non-empty check", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        // A required string field spelled as `env(VAR)` with `VAR` unset decodes as the literal
+        // `env(VAR)` string, which is non-empty, so it still satisfies a required-field check even
+        // though it never actually resolved.
+        const document = {
+          project_id: "abc123",
+          auth: {
+            sms: {
+              twilio: {
+                enabled: true,
+                account_sid: "AC123",
+                message_service_sid: "MG123",
+                auth_token: "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)",
+              },
+            },
           },
-        },
-      },
-    };
-    const config = await runConfigEffect(
-      decodeCliConfigDocumentForValidationEffect(document, {
-        goViperCompat: true,
-        path: "supabase/config.toml",
-        format: "toml",
+        };
+        const config = yield* decodeCliConfigDocumentForValidationEffect(document, {
+          goViperCompat: true,
+          path: "supabase/config.toml",
+          format: "toml",
+        });
+        expect(config.auth.sms.twilio.auth_token).toBe("env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)");
       }),
-    );
-    expect(config.auth.sms.twilio.auth_token).toBe("env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)");
-  });
+    ));
 
-  test("remoteName merges the [remotes.*] block over the root and validates the merged projection: a rule violation only visible after the merge fails", async () => {
-    const document = {
-      project_id: "abc123",
-      remotes: {
-        staging: {
-          project_id: "stagingrefaaaaaaaaaa",
-          auth: { sms: { twilio: { enabled: true, account_sid: "", message_service_sid: "" } } },
-        },
-      },
-    };
-    const exit = await Effect.runPromiseExit(
-      decodeCliConfigDocumentForValidationEffect(document, {
-        goViperCompat: true,
-        path: "supabase/config.toml",
-        format: "toml",
-        remoteName: "staging",
-      }).pipe(Effect.provide(BunServices.layer)),
-    );
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (!Exit.isFailure(exit)) {
-      return;
-    }
-    const error = Cause.findErrorOption(exit.cause);
-    expect(Option.isSome(error)).toBe(true);
-    if (Option.isSome(error)) {
-      expect((error.value as { _tag: string })._tag).toBe("CliConfigParseError");
-      expect(Schema.isSchemaError((error.value as { cause: unknown }).cause)).toBe(true);
-      expect((error.value as { appliedRemote?: string }).appliedRemote).toBe("staging");
-    }
-  });
-
-  test("the same document passes when remoteName is omitted — the remote's own rule violation is invisible before the merge", async () => {
-    const document = {
-      project_id: "abc123",
-      remotes: {
-        staging: {
-          project_id: "stagingrefaaaaaaaaaa",
-          auth: { sms: { twilio: { enabled: true, account_sid: "", message_service_sid: "" } } },
-        },
-      },
-    };
-    const config = await runConfigEffect(
-      decodeCliConfigDocumentForValidationEffect(document, {
-        goViperCompat: true,
-        path: "supabase/config.toml",
-        format: "toml",
+  test("remoteName merges the [remotes.*] block over the root and validates the merged projection: a rule violation only visible after the merge fails", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const document = {
+          project_id: "abc123",
+          remotes: {
+            staging: {
+              project_id: "stagingrefaaaaaaaaaa",
+              auth: {
+                sms: { twilio: { enabled: true, account_sid: "", message_service_sid: "" } },
+              },
+            },
+          },
+        };
+        const exit = yield* Effect.exit(
+          decodeCliConfigDocumentForValidationEffect(document, {
+            goViperCompat: true,
+            path: "supabase/config.toml",
+            format: "toml",
+            remoteName: "staging",
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) {
+          return;
+        }
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect((error.value as { _tag: string })._tag).toBe("CliConfigParseError");
+          expect(Schema.isSchemaError((error.value as { cause: unknown }).cause)).toBe(true);
+          expect((error.value as { appliedRemote?: string }).appliedRemote).toBe("staging");
+        }
       }),
-    );
-    expect(config.remotes["staging"]).toBeDefined();
-  });
+    ));
+
+  test("the same document passes when remoteName is omitted — the remote's own rule violation is invisible before the merge", () =>
+    runConfigEffect(
+      Effect.gen(function* () {
+        const document = {
+          project_id: "abc123",
+          remotes: {
+            staging: {
+              project_id: "stagingrefaaaaaaaaaa",
+              auth: {
+                sms: { twilio: { enabled: true, account_sid: "", message_service_sid: "" } },
+              },
+            },
+          },
+        };
+        const config = yield* decodeCliConfigDocumentForValidationEffect(document, {
+          goViperCompat: true,
+          path: "supabase/config.toml",
+          format: "toml",
+        });
+        expect(config.remotes["staging"]).toBeDefined();
+      }),
+    ));
 });
