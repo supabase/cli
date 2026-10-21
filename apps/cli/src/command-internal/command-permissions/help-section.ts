@@ -26,13 +26,13 @@ import type {
 import { CommandFlagsAnnotation, flagCatalogFor } from "./permission-flags.ts";
 import type { FlagCatalog } from "./permission-flags.ts";
 import { permissionSchemes } from "./permission-schemes.ts";
-import type { Alternatives, PermissionScheme } from "./permission-schemes.ts";
+import type { Alternatives, PermissionScheme, Requirement } from "./permission-schemes.ts";
 import type { CommandPermissions, OperationEntry } from "./model.ts";
 
 type PermissionKind = OperationEntry["kind"];
 
-/** One thing a heading lists: operations' permission alternatives, or why there are none. */
-type PermissionRow = { readonly anyOf: Alternatives } | { readonly note: string };
+/** One thing a heading lists: what an operation needs, or why a scheme lists nothing. */
+type PermissionRow = Requirement | { readonly note: string };
 
 interface PermissionGroup {
   /** The heading the text section prints, without its colon. */
@@ -72,7 +72,7 @@ interface Bucket {
   condition: Condition;
 }
 
-const rowKey = (row: PermissionRow) => ("anyOf" in row ? JSON.stringify(row.anyOf) : row.note);
+const rowKey = (row: PermissionRow) => JSON.stringify(row);
 
 /** An entry the command can reach; `hedged` when a prerequisite or a hidden flag qualifies it. */
 interface ReachableEntry {
@@ -83,9 +83,16 @@ interface ReachableEntry {
 
 const strength = (kind: PermissionKind) => (kind === "required" ? 1 : 0);
 
-function rowFor(scheme: PermissionScheme, entry: OperationEntry): PermissionRow {
-  const anyOf = scheme.requirement(entry.operationId, entry.request);
-  return anyOf === undefined ? { note: scheme.missing(entry.kind, entry.operationId) } : { anyOf };
+interface RowPart {
+  readonly row: PermissionRow;
+  readonly hedged: boolean;
+}
+
+function rowPartsFor(scheme: PermissionScheme, entry: OperationEntry): ReadonlyArray<RowPart> {
+  const parts = scheme.requirement(entry.operationId, entry.request);
+  return parts === undefined
+    ? [{ row: { note: scheme.missing(entry.kind, entry.operationId) }, hedged: false }]
+    : parts.map(({ requirement, hedged }) => ({ row: requirement, hedged }));
 }
 
 const sameOrBroader = (bucket: Bucket, other: Bucket) =>
@@ -132,14 +139,16 @@ function schemeSection(
 ): SchemeSection {
   const buckets = new Map<string, Bucket>();
   for (const { entry, term, hedged } of terms) {
-    const row = rowFor(scheme, entry);
-    const situational = hedged && entry.kind === "required";
-    const key = `${entry.kind}\u0000${situational}\u0000${rowKey(row)}`;
-    const bucket = buckets.get(key);
-    if (bucket === undefined) {
-      buckets.set(key, { row, kind: entry.kind, situational, condition: [term] });
-    } else {
-      bucket.condition = [...bucket.condition, term];
+    for (const part of rowPartsFor(scheme, entry)) {
+      const { row } = part;
+      const situational = (hedged || part.hedged) && entry.kind === "required";
+      const key = `${entry.kind}\u0000${situational}\u0000${rowKey(row)}`;
+      const bucket = buckets.get(key);
+      if (bucket === undefined) {
+        buckets.set(key, { row, kind: entry.kind, situational, condition: [term] });
+      } else {
+        bucket.condition = [...bucket.condition, term];
+      }
     }
   }
   const simplified = [...buckets.values()].map((bucket) => ({
@@ -259,6 +268,12 @@ const wraps = (anyOf: Alternatives) =>
 
 function renderRow(row: PermissionRow): Array<string> {
   if ("note" in row) return [`      ${row.note}`];
+  if ("cases" in row) {
+    return row.cases.map(
+      ({ for: target, allOf }, index) =>
+        `      ${index === 0 ? "" : "  or "}${altText(allOf)} for ${target}`,
+    );
+  }
   if (!wraps(row.anyOf)) return [`      ${row.anyOf.map(altText).join(" or ")}`];
   return row.anyOf.flatMap((alternative, index) => {
     const [head, ...more] =

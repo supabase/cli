@@ -120,7 +120,16 @@ describe("token permissions in command help", () => {
         for (const group of scheme.groups) {
           expect(block).toContain(`${group.heading}:`);
           for (const row of group.rows) {
-            for (const alternative of row.anyOf) expect(block).toContain(alternative.join(" + "));
+            const shown: ReadonlyArray<string> =
+              "anyOf" in row
+                ? row.anyOf.map((alternative: ReadonlyArray<string>) => alternative.join(" + "))
+                : "cases" in row
+                  ? row.cases.map(
+                      (item: { for: string; allOf: ReadonlyArray<string> }) =>
+                        `${item.allOf.join(" + ")} for ${item.for}`,
+                    )
+                  : [row.note];
+            for (const text of shown) expect(block).toContain(text);
           }
         }
       }

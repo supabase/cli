@@ -733,7 +733,7 @@ describe("permission help section", () => {
 
     it("wraps a row that does not fit the help width", () => {
       const text = render({
-        operations: [{ operationId: "v1-delete-a-branch", kind: "required" }],
+        operations: [{ operationId: "v1-list-all-branches", kind: "required" }],
       });
 
       expect(text).toBe(
@@ -741,8 +741,142 @@ describe("permission help section", () => {
           "PERMISSIONS",
           fga,
           "    Required:",
-          "      branching_development_delete",
-          "        or branching_production_delete",
+          "      branching_development_read or branching_production_read",
+        ),
+      );
+    });
+
+    it("shows a permission the API needs only for some requests apart from the one it always needs", () => {
+      const text = render(
+        {
+          operations: [
+            { operationId: "v1-run-a-query", kind: "required", when: [{ flag: "dry", is: true }] },
+          ],
+        },
+        catalogOf(switchFlag("dry")),
+      );
+
+      expect(text).toBe(
+        lines(
+          "PERMISSIONS",
+          "  Only needed with --dry.",
+          fga,
+          "    Required:",
+          "      database_read",
+          "    May be required:",
+          "      database_write",
+        ),
+      );
+    });
+
+    it("lists a conditional extra once when several entries add it", () => {
+      const text = render({
+        operations: [
+          { operationId: "v1-run-a-query", kind: "required" },
+          { operationId: "v1-run-a-query", kind: "required", context: "a prompt picks it" },
+        ],
+      });
+
+      expect(text).toBe(
+        lines(
+          "PERMISSIONS",
+          fga,
+          "    Required:",
+          "      database_read",
+          "    May be required:",
+          "      database_write",
+        ),
+      );
+    });
+
+    it("hedges a conditional extra of an entry that is already situational", () => {
+      const section = resolvePermissionSection(
+        mapped({
+          operations: [
+            { operationId: "v1-run-a-query", kind: "required", context: "a prompt picks it" },
+          ],
+        }),
+        catalogOf(),
+      );
+
+      expect(
+        section?.status === "mapped" &&
+          section.schemes[0]?.groups.map((group) => [group.need, group.rows]),
+      ).toEqual([["maybe", [{ anyOf: [["database_read"]] }, { anyOf: [["database_write"]] }]]]);
+    });
+
+    it("names the resource that decides which permission an operation needs", () => {
+      const section = resolvePermissionSection(
+        mapped({ operations: [{ operationId: "v1-get-a-branch", kind: "required" }] }),
+        catalogOf(),
+      );
+      if (section?.status !== "mapped") throw new Error("expected a mapped section");
+
+      expect(section.schemes[0]?.groups[0]?.rows).toEqual([
+        {
+          cases: [
+            { for: "a preview branch", allOf: ["branching_development_read"] },
+            { for: "the main branch", allOf: ["branching_production_read"] },
+          ],
+        },
+      ]);
+      expect(renderPermissionsSection(section)).toBe(
+        lines(
+          "PERMISSIONS",
+          fga,
+          "    Required:",
+          "      branching_development_read for a preview branch",
+          "        or branching_production_read for the main branch",
+        ),
+      );
+    });
+
+    it("keeps a per-resource row apart from an any-of row over the same permissions", () => {
+      const text = render({
+        operations: [
+          { operationId: "v1-list-all-branches", kind: "required" },
+          { operationId: "v1-get-a-branch", kind: "required" },
+        ],
+      });
+
+      expect(text).toBe(
+        lines(
+          "PERMISSIONS",
+          fga,
+          "    Required:",
+          "      branching_development_read or branching_production_read",
+          "      branching_development_read for a preview branch",
+          "        or branching_production_read for the main branch",
+        ),
+      );
+    });
+
+    it("shows the permission a request body detail needs next to the plain set", () => {
+      const withData = Flag.Boolean("with-data").pipe(Flag.optional);
+      const text = render(
+        {
+          operations: [
+            { operationId: "v1-create-a-branch", kind: "required" },
+            {
+              operationId: "v1-create-a-branch",
+              kind: "required",
+              when: [{ flag: "with-data" }],
+              request: { body: { with_data: "true" } },
+            },
+          ],
+        },
+        catalogOf(withData),
+      );
+
+      expect(text).toBe(
+        lines(
+          "PERMISSIONS",
+          fga,
+          "    Required:",
+          "      branching_development_create",
+          "        or branching_production_create",
+          "    Required with --with-data:",
+          "      branching_production_create",
         ),
       );
     });
@@ -751,7 +885,7 @@ describe("permission help section", () => {
       const longSet = ["a".repeat(30), "b".repeat(30)];
       const scheme: PermissionScheme = {
         ...fgaScheme,
-        requirement: () => [longSet, ["c"]],
+        requirement: () => [{ requirement: { anyOf: [longSet, ["c"]] }, hedged: false }],
       };
       const text = render(
         { operations: [{ operationId: "v1-get-project", kind: "required" }] },

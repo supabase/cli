@@ -25,6 +25,8 @@ interface RecordedMethodUrl {
   readonly url: string;
   /** Query parameters Effect's HttpClient keeps apart from `url` (a recorded request's `urlParams`). */
   readonly urlParams?: string;
+  /** The request body as the mock recorded it: parsed JSON when it parses. */
+  readonly body?: unknown;
 }
 
 export interface DriftCheckOptions {
@@ -83,38 +85,66 @@ function queryOf(request: RecordedMethodUrl, apiUrl: string | undefined): URLSea
   return params;
 }
 
+const DETAIL_KINDS = ["query", "body"] as const;
+
+type DetailKind = (typeof DETAIL_KINDS)[number];
+
+/** The string-encoded top-level body fields of a recorded JSON object body. */
+function bodyFieldsOf(body: unknown): ReadonlyMap<string, string> {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return new Map();
+  return new Map(
+    Object.entries(body).map(([key, value]) => [
+      key,
+      typeof value === "string" ? value : JSON.stringify(value),
+    ]),
+  );
+}
+
 /**
- * A request must carry the qualifiers of at least one applicable entry for its operation, and no
- * qualifier value the declaration names for the operation without an applicable entry declaring it.
+ * A request must carry the qualifiers (query parameters and body fields) of at least one
+ * applicable entry for its operation, and no qualifier value the declaration names for the
+ * operation without an applicable entry declaring it.
  */
 function assertQualifiersMatch(
   prefix: string,
   request: RecordedMethodUrl,
-  sent: URLSearchParams,
+  sentQuery: URLSearchParams,
   applicable: ReadonlyArray<OperationEntry>,
   declaredForOperation: ReadonlyArray<OperationEntry>,
 ): void {
   const target = `${request.method} ${new URL(request.url, "https://api.supabase.com").pathname}`;
+  const sentBody = bodyFieldsOf(request.body);
+  const sent = (kind: DetailKind, key: string): string | undefined =>
+    kind === "query" ? (sentQuery.get(key) ?? undefined) : sentBody.get(key);
+  const listed = (entry: OperationEntry, kind: DetailKind) =>
+    Object.entries(entry.request?.[kind] ?? {});
   if (
     !applicable.some((entry) =>
-      Object.entries(entry.request?.query ?? {}).every(([key, value]) => sent.get(key) === value),
+      DETAIL_KINDS.every((kind) =>
+        listed(entry, kind).every(([key, value]) => sent(kind, key) === value),
+      ),
     )
   ) {
     throw new Error(
-      `${prefix}: request ${target} was sent without the query qualifiers its declaration lists (${applicable
-        .map((entry) => JSON.stringify(entry.request?.query))
+      `${prefix}: request ${target} was sent without the request qualifiers its declaration lists (${applicable
+        .map((entry) => JSON.stringify(entry.request))
         .join(" or ")}).`,
     );
   }
-  const mentioned = new Set(
-    declaredForOperation.flatMap((entry) => Object.keys(entry.request?.query ?? {})),
-  );
-  for (const key of mentioned) {
-    const value = sent.get(key);
-    if (value !== null && !applicable.some((entry) => entry.request?.query?.[key] === value)) {
-      throw new Error(
-        `${prefix}: request ${target} carries ${key}=${value}, which no applicable declaration entry lists for this operation.`,
-      );
+  for (const kind of DETAIL_KINDS) {
+    const mentioned = new Set(
+      declaredForOperation.flatMap((entry) => listed(entry, kind).map(([key]) => key)),
+    );
+    for (const key of mentioned) {
+      const value = sent(kind, key);
+      if (
+        value !== undefined &&
+        !applicable.some((entry) => entry.request?.[kind]?.[key] === value)
+      ) {
+        throw new Error(
+          `${prefix}: request ${target} carries ${kind === "body" ? "body " : ""}${key}=${value}, which no applicable declaration entry lists for this operation.`,
+        );
+      }
     }
   }
 }
