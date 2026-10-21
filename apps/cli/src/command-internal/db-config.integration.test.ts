@@ -2136,7 +2136,7 @@ describe("dbConfigResolver.resolveConnection", () => {
     const bannedRequests = (
       requests: Array<{ readonly method: string; readonly path: string }>,
       bans: ReadonlyArray<string>,
-      failing: "retrieve" | "delete" | undefined = undefined,
+      failing?: "retrieve" | "delete",
     ) =>
       stubManagementApi(requests, (method, path) => {
         if (method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`) {
