@@ -93,6 +93,11 @@ const readPackageJson = Effect.fnUntraced(function* () {
   const packageJsonPath = path.join(yield* packageRoot, "package.json");
   const parsed: unknown = yield* decodeJson(
     yield* fs.readFileString(packageJsonPath).pipe(hostFailure),
+  ).pipe(
+    Effect.mapError(
+      (error) =>
+        new ReleasePlanError({ message: `${packageJsonPath} is malformed: ${error.message}` }),
+    ),
   );
   if (
     !isRecord(parsed) ||
