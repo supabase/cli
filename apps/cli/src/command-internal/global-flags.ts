@@ -204,11 +204,7 @@ const yesFlagFromArgs = (args: ReadonlyArray<string>): boolean | undefined => {
   return result;
 };
 
-/**
- * `raw` is the `SUPABASE_YES` value the process sees, which may come from a dotenv file Bun
- * autoloaded.
- */
-export type YesSource = { readonly via: "flag" } | { readonly via: "env"; readonly raw: string };
+export type YesSource = { readonly via: "flag" } | { readonly via: "env" };
 
 /** The origin of a granted `--yes`, or `None`; an explicit `--yes=false` wins over the env. */
 export const resolveYesSource = Effect.gen(function* () {
@@ -221,7 +217,7 @@ export const resolveYesSource = Effect.gen(function* () {
   if (explicit ?? flag) return Option.some<YesSource>({ via: "flag" });
   const raw = yield* envValue("SUPABASE_YES");
   return raw !== undefined && parseEnvBool(raw)
-    ? Option.some<YesSource>({ via: "env", raw })
+    ? Option.some<YesSource>({ via: "env" })
     : Option.none<YesSource>();
 });
 
