@@ -201,7 +201,8 @@ hosted.
   `HostedMutationConsent` token only the consent module constructs, and without `--yes` the command
   fails with `LinkedDbNetworkBannedError`. Its suggestion is to re-run with `--yes` or to run
   `supabase network-bans remove --remote=<ref>` with the ref of the project that failed, which need
-  not be the linked one. This applies to reads too.
+  not be the linked one. Under `--yes`, a failed ban listing or removal fails the command with
+  that error instead. This applies to reads too.
 - **Reads never prompt.** `db query --read-only` is a read: it sends `read_only: true` to the
   Management API for a linked target, and runs the statement in a read-only transaction for a local
   or database URL target. It skips consent.
