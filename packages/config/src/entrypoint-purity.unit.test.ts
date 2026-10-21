@@ -1,7 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { Data, Effect, Exit, FileSystem, Path, type Scope } from "effect";
 import { fileURLToPath } from "node:url";
 import * as defaultEntrypoint from "./index.ts";
 import * as effectEntrypoint from "./effect.ts";
@@ -12,6 +11,14 @@ import * as internalEntrypoint from "./internal.ts";
 // `node:`/`bun:` builtin. Bare `effect` itself is fine: its `FileSystem`/`Path` tags are inert
 // until a platform `Layer` provides them. This test walks the entrypoint's real import graph so
 // a future edit reintroducing a platform/IO dependency fails here instead of breaking bundling.
+
+function runPlatform<A, E>(
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
+): Promise<A> {
+  return Effect.runPromise(effect.pipe(Effect.scoped, Effect.provide(BunServices.layer)));
+}
+
+const { dirname, join } = await runPlatform(Effect.service(Path.Path));
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(srcDir, "..");
@@ -27,7 +34,11 @@ interface TypesBunDefaultExport {
   readonly default: string;
 }
 
-const packageJson = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
+const packageJson = JSON.parse(
+  await runPlatform(
+    FileSystem.FileSystem.use((fs) => fs.readFileString(join(packageRoot, "package.json"))),
+  ),
+) as {
   readonly exports: {
     readonly ".": TypesBunDefaultExport;
     readonly "./internal": TypesBunDefaultExport;
@@ -95,14 +106,19 @@ function findUnresolvableDynamicSpecifiers(rawSource: string): string[] {
   return unresolvable;
 }
 
-function readSourceOrThrow(file: string): string {
-  try {
-    return readFileSync(file, "utf8");
-  } catch {
-    throw new Error(
-      `purity walker could not resolve ${file} (imported somewhere in the pure graph)`,
-    );
-  }
+class PurityWalkerError extends Data.TaggedError("PurityWalkerError")<{
+  readonly message: string;
+}> {}
+
+function readSource(file: string) {
+  return FileSystem.FileSystem.use((fs) => fs.readFileString(file)).pipe(
+    Effect.mapError(
+      () =>
+        new PurityWalkerError({
+          message: `purity walker could not resolve ${file} (imported somewhere in the pure graph)`,
+        }),
+    ),
+  );
 }
 
 interface ImportGraph {
@@ -110,7 +126,7 @@ interface ImportGraph {
   readonly bareSpecifiers: ReadonlySet<string>;
 }
 
-function collectImportGraph(entryFile: string): ImportGraph {
+const collectImportGraph = Effect.fnUntraced(function* (entryFile: string) {
   const visitedFiles = new Set<string>();
   const bareSpecifiers = new Set<string>();
   const queue = [entryFile];
@@ -122,16 +138,17 @@ function collectImportGraph(entryFile: string): ImportGraph {
     }
     visitedFiles.add(file);
 
-    const source = readSourceOrThrow(file);
+    const source = yield* readSource(file);
 
     const unresolvable = findUnresolvableDynamicSpecifiers(source);
     if (unresolvable.length > 0) {
-      throw new Error(
-        `purity walker found a dynamic import()/require() in ${file} whose argument is not a ` +
+      return yield* new PurityWalkerError({
+        message:
+          `purity walker found a dynamic import()/require() in ${file} whose argument is not a ` +
           `static string/template literal, so Bun's scanImports() cannot resolve it to a ` +
           `specifier: ${unresolvable.join(", ")}. Rewrite it as a static specifier so the walker ` +
           `can verify what it pulls into the bundle.`,
-      );
+      });
     }
 
     for (const specifier of extractSpecifiers(source)) {
@@ -143,8 +160,8 @@ function collectImportGraph(entryFile: string): ImportGraph {
     }
   }
 
-  return { visitedFiles, bareSpecifiers };
-}
+  return { visitedFiles, bareSpecifiers } satisfies ImportGraph;
+});
 
 describe("extractSpecifiers", () => {
   test("extracts a dynamic import() specifier", () => {
@@ -249,25 +266,28 @@ describe("findUnresolvableDynamicSpecifiers", () => {
 describe("collectImportGraph", () => {
   test("throws a named error when a specifier cannot be resolved on disk", () => {
     const missingFile = join(srcDir, "__does-not-exist__.ts");
-    expect(() => collectImportGraph(missingFile)).toThrow(
+    return expect(runPlatform(collectImportGraph(missingFile))).rejects.toThrow(
       `purity walker could not resolve ${missingFile} (imported somewhere in the pure graph)`,
     );
   });
 
-  test("throws when a file contains an unresolvable dynamic import()/require() argument", () => {
-    const cwd = mkdtempSync(join(tmpdir(), "supabase-purity-walker-"));
-    try {
-      const entryFile = join(cwd, "entry.ts");
-      writeFileSync(entryFile, `const p = "./foo.ts";\nawait import(p);\n`);
+  test("throws when a file contains an unresolvable dynamic import()/require() argument", () =>
+    runPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-purity-walker-" });
+        const entryFile = join(cwd, "entry.ts");
+        yield* fs.writeFileString(entryFile, `const p = "./foo.ts";\nawait import(p);\n`);
 
-      expect(() => collectImportGraph(entryFile)).toThrow(/cannot resolve it to a specifier/);
-    } finally {
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
+        const error = yield* Effect.flip(collectImportGraph(entryFile));
+        expect(error.message).toMatch(/cannot resolve it to a specifier/);
+      }),
+    ));
 });
 
-const { visitedFiles, bareSpecifiers } = collectImportGraph(join(srcDir, "index.ts"));
+const { visitedFiles, bareSpecifiers } = await runPlatform(
+  collectImportGraph(join(srcDir, "index.ts")),
+);
 
 // The real, post-partition pure runtime graph: computed by running the walker above and
 // hardcoded here so both additions and removals are a deliberate, loud review event.
@@ -341,7 +361,7 @@ describe("src/index.ts stays browser-safe", () => {
 // `src/io-browser.ts` (the `browser` condition target for `@supabase/config/io`) must stay just
 // as bundler-safe as `index.ts` itself — it only adds inert, throw-when-invoked stubs on top of
 // `export * from "./index.ts"`. Reuses the same walker and allowlist as the `index.ts` suite.
-const ioBrowserGraph = collectImportGraph(join(srcDir, "io-browser.ts"));
+const ioBrowserGraph = await runPlatform(collectImportGraph(join(srcDir, "io-browser.ts")));
 const expectedIoBrowserGraphFiles = [
   join(srcDir, "io-browser.ts"),
   ...expectedPureGraphFiles,
@@ -566,14 +586,26 @@ describe("package.json exports map", () => {
   // The `types`/`default` conditions all point at `dist/` build outputs, which only exist after
   // `pnpm run build` — intentionally not checked here so this test stays build-independent.
   // `scripts/build.ts`'s tree-shake/Node-consumer smoke test owns dist correctness instead.
-  test("the ./io bun condition target exists on disk (its only src target)", () => {
-    expect(() => readFileSync(join(packageRoot, packageJson.exports["./io"].bun))).not.toThrow();
-  });
+  test("the ./io bun condition target exists on disk (its only src target)", () =>
+    runPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const read = yield* Effect.exit(
+          fs.readFile(join(packageRoot, packageJson.exports["./io"].bun)),
+        );
+        expect(Exit.isSuccess(read)).toBe(true);
+      }),
+    ));
 
-  test("the '.', './effect', and './internal' bun condition targets exist on disk", () => {
-    for (const key of [".", "./effect", "./internal"] as const) {
-      const target = packageJson.exports[key].bun;
-      expect(() => readFileSync(join(packageRoot, target))).not.toThrow();
-    }
-  });
+  test("the '.', './effect', and './internal' bun condition targets exist on disk", () =>
+    runPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        for (const key of [".", "./effect", "./internal"] as const) {
+          const target = packageJson.exports[key].bun;
+          const read = yield* Effect.exit(fs.readFile(join(packageRoot, target)));
+          expect(Exit.isSuccess(read)).toBe(true);
+        }
+      }),
+    ));
 });

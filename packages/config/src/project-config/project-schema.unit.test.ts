@@ -1,8 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { Schema, SchemaAST } from "effect";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, FileSystem, Path, Schema, SchemaAST } from "effect";
 import * as SmolToml from "smol-toml";
 import { CliConfigSchema } from "../base.ts";
 import { isSecretPath, secretPathPatterns } from "../lib/secret-paths.ts";
@@ -36,10 +34,13 @@ function findAtPattern(
   return current;
 }
 
-const legacyFixturePath = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../testdata/legacy-config.toml",
-);
+const legacyFixturePath = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  return path.join(
+    path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
+    "../../testdata/legacy-config.toml",
+  );
+});
 
 function apiEnvelope(attributes: Record<string, unknown>): unknown {
   return { data: { type: "project_config", id: "abcdefghijklmnopqrst", attributes } };
@@ -67,12 +68,16 @@ describe("ProjectConfigSchema acceptance", () => {
     expect(() => decodeProjectConfig(projected)).not.toThrow();
   });
 
-  test("fromConfigDocument's output over the real legacy-config.toml fixture validates", () => {
-    const raw = SmolToml.parse(readFileSync(legacyFixturePath, "utf8"));
-    const config = decodeCliConfig(raw);
-    const projected = fromConfigDocument(config);
-    expect(() => decodeProjectConfig(projected)).not.toThrow();
-  });
+  test("fromConfigDocument's output over the real legacy-config.toml fixture validates", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const raw = SmolToml.parse(yield* fs.readFileString(yield* legacyFixturePath));
+        const config = decodeCliConfig(raw);
+        const projected = fromConfigDocument(config);
+        expect(() => decodeProjectConfig(projected)).not.toThrow();
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
 
   test("toProjectConfig's cliConfig arm validates", () => {
     const projected = toProjectConfig({ cliConfig: { api: { max_rows: 100 } } });
@@ -452,23 +457,29 @@ describe("ProjectConfigSchema Standard Schema interop", () => {
     expect(ProjectConfigSchema["~standard"].version).toBe(1);
   });
 
-  test("~standard.validate returns a value on success", async () => {
-    const outcome = ProjectConfigSchema["~standard"].validate({
-      auth: { site_url: "https://example.com" },
-    });
-    const result = outcome instanceof Promise ? await outcome : outcome;
-    expect(result.issues).toBeUndefined();
-    if (!result.issues) {
-      expect(result.value).toEqual({ auth: { site_url: "https://example.com" } });
-    }
-  });
+  test("~standard.validate returns a value on success", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const outcome = ProjectConfigSchema["~standard"].validate({
+          auth: { site_url: "https://example.com" },
+        });
+        const result = outcome instanceof Promise ? yield* Effect.promise(() => outcome) : outcome;
+        expect(result.issues).toBeUndefined();
+        if (!result.issues) {
+          expect(result.value).toEqual({ auth: { site_url: "https://example.com" } });
+        }
+      }),
+    ));
 
-  test("~standard.validate returns issues with paths on failure", async () => {
-    const outcome = ProjectConfigSchema["~standard"].validate({ auth: { site_url: 123 } });
-    const result = outcome instanceof Promise ? await outcome : outcome;
-    expect(result.issues).toBeDefined();
-    expect(result.issues?.[0]?.path).toBeDefined();
-  });
+  test("~standard.validate returns issues with paths on failure", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const outcome = ProjectConfigSchema["~standard"].validate({ auth: { site_url: 123 } });
+        const result = outcome instanceof Promise ? yield* Effect.promise(() => outcome) : outcome;
+        expect(result.issues).toBeDefined();
+        expect(result.issues?.[0]?.path).toBeDefined();
+      }),
+    ));
 });
 
 describe("toProjectConfigJsonSchema", () => {

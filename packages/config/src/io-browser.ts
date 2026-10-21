@@ -5,11 +5,13 @@ import type { CliConfigIo } from "./promise-facade.ts";
 // entrypoint instead.
 //
 // Exports the same seven names as `bun.ts`/`node.ts` so bundlers resolve named imports, and each
-// export only throws once invoked — so a bundle that imports this module without calling into it
+// export only rejects once invoked — so a bundle that imports this module without calling into it
 // doesn't crash at module evaluation.
-async function unavailableInBrowser(): Promise<never> {
-  throw new Error(
-    '@supabase/config/io is not available in browser bundles; import the pure surface from "@supabase/config" instead.',
+function unavailableInBrowser(): Promise<never> {
+  return Promise.reject(
+    new Error(
+      '@supabase/config/io is not available in browser bundles; import the pure surface from "@supabase/config" instead.',
+    ),
   );
 }
 
