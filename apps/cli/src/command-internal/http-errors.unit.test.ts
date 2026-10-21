@@ -92,8 +92,8 @@ describe("mapHttpError plan-gate entitlement", () => {
     }),
   );
 
-  it.effect.each(["", "<html>Bad Gateway</html>"])(
-    "keeps the plain status error for a non-JSON 4xx body %j",
+  it.effect.each(["", "<html>Bad Gateway</html>", '{"message":"Not Found"}'])(
+    "keeps the plain status error for a non-envelope 4xx body %j",
     (body) =>
       Effect.gen(function* () {
         const error = yield* mapError(statusFailure(403, body)).pipe(Effect.flip);
@@ -114,8 +114,12 @@ describe("mapHttpError plan-gate entitlement", () => {
   );
 
   it.effect.each([
-    { case: "a non-https upgrade_url", feature: "backups", upgradeUrl: "javascript:alert(1)" },
-    { case: "a plain-http upgrade_url", feature: "backups", upgradeUrl: "http://evil.example/" },
+    { case: "a non-web upgrade_url", feature: "backups", upgradeUrl: "javascript:alert(1)" },
+    {
+      case: "an upgrade_url carrying credentials",
+      feature: "backups",
+      upgradeUrl: "https://supabase.com@evil.example/billing",
+    },
     {
       case: "a feature carrying a bidi override",
       feature: `backups${String.fromCodePoint(0x202e)}`,

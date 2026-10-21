@@ -1,5 +1,5 @@
 import { SupabaseApiInputError, type SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option } from "effect";
+import { Effect } from "effect";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClientError from "effect/http/HttpClientError";
 
@@ -115,7 +115,9 @@ function readString(obj: unknown, key: string): string {
 function normalizeUpgradeUrl(raw: string): string | undefined {
   if (raw.length > MAX_UPGRADE_URL_LEN || !URL.canParse(raw)) return undefined;
   const url = new URL(raw);
-  return url.protocol === "https:" ? url.href : undefined;
+  const isWebUrl = url.protocol === "https:" || url.protocol === "http:";
+  const hasCredentials = url.username !== "" || url.password !== "";
+  return isWebUrl && !hasCredentials ? url.href : undefined;
 }
 
 /**
@@ -164,13 +166,12 @@ export function mapHttpError<N, S>(opts: {
             Effect.orElseSucceed(() => cause.reason.description ?? ""),
           );
           const body = sanitizeErrorBody(rawBody);
-          const decoded =
+          const entitlement =
             status >= 400 && status < 500
-              ? yield* cause.response.json.pipe(Effect.option)
-              : Option.none();
-          const entitlement = Option.isSome(decoded)
-            ? parsePlanGateEnvelope(decoded.value)
-            : undefined;
+              ? parsePlanGateEnvelope(
+                  yield* cause.response.json.pipe(Effect.orElseSucceed(() => undefined)),
+                )
+              : undefined;
           return yield* Effect.fail(
             new opts.statusError({
               status,
