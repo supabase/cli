@@ -58,7 +58,7 @@ const applyError = (message: string) => new DbPushApplyError({ message });
 export interface DbPushCoreInput {
   /** Absolute project directory (never read from `CommandSettings.workdir`). */
   readonly workdir: string;
-  /** Resolved project ref, or `""` for `--local` / `--db-url`. */
+  /** Resolved project ref, or `""` for a local or database URL target. */
   readonly projectRef: string;
   readonly conn: PgConnInput;
   readonly isLocal: boolean;

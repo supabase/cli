@@ -1078,6 +1078,83 @@ describe("gen types", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
+    describe("--remote <language> read as a branch name", () => {
+      const languageSuggestion = (language: string) =>
+        `To generate ${language} types for the linked project, run supabase gen types --lang=${language} --remote.`;
+
+      it.effect.each(["typescript", "go"])(
+        "suggests --lang=%s --remote when the linked project has no such branch",
+        (language) =>
+          Effect.gen(function* () {
+            const { layer, api } = yield* setup({
+              args: ["gen", "types", "--remote", language],
+              projectId: Option.some(VALID_REF),
+              branches: [branchRow("feature-x")],
+            });
+            const error = yield* genTypes(
+              defaultFlags({ remote: Option.some({ _tag: "Branch", name: language } as const) }),
+            ).pipe(Effect.provide(layer), Effect.flip);
+
+            expect(error).toMatchObject({
+              _tag: "LinkBranchNotFoundError",
+              suggestion: languageSuggestion(language),
+            });
+            expect(api.requests).toEqual([
+              { method: "listAllBranches", input: { ref: VALID_REF } },
+            ]);
+          }).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      it.effect("suggests it when no project is linked to look the branch up in", () =>
+        Effect.gen(function* () {
+          const { layer } = yield* setup({ args: ["gen", "types", "--remote", "python"] });
+          const error = yield* genTypes(
+            defaultFlags({ remote: Option.some({ _tag: "Branch", name: "python" } as const) }),
+          ).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(error).toMatchObject({
+            _tag: "LinkBranchNotLinkedError",
+            suggestion: languageSuggestion("python"),
+          });
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      it.effect("adds no suggestion for a name that is not a language", () =>
+        Effect.gen(function* () {
+          const { layer } = yield* setup({
+            args: ["gen", "types", "--remote", "feature-y"],
+            projectId: Option.some(VALID_REF),
+            branches: [branchRow("feature-x")],
+          });
+          const error = yield* genTypes(
+            defaultFlags({ remote: Option.some({ _tag: "Branch", name: "feature-y" } as const) }),
+          ).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(error).toMatchObject({ _tag: "LinkBranchNotFoundError" });
+          expect(error).not.toHaveProperty("suggestion");
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      it.effect("still reads a real branch named after a language as that branch", () =>
+        Effect.gen(function* () {
+          const { layer, api } = yield* setup({
+            args: ["gen", "types", "--remote", "typescript"],
+            projectId: Option.some(VALID_REF),
+            branches: [branchRow("typescript")],
+            projectTypes: "ok",
+          });
+          yield* genTypes(
+            defaultFlags({ remote: Option.some({ _tag: "Branch", name: "typescript" } as const) }),
+          ).pipe(Effect.provide(layer));
+
+          expect(api.requests).toContainEqual({
+            method: "generateTypescriptTypes",
+            input: { ref: BRANCH_PROJECT_REF, included_schemas: "public" },
+          });
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
+    });
+
     describeDbTargetSelection("gen types", {
       dbUrl: true,
       workdir: () => tempRoot.current,

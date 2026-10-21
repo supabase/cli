@@ -152,7 +152,9 @@ Not applicable.
   TypeScript for a remote project still comes from the Management API.
 - **`--remote <word>`.** A word after `--remote` is always read as `--remote=<word>`: the legacy positional
   language is hidden and takes no part in that reading, so a language goes before `--remote`
-  (`gen types typescript --remote`).
+  (`gen types typescript --remote`). A word that is a language name (`--remote typescript`) is still
+  a branch name; when the linked project has no such branch, or no project is linked, the lookup
+  error's suggestion is `To generate <language> types for the linked project, run supabase gen types --lang=<language> --remote.`
 - **Stopped local stack in a linked checkout.** A checkout is linked when `SUPABASE_PROJECT_ID` is
   set or `supabase/.temp/project-ref` names a project. On the legacy Docker Compose stack, a missing
   database container (`GenTypesLocalDbNotRunningError`, `supabase start is not running.`) or a

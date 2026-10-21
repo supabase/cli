@@ -62,19 +62,17 @@ const autoloadedDefinitions = (host: Platform) =>
 
 /**
  * Confirms a hosted change only for `--yes` or a `SUPABASE_YES` the shell exported. Bun copies
- * working-directory dotenv files into the environment, and a shell variable overrides them, so a
- * value that matches one of those files is treated as the file's and not as consent.
+ * working-directory dotenv files into the environment and its parsing can differ from ours, so a
+ * working-directory dotenv file that defines `SUPABASE_YES` at all, whatever its value, makes the
+ * environment's value the file's and not consent.
  */
 export const resolveHostedYes = Effect.gen(function* () {
   const source = yield* resolveYesSource;
   if (Option.isNone(source)) return Option.none<HostedYesSource>();
   if (source.value.via === "flag") return Option.some<HostedYesSource>("--yes");
-  const { raw } = source.value;
   const host = yield* platform;
   if (Option.isNone(host)) return Option.none<HostedYesSource>();
-  const fromFile = (yield* autoloadedDefinitions(host.value)).some(
-    ({ value }) => Option.isNone(value) || value.value === raw,
-  );
+  const fromFile = (yield* autoloadedDefinitions(host.value)).length > 0;
   return fromFile ? Option.none<HostedYesSource>() : Option.some<HostedYesSource>("SUPABASE_YES");
 });
 

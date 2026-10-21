@@ -86,7 +86,7 @@ function classifyParentCandidates(
 }
 
 /**
- * The linked PARENT project ref, not the branch's own ref that `resolve` returns right after
+ * The linked parent project ref, not the branch's own ref that `resolve` returns right after
  * `link <branch>`: `SUPABASE_PROJECT_ID`, then the `linked-project.json` cache, then `project-ref`.
  */
 export const resolveLinkedParentRef = Effect.fnUntraced(function* () {

@@ -17,7 +17,8 @@ import type { DbPushFlags } from "./push.command.ts";
 
 /**
  * `supabase db push` — apply pending local migrations (and optionally seed data
- * and custom roles) to the linked project, or to the database `--local` / `--db-url` selects.
+ * and custom roles) to the local database by default, or to the project, branch or database URL
+ * that `--remote` names (the linked project when bare).
  *
  * Resolves the target and `config.toml`, then delegates the push to `dbPushCore`, shared with
  * `bootstrap`, which asks one combined consent once the plan is known.

@@ -72,3 +72,20 @@ export const nearMissByName = <T extends { readonly name: string }>(
     )
   );
 };
+
+/** The word within `maxEdits` of `word`, ignoring case; the nearest wins, then the earlier one. */
+export const closestWord = (
+  words: ReadonlyArray<string>,
+  word: string,
+  maxEdits: number,
+): string | undefined => {
+  const target = word.trim().toLowerCase();
+  let best: { readonly word: string; readonly distance: number } | undefined;
+  for (const candidate of words) {
+    const distance = editDistance(target, candidate.toLowerCase());
+    if (distance <= maxEdits && (best === undefined || distance < best.distance)) {
+      best = { word: candidate, distance };
+    }
+  }
+  return best?.word;
+};

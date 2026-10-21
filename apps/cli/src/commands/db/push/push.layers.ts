@@ -14,8 +14,8 @@ import { linkedProjectCacheLayer } from "../../../telemetry/linked-project-cache
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
 
 /**
- * Runtime layer for `supabase db push`. Same shape as `db lint`: it spans local
- * (`--local` / `--db-url`) and linked DB access, so it composes the Postgres
+ * Runtime layer for `supabase db push`. Same shape as `db lint`: it spans the local default
+ * and `--remote` DB access, so it composes the Postgres
  * connection, the db-config resolver, project-ref resolution, and the
  * linked-project cache.
  *

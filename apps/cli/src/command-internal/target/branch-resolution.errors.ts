@@ -9,6 +9,7 @@ import {
 /** A branch name was given but no linked parent project could be resolved to search for it. */
 export class LinkBranchNotLinkedError extends Data.TaggedError("LinkBranchNotLinkedError")<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.projectNotLinked;
@@ -18,6 +19,7 @@ export class LinkBranchNotLinkedError extends Data.TaggedError("LinkBranchNotLin
 /** A linked-parent candidate (env, cache or `project-ref` file) exists but none is ref-shaped. */
 export class LinkParentRefInvalidError extends Data.TaggedError("LinkParentRefInvalidError")<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.relinkProject;
@@ -27,6 +29,7 @@ export class LinkParentRefInvalidError extends Data.TaggedError("LinkParentRefIn
 /** No branch with the given name/UUID exists on the resolved parent project. */
 export class LinkBranchNotFoundError extends Data.TaggedError("LinkBranchNotFoundError")<{
   readonly message: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidInput;

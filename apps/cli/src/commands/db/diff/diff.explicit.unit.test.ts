@@ -11,6 +11,7 @@ import {
   classifyExplicitRef,
   explicitDeprecationMessages,
   explicitSelectorError,
+  unresolvedBranchSuggestion,
 } from "./diff.explicit.ts";
 
 const REF = "abcdefghijklmnopqrst";
@@ -299,4 +300,27 @@ describe("explicitSelectorError", () => {
     );
     expect(`${rewritten.message} ${rewritten.suggestion}`).not.toContain("hunter2");
   });
+});
+
+describe("unresolvedBranchSuggestion", () => {
+  const accepted = (flag: string) =>
+    `${flag} accepts local, migrations, remote, a project ref, a branch of the linked project, or a postgresql:// URL.`;
+
+  it.each([
+    { flag: "--from", value: "lcoal", keyword: "local" },
+    { flag: "--to", value: "migratoins", keyword: "migrations" },
+    { flag: "--from", value: "remove", keyword: "remote" },
+    { flag: "--to", value: "Locale", keyword: "local" },
+  ] as const)("leads with $flag=$keyword for $value", ({ flag, value, keyword }) => {
+    expect(unresolvedBranchSuggestion(flag, value)).toBe(
+      `Did you mean ${flag}=${keyword}? ${accepted(flag)}`,
+    );
+  });
+
+  it.each(["feature-x", "main", "staging", "lo"])(
+    "only lists what the flag accepts for %s",
+    (value) => {
+      expect(unresolvedBranchSuggestion("--to", value)).toBe(accepted("--to"));
+    },
+  );
 });

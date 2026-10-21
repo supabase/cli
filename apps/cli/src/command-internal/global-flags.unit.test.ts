@@ -168,7 +168,7 @@ describe("resolveYesSource", () => {
   it.effect("falls back to a shell SUPABASE_YES when --yes never appears", () =>
     Effect.gen(function* () {
       expect(yield* resolve([], { parsed: false, shellYes: "1" })).toEqual(
-        Option.some({ via: "env", raw: "1" }),
+        Option.some({ via: "env" }),
       );
       expect(yield* resolve([], { parsed: false })).toEqual(Option.none());
     }),

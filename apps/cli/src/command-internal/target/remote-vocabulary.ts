@@ -5,7 +5,11 @@ export const DB_URL_PATTERN = /^postgres(ql)?:\/\//i;
 /** The spellings of a bare `--remote`, in any case: the words the flag parser reads as true. */
 export const LINKED_LITERAL = /^(true|yes|on|1|y)$/i;
 
-export const OFF_LITERAL = /^(false|no|off|0|n)$/i;
+/** The lowercase words the flag parser reads as false. */
+export const OFF_WORDS: ReadonlySet<string> = new Set(["false", "no", "off", "0", "n"]);
+
+/** {@link OFF_WORDS} in any case. */
+export const OFF_LITERAL = new RegExp(`^(${[...OFF_WORDS].join("|")})$`, "i");
 
 export const isBooleanLiteral = (word: string): boolean =>
   LINKED_LITERAL.test(word) || OFF_LITERAL.test(word);

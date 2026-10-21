@@ -280,13 +280,19 @@ describe("requireHostedMutationConsent", () => {
       ),
     );
 
-    it.effect("grants a shell value that differs from the working directory's file", () =>
-      withDotenvDir({ ".env": "SUPABASE_YES=true\n" }, (cwd) =>
-        Effect.gen(function* () {
-          const exit = yield* consent({ shellYes: "1", cwd }).exit;
-          expect(successOf(exit).via).toBe("yes");
-        }),
-      ),
+    it.effect.each([
+      { name: "a different value", contents: "SUPABASE_YES=true\n" },
+      { name: "an inline comment Bun strips", contents: "SUPABASE_YES=1#x\n" },
+      { name: "an empty value", contents: "SUPABASE_YES=\n" },
+    ])(
+      "does not grant a shell value when the working directory's .env sets it with $name",
+      ({ contents }) =>
+        withDotenvDir({ ".env": contents }, (cwd) =>
+          Effect.gen(function* () {
+            const exit = yield* consent({ shellYes: "1", cwd }).exit;
+            expect(failureOf(exit)).toBeInstanceOf(HostedMutationConsentRequiredError);
+          }),
+        ),
     );
 
     it.effect("grants when the working directory's dotenv files do not mention it", () =>

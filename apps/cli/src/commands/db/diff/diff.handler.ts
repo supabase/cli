@@ -36,6 +36,7 @@ import {
   renderLocalTarget,
 } from "../../../command-internal/target/target-identity.ts";
 import { parseTargetSelector } from "../../../command-internal/target/target-selector.ts";
+import { withUnresolvedBranchSuggestion } from "../../../command-internal/target/unresolved-branch-suggestion.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import { makeDir } from "../../../command-internal/make-dir.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
@@ -94,6 +95,7 @@ import {
   explicitDeprecationMessages,
   explicitIpv6Error,
   explicitSelectorError,
+  unresolvedBranchSuggestion,
 } from "./diff.explicit.ts";
 import {
   DbDiffDbNotRunningError,
@@ -344,8 +346,11 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
               }
               return yield* hostedEndpoint(projectRefTarget ?? { _tag: "Linked" });
             case "Ref":
-            case "Branch":
               return yield* hostedEndpoint(explicit);
+            case "Branch":
+              return yield* hostedEndpoint(explicit).pipe(
+                withUnresolvedBranchSuggestion(unresolvedBranchSuggestion(flag, explicit.name)),
+              );
             case "ForeignUrl":
               return yield* new DbDiffExplicitFlagsError({
                 message: `${EXPLICIT_REF_VALUES_MESSAGE(flag)}${

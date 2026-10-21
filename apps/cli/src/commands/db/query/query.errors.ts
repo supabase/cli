@@ -19,6 +19,18 @@ export class DbQueryNoSqlError extends Data.TaggedError("DbQueryNoSqlError")<{
   }
 }
 
+/** `--file` was given together with positional SQL, so one of them would be silently ignored. */
+export class DbQuerySqlSourceConflictError extends Data.TaggedError(
+  "DbQuerySqlSourceConflictError",
+)<{
+  readonly message: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
+
 /** Stdin was piped but empty; message text (`"no SQL provided via stdin"`) is an established output contract. */
 export class DbQueryNoStdinSqlError extends Data.TaggedError("DbQueryNoStdinSqlError")<{
   readonly message: string;

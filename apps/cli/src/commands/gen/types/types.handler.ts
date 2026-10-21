@@ -42,6 +42,7 @@ import {
   missingProjectConfigMessageEffect,
 } from "../../../command-internal/workdir-project.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
+import { withUnresolvedBranchSuggestion } from "../../../command-internal/target/unresolved-branch-suggestion.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
@@ -52,6 +53,7 @@ import type { GenTypesFlags } from "./types.command.ts";
 import {
   GEN_TYPES_LANGUAGE_FLAG_NAMES,
   GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES,
+  GEN_TYPES_LANGUAGES,
   languageOptionValues,
 } from "./types.languages.ts";
 import {
@@ -619,7 +621,19 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       }
     }
 
-    const target = yield* resolveTarget(flags);
+    const remoteBranch = Option.getOrUndefined(flags.remote);
+    const languageNamedBranch =
+      remoteBranch?._tag === "Branch" && GEN_TYPES_LANGUAGES.includes(remoteBranch.name)
+        ? remoteBranch.name
+        : undefined;
+    const resolution = resolveTarget(flags);
+    const target = yield* languageNamedBranch === undefined
+      ? resolution
+      : resolution.pipe(
+          withUnresolvedBranchSuggestion(
+            `To generate ${languageNamedBranch} types for the linked project, run supabase gen types --lang=${languageNamedBranch} --remote.`,
+          ),
+        );
 
     yield* Effect.annotateCurrentSpan("typegen.lang", lang);
 

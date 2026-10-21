@@ -200,7 +200,10 @@ const unbanErrorMapper = mapHttpError({
   statusMessage: (status, body) => `unexpected remove bans status ${status}: ${body}`,
 });
 
-/** Compares against the resolved local services hostname, not a hard-coded loopback. */
+const isLoopbackHost = (host: string): boolean =>
+  host === "localhost" || host === "::1" || (net.isIPv4(host) && host.startsWith("127."));
+
+/** Loopback spellings count as the resolved local services hostname; the port must match too. */
 function isLocalDatabase(
   host: string,
   localHost: string,
@@ -208,17 +211,13 @@ function isLocalDatabase(
   dbPort: number,
   shadowPort: number,
 ): boolean {
-  return host === localHost && (port === dbPort || port === shadowPort);
+  const sameHost = host === localHost || (isLoopbackHost(host) && isLoopbackHost(localHost));
+  return sameHost && (port === dbPort || port === shadowPort);
 }
 
 /** Stack databases listen on loopback, so only loopback or services-hostname URLs can match one. */
 function mayBeStackDatabaseHost(host: string, localHost: string): boolean {
-  return (
-    host === localHost ||
-    host === "localhost" ||
-    host === "::1" ||
-    (net.isIPv4(host) && host.startsWith("127."))
-  );
+  return host === localHost || isLoopbackHost(host);
 }
 
 /** Best-effort TCP reachability probe with a 5s timeout. */
@@ -277,9 +276,16 @@ const networkBannedError = (ref: string, addrs: ReadonlyArray<string>) =>
     suggestion: `Re-run with --yes to remove them, or run supabase network-bans remove --db-unban-ip ${addrs.join(",")} --experimental --yes --remote=${ref}`,
   });
 
+interface BanState {
+  readonly listed: ReadonlyArray<string>;
+  readonly failure: Option.Option<DbConfigError>;
+}
+
+const NO_BANS: BanState = { listed: [], failure: Option.none() };
+
 // Verify-connect with backoff while the pooler refreshes the temp password. From attempt 3 on, look
-// for network bans on the project: with approval they are removed, without it the last listing is
-// reported if the retries run out.
+// for network bans on the project: with approval they are removed and a failed listing or removal
+// is what the run reports if the retries run out; without it the last listing is reported instead.
 const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
   ref: string,
   conn: PgConnInput,
@@ -290,7 +296,7 @@ const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
   const debug = yield* DebugLogger;
   const attempt = (
     n: number,
-    listedBans: ReadonlyArray<string>,
+    bans: BanState,
   ): Effect.Effect<void, DbConfigError, CommandPlatformApiFactory | Output> =>
     // The temp-role probe always targets the remote Supavisor pooler, so it connects with TLS
     // and honors `--dns-resolver`.
@@ -300,9 +306,10 @@ const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
         // 8 retries after the initial attempt allows 9 total attempts. `n` is 1-based, so give
         // up only after attempt 9 (`n > MAX_RETRIES`), not at attempt 8.
         if (n > MAX_RETRIES) {
+          if (Option.isSome(bans.failure)) return Effect.fail(bans.failure.value);
           return Effect.fail(
-            listedBans.length > 0
-              ? networkBannedError(ref, listedBans)
+            bans.listed.length > 0
+              ? networkBannedError(ref, bans.listed)
               : new Errors.DbConfigConnectTempRoleError({
                   message: `failed to connect as temp role: ${cause.message}`,
                   suggestion: SUGGEST_ENV_VAR,
@@ -316,28 +323,40 @@ const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
           Duration.toMillis(BACKOFF_MAX),
         );
         return Effect.gen(function* () {
-          // A transient ban-list/unban failure must not propagate out of the retry loop; log it
-          // to --debug, then discard.
-          const bans =
+          // A ban-list/unban failure must not abort the retry loop: it is logged to --debug and,
+          // with approval, kept so the final error names it.
+          const nextBans =
             n < 3
-              ? listedBans
+              ? bans
               : yield* listBans(ref).pipe(
-                  Effect.flatMap((addrs) =>
-                    addrs.length > 0 && removeNetworkBans
-                      ? removeBans(ref, addrs).pipe(Effect.as([]))
-                      : Effect.succeed(addrs),
+                  Effect.flatMap(
+                    (
+                      addrs,
+                    ): Effect.Effect<
+                      BanState,
+                      DbConfigError,
+                      CommandPlatformApiFactory | Output
+                    > =>
+                      addrs.length > 0 && removeNetworkBans
+                        ? removeBans(ref, addrs).pipe(Effect.as(NO_BANS))
+                        : Effect.succeed({ listed: addrs, failure: Option.none() }),
                   ),
                   Effect.catch((banError) =>
-                    debug.debug(banError.message).pipe(Effect.as(listedBans)),
+                    debug.debug(banError.message).pipe(
+                      Effect.as<BanState>({
+                        listed: bans.listed,
+                        failure: removeNetworkBans ? Option.some(banError) : Option.none(),
+                      }),
+                    ),
                   ),
                 );
           yield* debug.debug(`Retry (${n}/${MAX_RETRIES}): ${cause.message}`);
           yield* Effect.sleep(Duration.millis(delayMs));
-          return yield* attempt(n + 1, bans);
+          return yield* attempt(n + 1, nextBans);
         });
       }),
     );
-  return yield* attempt(1, []);
+  return yield* attempt(1, NO_BANS);
 });
 
 /**
