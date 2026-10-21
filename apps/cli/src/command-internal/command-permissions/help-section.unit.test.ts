@@ -905,7 +905,29 @@ describe("permission help section", () => {
       expect(shared).toEqual([{ target: ["linked"] }]);
     });
 
-    it("combines conditions that read the same in one heading", () => {
+    it("keeps rows under different conditions apart even when the headings read alike", () => {
+      const { groups } = whenOf(
+        {
+          operations: [
+            { operationId: "v1-list-all-projects", kind: "required" },
+            { operationId: "v1-get-project", kind: "required", when: [{ flag: "project-ref" }] },
+            {
+              operationId: "v1-get-pooler-config",
+              kind: "required",
+              when: [{ flag: "project-ref", oneOf: [""] }],
+            },
+          ],
+        },
+        catalogOf(projectRef),
+      );
+
+      expect(groups.slice(1)).toEqual([
+        ["Required with --project-ref", [{ all: [{ flag: "project-ref", values: ["set"] }] }]],
+        ['Required with --project-ref=""', [{ all: [{ flag: "project-ref", values: ["empty"] }] }]],
+      ]);
+    });
+
+    it("treats naming a target flag as selecting that target", () => {
       const { groups } = whenOf(
         {
           dbTargetDefault: "local",
@@ -926,9 +948,9 @@ describe("permission help section", () => {
         catalogOf(switchFlag("local"), switchFlag("linked")),
       );
 
-      expect(groups[1]).toEqual([
-        "Required with --linked",
-        [{ all: [{ target: ["linked"] }] }, { all: [{ flag: "linked", values: ["true"] }] }],
+      expect(groups).toEqual([
+        ["Required", undefined],
+        ["Required with --linked", [{ all: [{ target: ["linked"] }] }]],
       ]);
     });
 

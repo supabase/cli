@@ -94,9 +94,42 @@ describe("permission help section across the command tree", () => {
           const expected = permissionFlagsOf(ownParams(node.command)).map((flag) => flag.name);
           expect(Option.isSome(recorded), `"${path}" records no flags`).toBe(true);
           expect(
-            Option.getOrElse(recorded, () => []).map((flag) => flag.name),
+            Option.match(recorded, { onNone: () => [], onSome: (read) => read() }).map(
+              (flag) => flag.name,
+            ),
             `"${path}" declares permissions before its flags are complete`,
           ).toEqual(expected);
+        }
+      });
+
+      // Help sees a parent group's flags only as visible names, so a condition cannot depend on
+      // a parent's hidden flag or on its choice values.
+      it("only conditions on flags a parent group shares when help can describe them", () => {
+        for (const [path, node] of leaves) {
+          const declared = Option.getOrUndefined(readPermissions(node.command));
+          if (declared?.status !== "mapped") continue;
+          const parts = path.split(" ");
+          const own = new Set(permissionFlagsOf(ownParams(node.command)).map((flag) => flag.name));
+          const root = new Set(rootFlags.map((flag) => flag.name));
+          const inherited = new Map(
+            parts
+              .slice(0, -1)
+              .flatMap((_, index) => {
+                const ancestor = tree.get(parts.slice(0, index + 1).join(" "));
+                return ancestor === undefined ? [] : permissionFlagsOf(ownParams(ancestor.command));
+              })
+              .map((flag) => [flag.name, flag]),
+          );
+          for (const entry of declared.operations) {
+            for (const condition of entry.when ?? []) {
+              const flag = condition.flag === undefined ? undefined : inherited.get(condition.flag);
+              if (flag === undefined || own.has(flag.name) || root.has(flag.name)) continue;
+              expect(
+                !flag.hidden && flag.kind !== "choice",
+                `"${path}" conditions on --${flag.name}, a hidden or choice flag of a parent group that help cannot describe`,
+              ).toBe(true);
+            }
+          }
         }
       });
 

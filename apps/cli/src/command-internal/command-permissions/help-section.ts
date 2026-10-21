@@ -165,7 +165,10 @@ function schemeSection(
     const { flags, remote } = conditionText(bucket.condition, context);
     const heading = headingFor(bucket.kind, bucket.situational, flags, remote);
     const when = alternativesOf(bucket.condition, context);
-    const group = groups.get(heading) ?? {
+    // A group holds only rows whose conditions are identical, so one row's condition never
+    // stands for another's even when their headings read alike.
+    const key = `${heading}\u0000${JSON.stringify(when)}`;
+    const group = groups.get(key) ?? {
       heading,
       kind: bucket.kind,
       situational: bucket.situational,
@@ -173,17 +176,8 @@ function schemeSection(
       when,
       rows: [],
     };
-    // Conditions that read the same in the heading, such as `--linked` as a flag and as the
-    // database target, share one group, so the group applies under either.
-    if (group.when !== undefined && when !== undefined) {
-      const known = new Set(group.when.map((alternative) => JSON.stringify(alternative)));
-      group.when = [
-        ...group.when,
-        ...when.filter((alternative) => !known.has(JSON.stringify(alternative))),
-      ];
-    }
     group.rows.push(bucket.row);
-    groups.set(heading, group);
+    groups.set(key, group);
   }
   return {
     scheme: scheme.id,

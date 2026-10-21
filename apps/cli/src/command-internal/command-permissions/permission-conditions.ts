@@ -108,6 +108,16 @@ function flagConstraint(
 ): Constraint {
   if (flag.hidden) return VACUOUS;
   const variable = flag.name;
+  // Naming a target flag selects that target, so it is the same restriction as the target condition.
+  const selected = TARGET_FLAGS.find((target) => target === variable);
+  if (
+    selected !== undefined &&
+    context.targets.length > 1 &&
+    condition.oneOf === undefined &&
+    requiresFlag(condition)
+  ) {
+    return targetConstraint(context, [selected]);
+  }
   if (flag.kind === "boolean") {
     if (condition.is !== undefined) return restrict(context, variable, [String(condition.is)]);
     if (condition.oneOf !== undefined) return restrict(context, variable, condition.oneOf);
@@ -289,6 +299,7 @@ function textOfVariable(
     return { positive: [`${name}=${literals.join("|")}${values.has(ABSENT) ? " or unset" : ""}`] };
   }
   if (values.has(ABSENT)) return values.has(SET) ? {} : { negative: [name] };
+  if (values.has(EMPTY) && !values.has(SET)) return { positive: [`${name}=""`] };
   return { positive: [name] };
 }
 

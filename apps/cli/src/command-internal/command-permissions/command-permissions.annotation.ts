@@ -14,27 +14,29 @@ export class CommandPermissionsAnnotation extends Context.Service<
 
 /**
  * Declares the Management API operations a command may call. Takes a full `CommandPermissions`,
- * or a fragment (e.g. the result of `compose`) that is declared as mapped. Also records the
- * command's own flags, so help can tell a flag the command lacks from one it hides; apply it after
- * the command's flags are defined.
+ * or a fragment (e.g. the result of `compose`) that is declared as mapped. Also lets help read the
+ * command's own flags as they are at this call, so it can tell a flag the command lacks from one it
+ * hides; apply it after the command's flags are defined.
  */
 export const withPermissions =
   (permissions: CommandPermissions | PermissionFragment) =>
   <Name extends string, Input, ContextInput, E, R>(
     self: Command.Command<Name, Input, ContextInput, E, R>,
   ): Command.Command<Name, Input, ContextInput, E, R> => {
-    const internals = commandInternals(self);
-    const ownFlags = permissionFlagsOf([
-      ...internals.config.flags,
-      ...internals.contextConfig.flags,
-      ...userGlobalFlagParams(self),
-    ]);
+    const readOwnFlags = () => {
+      const internals = commandInternals(self);
+      return permissionFlagsOf([
+        ...internals.config.flags,
+        ...internals.contextConfig.flags,
+        ...userGlobalFlagParams(self),
+      ]);
+    };
     return self.pipe(
       Command.annotate(
         CommandPermissionsAnnotation,
         "status" in permissions ? permissions : mapped(permissions),
       ),
-      Command.annotate(CommandFlagsAnnotation, ownFlags),
+      Command.annotate(CommandFlagsAnnotation, readOwnFlags),
     );
   };
 

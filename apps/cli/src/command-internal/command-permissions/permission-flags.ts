@@ -19,10 +19,13 @@ export interface PermissionFlag {
 /** The flags a command accepts, by name. */
 export type FlagCatalog = ReadonlyMap<string, PermissionFlag>;
 
-/** Context key under which {@link withPermissions} stores the annotated command's own flags. */
+/**
+ * Context key under which {@link withPermissions} stores a function that reads the annotated
+ * command's own flags, so the command's internals are inspected only when help is rendered.
+ */
 export class CommandFlagsAnnotation extends Context.Service<
   CommandFlagsAnnotation,
-  ReadonlyArray<PermissionFlag>
+  () => ReadonlyArray<PermissionFlag>
 >()("supabase/CommandFlags") {}
 
 export function permissionFlagsOf(
@@ -59,10 +62,10 @@ const globalFlags = permissionFlagsOf(ROOT_GLOBAL_FLAGS.map((entry) => entry.fla
  */
 export function flagCatalogFor(doc: HelpDoc.HelpDoc): FlagCatalog {
   const catalog = new Map<string, PermissionFlag>(globalFlags.map((flag) => [flag.name, flag]));
-  const own = Option.getOrElse(
-    Context.getOption(doc.annotations, CommandFlagsAnnotation),
-    () => [],
-  );
+  const own = Option.match(Context.getOption(doc.annotations, CommandFlagsAnnotation), {
+    onNone: () => [],
+    onSome: (readFlags) => readFlags(),
+  });
   for (const flag of own) catalog.set(flag.name, flag);
   for (const flag of [...doc.flags, ...(doc.globalFlags ?? [])]) {
     if (catalog.has(flag.name)) continue;
