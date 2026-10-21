@@ -8,6 +8,19 @@ const TARGET = "\u0000target";
 
 const TARGET_FLAGS = ["db-url", "local", "linked"] as const satisfies ReadonlyArray<DbTarget>;
 
+const isLiteral = (value: string) => ![ABSENT, EMPTY, SET].includes(value);
+
+/** A literal value is a case of "given any value", so a set holding both keeps only `SET`. */
+function withoutSubsumedLiterals(values: ReadonlySet<string>): ReadonlySet<string> {
+  return values.has(SET) ? new Set([...values].filter((value) => !isLiteral(value))) : values;
+}
+
+function intersect(a: ReadonlySet<string>, b: ReadonlySet<string>): ReadonlySet<string> {
+  const common = [...a].filter((value) => b.has(value) || (isLiteral(value) && b.has(SET)));
+  const fromB = [...b].filter((value) => isLiteral(value) && a.has(SET));
+  return new Set([...common, ...fromB]);
+}
+
 /**
  * What a run must look like for an entry to apply: each listed variable (a flag, or the database
  * target) takes one of the listed values, and unlisted variables are unrestricted.
@@ -21,7 +34,7 @@ export interface ConditionContext {
   readonly catalog: FlagCatalog;
   /** The target a run uses when no target flag is given; set with `withDbTarget`. */
   readonly targetDefault: "local" | "linked" | undefined;
-  /** The values a variable can take; `undefined` for an open set such as free-form text. */
+  /** The values a variable can take; `undefined` for a variable the command does not have. */
   readonly domainOf: (variable: string) => ReadonlyArray<string> | undefined;
   /** The database targets a run can select. */
   readonly targets: ReadonlyArray<string>;
@@ -41,15 +54,14 @@ export function conditionContext(
     if (variable === TARGET) return targets;
     const flag = catalog.get(variable);
     if (flag === undefined) return undefined;
-    const named = conditions.filter((condition) => condition.flag === variable);
     if (flag.kind === "boolean") return ["true", "false"];
     if (flag.kind === "choice") {
-      return named.some((condition) => condition.present === false)
-        ? [...flag.choices, ABSENT]
-        : flag.choices;
+      const absenceIsTested = conditions.some(
+        (condition) => condition.flag === variable && condition.present === false,
+      );
+      return flag.optional || absenceIsTested ? [...flag.choices, ABSENT] : flag.choices;
     }
-    const hasLiteral = named.some((condition) => condition.oneOf?.some((value) => value !== ""));
-    return hasLiteral ? undefined : [ABSENT, EMPTY, SET];
+    return [ABSENT, EMPTY, SET];
   };
   return { catalog, targetDefault, domainOf, targets };
 }
@@ -67,7 +79,7 @@ function restrict(
   variable: string,
   values: ReadonlyArray<string>,
 ): Constraint {
-  const unique = new Set(values);
+  const unique = withoutSubsumedLiterals(new Set(values));
   if (unique.size === 0) return UNREACHABLE;
   const domain = context.domainOf(variable);
   if (domain !== undefined && domain.every((value) => unique.has(value))) return VACUOUS;
@@ -117,16 +129,24 @@ function flagConstraint(
   return VACUOUS;
 }
 
+/** Whether the condition holds only when the flag is given or on. */
+const requiresFlag = (condition: EntryCondition) =>
+  condition.is === true ||
+  condition.oneOf !== undefined ||
+  (condition.is === undefined && condition.present !== false);
+
 /**
  * Reduces an entry's `when` to one term against the command's flags, or `undefined` when no run can
  * satisfy it. A condition on a flag the command lacks is vacuous when it holds for an unset flag
- * (`is: false`, absence) and unreachable otherwise; a condition on a hidden flag is dropped.
+ * (`is: false`, absence) and unreachable otherwise. A condition on a hidden flag is dropped; when
+ * it said the entry applies only with that flag, `widened` reports it so the caller can hedge.
  */
 export function termOf(
   conditions: ReadonlyArray<EntryCondition> | undefined,
   context: ConditionContext,
-): Term | undefined {
+): { readonly term: Term; readonly widened: boolean } | undefined {
   const term = new Map<string, ReadonlySet<string>>();
+  let widened = false;
   for (const condition of conditions ?? []) {
     const flag = condition.flag === undefined ? undefined : context.catalog.get(condition.flag);
     const constraint =
@@ -136,23 +156,25 @@ export function termOf(
           ? missingFlagConstraint(condition)
           : flagConstraint(context, flag, condition);
     if (constraint.kind === "unreachable") return undefined;
+    if (flag?.hidden === true && requiresFlag(condition)) widened = true;
     if (constraint.kind === "vacuous") continue;
     const existing = term.get(constraint.variable);
     const values =
-      existing === undefined
-        ? constraint.values
-        : new Set([...existing].filter((value) => constraint.values.has(value)));
+      existing === undefined ? constraint.values : intersect(existing, constraint.values);
     if (values.size === 0) return undefined;
     term.set(constraint.variable, values);
   }
-  return term;
+  return { term, widened };
 }
 
 /** Whether every run matching `strong` also matches `weak`. */
 function implies(strong: Term, weak: Term): boolean {
   return [...weak].every(([variable, allowed]) => {
     const values = strong.get(variable);
-    return values !== undefined && [...values].every((value) => allowed.has(value));
+    return (
+      values !== undefined &&
+      [...values].every((value) => allowed.has(value) || (isLiteral(value) && allowed.has(SET)))
+    );
   });
 }
 
@@ -170,7 +192,9 @@ function mergeTerms(a: Term, b: Term, context: ConditionContext): Term | undefin
     differing = variable;
   }
   if (differing === undefined) return a;
-  const union = new Set([...(a.get(differing) ?? []), ...(b.get(differing) ?? [])]);
+  const union = withoutSubsumedLiterals(
+    new Set([...(a.get(differing) ?? []), ...(b.get(differing) ?? [])]),
+  );
   const merged = new Map(a);
   const domain = context.domainOf(differing);
   if (domain !== undefined && domain.every((value) => union.has(value))) merged.delete(differing);
@@ -211,7 +235,6 @@ export function conditionImplies(strong: Condition, weak: Condition): boolean {
   return strong.every((term) => weak.some((other) => implies(term, other)));
 }
 
-/** The variable a term uses for the database target. */
 export const TARGET_VARIABLE = TARGET;
 
 export function withoutVariables(term: Term, variables: ReadonlyArray<string>): Term {
@@ -250,7 +273,8 @@ function textOfVariable(
     if (values.size === 1 && values.has("linked")) {
       return context.targetDefault === "linked" ? { remote: true } : { positive: ["--linked"] };
     }
-    return { positive: [joinOr([...values].map((target) => `--${target}`))] };
+    const named = context.targets.filter((target) => values.has(target));
+    return { positive: [joinOr(named.map((target) => `--${target}`))] };
   }
   const flag = context.catalog.get(variable);
   const name = `--${variable}`;
@@ -309,7 +333,7 @@ export function conditionText(
   const phrases = texts.map((text) =>
     [flagsPhrase(text), ...(text.remote ? ["remote only"] : [])].filter(Boolean).join(", "),
   );
-  const separator = phrases.some((phrase) => phrase.includes(",")) ? "; or " : " or ";
+  const separator = phrases.some((phrase) => /,| and /.test(phrase)) ? "; or " : " or ";
   return { flags: phrases.join(separator), remote: false };
 }
 

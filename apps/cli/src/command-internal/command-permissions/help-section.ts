@@ -60,6 +60,13 @@ interface Bucket {
 
 const rowKey = (row: PermissionRow) => ("anyOf" in row ? JSON.stringify(row.anyOf) : row.note);
 
+/** An entry the command can reach; `hedged` when a prerequisite or a hidden flag qualifies it. */
+interface ReachableEntry {
+  readonly entry: OperationEntry;
+  readonly term: Term;
+  readonly hedged: boolean;
+}
+
 const strength = (kind: PermissionKind) => (kind === "required" ? 1 : 0);
 
 function rowFor(scheme: PermissionScheme, entry: OperationEntry): PermissionRow {
@@ -67,14 +74,20 @@ function rowFor(scheme: PermissionScheme, entry: OperationEntry): PermissionRow 
   return anyOf === undefined ? { note: scheme.missing(entry.kind, entry.operationId) } : { anyOf };
 }
 
-/** Whether `other` already shows this bucket's row under a condition at least as broad. */
+const sameOrBroader = (bucket: Bucket, other: Bucket) =>
+  strength(other.kind) >= strength(bucket.kind) &&
+  (bucket.kind === "best-effort" || !other.situational || bucket.situational) &&
+  conditionImplies(bucket.condition, other.condition);
+
+/**
+ * Whether `other` already shows this bucket's row: under a condition at least as broad or, for an
+ * optional row, as required under any condition, so no heading says the command still runs
+ * without a permission that another heading requires.
+ */
 function absorbedBy(bucket: Bucket, other: Bucket): boolean {
+  if (other === bucket || rowKey(other.row) !== rowKey(bucket.row)) return false;
   return (
-    other !== bucket &&
-    rowKey(other.row) === rowKey(bucket.row) &&
-    strength(other.kind) >= strength(bucket.kind) &&
-    (bucket.kind === "best-effort" || !other.situational || bucket.situational) &&
-    conditionImplies(bucket.condition, other.condition)
+    (bucket.kind === "best-effort" && other.kind === "required") || sameOrBroader(bucket, other)
   );
 }
 
@@ -97,13 +110,13 @@ const rank = (group: { kind: PermissionKind; situational: boolean; unconditional
 
 function schemeSection(
   scheme: PermissionScheme,
-  terms: ReadonlyArray<{ readonly entry: OperationEntry; readonly term: Term }>,
+  terms: ReadonlyArray<ReachableEntry>,
   context: ConditionContext,
 ): SchemeSection {
   const buckets = new Map<string, Bucket>();
-  for (const { entry, term } of terms) {
+  for (const { entry, term, hedged } of terms) {
     const row = rowFor(scheme, entry);
-    const situational = entry.context !== undefined && entry.kind === "required";
+    const situational = hedged && entry.kind === "required";
     const key = `${entry.kind}\u0000${situational}\u0000${rowKey(row)}`;
     const bucket = buckets.get(key);
     if (bucket === undefined) {
@@ -171,27 +184,26 @@ export function resolvePermissionSection(
 ): PermissionSection | undefined {
   if (permissions.status === "unmapped") return { status: "unmapped" };
   const context = conditionContext(permissions.operations, catalog, permissions.dbTargetDefault);
-  const reachable = permissions.operations.flatMap((entry) => {
-    const term = termOf(entry.when, context);
-    return term === undefined ? [] : [{ entry, term }];
+  const reachable = permissions.operations.flatMap((entry): ReadonlyArray<ReachableEntry> => {
+    const reduced = termOf(entry.when, context);
+    return reduced === undefined
+      ? []
+      : [{ entry, term: reduced.term, hedged: entry.context !== undefined || reduced.widened }];
   });
   if (reachable.length === 0) return undefined;
 
   const { dbTargetDefault } = permissions;
   const liftTarget = dbTargetDefault === "linked" && onlyLinked(reachable.map(({ term }) => term));
   const withoutLifted = liftTarget
-    ? reachable.map(({ entry, term }) => ({
-        entry,
-        term: withoutVariables(term, [TARGET_VARIABLE]),
-      }))
+    ? reachable.map((item) => ({ ...item, term: withoutVariables(item.term, [TARGET_VARIABLE]) }))
     : reachable;
   const common = commonConditions(
     withoutLifted.map(({ term }) => term),
     context,
   );
-  const terms = withoutLifted.map(({ entry, term }) => ({
-    entry,
-    term: withoutVariables(term, common.variables),
+  const terms = withoutLifted.map((item) => ({
+    ...item,
+    term: withoutVariables(item.term, common.variables),
   }));
   const note = [
     ...(liftTarget ? [notNeededWithOtherTargets(catalog)] : []),

@@ -41,15 +41,19 @@ describe("permission help section across the command tree", () => {
       const rootFlags = permissionFlagsOf(userGlobalFlagParams(rootCommandForFeatures(variant)));
       const leaves = [...tree].filter(([, node]) => node.isLeaf);
 
+      // Help lists only visible flags of a parent group, but the command's own flags come with
+      // their hidden ones from what `withPermissions` recorded.
       const catalogFor = (path: string): FlagCatalog => {
         const parts = path.split(" ");
-        const params = parts.flatMap((_, index) => {
+        const inherited = parts.slice(0, -1).flatMap((_, index) => {
           const ancestor = tree.get(parts.slice(0, index + 1).join(" "));
-          return ancestor === undefined ? [] : ownParams(ancestor.command);
+          return ancestor === undefined
+            ? []
+            : permissionFlagsOf(ownParams(ancestor.command)).filter((flag) => !flag.hidden);
         });
-        return new Map(
-          [...rootFlags, ...permissionFlagsOf(params)].map((flag) => [flag.name, flag]),
-        );
+        const own = tree.get(path);
+        const ownFlags = own === undefined ? [] : permissionFlagsOf(ownParams(own.command));
+        return new Map([...rootFlags, ...inherited, ...ownFlags].map((flag) => [flag.name, flag]));
       };
 
       it("never turns on by default a switch a condition tests", async () => {
@@ -136,7 +140,7 @@ describe("permission help section across the command tree", () => {
         }
       });
 
-      it("prints each heading once", () => {
+      it("prints each heading once, and never lists a row as both required and optional", () => {
         for (const [path, node] of leaves) {
           const declared = Option.getOrUndefined(readPermissions(node.command));
           if (declared === undefined) continue;
@@ -145,6 +149,16 @@ describe("permission help section across the command tree", () => {
           for (const scheme of section.schemes) {
             const headings = scheme.groups.map((group) => group.heading);
             expect(new Set(headings).size, `"${path}" repeats a heading`).toBe(headings.length);
+            const rowsOf = (kind: string) =>
+              scheme.groups
+                .filter((group) => group.kind === kind)
+                .flatMap((group) => group.rows.map((row) => JSON.stringify(row)));
+            const required = new Set(rowsOf("required"));
+            for (const row of rowsOf("best-effort")) {
+              expect(required.has(row), `"${path}" lists ${row} as required and optional`).toBe(
+                false,
+              );
+            }
           }
         }
       });

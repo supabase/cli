@@ -134,6 +134,9 @@ export const GLOBAL_FLAGS = [
   AgentFlag,
 ] as const;
 
+/** The flags the root command registers: every global flag plus `--output-format`. */
+export const ROOT_GLOBAL_FLAGS = [OutputFormatFlag, ...GLOBAL_FLAGS] as const;
+
 /**
  * Resolves the current value of every global/persistent flag above, keyed by its own CLI flag
  * name. Used by `telemetry/command-telemetry.ts` as a fallback for a global flag not present in a

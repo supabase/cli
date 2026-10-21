@@ -1,7 +1,7 @@
 /**
  * The FGA permission set an operation needs for a request detail the API spec does not describe.
- * `reveal=true` on the api-keys call is inferred to need the secret-read permission as well; the
- * unit tests check each set against the operation's sets in the spec.
+ * The spec lists the secret-read set for the api-keys operation but not which request needs it;
+ * `reveal=true`, which returns full secret keys, is taken to be that request.
  */
 interface FgaRequestSet {
   readonly operationId: string;

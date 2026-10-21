@@ -51,7 +51,7 @@ export const fgaScheme: PermissionScheme = {
   missing: () => NO_LISTING,
 };
 
-/** Not in {@link permissionSchemes} while OAuth scopes stay out of help. */
+/** Resolves OAuth scopes; register it in {@link permissionSchemes} to show them in help. */
 export const oauthScheme: PermissionScheme = {
   id: "oauth",
   title: "OAuth token (scopes)",

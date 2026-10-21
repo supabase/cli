@@ -201,7 +201,7 @@ describe("permission help section", () => {
       expect(text).toBe(lines("PERMISSIONS", fga, "    Required:", "      projects_read"));
     });
 
-    it("never prints a hidden flag", () => {
+    it("never names a hidden flag, and hedges what it gated", () => {
       const hidden = Flag.Boolean("legacy").pipe(Flag.withDefault(false), Flag.withHidden);
       const text = render(
         {
@@ -216,7 +216,106 @@ describe("permission help section", () => {
         catalogOf(hidden),
       );
 
-      expect(text).toBe(lines("PERMISSIONS", fga, "    Required:", "      projects_read"));
+      expect(text).toBe(lines("PERMISSIONS", fga, "    May be required:", "      projects_read"));
+    });
+
+    it("covers every value of a text flag when a literal, any value and no value all apply", () => {
+      const from = Flag.String("from").pipe(Flag.optional);
+      const operation = { operationId: "v1-get-pooler-config", kind: "required" } as const;
+      const text = render(
+        {
+          operations: [
+            { ...operation, when: [{ flag: "from", oneOf: ["linked"] }] },
+            { ...operation, when: [{ flag: "from" }] },
+            { ...operation, when: [{ flag: "from", present: false }] },
+          ],
+        },
+        catalogOf(from),
+      );
+
+      expect(text).toBe(
+        lines("PERMISSIONS", fga, "    Required:", "      database_pooling_config_read"),
+      );
+    });
+
+    it("words a text flag's literal and any given value as the flag being given", () => {
+      const from = Flag.String("from").pipe(Flag.optional);
+      const operation = { operationId: "v1-get-pooler-config", kind: "required" } as const;
+      const text = render(
+        {
+          operations: [
+            { operationId: "v1-list-all-projects", kind: "required" },
+            { ...operation, when: [{ flag: "from", oneOf: ["linked"] }] },
+            { ...operation, when: [{ flag: "from" }] },
+          ],
+        },
+        catalogOf(from),
+      );
+
+      expect(text).toBe(
+        lines(
+          "PERMISSIONS",
+          fga,
+          "    Required:",
+          "      projects_read",
+          "    Required with --from:",
+          "      database_pooling_config_read",
+        ),
+      );
+    });
+
+    it("keeps a condition on an optional choice flag even when it names every choice", () => {
+      const type = Flag.Literals("type", ["security", "performance"] as const).pipe(Flag.optional);
+      const text = render(
+        {
+          operations: [
+            { operationId: "v1-list-all-projects", kind: "required" },
+            { operationId: "v1-get-project", kind: "required", when: [{ flag: "type" }] },
+          ],
+        },
+        catalogOf(type),
+      );
+
+      expect(text).toBe(
+        lines(
+          "PERMISSIONS",
+          fga,
+          "    Required:",
+          "      projects_read",
+          "    Required with --type=security|performance:",
+          "      project_admin_read",
+        ),
+      );
+    });
+
+    it("separates alternatives that each combine several flags", () => {
+      const operation = { operationId: "v1-get-pooler-config", kind: "required" } as const;
+      const text = render(
+        {
+          operations: [
+            { operationId: "v1-list-all-projects", kind: "required" },
+            {
+              ...operation,
+              when: [
+                { flag: "a", is: true },
+                { flag: "b", is: true },
+              ],
+            },
+            {
+              ...operation,
+              when: [
+                { flag: "c", is: true },
+                { flag: "d", is: false },
+              ],
+            },
+          ],
+        },
+        catalogOf(switchFlag("a"), switchFlag("b"), switchFlag("c"), switchFlag("d")),
+      );
+
+      expect(text).toContain(
+        "    Required with --a and --b; or with --c, without --d:\n      database_pooling_config_read",
+      );
     });
 
     it("words alternative flags as one list", () => {
@@ -300,6 +399,34 @@ describe("permission help section", () => {
       });
 
       expect(text).toBe(lines("PERMISSIONS", fga, "    Required:", "      project_admin_read"));
+    });
+
+    it("does not call a permission optional when another heading requires it", () => {
+      const text = render(
+        {
+          operations: [
+            {
+              operationId: "v1-get-project",
+              kind: "required",
+              when: [{ flag: "strict", is: true }],
+            },
+            { operationId: "v1-get-project", kind: "best-effort" },
+            { operationId: "v1-list-all-projects", kind: "required" },
+          ],
+        },
+        catalogOf(switchFlag("strict")),
+      );
+
+      expect(text).toBe(
+        lines(
+          "PERMISSIONS",
+          fga,
+          "    Required:",
+          "      projects_read",
+          "    Required with --strict:",
+          "      project_admin_read",
+        ),
+      );
     });
 
     it("never shows the reason behind a situational entry", () => {
@@ -569,6 +696,30 @@ describe("permission help section", () => {
           "    Required:",
           "      branching_development_delete",
           "        or branching_production_delete",
+        ),
+      );
+    });
+
+    it("breaks a single alternative that is too long across lines", () => {
+      const longSet = ["a".repeat(30), "b".repeat(30)];
+      const scheme: PermissionScheme = {
+        ...fgaScheme,
+        requirement: () => [longSet, ["c"]],
+      };
+      const text = render(
+        { operations: [{ operationId: "v1-get-project", kind: "required" }] },
+        catalogOf(),
+        [scheme],
+      );
+
+      expect(text).toBe(
+        lines(
+          "PERMISSIONS",
+          fga,
+          "    Required:",
+          `      ${longSet[0]}`,
+          `        + ${longSet[1]}`,
+          "        or c",
         ),
       );
     });

@@ -2,7 +2,7 @@ import { Context, Option } from "effect";
 import type { HelpDoc, Param } from "effect/cli";
 
 import { choiceKeysOf } from "../../docs/docs-introspection.ts";
-import { GLOBAL_FLAGS, OutputFormatFlag } from "../global-flags.ts";
+import { ROOT_GLOBAL_FLAGS } from "../global-flags.ts";
 import { unwrapParam } from "../param-introspection.ts";
 
 /** What a permission condition needs to know about a flag: its value shape and whether help shows it. */
@@ -12,6 +12,8 @@ export interface PermissionFlag {
   readonly hidden: boolean;
   /** The accepted values of a `choice` flag; empty otherwise. */
   readonly choices: ReadonlyArray<string>;
+  /** Declared with `Flag.optional` outermost, so it can be unset; a flag with a default is not. */
+  readonly optional: boolean;
 }
 
 /** The flags a command accepts, by name. */
@@ -36,13 +38,19 @@ export function permissionFlagsOf(
         : choices === undefined
           ? "text"
           : "choice";
-    return [{ name: single.name, kind, hidden: single.hidden, choices: choices ?? [] }];
+    return [
+      {
+        name: single.name,
+        kind,
+        hidden: single.hidden,
+        choices: choices ?? [],
+        optional: param._tag === "Optional",
+      },
+    ];
   });
 }
 
-const globalFlags = permissionFlagsOf(
-  [OutputFormatFlag, ...GLOBAL_FLAGS].map((entry) => entry.flag),
-);
+const globalFlags = permissionFlagsOf(ROOT_GLOBAL_FLAGS.map((entry) => entry.flag));
 
 /**
  * Every flag a help document's command accepts: the root's globals, the flags captured by
@@ -63,6 +71,7 @@ export function flagCatalogFor(doc: HelpDoc.HelpDoc): FlagCatalog {
       kind: flag.type === "boolean" ? "boolean" : "text",
       hidden: false,
       choices: [],
+      optional: !flag.required,
     });
   }
   return catalog;
