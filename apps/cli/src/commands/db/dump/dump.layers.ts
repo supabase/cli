@@ -20,7 +20,7 @@ import { bundledPostgresClientLayer } from "../../../command-internal/bundled-po
  * Runtime layer for `supabase db dump`.
  *
  * Mirrors `test db`'s composition: most of the Management API stack builds lazily
- * inside the resolver's `--linked` branch. `ProjectRefResolver` is exposed here (like
+ * inside the resolver's hosted-target branch. `ProjectRefResolver` is exposed here (like
  * `db push`) so the handler can validate `--project-ref` before the linked-project-cache
  * finalizer sees it.
  */
@@ -32,7 +32,7 @@ const credentials = commandCredentialsLayer.pipe(
 );
 
 // The lazy `commandPlatformApiFactoryLayer` (not the eager management-API runtime)
-// keeps dump's auth-free `--linked --password` path from resolving an access token
+// keeps dump's auth-free `--remote --password` path from resolving an access token
 // at layer-build time, same as `db push`.
 const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
   Layer.provide(credentials),

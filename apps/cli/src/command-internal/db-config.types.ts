@@ -11,7 +11,7 @@ export interface ResolvedDbConfig {
   readonly conn: PgConnInput;
   readonly isLocal: boolean;
   /**
-   * The resolved linked project ref (`--linked` path only; `None` for `--local` / `--db-url`).
+   * The resolved project ref (hosted targets only; `None` for a local or database URL target).
    * Lets the caller re-read config with the ref applied so a matching `[remotes.<ref>]` block can
    * override fields like `db.major_version` for the container image.
    */
