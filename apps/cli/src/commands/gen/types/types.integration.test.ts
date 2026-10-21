@@ -1082,17 +1082,21 @@ describe("gen types", () => {
       const languageSuggestion = (language: string) =>
         `To generate ${language} types for the linked project, run supabase gen types --lang=${language} --remote.`;
 
-      it.effect.each(["typescript", "go"])(
-        "suggests --lang=%s --remote when the linked project has no such branch",
-        (language) =>
+      it.effect.each([
+        { typed: "typescript", language: "typescript" },
+        { typed: "go", language: "go" },
+        { typed: "TypeScript", language: "typescript" },
+      ])(
+        "suggests --lang=$language --remote for --remote $typed when the linked project has no such branch",
+        ({ typed, language }) =>
           Effect.gen(function* () {
             const { layer, api } = yield* setup({
-              args: ["gen", "types", "--remote", language],
+              args: ["gen", "types", "--remote", typed],
               projectId: Option.some(VALID_REF),
               branches: [branchRow("feature-x")],
             });
             const error = yield* genTypes(
-              defaultFlags({ remote: Option.some({ _tag: "Branch", name: language } as const) }),
+              defaultFlags({ remote: Option.some({ _tag: "Branch", name: typed } as const) }),
             ).pipe(Effect.provide(layer), Effect.flip);
 
             expect(error).toMatchObject({

@@ -623,8 +623,8 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
     const remoteBranch = Option.getOrUndefined(flags.remote);
     const languageNamedBranch =
-      remoteBranch?._tag === "Branch" && GEN_TYPES_LANGUAGES.includes(remoteBranch.name)
-        ? remoteBranch.name
+      remoteBranch?._tag === "Branch"
+        ? GEN_TYPES_LANGUAGES.find((language) => language === remoteBranch.name.toLowerCase())
         : undefined;
     const resolution = resolveTarget(flags);
     const target = yield* languageNamedBranch === undefined
