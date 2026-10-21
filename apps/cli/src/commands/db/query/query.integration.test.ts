@@ -96,10 +96,14 @@ const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 const failMessage = (exit: Exit.Exit<unknown, { readonly message: string }>): string | undefined =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.message : undefined;
 
-const failSuggestion = (
-  exit: Exit.Exit<unknown, { readonly suggestion?: string }>,
-): string | undefined =>
-  Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.suggestion : undefined;
+const failSuggestion = (exit: Exit.Exit<unknown, unknown>): unknown => {
+  const error = Exit.isFailure(exit)
+    ? exit.cause.reasons.find(Cause.isFailReason)?.error
+    : undefined;
+  return typeof error === "object" && error !== null && "suggestion" in error
+    ? error.suggestion
+    : undefined;
+};
 
 function mockResolver(
   isLocal: boolean | undefined,
