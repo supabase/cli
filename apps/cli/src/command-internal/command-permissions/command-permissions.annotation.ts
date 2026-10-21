@@ -1,8 +1,10 @@
 import { Context, Option } from "effect";
 import { Command } from "effect/cli";
 
+import { commandInternals, userGlobalFlagParams } from "../../docs/docs-introspection.ts";
 import { mapped } from "./model.ts";
 import type { CommandPermissions, PermissionFragment } from "./model.ts";
+import { CommandFlagsAnnotation, permissionFlagsOf } from "./permission-flags.ts";
 
 /** Context key under which a command's declared permissions are stored in `Command.annotations`. */
 export class CommandPermissionsAnnotation extends Context.Service<
@@ -12,13 +14,31 @@ export class CommandPermissionsAnnotation extends Context.Service<
 
 /**
  * Declares the Management API operations a command may call. Takes a full `CommandPermissions`,
- * or a fragment (e.g. the result of `compose`) that is declared as mapped.
+ * or a fragment (e.g. the result of `compose`) that is declared as mapped. Also lets help read the
+ * command's own flags as they are at this call, so it can tell a flag the command lacks from one it
+ * hides; apply it after the command's flags are defined.
  */
-export const withPermissions = (permissions: CommandPermissions | PermissionFragment) =>
-  Command.annotate(
-    CommandPermissionsAnnotation,
-    "status" in permissions ? permissions : mapped(permissions),
-  );
+export const withPermissions =
+  (permissions: CommandPermissions | PermissionFragment) =>
+  <Name extends string, Input, ContextInput, E, R>(
+    self: Command.Command<Name, Input, ContextInput, E, R>,
+  ): Command.Command<Name, Input, ContextInput, E, R> => {
+    const readOwnFlags = () => {
+      const internals = commandInternals(self);
+      return permissionFlagsOf([
+        ...internals.config.flags,
+        ...internals.contextConfig.flags,
+        ...userGlobalFlagParams(self),
+      ]);
+    };
+    return self.pipe(
+      Command.annotate(
+        CommandPermissionsAnnotation,
+        "status" in permissions ? permissions : mapped(permissions),
+      ),
+      Command.annotate(CommandFlagsAnnotation, readOwnFlags),
+    );
+  };
 
 /** The permissions declared on `command` with {@link withPermissions}, or none if it has no declaration. */
 export function readPermissions(command: Command.Command.Any): Option.Option<CommandPermissions> {

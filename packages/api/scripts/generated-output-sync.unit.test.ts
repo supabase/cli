@@ -4,7 +4,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 
-import { extractOperations, loadSpec, renderContracts, renderEffectClient } from "./generate.ts";
+import {
+  extractOperations,
+  loadSpec,
+  renderContracts,
+  renderEffectClient,
+  renderPermissions,
+} from "./generate.ts";
 
 // Full-fidelity drift guard: re-renders every generated file from the committed
 // snapshot, formats it with the same oxfmt the pipeline uses, and requires byte
@@ -87,6 +93,17 @@ describe("generated output sync", () => {
       expectSameSource(
         formatWithOxfmt(renderEffectClient(operations), "effect-client.ts"),
         "effect-client.ts",
+      );
+    },
+  );
+
+  test(
+    "permissions.ts is byte-identical to the generator's render of the committed snapshot",
+    { timeout: RENDER_TIMEOUT_MS },
+    () => {
+      expectSameSource(
+        formatWithOxfmt(renderPermissions(document), "permissions.ts"),
+        "permissions.ts",
       );
     },
   );

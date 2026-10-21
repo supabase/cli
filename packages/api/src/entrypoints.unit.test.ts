@@ -46,6 +46,7 @@ describe("@supabase/api entrypoints", () => {
       default: "./src/node.ts",
     });
     expect(packageJson.exports["./effect"]).toBe("./src/effect.ts");
+    expect(packageJson.exports["./permissions"]).toBe("./src/generated/permissions.ts");
     expect(packageJson.exports["./openapi.json"]).toBe("./src/generated/openapi.json");
     expect(packageJson.exports["./bun"]).toBeUndefined();
     expect(packageJson.exports["./node"]).toBeUndefined();

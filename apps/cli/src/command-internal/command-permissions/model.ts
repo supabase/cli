@@ -71,6 +71,12 @@ interface DbTargetCondition {
 
 export type EntryCondition = FlagCondition | DbTargetCondition;
 
+/** The parts of a request a permission can depend on, string-encoded like the request on the wire. */
+export interface RequestDetails {
+  readonly query?: Readonly<Record<string, string>>;
+  readonly body?: Readonly<Record<string, string>>;
+}
+
 export interface OperationEntry {
   /** The spec's `operationId`, e.g. `"v1-list-all-secrets"`. */
   readonly operationId: string;
@@ -80,7 +86,7 @@ export interface OperationEntry {
   /** A condition that isn't a flag, e.g. "only without a saved .temp/pooler-url". */
   readonly context?: string;
   /** Request details a permission can depend on, e.g. `reveal=true` on the api-keys call. */
-  readonly request?: { readonly query?: Readonly<Record<string, string>> };
+  readonly request?: RequestDetails;
   /** The building block this entry came from (set by {@link block}); absent for a command's own entry. */
   readonly source?: string;
 }

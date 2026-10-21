@@ -1,4 +1,8 @@
 import { CliOutput } from "effect/cli";
+import {
+  permissionSectionForHelp,
+  renderPermissionsSection,
+} from "../../command-internal/command-permissions/help-section.ts";
 import type {
   CliErrorSuggestionContext,
   FormattedCliError,
@@ -17,6 +21,11 @@ export function textCliOutputFormatter(context?: CliErrorSuggestionContext): Cli
 
   return {
     ...base,
+    formatHelpDoc: (doc) => {
+      const text = base.formatHelpDoc(doc);
+      const section = permissionSectionForHelp(doc);
+      return section === undefined ? text : `${text}\n\n${renderPermissionsSection(section)}`;
+    },
     formatErrors: (errors) => {
       const formatted = formatCliErrorsForDisplay(errors, context);
       if (!formatted.changed) return base.formatErrors(errors);
