@@ -203,7 +203,9 @@ const unbanErrorMapper = mapHttpError({
 const isLoopbackHost = (host: string): boolean =>
   host === "localhost" || host === "::1" || (net.isIPv4(host) && host.startsWith("127."));
 
-/** Loopback spellings count as the resolved local services hostname; the port must match too. */
+const LOCAL_STACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "::1"]);
+
+/** The stack's own spellings of its host count as local; the port must match too. */
 function isLocalDatabase(
   host: string,
   localHost: string,
@@ -211,7 +213,8 @@ function isLocalDatabase(
   dbPort: number,
   shadowPort: number,
 ): boolean {
-  const sameHost = host === localHost || (isLoopbackHost(host) && isLoopbackHost(localHost));
+  const sameHost =
+    host === localHost || (LOCAL_STACK_HOSTS.has(host) && LOCAL_STACK_HOSTS.has(localHost));
   return sameHost && (port === dbPort || port === shadowPort);
 }
 

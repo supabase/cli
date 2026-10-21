@@ -164,9 +164,9 @@ production sees it. A UUID looked up with no linked project cannot tell, so it s
 ### Hosted-mutation consent
 
 Every persistent mutation of a hosted resource in the `account`, `hosted` and `selectable` groups
-needs consent. This includes writes through a non-local `--remote=<url>`: a loopback host on the
-local or shadow database ports, or the local stack's endpoint, counts as local; anything else is
-hosted.
+needs consent. This includes writes through a non-local `--remote=<url>`: `localhost`, `127.0.0.1`
+or `::1` on the local or shadow database ports, or the local stack's endpoint, counts as local;
+anything else is hosted.
 
 - **Default.** It comes from the command's policy. Create-only operations default to Yes:
   `projects create`, `orgs create`, `branches create`, `domains create` and `bootstrap`. Everything
