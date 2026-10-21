@@ -5,11 +5,18 @@ import { formatInvalidValueMessage } from "../cli/invalid-value-message.ts";
 import type { CliErrorSuggestionContext } from "../cli/subcommand-flag-suggestions.ts";
 import { formatCliErrorsForDisplay } from "../cli/subcommand-flag-suggestions.ts";
 
+/** The plan-gate signal machine-mode errors carry, mirroring the Management API's `entitlement_required` body. */
+export type PlanGateEntitlement = {
+  readonly feature: string;
+  readonly upgrade_url: string;
+};
+
 type NormalizedCliError = {
   readonly code: string;
   readonly message: string;
   readonly detail?: string;
   readonly suggestion?: string;
+  readonly entitlement?: PlanGateEntitlement;
 };
 
 type ErrorRecord = Record<string, unknown>;
@@ -29,6 +36,14 @@ const readString = (value: ErrorRecord, key: string): string | undefined => {
 const readRawString = (value: ErrorRecord, key: string): string | undefined => {
   const field = value[key];
   return typeof field === "string" ? field : undefined;
+};
+
+const readEntitlement = (error: ErrorRecord): PlanGateEntitlement | undefined => {
+  const entitlement = error["entitlement"];
+  if (!isErrorRecord(entitlement)) return undefined;
+  const feature = readString(entitlement, "feature");
+  const upgradeUrl = readString(entitlement, "upgrade_url");
+  return feature && upgradeUrl ? { feature, upgrade_url: upgradeUrl } : undefined;
 };
 
 const mappedError = (
@@ -140,11 +155,13 @@ export function normalizeCliError(
     // whitespace (e.g. `suggestLegacyBundle`'s leading `\n` for a blank
     // separator line); `readString` would trim exactly that away.
     const suggestion = readRawString(error, "suggestion");
+    const entitlement = readEntitlement(error);
     return {
       code,
       message,
       ...(detail && detail !== message ? { detail } : {}),
       ...(suggestion !== undefined && suggestion.length > 0 ? { suggestion } : {}),
+      ...(entitlement === undefined ? {} : { entitlement }),
     };
   }
 

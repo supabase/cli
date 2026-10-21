@@ -6,6 +6,7 @@ import {
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
+import type { PlanGateEntitlement } from "../../shared/output/normalize-error.ts";
 
 export class BranchesListNetworkError extends Data.TaggedError("BranchesListNetworkError")<{
   readonly message: string;
@@ -48,6 +49,7 @@ export class BranchesCreateUnexpectedStatusError extends Data.TaggedError(
   readonly body: string;
   readonly message: string;
   readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     // A non-gated 409 means the branch name already exists (user input, not a raw API status);
@@ -184,6 +186,7 @@ export class BranchesUpdateUnexpectedStatusError extends Data.TaggedError(
   readonly body: string;
   readonly message: string;
   readonly upgradeSuggested?: boolean;
+  readonly entitlement?: PlanGateEntitlement;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status, {

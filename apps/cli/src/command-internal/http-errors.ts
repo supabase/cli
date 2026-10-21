@@ -1,7 +1,9 @@
 import { SupabaseApiInputError, type SupabaseApiError } from "@supabase/api/effect";
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClientError from "effect/http/HttpClientError";
+
+import type { PlanGateEntitlement } from "../shared/output/normalize-error.ts";
 
 // HttpClientError reasons that indicate the server returned an actual response (vs a transport
 // failure). Anything in this set surfaces as an `UnexpectedStatusError`; everything else maps
@@ -95,7 +97,41 @@ export type StatusErrorFactory<E> = new (args: {
   readonly status: number;
   readonly body: string;
   readonly message: string;
+  readonly entitlement?: PlanGateEntitlement;
 }) => E;
+
+const FEATURE_KEY_PATTERN = /^[\w.-]{1,128}$/;
+const MAX_UPGRADE_URL_LEN = 2048;
+
+function readString(obj: unknown, key: string): string {
+  if (typeof obj === "object" && obj !== null && key in obj) {
+    const value = (obj as Record<string, unknown>)[key];
+    return typeof value === "string" ? value : "";
+  }
+  return "";
+}
+
+// The parsed `href` percent-encodes control and bidi characters, so the URL is safe to print.
+function normalizeUpgradeUrl(raw: string): string | undefined {
+  if (raw.length > MAX_UPGRADE_URL_LEN || !URL.canParse(raw)) return undefined;
+  const url = new URL(raw);
+  return url.protocol === "https:" ? url.href : undefined;
+}
+
+/**
+ * Reads the Management API's plan-gate error body,
+ * `{ error: { code: "entitlement_required", feature, upgrade_url } }`.
+ * Hand-validated: the packages/api codegen emits no non-2xx schemas.
+ */
+export function parsePlanGateEnvelope(body: unknown): PlanGateEntitlement | undefined {
+  if (typeof body !== "object" || body === null) return undefined;
+  const error = (body as { readonly error?: unknown }).error;
+  if (readString(error, "code") !== "entitlement_required") return undefined;
+  const feature = readString(error, "feature");
+  const upgradeUrl = normalizeUpgradeUrl(readString(error, "upgrade_url"));
+  if (!FEATURE_KEY_PATTERN.test(feature) || upgradeUrl === undefined) return undefined;
+  return { feature, upgrade_url: upgradeUrl };
+}
 
 /**
  * Builds an error mapper that classifies a `SupabaseApiError` into either a
@@ -128,11 +164,19 @@ export function mapHttpError<N, S>(opts: {
             Effect.orElseSucceed(() => cause.reason.description ?? ""),
           );
           const body = sanitizeErrorBody(rawBody);
+          const decoded =
+            status >= 400 && status < 500
+              ? yield* cause.response.json.pipe(Effect.option)
+              : Option.none();
+          const entitlement = Option.isSome(decoded)
+            ? parsePlanGateEnvelope(decoded.value)
+            : undefined;
           return yield* Effect.fail(
             new opts.statusError({
               status,
               body,
               message: opts.statusMessage(status, body),
+              ...(entitlement === undefined ? {} : { entitlement }),
             }),
           );
         }

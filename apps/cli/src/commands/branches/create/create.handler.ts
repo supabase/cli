@@ -115,6 +115,7 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
                       body: mapped.body,
                       message: mapped.message,
                       upgradeSuggested,
+                      entitlement: mapped.entitlement,
                     }),
                   ),
                 ),

@@ -83,6 +83,7 @@ export const vanitySubdomainsCheckAvailability = Effect.fn("vanity-subdomains.ch
                       body: mapped.body,
                       message: mapped.message,
                       upgradeSuggested,
+                      entitlement: mapped.entitlement,
                     });
                   }),
                 ),
