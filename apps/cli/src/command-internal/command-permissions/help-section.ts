@@ -16,7 +16,7 @@ import {
   withoutVariables,
 } from "./permission-conditions.ts";
 import type { Condition, ConditionContext, Term } from "./permission-conditions.ts";
-import { flagCatalogFor } from "./permission-flags.ts";
+import { CommandFlagsAnnotation, flagCatalogFor } from "./permission-flags.ts";
 import type { FlagCatalog } from "./permission-flags.ts";
 import { permissionSchemes } from "./permission-schemes.ts";
 import type { Alternatives, PermissionScheme } from "./permission-schemes.ts";
@@ -251,4 +251,15 @@ export function permissionSectionForHelp(doc: HelpDoc.HelpDoc): PermissionSectio
     Context.getOption(doc.annotations, CommandPermissionsAnnotation),
     (declared) => Option.fromNullishOr(resolvePermissionSection(declared, flagCatalogFor(doc))),
   ).pipe(Option.getOrUndefined);
+}
+
+/** The help document without the annotations that hold a command's raw permission declaration. */
+export function withoutPermissionAnnotations(doc: HelpDoc.HelpDoc): HelpDoc.HelpDoc {
+  return {
+    ...doc,
+    annotations: Context.omit(
+      CommandPermissionsAnnotation,
+      CommandFlagsAnnotation,
+    )(doc.annotations),
+  };
 }

@@ -5,6 +5,7 @@ import { CliOutput, Command } from "effect/cli";
 import { emptyEnv, fakeConsole, mockOutput } from "../../../tests/helpers/mocks.ts";
 import { projectsCommand } from "../../commands/projects/projects.command.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { jsonCliOutputFormatter } from "../../shared/output/json-formatter.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
 import {
   DebugFlag,
@@ -16,10 +17,14 @@ import {
   YesFlag,
 } from "../global-flags.ts";
 
-const layerFor = (args: ReadonlyArray<string>, console: Console.Console) =>
+const layerFor = (
+  args: ReadonlyArray<string>,
+  console: Console.Console,
+  formatter: CliOutput.Formatter,
+) =>
   Layer.mergeAll(
     emptyEnv(),
-    CliOutput.layer(textCliOutputFormatter()),
+    CliOutput.layer(formatter),
     Layer.succeed(CliArgs, { args }),
     Layer.succeed(Console.Console, console),
     Layer.succeed(DebugFlag, false),
@@ -32,12 +37,15 @@ const layerFor = (args: ReadonlyArray<string>, console: Console.Console) =>
     mockOutput({ format: "text" }).layer,
   );
 
-const helpFor = (args: ReadonlyArray<string>) =>
+const helpFor = (
+  args: ReadonlyArray<string>,
+  formatter: CliOutput.Formatter = textCliOutputFormatter(),
+) =>
   Effect.gen(function* () {
     const { console, calls } = fakeConsole();
     yield* Effect.scoped(
       Command.runWith(projectsCommand, { version: "0.0.0-test" })(args).pipe(
-        Effect.provide(layerFor(args, console)),
+        Effect.provide(layerFor(args, console, formatter)),
       ),
     );
     return calls.join("\n");
@@ -62,6 +70,61 @@ describe("token permissions in command help", () => {
           "      project_admin_read",
         ].join("\n"),
       );
+    }),
+  );
+
+  it.effect("carries the same section as data in JSON help, without the raw declaration", () =>
+    Effect.gen(function* () {
+      const text = yield* helpFor(["api-keys", "--help"]);
+      const printed = yield* helpFor(["api-keys", "--help"], jsonCliOutputFormatter());
+      const json = JSON.parse(printed.replace(/^log:/, ""));
+
+      expect(json.permissions).toEqual({
+        status: "mapped",
+        schemes: [
+          {
+            scheme: "fga",
+            title: "Personal access token (FGA)",
+            groups: [
+              {
+                heading: "Required with --reveal",
+                kind: "required",
+                situational: false,
+                rows: [{ anyOf: [["api_gateway_keys_read", "api_gateway_keys_secret_read"]] }],
+              },
+              {
+                heading: "Required without --reveal",
+                kind: "required",
+                situational: false,
+                rows: [{ anyOf: [["api_gateway_keys_read"]] }],
+              },
+              {
+                heading: "May be required (without --project-ref)",
+                kind: "required",
+                situational: true,
+                rows: [{ anyOf: [["projects_read"]] }],
+              },
+              {
+                heading: "Optional (command still runs without these)",
+                kind: "best-effort",
+                situational: false,
+                rows: [{ anyOf: [["project_admin_read"]] }],
+              },
+            ],
+          },
+        ],
+      });
+      expect(JSON.stringify(json.doc)).not.toContain("supabase/Command");
+
+      const block = text.slice(text.indexOf("PERMISSIONS"));
+      for (const scheme of json.permissions.schemes) {
+        for (const group of scheme.groups) {
+          expect(block).toContain(`${group.heading}:`);
+          for (const row of group.rows) {
+            for (const alternative of row.anyOf) expect(block).toContain(alternative.join(" + "));
+          }
+        }
+      }
     }),
   );
 
