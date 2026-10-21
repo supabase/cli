@@ -272,9 +272,12 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     // Checked before the target resolves: `--file` would silently override the positional SQL,
     // which is how `-f x.sql --remote <branch>` would otherwise target the linked project.
     if (Option.isSome(flags.file) && Option.isSome(flags.sql)) {
+      const bareRemote = Option.exists(flags.remote, (remote) => remote._tag === "Linked");
       return yield* new DbQuerySqlSourceConflictError({
         message: "Pass SQL as an argument or with --file, not both.",
-        suggestion: "To select a branch or project with --remote, write --remote=<value>.",
+        ...(bareRemote
+          ? { suggestion: "To select a branch or project with --remote, write --remote=<value>." }
+          : {}),
       });
     }
     const target = yield* resolveTarget(flags);

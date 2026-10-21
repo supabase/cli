@@ -48,14 +48,14 @@ stack never prompts.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                                 |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                                                                                                                                   |
-| `1`  | `--file` together with positional SQL (`DbQuerySqlSourceConflictError`: `Pass SQL as an argument or with --file, not both.`); no API call and no `Target:` line                                                                           |
-| `1`  | no SQL provided; empty stdin; unreadable `--file`; remote project or branch without login; query exec failure; non-201 remote status                                                                                                      |
-| `1`  | hosted target without `--read-only` in a JSON, piped, agent or non-TTY run without `--yes` or a shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`); nothing is sent                                                              |
-| `1`  | `--read-only` with a statement that does not start with `SELECT`, `WITH`, `VALUES`, `TABLE`, `SHOW`, `EXPLAIN` or `(`, or with input that ends inside a comment, quote or dollar quote (`DbQueryReadOnlyStatementError`); nothing is sent |
-| `1`  | hosted target confirmation declined (`HostedMutationDeclinedError`, `context canceled`); nothing is sent                                                                                                                                  |
+| Code | Condition                                                                                                                                                                                                                                                                                        |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | success                                                                                                                                                                                                                                                                                          |
+| `1`  | `--file` together with positional SQL (`DbQuerySqlSourceConflictError`: `Pass SQL as an argument or with --file, not both.`, plus the suggestion `To select a branch or project with --remote, write --remote=<value>.` only when `--remote` was passed bare); no API call and no `Target:` line |
+| `1`  | no SQL provided; empty stdin; unreadable `--file`; remote project or branch without login; query exec failure; non-201 remote status                                                                                                                                                             |
+| `1`  | hosted target without `--read-only` in a JSON, piped, agent or non-TTY run without `--yes` or a shell `SUPABASE_YES` (`HostedMutationConsentRequiredError`); nothing is sent                                                                                                                     |
+| `1`  | `--read-only` with a statement that does not start with `SELECT`, `WITH`, `VALUES`, `TABLE`, `SHOW`, `EXPLAIN` or `(`, or with input that ends inside a comment, quote or dollar quote (`DbQueryReadOnlyStatementError`); nothing is sent                                                        |
+| `1`  | hosted target confirmation declined (`HostedMutationDeclinedError`, `context canceled`); nothing is sent                                                                                                                                                                                         |
 
 ## Output
 

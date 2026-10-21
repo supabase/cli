@@ -24,7 +24,7 @@ export class DbQuerySqlSourceConflictError extends Data.TaggedError(
   "DbQuerySqlSourceConflictError",
 )<{
   readonly message: string;
-  readonly suggestion: string;
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidInput;

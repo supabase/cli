@@ -96,6 +96,11 @@ const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 const failMessage = (exit: Exit.Exit<unknown, { readonly message: string }>): string | undefined =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.message : undefined;
 
+const failSuggestion = (
+  exit: Exit.Exit<unknown, { readonly suggestion?: string }>,
+): string | undefined =>
+  Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.suggestion : undefined;
+
 function mockResolver(
   isLocal: boolean | undefined,
   resolveFails = false,
@@ -539,6 +544,9 @@ describe("db query integration", () => {
         ).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         expect(failMessage(exit)).toBe("Pass SQL as an argument or with --file, not both.");
+        expect(failSuggestion(exit)).toBe(
+          "To select a branch or project with --remote, write --remote=<value>.",
+        );
         expect(platformApi.requests).toEqual([]);
         expect(resolvedTargets).toEqual([]);
         expect(out.stderrText).not.toContain("Target:");
@@ -547,6 +555,19 @@ describe("db query integration", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.effect("rejects --file together with positional SQL without a --remote suggestion", () => {
+    const { layer, platformApi, resolvedTargets } = setup({ result: SELECT_RESULT });
+    return Effect.gen(function* () {
+      const exit = yield* dbQuery(
+        flags({ sql: Option.some("select 1"), file: Option.some("x.sql") }),
+      ).pipe(Effect.exit);
+      expect(failMessage(exit)).toBe("Pass SQL as an argument or with --file, not both.");
+      expect(failSuggestion(exit)).toBeUndefined();
+      expect(platformApi.requests).toEqual([]);
+      expect(resolvedTargets).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("errors when --file cannot be read", () => {
     const { layer } = setup();
