@@ -200,7 +200,10 @@ const unbanErrorMapper = mapHttpError({
   statusMessage: (status, body) => `unexpected remove bans status ${status}: ${body}`,
 });
 
-/** Compares against the resolved local services hostname, not a hard-coded loopback. */
+const isLoopbackHost = (host: string): boolean =>
+  host === "localhost" || host === "::1" || (net.isIPv4(host) && host.startsWith("127."));
+
+/** Loopback spellings count as the resolved local services hostname; the port must match too. */
 function isLocalDatabase(
   host: string,
   localHost: string,
@@ -208,17 +211,13 @@ function isLocalDatabase(
   dbPort: number,
   shadowPort: number,
 ): boolean {
-  return host === localHost && (port === dbPort || port === shadowPort);
+  const sameHost = host === localHost || (isLoopbackHost(host) && isLoopbackHost(localHost));
+  return sameHost && (port === dbPort || port === shadowPort);
 }
 
 /** Stack databases listen on loopback, so only loopback or services-hostname URLs can match one. */
 function mayBeStackDatabaseHost(host: string, localHost: string): boolean {
-  return (
-    host === localHost ||
-    host === "localhost" ||
-    host === "::1" ||
-    (net.isIPv4(host) && host.startsWith("127."))
-  );
+  return host === localHost || isLoopbackHost(host);
 }
 
 /** Best-effort TCP reachability probe with a 5s timeout. */

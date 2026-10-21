@@ -403,6 +403,45 @@ describe("dbConfigResolver (local + db-url)", () => {
     ),
   );
 
+  it.effect.each([
+    "postgres://postgres:postgres@localhost:54322/postgres",
+    "postgres://postgres:postgres@[::1]:54322/postgres",
+    "postgres://postgres:postgres@127.0.0.2:54322/postgres",
+  ])("db-url mode: the loopback alias %s is local when the services host is 127.0.0.1", (url) =>
+    Effect.gen(function* () {
+      const dir = yield* withWorkdir();
+      return yield* resolveConnection(dir, inputFor(dbUrlTarget(url)));
+    }).pipe(
+      Effect.tap((r) =>
+        Effect.sync(() => {
+          expect(r.isLocal).toBe(true);
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(BunServices.layer),
+    ),
+  );
+
+  it.effect(
+    "db-url mode: a loopback alias on a port the local database does not use stays remote",
+    () =>
+      Effect.gen(function* () {
+        const dir = yield* withWorkdir();
+        return yield* resolveConnection(
+          dir,
+          inputFor(dbUrlTarget("postgres://postgres:postgres@localhost:5432/postgres")),
+        );
+      }).pipe(
+        Effect.tap((r) =>
+          Effect.sync(() => {
+            expect(r.isLocal).toBe(false);
+          }),
+        ),
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+      ),
+  );
+
   it.effect("db-url mode: a multi-host url stays remote even when its primary is local", () =>
     Effect.gen(function* () {
       const dir = yield* withWorkdir();
