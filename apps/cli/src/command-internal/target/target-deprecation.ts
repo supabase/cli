@@ -41,7 +41,7 @@ const replacementOf = (value: RemoteValue): string => {
 };
 
 /** The ref a Supabase connection string names: `db.<ref>.<host>` or a `postgres.<ref>` user. */
-export const refFromDbUrl = (url: string, projectHost: string): string | undefined => {
+const refFromDbUrl = (url: string, projectHost: string): string | undefined => {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname;

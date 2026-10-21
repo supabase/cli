@@ -47,7 +47,7 @@ export const warnTarget = Effect.fnUntraced(function* (message: string) {
 });
 
 /** Prints one warning per deprecated selector flag, naming its `--remote` replacement. */
-export const warnTargetDeprecations = Effect.fnUntraced(function* (
+const warnTargetDeprecations = Effect.fnUntraced(function* (
   deprecations: ReadonlyArray<TargetDeprecation>,
 ) {
   if (deprecations.length === 0) return;

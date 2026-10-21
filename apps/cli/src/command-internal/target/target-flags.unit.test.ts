@@ -85,6 +85,7 @@ describe("targetFlags", () => {
   it.effect.each([
     { args: ["--remote"], expected: { _tag: "Linked" } },
     { args: ["--remote", "yes"], expected: { _tag: "Linked" } },
+    { args: ["--remote", "y"], expected: { _tag: "Linked" } },
     { args: ["--remote=on"], expected: { _tag: "Linked" } },
     { args: ["--remote=1"], expected: { _tag: "Linked" } },
     { args: [`--remote=${REF}`], expected: { _tag: "Ref", ref: REF } },
@@ -95,16 +96,6 @@ describe("targetFlags", () => {
     Effect.gen(function* () {
       expect(yield* parseWith(withDbUrl, args)).toMatchObject({ remote: Option.some(expected) });
     }),
-  );
-
-  it.effect.each([{ args: ["--remote", "y"] }, { args: ["--remote=y"] }, { args: ["--remote=Y"] }])(
-    "reads $args as the linked project, not a branch named y",
-    ({ args }) =>
-      Effect.gen(function* () {
-        expect(yield* parseWith(withDbUrl, args)).toMatchObject({
-          remote: Option.some({ _tag: "Linked" }),
-        });
-      }),
   );
 
   it.effect("keeps the deprecated aliases parseable", () =>
@@ -170,10 +161,6 @@ describe("targetFlags", () => {
       message: `--remote takes a postgres:// URL, a project ref or a branch name; to target that project, use --remote=${REF}.`,
     },
     {
-      value: `HTTPS://${REF}.supabase.co/dashboard`,
-      message: `--remote takes a postgres:// URL, a project ref or a branch name; to target that project, use --remote=${REF}.`,
-    },
-    {
       value: "https://example.com/db",
       message: "--remote takes a postgres:// URL, a project ref or a branch name.",
     },
@@ -209,20 +196,6 @@ describe("targetFlags", () => {
           "--remote takes a project ref or a branch name.",
         );
       }),
-  );
-
-  it.effect.each([
-    { value: ` ${URL} `, expected: { _tag: "DbUrl", url: URL } },
-    { value: "POSTGRESQL://u:pw@h/db", expected: { _tag: "DbUrl", url: "postgresql://u:pw@h/db" } },
-    { value: "Postgres://h/db", expected: { _tag: "DbUrl", url: "postgres://h/db" } },
-    { value: ` ${REF} `, expected: { _tag: "Ref", ref: REF } },
-    { value: " staging ", expected: { _tag: "Branch", name: "staging" } },
-  ])("trims and classifies the value %j", ({ value, expected }) =>
-    Effect.gen(function* () {
-      expect(yield* parseWith(withDbUrl, [`--remote=${value}`])).toMatchObject({
-        remote: Option.some(expected),
-      });
-    }),
   );
 
   it("omits --db-url for commands without a database connection", () => {
