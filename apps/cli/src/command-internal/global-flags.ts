@@ -12,6 +12,7 @@ import {
   supabaseEnvBool,
   supabaseEnvBoolWithProjectFallback,
 } from "./supabase-env.ts";
+import { OFF_WORDS } from "./target/remote-vocabulary.ts";
 
 // `-o/--output` is tree-wide and can't vary per command, so it takes the union of every command's
 // values and each handler honors its subset.
@@ -154,9 +155,6 @@ export const globalFlagValues = Effect.gen(function* () {
 
 const FALSE_VALUES = new Set(["0", "f", "F", "false", "FALSE", "False"]);
 
-// The false spellings of the CLI's boolean flag parser, which also reads one after a bare flag.
-const BOOLEAN_FALSE_VALUES = new Set(["false", "no", "off", "0", "n"]);
-
 /** Argv before the first bare `--`; the rest is an operand (`db pull -- --experimental=false`). */
 const argsBeforeOperandTerminator = (args: ReadonlyArray<string>): ReadonlyArray<string> => {
   const terminatorIndex = args.indexOf("--");
@@ -195,10 +193,10 @@ const yesFlagFromArgs = (args: ReadonlyArray<string>): boolean | undefined => {
   let result: boolean | undefined;
   for (const [index, arg] of tokens.entries()) {
     if (arg === "--yes") {
-      result = !BOOLEAN_FALSE_VALUES.has(tokens[index + 1] ?? "");
+      result = !OFF_WORDS.has(tokens[index + 1] ?? "");
     } else if (arg.startsWith("--yes=")) {
       const value = arg.slice("--yes=".length);
-      result = !(FALSE_VALUES.has(value) || BOOLEAN_FALSE_VALUES.has(value));
+      result = !(FALSE_VALUES.has(value) || OFF_WORDS.has(value));
     }
   }
   return result;
