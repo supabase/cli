@@ -284,8 +284,8 @@ interface BanState {
 const NO_BANS: BanState = { listed: [], failure: Option.none() };
 
 // Verify-connect with backoff while the pooler refreshes the temp password. From attempt 3 on, look
-// for network bans on the project: with approval they are removed and a failed listing or removal
-// is what the run reports if the retries run out; without it the last listing is reported instead.
+// for network bans on the project: with approval they are removed and a failed removal is what the
+// run reports if the retries run out; without it the last listing is reported instead.
 const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
   ref: string,
   conn: PgConnInput,
@@ -323,8 +323,8 @@ const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
           Duration.toMillis(BACKOFF_MAX),
         );
         return Effect.gen(function* () {
-          // A ban-list/unban failure must not abort the retry loop: it is logged to --debug and,
-          // with approval, kept so the final error names it.
+          // A ban-list/unban failure must not abort the retry loop: it is logged to --debug and a
+          // failed removal is kept so the final error names it.
           const nextBans =
             n < 3
               ? bans
@@ -338,17 +338,20 @@ const waitForTempRole = Effect.fn("DbConfig.waitForTempRole")(function* (
                       CommandPlatformApiFactory | Output
                     > =>
                       addrs.length > 0 && removeNetworkBans
-                        ? removeBans(ref, addrs).pipe(Effect.as(NO_BANS))
+                        ? removeBans(ref, addrs).pipe(
+                            Effect.as(NO_BANS),
+                            Effect.catch((removeError) =>
+                              debug.debug(removeError.message).pipe(
+                                Effect.as<BanState>({
+                                  listed: addrs,
+                                  failure: Option.some(removeError),
+                                }),
+                              ),
+                            ),
+                          )
                         : Effect.succeed({ listed: addrs, failure: Option.none() }),
                   ),
-                  Effect.catch((banError) =>
-                    debug.debug(banError.message).pipe(
-                      Effect.as<BanState>({
-                        listed: bans.listed,
-                        failure: removeNetworkBans ? Option.some(banError) : Option.none(),
-                      }),
-                    ),
-                  ),
+                  Effect.catch((listError) => debug.debug(listError.message).pipe(Effect.as(bans))),
                 );
           yield* debug.debug(`Retry (${n}/${MAX_RETRIES}): ${cause.message}`);
           yield* Effect.sleep(Duration.millis(delayMs));

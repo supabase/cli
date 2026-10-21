@@ -2346,7 +2346,7 @@ describe("dbConfigResolver.resolveConnection", () => {
       },
     );
 
-    it.effect("reports the listing failure when listing keeps failing under --yes", () => {
+    it.effect("reports the connection error when listing keeps failing under --yes", () => {
       const requests: Array<{ readonly method: string; readonly path: string }> = [];
       const connection = failingConnect(Number.POSITIVE_INFINITY);
       return Effect.gen(function* () {
@@ -2359,47 +2359,49 @@ describe("dbConfigResolver.resolveConnection", () => {
         );
         yield* advance(8);
         const exit = yield* Fiber.await(fiber);
-        expect(failureText(exit)).toContain("DbConfigListBansStatusError");
+        expect(failureText(exit)).toContain("DbConfigConnectTempRoleError");
+        expect(failureText(exit)).not.toContain("--yes");
         expect(requests.some((request) => request.method === "DELETE")).toBe(false);
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
     });
 
-    it.effect(
-      "falls back to the connection error once listing recovers with no bans under --yes",
-      () => {
-        const requests: Array<{ readonly method: string; readonly path: string }> = [];
-        const connection = failingConnect(Number.POSITIVE_INFINITY);
-        let listCalls = 0;
-        return Effect.gen(function* () {
-          yield* stubManagementApi(requests, (method, path) => {
-            if (method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`) {
-              return Response.json(primaryPoolerConfigs(ref));
-            }
-            if (method === "POST" && path === `/v1/projects/${ref}/cli/login-role`) {
-              return Response.json(
-                { role: "cli_login_role", password: "temporary-role-password", ttl_seconds: 3600 },
-                { status: 201 },
-              );
-            }
-            if (method === "POST" && path === `/v1/projects/${ref}/network-bans/retrieve`) {
-              listCalls += 1;
-              return listCalls === 1
-                ? Response.json({ message: "listing broke" }, { status: 500 })
-                : Response.json({ banned_ipv4_addresses: [] });
-            }
-            return undefined;
-          });
-          const { fiber, advance } = yield* forkResolve(
-            inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false }), {
-              networkBanRemoval: yield* approval,
-            }),
-            connection.layer,
-          );
-          yield* advance(8);
-          const exit = yield* Fiber.await(fiber);
-          expect(failureText(exit)).toContain("DbConfigConnectTempRoleError");
-        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
-      },
-    );
+    it.effect("keeps a failed removal when a later listing fails under --yes", () => {
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connection = failingConnect(Number.POSITIVE_INFINITY);
+      let listCalls = 0;
+      return Effect.gen(function* () {
+        yield* stubManagementApi(requests, (method, path) => {
+          if (method === "GET" && path === `/v1/projects/${ref}/config/database/pooler`) {
+            return Response.json(primaryPoolerConfigs(ref));
+          }
+          if (method === "POST" && path === `/v1/projects/${ref}/cli/login-role`) {
+            return Response.json(
+              { role: "cli_login_role", password: "temporary-role-password", ttl_seconds: 3600 },
+              { status: 201 },
+            );
+          }
+          if (method === "POST" && path === `/v1/projects/${ref}/network-bans/retrieve`) {
+            listCalls += 1;
+            return listCalls === 1
+              ? Response.json({ banned_ipv4_addresses: ["203.0.113.7"] })
+              : Response.json({ message: "listing broke" }, { status: 500 });
+          }
+          if (method === "DELETE" && path === `/v1/projects/${ref}/network-bans`) {
+            return Response.json({ message: "removal broke" }, { status: 500 });
+          }
+          return undefined;
+        });
+        const { fiber, advance } = yield* forkResolve(
+          inputFor(linkedTarget(ref, { source: "flag", matchesLinkedRef: false }), {
+            networkBanRemoval: yield* approval,
+          }),
+          connection.layer,
+        );
+        yield* advance(8);
+        const exit = yield* Fiber.await(fiber);
+        expect(failureText(exit)).toContain("DbConfigUnbanStatusError");
+        expect(listCalls).toBeGreaterThan(1);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
+    });
   });
 });
