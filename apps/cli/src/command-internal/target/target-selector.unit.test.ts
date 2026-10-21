@@ -3,11 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { RemoteValue } from "./remote-value.ts";
 import type { TargetFlagValues } from "./target-flags.ts";
-import {
-  hasExplicitSelector,
-  parseTargetSelector,
-  type TargetSelectorOptions,
-} from "./target-selector.ts";
+import { parseTargetSelector, type TargetSelectorOptions } from "./target-selector.ts";
 
 const REF = "abcdefghijklmnopqrst";
 const URL = "postgresql://u:p@db.example.com:5432/postgres";
@@ -416,27 +412,5 @@ describe("parseTargetSelector", () => {
       });
       expect(JSON.stringify(result)).not.toContain("db.example.com");
     });
-  });
-});
-
-describe("hasExplicitSelector", () => {
-  it("is false when no selector flag is given", () => {
-    expect(hasExplicitSelector(none)).toBe(false);
-  });
-
-  it.each<readonly [string, Partial<TargetFlagValues>]>([
-    ["--remote", { remote: Option.some({ _tag: "Linked" }) }],
-    ["--linked", { linked: true }],
-    ["--local", { local: true }],
-    ["--db-url", { dbUrl: Option.some(URL) }],
-    ["--project-ref", { projectRef: Option.some(REF) }],
-    ["--project-id", { projectId: Option.some(REF) }],
-  ])("is true for %s", (_flag, overrides) => {
-    expect(hasExplicitSelector({ ...none, ...overrides })).toBe(true);
-  });
-
-  it("ignores a database URL flag a command does not declare", () => {
-    const { dbUrl: _dbUrl, ...withoutDbUrl } = none;
-    expect(hasExplicitSelector(withoutDbUrl)).toBe(false);
   });
 });

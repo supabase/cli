@@ -18,15 +18,6 @@ import {
 /** What the flags select: the default, the local stack, or a remote project, branch or database. */
 type TargetSelection = { readonly _tag: "Default" } | { readonly _tag: "Local" } | RemoteValue;
 
-/** Whether any selector flag, `--local` and the deprecated aliases included, was given. */
-export const hasExplicitSelector = (flags: TargetFlagValues): boolean =>
-  flags.local ||
-  flags.linked ||
-  Option.isSome(flags.remote) ||
-  Option.isSome(flags.projectRef) ||
-  Option.isSome(flags.projectId ?? Option.none()) ||
-  Option.isSome(flags.dbUrl ?? Option.none());
-
 type RemoteAliasFlag = "--linked" | "--project-ref" | "--project-id" | "--db-url";
 
 /** A deprecated selector flag the run used, with the `--remote` form it maps to. */
