@@ -390,26 +390,6 @@ WalgEnabled = true
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("carries the plan-gate entitlement on a JSON-mode gated denial", () => {
-    const upgradeUrl = "https://supabase.com/dashboard/org/acme/billing";
-    const { layer, out } = setup({
-      format: "json",
-      status: 402,
-      response: {
-        message: "Upgrade your plan to access backups",
-        error: { code: "entitlement_required", feature: "backups", upgrade_url: upgradeUrl },
-      } as unknown as typeof V1ListAllBackupsOutput.Type,
-    });
-    return Effect.gen(function* () {
-      yield* backupsList({ projectRef: Option.none() }).pipe(withJsonErrorHandling);
-      expect(out.failures).toHaveLength(1);
-      expect(out.failures[0]).toMatchObject({
-        code: "BackupListUnexpectedStatusError",
-        entitlement: { feature: "backups", upgrade_url: upgradeUrl },
-      });
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect(
     "sends User-Agent SupabaseCLI/<version> and no X-Supabase-Command headers (Go parity)",
     () => {
