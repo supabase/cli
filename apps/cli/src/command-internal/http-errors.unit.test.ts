@@ -2,6 +2,9 @@ import { describe, expect, it } from "@effect/vitest";
 import { SupabaseApiInputError } from "@supabase/api/effect";
 import { Data, Effect } from "effect";
 import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { classifyCliErrorActionability } from "../shared/telemetry/error-actionability.ts";
 
 import { sanitizeInlineName, mapHttpError, unexpectedStatusMessage } from "./http-errors.ts";
@@ -55,6 +58,93 @@ describe("mapHttpError", () => {
         error_kind: "internal_bug",
         error_category: "impossible_state",
         error_fingerprint: "tag:HttpBodyError:request_encoding",
+      });
+    }),
+  );
+});
+
+const UPGRADE_URL = "https://supabase.com/dashboard/org/acme/billing";
+
+function statusFailure(status: number, body: string): HttpClientError.HttpClientError {
+  const request = HttpClientRequest.get("https://api.supabase.com/v1/projects/test/backups");
+  const response = HttpClientResponse.fromWeb(request, new Response(body, { status }));
+  return new HttpClientError.HttpClientError({
+    reason: new HttpClientError.StatusCodeError({ request, response }),
+  });
+}
+
+function planGateBody(error: Record<string, unknown>, message = "Upgrade required"): string {
+  return JSON.stringify({ message, error: { code: "entitlement_required", ...error } });
+}
+
+describe("mapHttpError plan-gate entitlement", () => {
+  it.effect("attaches the entitlement from a gated body longer than the embedded body cap", () =>
+    Effect.gen(function* () {
+      const body = planGateBody({ feature: "backups", upgrade_url: UPGRADE_URL }, "x".repeat(2000));
+
+      const error = yield* mapError(statusFailure(402, body)).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "TestStatusError",
+        status: 402,
+        entitlement: { feature: "backups", upgrade_url: UPGRADE_URL },
+      });
+    }),
+  );
+
+  it.effect.each(["", "<html>Bad Gateway</html>"])(
+    "keeps the plain status error for a non-JSON 4xx body %j",
+    (body) =>
+      Effect.gen(function* () {
+        const error = yield* mapError(statusFailure(403, body)).pipe(Effect.flip);
+
+        expect(error).toMatchObject({ _tag: "TestStatusError", status: 403, body });
+        expect(error).not.toHaveProperty("entitlement");
+      }),
+  );
+
+  it.effect("ignores a plan-gate body on a 5xx", () =>
+    Effect.gen(function* () {
+      const body = planGateBody({ feature: "backups", upgrade_url: UPGRADE_URL });
+
+      const error = yield* mapError(statusFailure(503, body)).pipe(Effect.flip);
+
+      expect(error).not.toHaveProperty("entitlement");
+    }),
+  );
+
+  it.effect.each([
+    { case: "a non-https upgrade_url", feature: "backups", upgradeUrl: "javascript:alert(1)" },
+    { case: "a plain-http upgrade_url", feature: "backups", upgradeUrl: "http://evil.example/" },
+    {
+      case: "a feature carrying a bidi override",
+      feature: `backups${String.fromCodePoint(0x202e)}`,
+      upgradeUrl: UPGRADE_URL,
+    },
+  ])("drops the entitlement for $case", ({ feature, upgradeUrl }) =>
+    Effect.gen(function* () {
+      const body = planGateBody({ feature, upgrade_url: upgradeUrl });
+
+      const error = yield* mapError(statusFailure(402, body)).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "TestStatusError", status: 402 });
+      expect(error).not.toHaveProperty("entitlement");
+    }),
+  );
+
+  it.effect("percent-encodes control and bidi characters in the upgrade_url", () =>
+    Effect.gen(function* () {
+      const rlo = String.fromCodePoint(0x202e);
+      const csi = String.fromCodePoint(0x9b);
+      const body = planGateBody({
+        feature: "backups",
+        upgrade_url: `${UPGRADE_URL}?ref=${rlo}${csi}`,
+      });
+
+      const error = yield* mapError(statusFailure(402, body)).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        entitlement: { feature: "backups", upgrade_url: `${UPGRADE_URL}?ref=%E2%80%AE%C2%9B` },
       });
     }),
   );
