@@ -37,9 +37,11 @@ type PermissionRow = { readonly anyOf: Alternatives } | { readonly note: string 
 interface PermissionGroup {
   /** The heading the text section prints, without its colon. */
   readonly heading: string;
-  readonly kind: PermissionKind;
-  /** Whether the group depends on a prerequisite that isn't a flag. */
-  readonly situational: boolean;
+  /**
+   * `required` fails or loses the command's result without it; `maybe` is needed only in
+   * circumstances the heading does not spell out; `optional` leaves the command working without it.
+   */
+  readonly need: "required" | "maybe" | "optional";
   /** The ways the group applies, any one of which suffices; absent when it always applies. */
   readonly when?: ReadonlyArray<Alternative>;
   readonly rows: ReadonlyArray<PermissionRow>;
@@ -117,6 +119,9 @@ function headingFor(
   return `Optional${inner === "" ? "" : `, ${inner}`} (command still runs without these)`;
 }
 
+const needOf = (group: { kind: PermissionKind; situational: boolean }) =>
+  group.kind === "best-effort" ? "optional" : group.situational ? "maybe" : "required";
+
 const rank = (group: { kind: PermissionKind; situational: boolean; unconditional: boolean }) =>
   (group.kind === "required" ? 0 : 3) + (group.situational ? 2 : group.unconditional ? 0 : 1);
 
@@ -187,8 +192,7 @@ function schemeSection(
       .sort((a, b) => rank(a) - rank(b))
       .map((group) => ({
         heading: group.heading,
-        kind: group.kind,
-        situational: group.situational,
+        need: needOf(group),
         ...(group.when === undefined ? {} : { when: group.when }),
         rows: group.rows,
       })),

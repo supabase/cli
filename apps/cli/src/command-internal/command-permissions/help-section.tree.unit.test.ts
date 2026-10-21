@@ -149,12 +149,12 @@ describe("permission help section across the command tree", () => {
           for (const scheme of section.schemes) {
             const headings = scheme.groups.map((group) => group.heading);
             expect(new Set(headings).size, `"${path}" repeats a heading`).toBe(headings.length);
-            const rowsOf = (kind: string) =>
+            const rowsOf = (matches: (need: string) => boolean) =>
               scheme.groups
-                .filter((group) => group.kind === kind)
+                .filter((group) => matches(group.need))
                 .flatMap((group) => group.rows.map((row) => JSON.stringify(row)));
-            const required = new Set(rowsOf("required"));
-            for (const row of rowsOf("best-effort")) {
+            const required = new Set(rowsOf((need) => need !== "optional"));
+            for (const row of rowsOf((need) => need === "optional")) {
               expect(required.has(row), `"${path}" lists ${row} as required and optional`).toBe(
                 false,
               );

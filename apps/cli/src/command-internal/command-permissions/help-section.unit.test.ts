@@ -764,6 +764,30 @@ describe("permission help section", () => {
     });
   });
 
+  describe("need", () => {
+    it("tells required, maybe and optional apart", () => {
+      const section = resolvePermissionSection(
+        mapped({
+          operations: [
+            { operationId: "v1-list-all-projects", kind: "required" },
+            { operationId: "v1-get-pooler-config", kind: "required", context: "a prompt picks it" },
+            { operationId: "v1-get-project", kind: "best-effort", context: "a cache is cold" },
+          ],
+        }),
+        catalogOf(),
+      );
+
+      expect(
+        section?.status === "mapped" &&
+          section.schemes[0]?.groups.map((group) => [group.heading, group.need]),
+      ).toEqual([
+        ["Required", "required"],
+        ["May be required", "maybe"],
+        ["Optional (command still runs without these)", "optional"],
+      ]);
+    });
+  });
+
   describe("structured conditions", () => {
     const whenOf = (declaration: Declaration, catalog: FlagCatalog) => {
       const section = resolvePermissionSection(mapped(declaration), catalog);
