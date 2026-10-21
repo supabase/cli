@@ -162,7 +162,7 @@ describe("permission help section", () => {
       );
     });
 
-    it("marks a flag's default value in text and in data, only when the condition includes it", () => {
+    it("adds 'or unset' to text and the default to data, only when the condition includes the default", () => {
       const lang = Flag.Literals("lang", ["typescript", "go", "swift"] as const).pipe(
         Flag.withDefault("typescript" as const),
       );
@@ -184,11 +184,11 @@ describe("permission help section", () => {
       };
 
       expect(groupOf(["typescript"])).toMatchObject({
-        heading: "Required with --lang=typescript (default)",
+        heading: "Required with --lang=typescript or unset",
         when: [{ all: [{ flag: "lang", values: ["typescript"], default: "typescript" }] }],
       });
       expect(groupOf(["typescript", "go"])).toMatchObject({
-        heading: "Required with --lang=typescript (default)|go",
+        heading: "Required with --lang=typescript|go or unset",
       });
       expect(groupOf(["go"])?.when).toEqual([{ all: [{ flag: "lang", values: ["go"] }] }]);
       expect(groupOf(["go"])?.heading).toBe("Required with --lang=go");

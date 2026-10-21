@@ -296,8 +296,9 @@ function textOfVariable(
       ? flag.choices.filter((value) => values.has(value))
       : [...values].filter((value) => ![ABSENT, EMPTY, SET].includes(value)).sort();
   if (literals.length > 0) {
-    const shown = literals.map((value) => (value === flag?.default ? `${value} (default)` : value));
-    return { positive: [`${name}=${shown.join("|")}${values.has(ABSENT) ? " or unset" : ""}`] };
+    const orUnset =
+      values.has(ABSENT) || (flag?.default !== undefined && literals.includes(flag.default));
+    return { positive: [`${name}=${literals.join("|")}${orUnset ? " or unset" : ""}`] };
   }
   if (values.has(ABSENT)) return values.has(SET) ? {} : { negative: [name] };
   if (values.has(EMPTY) && !values.has(SET)) return { positive: [`${name}=""`] };
