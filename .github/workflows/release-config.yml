@@ -91,7 +91,7 @@ jobs:
           resume_token="$(openssl rand -hex 16)"
           echo "::stop-commands::${resume_token}"
           trap 'echo "::${resume_token}::"' EXIT
-          pnpm exec bun packages/config/scripts/release-plan.ts --notes-out "$RUNNER_TEMP/config-release-notes.md"
+          bun packages/config/scripts/release-plan.ts --notes-out "$RUNNER_TEMP/config-release-notes.md"
 
       # Build/gate/pack also run on private-blocked pushes (should_release=false, version set):
       # if `private` is ever flipped back on, the plan half of the release train is already
@@ -127,7 +127,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/config-release-gate-local"
           tar -xzf "$RUNNER_TEMP/config-release-artifact/supabase-config-${VERSION}.tgz" \
             -C "$RUNNER_TEMP/config-release-gate-local" --no-same-owner --no-same-permissions
-          pnpm exec bun tools/config-release-gate.ts --version "$VERSION" \
+          bun tools/config-release-gate.ts --version "$VERSION" \
             --local-dist "$RUNNER_TEMP/config-release-gate-local/package/dist"
 
       - name: Upload release artifact

@@ -318,10 +318,10 @@ jobs:
           fail-on-cache-miss: true
 
       - name: Sync versions
-        run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
+        run: bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
 
       - name: Publish to npm
-        run: pnpm exec bun apps/cli/scripts/publish.ts --tag "${NPM_TAG}"
+        run: bun apps/cli/scripts/publish.ts --tag "${NPM_TAG}"
 
       - name: Configure git for release pushes
         run: |
@@ -389,13 +389,13 @@ jobs:
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: pnpm exec bun apps/cli/scripts/upload-release-assets.ts upload --version "${VERSION}"
+        run: bun apps/cli/scripts/upload-release-assets.ts upload --version "${VERSION}"
 
       # Publishing makes the release immutable, so require every expected asset to be uploaded first.
       - name: Verify release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: pnpm exec bun apps/cli/scripts/upload-release-assets.ts verify --version "${VERSION}"
+        run: bun apps/cli/scripts/upload-release-assets.ts verify --version "${VERSION}"
 
       - name: Publish GitHub Release (immutable)
         env:
@@ -514,7 +514,7 @@ jobs:
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Update Homebrew formula
-        run: pnpm exec bun apps/cli/scripts/update-homebrew.ts --version "${VERSION}" --name "${BREW_NAME}"
+        run: bun apps/cli/scripts/update-homebrew.ts --version "${VERSION}" --name "${BREW_NAME}"
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -575,7 +575,7 @@ jobs:
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Update Scoop manifest
-        run: pnpm exec bun apps/cli/scripts/update-scoop.ts --version "${VERSION}" --name "${SCOOP_NAME}"
+        run: bun apps/cli/scripts/update-scoop.ts --version "${VERSION}" --name "${SCOOP_NAME}"
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

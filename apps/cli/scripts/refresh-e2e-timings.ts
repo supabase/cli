@@ -109,7 +109,7 @@ function readResultsCaches(dir: string): VitestResultsCache[] {
     });
 }
 
-const usage = `Usage: pnpm exec bun apps/cli/scripts/refresh-e2e-timings.ts --run <run-id> [--repo supabase/cli]
+const usage = `Usage: bun apps/cli/scripts/refresh-e2e-timings.ts --run <run-id> [--repo supabase/cli]
 
   Downloads the e2e-timings-* artifacts of a test workflow run and rewrites
   apps/cli/tests/e2e-timings.json from them.`;

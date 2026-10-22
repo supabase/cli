@@ -66,7 +66,7 @@ jobs:
       # are skipped, so a re-run produces an empty list.
       - name: Detect images missing from the mirror
         id: detect
-        run: pnpm exec bun apps/cli/scripts/detect-unmirrored-images.ts
+        run: bun apps/cli/scripts/detect-unmirrored-images.ts
 
   mirror:
     name: Mirror image
