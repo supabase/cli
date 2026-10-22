@@ -130,7 +130,6 @@ runs:
       with:
         version: 2026.10.17
         install_args: ${{ inputs.tools }}
-        cache_key: ${{ inputs.tools != '' && format('mise-{0}-{1}-{2}-{3}', runner.os, runner.arch, inputs.tools, hashFiles('mise.toml', 'mise.lock', '.node-version', '.bun-version', 'package.json')) || '' }}
 
     - name: Resolve pnpm store path
       if: inputs.dependency-cache == 'true'
