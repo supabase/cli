@@ -9,6 +9,7 @@ import {
   NativeRuntimeRootBase,
   nativeRuntimeRootPath,
   type PasswdEntry,
+  restrictDirectoryToOwner,
 } from "./postgres-user.ts";
 
 /**
@@ -137,6 +138,27 @@ describe("acquireNativeRuntimeRoot", () => {
         expect(yield* fs.exists(nativeRuntimeRootPath(path, base, process.getuid?.() ?? 0))).toBe(
           false,
         );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+// Windows has no POSIX mode bits.
+describe.skipIf(process.platform === "win32")("restrictDirectoryToOwner", () => {
+  it.live("keeps a traverse grant another process adds after the mode was read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "restrict-owner-race-" });
+        yield* fs.chmod(directory, 0o700);
+        const grantAfterStat: FileSystem.FileSystem = {
+          ...fs,
+          stat: (target) => fs.stat(target).pipe(Effect.tap(() => fs.chmod(directory, 0o701))),
+        };
+
+        yield* restrictDirectoryToOwner(grantAfterStat, directory);
+
+        expect((yield* fs.stat(directory)).mode & 0o777).toBe(0o701);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
