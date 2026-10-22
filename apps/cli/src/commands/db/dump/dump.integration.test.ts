@@ -1106,6 +1106,77 @@ describe("db dump integration", () => {
     ),
   );
 
+  it.effect(
+    "follows OpenSSL's trust store overrides for sslrootcert=system in a native pg_dump",
+    () => {
+      const cases: ReadonlyArray<{
+        sslrootcert: string | undefined;
+        env: Readonly<Record<string, string>>;
+        major?: 15;
+        expected: string;
+      }> = [
+        { sslrootcert: "system", env: {}, expected: "/etc/ssl/cert.pem" },
+        { sslrootcert: "system", env: { SSL_CERT_FILE: "/certs/ca.pem" }, expected: "system" },
+        { sslrootcert: "system", env: { SSL_CERT_DIR: "/certs" }, expected: "system" },
+        {
+          sslrootcert: "system",
+          env: { SSL_CERT_FILE: "/certs/ca.pem", SSL_CERT_DIR: "/certs" },
+          expected: "system",
+        },
+        {
+          sslrootcert: "system",
+          env: { SSL_CERT_FILE: "/certs/ca.pem" },
+          major: 15,
+          expected: "/certs/ca.pem",
+        },
+        {
+          sslrootcert: "system",
+          env: { SSL_CERT_DIR: "/certs" },
+          major: 15,
+          expected: "/etc/ssl/cert.pem",
+        },
+        {
+          sslrootcert: undefined,
+          env: { SSL_CERT_FILE: "/certs/ca.pem" },
+          expected: "/etc/ssl/cert.pem",
+        },
+      ];
+      return Effect.forEach(cases, ({ sslrootcert, env, major, expected }) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          if (major !== undefined) {
+            yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+            yield* fs.writeFileString(
+              path.join(tmp.current, "supabase", "config.toml"),
+              `[db]\nmajor_version = ${major}\n`,
+            );
+          }
+          const { layer, bundled } = setup({
+            conn: { ...REMOTE_CONN, sslmode: "verify-full", sslrootcert },
+            isLocal: false,
+            platform: "darwin",
+            stdout: "",
+            env,
+            ...(major === undefined ? {} : { workdir: tmp.current }),
+          });
+          yield* dbDump(flags({ linked: Option.some(true) })).pipe(
+            Effect.provide(
+              withHostCaBundles(["/etc/ssl/cert.pem"]).pipe(
+                Layer.provideMerge(Layer.mergeAll(layer, stackBackendLayer("stack"))),
+              ),
+            ),
+          );
+          expect(bundled.lastOpts?.pin.upstreamVersion.startsWith(String(major ?? 17))).toBe(true);
+          expect(bundled.lastOpts?.env).toMatchObject({
+            PGSSLMODE: "verify-full",
+            PGSSLROOTCERT: expected,
+          });
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
+    },
+  );
+
   it.effect("never hands TLS settings to a local pg_dump", () => {
     const { layer, docker } = setup({
       conn: { ...LOCAL_CONN, sslmode: "verify-full", sslrootcert: "/certs/root.crt" },

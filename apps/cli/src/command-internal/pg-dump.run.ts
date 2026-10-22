@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Config, Effect, FileSystem, Option, Path } from "effect";
 import type { Stack } from "@supabase/stack/effect";
 import type { ArtifactPin } from "@supabase/stack/internal/artifacts";
 import { postgres } from "@supabase/stack/commands";
@@ -110,11 +110,28 @@ const usesDefaultTrustRoots = (env: Readonly<Record<string, string>>): boolean =
   ((env["PGSSLMODE"] === "verify-ca" || env["PGSSLMODE"] === "verify-full") &&
     env["PGSSLROOTCERT"] === undefined);
 
+const opensslOverride = (name: string) =>
+  Config.option(Config.NonEmptyString(name)).pipe(
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+
 const nativeTlsEnv = Effect.fnUntraced(function* (
   env: Readonly<Record<string, string>>,
   homeDir: string,
+  clientVersion: string,
 ) {
   if (!usesDefaultTrustRoots(env)) return env;
+  if (env["PGSSLROOTCERT"] === "system") {
+    /* `system` means OpenSSL's verify paths, which honour these; libpq reads `system` from 16. */
+    const certFile = yield* opensslOverride("SSL_CERT_FILE");
+    const certDir = yield* opensslOverride("SSL_CERT_DIR");
+    if (
+      Number.parseInt(clientVersion, 10) >= 16 &&
+      (Option.isSome(certFile) || Option.isSome(certDir))
+    )
+      return env;
+    if (Option.isSome(certFile)) return { ...env, PGSSLROOTCERT: certFile.value };
+  }
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const exists = (file: string) => fs.exists(file).pipe(Effect.orElseSucceed(() => false));
@@ -417,7 +434,11 @@ export const streamPgDumpWithClient = Effect.fn("streamPgDumpWithClient")(functi
       runtime.kind === "container"
         ? yield* containerTlsFiles(params.env, params.script)
         : {
-            env: yield* nativeTlsEnv(params.env, runtimeInfo.homeDir),
+            env: yield* nativeTlsEnv(
+              params.env,
+              runtimeInfo.homeDir,
+              params.client.pin.upstreamVersion,
+            ),
             mounts: [],
             securityOpt: [],
             script: params.script,

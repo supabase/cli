@@ -47,6 +47,7 @@ image), to stdout or `--file`.
 | `DOCKER_HOST`                                                                 | docker daemon endpoint                                                                                                                                                                                                                                           |
 | `MSYSTEM`, `TERM_PROGRAM`                                                     | suppress the piped-stdout non-ASCII warning in MSYS/mintty sessions                                                                                                                                                                                              |
 | `PG*` libpq                                                                   | linked-project TLS, timeout, service; see `db push`. An invalid value fails before `pg_dump` runs; a remote target also hands them to `pg_dump` (see Notes)                                                                                                      |
+| `SSL_CERT_FILE`, `SSL_CERT_DIR`                                               | a native `pg_dump` on libpq 16+ keeps `sslrootcert=system` when either is set; libpq 15 uses only `SSL_CERT_FILE`                                                                                                                                                |
 
 ## Exit Codes
 
@@ -124,11 +125,12 @@ Warning: supabase db dump will target the local database by default in the next 
   `sslpassword` (libpq reads no passphrase from the environment). `system` pins
   `verify-full`. Verifying without a root cert, or with `system`, uses the image's trust
   store in a container and the host's CA bundle for a native `pg_dump`, which keeps
-  libpq's `~/.postgresql/root.crt` when no root cert is set and also inherits the
-  shell's `PG*`. A container mounts the PEM files read-only under `/run/supabase/tls`
-  (the Docker daemon must see the same paths) and copies the key to a private file. A
-  missing or non-file path, or one containing `:` past a Windows drive, fails before the
-  container starts.
+  libpq's `~/.postgresql/root.crt` when no root cert is set, keeps `system` on libpq 16+
+  when `SSL_CERT_FILE` or `SSL_CERT_DIR` is set (libpq 15 uses only `SSL_CERT_FILE`),
+  and also inherits the shell's `PG*`. A container mounts the PEM files read-only under
+  `/run/supabase/tls` (the Docker daemon must see the same paths) and copies the key to
+  a private file. A missing or non-file path, or one containing `:` past a Windows
+  drive, fails before the container starts.
 - **Stack backend host rewrite.** Stack dumps always use catalog `pg_dump` (native
   artifact or a one-shot of the same image). `--local` native rewrites loopback to
   `127.0.0.1`. Native `--linked` / `--db-url` keep
