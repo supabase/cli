@@ -278,11 +278,16 @@ export const removeNativeSocketDirectory = Effect.fn("NativePostgresUser.removeS
 /**
  * Restricts a directory to its owner but keeps an existing traverse-only grant, because a
  * stepped-down PostgreSQL resolves bundle and data paths through the cache and state roots while it runs.
+ * An already-restricted directory is left unchanged, so a concurrent stat-then-chmod cannot write
+ * back a mode that predates another process's traverse grant.
  */
 export const restrictDirectoryToOwner = (fs: FileSystem.FileSystem, directory: string) =>
-  fs
-    .stat(directory)
-    .pipe(Effect.flatMap(({ mode }) => fs.chmod(directory, 0o700 | (mode & 0o001))));
+  fs.stat(directory).pipe(
+    Effect.flatMap(({ mode }) => {
+      const restricted = 0o700 | (mode & 0o001);
+      return (mode & 0o7777) === restricted ? Effect.void : fs.chmod(directory, restricted);
+    }),
+  );
 
 const allowTraverse = Effect.fn("NativePostgresUser.allowTraverse")(function* (
   user: PasswdEntry,
