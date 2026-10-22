@@ -4698,6 +4698,8 @@ const (
 	PitrNotEnabled                V1ProjectAdvisorsResponseOutputLintsName = "pitr_not_enabled"
 	PolicyExistsRlsDisabled       V1ProjectAdvisorsResponseOutputLintsName = "policy_exists_rls_disabled"
 	ProjectNotActive              V1ProjectAdvisorsResponseOutputLintsName = "project_not_active"
+	RealtimeAuthorizationTimeouts V1ProjectAdvisorsResponseOutputLintsName = "realtime_authorization_timeouts"
+	RealtimePostgresChangesSpike  V1ProjectAdvisorsResponseOutputLintsName = "realtime_postgres_changes_spike"
 	RlsDisabledInPublic           V1ProjectAdvisorsResponseOutputLintsName = "rls_disabled_in_public"
 	RlsEnabledNoPolicy            V1ProjectAdvisorsResponseOutputLintsName = "rls_enabled_no_policy"
 	RlsReferencesUserMetadata     V1ProjectAdvisorsResponseOutputLintsName = "rls_references_user_metadata"
@@ -4777,6 +4779,10 @@ func (e V1ProjectAdvisorsResponseOutputLintsName) Valid() bool {
 	case PolicyExistsRlsDisabled:
 		return true
 	case ProjectNotActive:
+		return true
+	case RealtimeAuthorizationTimeouts:
+		return true
+	case RealtimePostgresChangesSpike:
 		return true
 	case RlsDisabledInPublic:
 		return true

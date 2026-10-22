@@ -30,7 +30,7 @@ describe("compute schema", () => {
   });
 
   test("defaults to an empty section when the key is absent", () => {
-    expect(Schema.decodeUnknownSync(Schema.Struct({ compute }))({})).toEqual({ compute: {} });
+    expect(Schema.decodeSync(Schema.Struct({ compute }))({})).toEqual({ compute: {} });
   });
 
   test("drops compute names that are not DNS labels", () => {

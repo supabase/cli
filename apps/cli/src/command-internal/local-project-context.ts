@@ -5,7 +5,17 @@ import {
   type CliConfig,
 } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
-import { Config, Console, Crypto, Effect, FileSystem, Option, Path, Schema } from "effect";
+import {
+  Config,
+  Console,
+  Crypto,
+  Effect,
+  FileSystem,
+  Option,
+  Path,
+  Predicate,
+  Schema,
+} from "effect";
 
 import { recordOrioleDbTelemetry } from "./db-image.ts";
 import { resolveLocalProjectId, sanitizeProjectId } from "./docker-ids.ts";
@@ -17,6 +27,7 @@ import {
   envOverrideOrioleDBVersion,
 } from "./local-config-values.ts";
 import { resolveProjectEnvironmentValues } from "./project-environment.ts";
+import { configParseCauseMessage } from "../shared/output/normalize-error.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 
 /** Config, resolved project env values, hostname, and sanitized project id for a command. */
@@ -87,7 +98,11 @@ export const loadLocalProjectContext = <E>(
       goViperCompat: true,
       projectRef,
     }).pipe(
-      Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),
+      Effect.mapError((cause) =>
+        mapConfigLoadError(
+          `failed to read config: ${Predicate.isTagged(cause, "CliConfigParseError") ? configParseCauseMessage(cause.cause) : String(cause)}`,
+        ),
+      ),
     );
     // Printed beside the loader's deprecated-config WARNs, on the same real console, so it shares
     // their once-per-context-load cadence.

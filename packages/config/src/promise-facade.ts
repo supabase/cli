@@ -1,5 +1,5 @@
 import type { FileSystem, Path } from "effect";
-import { Layer, ManagedRuntime } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
 import type {
   LoadedCliConfig,
   LoadCliConfigOptions,
@@ -59,19 +59,22 @@ export function makeCliConfigIo(
     return runtime;
   }
 
+  /* Never throws synchronously: a throw while building the program rejects like any failure. */
+  function run<A, E>(
+    program: () => Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | CliConfigStore>,
+  ) {
+    return getRuntime().runPromise(Effect.suspend(program));
+  }
+
   return {
-    loadCliConfig: async (cwd, options) =>
-      getRuntime().runPromise(CliConfigStore.use((store) => store.load(cwd, options))),
-    findCliProjectRoot: async (cwd) => getRuntime().runPromise(findCliProjectRoot(cwd)),
-    findCliProjectPaths: async (cwd) => getRuntime().runPromise(findCliProjectPaths(cwd)),
-    loadCliConfigFile: async (path) =>
-      getRuntime().runPromise(CliConfigStore.use((store) => store.loadFile(path))),
-    loadCliProjectEnvironment: async (options) =>
-      getRuntime().runPromise(
-        loadCliProjectEnvironment({ ...options, baseEnv: options.baseEnv ?? process.env }),
-      ),
-    saveCliConfig: async (options) =>
-      getRuntime().runPromise(CliConfigStore.use((store) => store.save(options))),
-    inferFunctionsManifest: async (cwd) => getRuntime().runPromise(inferFunctionsManifest({ cwd })),
+    loadCliConfig: (cwd, options) =>
+      run(() => CliConfigStore.use((store) => store.load(cwd, options))),
+    findCliProjectRoot: (cwd) => run(() => findCliProjectRoot(cwd)),
+    findCliProjectPaths: (cwd) => run(() => findCliProjectPaths(cwd)),
+    loadCliConfigFile: (path) => run(() => CliConfigStore.use((store) => store.loadFile(path))),
+    loadCliProjectEnvironment: (options) =>
+      run(() => loadCliProjectEnvironment({ ...options, baseEnv: options.baseEnv ?? process.env })),
+    saveCliConfig: (options) => run(() => CliConfigStore.use((store) => store.save(options))),
+    inferFunctionsManifest: (cwd) => run(() => inferFunctionsManifest({ cwd })),
   };
 }

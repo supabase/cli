@@ -29,6 +29,8 @@ export type OpenApiOperation = {
   readonly parameters?: ReadonlyArray<OpenApiParameter>;
   readonly requestBody?: OpenApiRequestBody;
   readonly responses?: Record<string, OpenApiResponse>;
+  readonly "x-fga-permissions"?: ReadonlyArray<ReadonlyArray<string>>;
+  readonly "x-oauth-scope"?: string;
 };
 
 type OpenApiRequestBody = {
@@ -1150,6 +1152,36 @@ export type GeneratedEffectOperations = typeof versionedEffectOperations;
 `;
 }
 
+export function renderPermissions(document: OpenApiDocument): string {
+  const rows: Array<string> = [];
+  for (const pathItem of Object.values(document.paths)) {
+    for (const method of httpMethodOrder) {
+      const operation = pathItem[method];
+      if (!operation?.operationId) continue;
+      const fga = operation["x-fga-permissions"] ?? [];
+      const oauthScope = operation["x-oauth-scope"];
+      rows.push(
+        `  ${JSON.stringify(operation.operationId)}: { fga: ${JSON.stringify(fga)}${
+          oauthScope === undefined ? "" : `, oauthScope: ${JSON.stringify(oauthScope)}`
+        } },`,
+      );
+    }
+  }
+  return `/** Token permissions an operation declares in the API spec. */
+export interface OperationPermissions {
+  /** Alternative permission sets: a token needs every permission in at least one set. */
+  readonly fga: ReadonlyArray<ReadonlyArray<string>>;
+  /** OAuth scope for the operation; absent when OAuth tokens cannot call it yet. */
+  readonly oauthScope?: string;
+}
+
+/** Permissions keyed by OpenAPI operation id. */
+export const operationPermissions: Readonly<Record<string, OperationPermissions>> = {
+${rows.join("\n")}
+};
+`;
+}
+
 function main() {
   const document = loadSpec();
   const operations = extractOperations(document);
@@ -1159,6 +1191,7 @@ function main() {
 
   writeFileSync(path.join(generatedDir, "contracts.ts"), renderContracts(document, operations));
   writeFileSync(path.join(generatedDir, "effect-client.ts"), renderEffectClient(operations));
+  writeFileSync(path.join(generatedDir, "permissions.ts"), renderPermissions(document));
   writeFileSync(path.join(generatedDir, "openapi.json"), `${JSON.stringify(document, null, 2)}\n`);
 
   console.log(`Generated ${operations.length} API operations in ${generatedDir}`);

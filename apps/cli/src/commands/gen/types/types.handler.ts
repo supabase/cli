@@ -76,6 +76,7 @@ import {
   parseQueryTimeoutMillis,
   rootCaBundle,
 } from "./types.shared.ts";
+import { configParseCauseMessage } from "../../../shared/output/normalize-error.ts";
 
 const mapProjectTypesError = mapHttpError({
   networkError: GenTypesNetworkError,
@@ -274,7 +275,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       Effect.catchTags({
         CliConfigParseError: (cause) =>
           new GenTypesParseConfigError({
-            message: `failed to parse ${toRelativeConfigPath(cause.path)}: ${String(cause.cause)}`,
+            message: `failed to parse ${toRelativeConfigPath(cause.path)}: ${configParseCauseMessage(cause.cause)}`,
           }),
         DuplicateRemoteProjectIdError: (cause) =>
           new GenTypesParseConfigError({ message: cause.message }),

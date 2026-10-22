@@ -9,6 +9,7 @@ import { resolveYesWithProjectEnv } from "./global-flags.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { bold, yellow } from "./colors.ts";
 import { loadProjectEnv } from "./db-config.toml-read.ts";
+import { relativeConfigPath } from "./workdir-project.ts";
 import { shouldSearchAncestors } from "./workdir-search.ts";
 import { promptYesNo } from "./prompt-yes-no.ts";
 import {
@@ -33,6 +34,7 @@ import {
 } from "../commands/seed/buckets/buckets.classify.ts";
 import { SeedConfigLoadError } from "../commands/seed/buckets/buckets.errors.ts";
 import { bucketObjectKey } from "../commands/seed/buckets/buckets.upload.ts";
+import { configParseCauseMessage } from "../shared/output/normalize-error.ts";
 
 const CONFIG_PATH = "supabase/config.toml";
 const UPLOAD_CONCURRENCY = 5;
@@ -178,7 +180,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
             "CliConfigParseError",
             (cause) =>
               new SeedConfigLoadError({
-                message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
+                message: `failed to parse ${relativeConfigPath(workdir, cause.path)}: ${configParseCauseMessage(cause.cause)}`,
               }),
           ),
         );
