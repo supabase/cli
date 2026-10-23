@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   inspectResultIsMirrored,
+  inspectWithRateLimitRetry,
   MIRROR_REGISTRIES,
   mirrorImageTarget,
   mirrorImageTargets,
@@ -75,6 +76,29 @@ describe("detect unmirrored images", () => {
 
     expect(() => inspectResultIsMirrored(target, 1, stderr)).toThrow(
       `could not inspect ${target} (exit 1): ${stderr.trim()}`,
+    );
+  });
+
+  test("a rate-limited probe is retried with backoff and only aborts once retries run out", async () => {
+    const target = "public.ecr.aws/supabase/postgres:17.11.0.006";
+    const rateLimited = {
+      exit: 1,
+      stderr: "ERROR: httpReadSeeker: failed open: unexpected status: 429 Too Many Requests\n",
+    };
+    const slept: number[] = [];
+    const sleep = (ms: number) => {
+      slept.push(ms);
+      return Promise.resolve();
+    };
+
+    const responses = [rateLimited, rateLimited, { exit: 0, stderr: "" }];
+    await expect(
+      inspectWithRateLimitRetry(target, () => responses.shift()!, sleep, [1, 2, 3]),
+    ).resolves.toBe(true);
+    expect(slept).toEqual([1, 2]);
+
+    await expect(inspectWithRateLimitRetry(target, () => rateLimited, sleep, [1])).rejects.toThrow(
+      "429 Too Many Requests",
     );
   });
 });
