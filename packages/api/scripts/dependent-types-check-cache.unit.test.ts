@@ -1,41 +1,53 @@
-import { execFileSync } from "node:child_process";
-import { closeSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { NodeServices } from "@effect/platform-node";
+import { Effect, Schema, Stream } from "effect";
+import * as ChildProcess from "effect/process/ChildProcess";
+import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import { describe, expect, test } from "vitest";
 
 // The scheduled API sync only rewrites this package, and the project-config mirror lives in
 // @supabase/config, so apps/cli's type-level drift guards only run on a PR touching either if turbo
 // folds that package's files into the dependent's cached `types:check` hash via `transit`.
 
-const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const packageDir = path.join(scriptDir, "..");
-const repoDir = path.join(packageDir, "..", "..");
-const turboBin = path.join(repoDir, "node_modules", ".bin", "turbo");
+const repoDir = fileURLToPath(new URL("../../..", import.meta.url));
+const turboBin = fileURLToPath(new URL("../../../node_modules/.bin/turbo", import.meta.url));
 
 type DryRunTask = { readonly taskId: string; readonly dependencies: ReadonlyArray<string> };
+const DryRunJson = Schema.fromJsonString(
+  Schema.Struct({
+    tasks: Schema.Array(
+      Schema.Struct({ taskId: Schema.String, dependencies: Schema.Array(Schema.String) }),
+    ),
+  }),
+);
 
-function dryRunTypesCheckForDependents(packageName: string): ReadonlyArray<DryRunTask> {
-  // Redirects stdout to a file: Bun on Linux truncates a child's piped stdout at ~219 KB, and
-  // the dry-run JSON lists every hashed input file.
-  const tempDir = mkdtempSync(path.join(tmpdir(), "turbo-dry-run-"));
-  try {
-    const outputPath = path.join(tempDir, "dry-run.json");
-    const fd = openSync(outputPath, "w");
-    try {
-      execFileSync(turboBin, ["run", "types:check", `--filter=...${packageName}`, "--dry=json"], {
-        cwd: repoDir,
-        stdio: ["ignore", fd, "pipe"],
-      });
-    } finally {
-      closeSync(fd);
+const dryRunTypesCheckForDependents = (packageName: string) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make(
+        turboBin,
+        ["run", "types:check", `--filter=...${packageName}`, "--dry=json"],
+        {
+          cwd: repoDir,
+          stdin: "ignore",
+        },
+      ),
+    );
+    const [exitCode, stdout, stderr] = yield* Effect.all(
+      [
+        handle.exitCode,
+        Stream.mkString(Stream.decodeText(handle.stdout)),
+        Stream.mkString(Stream.decodeText(handle.stderr)),
+      ],
+      { concurrency: "unbounded" },
+    );
+    if (exitCode !== 0) {
+      return yield* Effect.die(`turbo dry run exited with code ${exitCode}: ${stderr}`);
     }
-    return JSON.parse(readFileSync(outputPath, "utf8")).tasks;
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-}
+    const { tasks } = yield* Schema.decodeEffect(DryRunJson)(stdout);
+    return tasks;
+  }).pipe(Effect.scoped);
 
 function reachableTaskIds(tasks: ReadonlyArray<DryRunTask>, from: string): ReadonlySet<string> {
   const byId = new Map(tasks.map((task) => [task.taskId, task]));
@@ -53,19 +65,22 @@ function reachableTaskIds(tasks: ReadonlyArray<DryRunTask>, from: string): Reado
 describe("dependent types:check cache key", () => {
   test.each(["@supabase/api", "@supabase/config"])(
     "includes %s's files for every workspace that depends on it",
-    (packageName) => {
-      const tasks = dryRunTypesCheckForDependents(packageName);
-      const dependentTypesChecks = tasks
-        .map((task) => task.taskId)
-        .filter(
-          (taskId) => taskId.endsWith("#types:check") && !taskId.startsWith(`${packageName}#`),
-        );
+    (packageName) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const tasks = yield* dryRunTypesCheckForDependents(packageName);
+          const dependentTypesChecks = tasks
+            .map((task) => task.taskId)
+            .filter(
+              (taskId) => taskId.endsWith("#types:check") && !taskId.startsWith(`${packageName}#`),
+            );
 
-      expect(dependentTypesChecks).toContain("supabase#types:check");
-      for (const taskId of dependentTypesChecks) {
-        expect(reachableTaskIds(tasks, taskId), taskId).toContain(`${packageName}#transit`);
-      }
-    },
+          expect(dependentTypesChecks).toContain("supabase#types:check");
+          for (const taskId of dependentTypesChecks) {
+            expect(reachableTaskIds(tasks, taskId), taskId).toContain(`${packageName}#transit`);
+          }
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ),
     60_000,
   );
 });

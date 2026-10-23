@@ -6,7 +6,7 @@
   },
   "ignorePatterns": [
     "**",
-    "!packages/api/src/**",
+    "!packages/api/**",
     "!packages/config/**",
     "!packages/stack/**",
     "!apps/cli/src/auth/**",
