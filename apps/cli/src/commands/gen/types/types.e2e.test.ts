@@ -337,7 +337,7 @@ describe("gen types e2e", () => {
 
             for (const lang of TYPEGEN_LANGS) {
               const result = yield* runSupabaseEffect(
-                ["gen", "types", "--local", "--lang", lang, "--schema", "public"],
+                ["gen", "types", "--lang", lang, "--schema", "public"],
                 {
                   cwd: project.dir,
                   home: home.dir,
@@ -345,7 +345,7 @@ describe("gen types e2e", () => {
                   exitTimeoutMs: TYPEGEN_TIMEOUT_MS,
                 },
               );
-              expectSucceeded(`supabase gen types --local --lang ${lang}`, result);
+              expectSucceeded(`supabase gen types --lang ${lang}`, result);
               expectNoRemoteAuthPath(result);
               expectLanguageShape(lang, result.stdout);
               expectLocalSmokeTable(lang, result.stdout);
@@ -390,12 +390,11 @@ describe("gen types e2e", () => {
               [
                 "gen",
                 "types",
-                "--project-id",
-                remoteProjectRef,
                 "--lang",
                 lang,
                 "--schema",
                 "public",
+                `--remote=${remoteProjectRef}`,
               ],
               {
                 cwd: project.dir,
@@ -404,7 +403,7 @@ describe("gen types e2e", () => {
                 exitTimeoutMs: TYPEGEN_TIMEOUT_MS,
               },
             );
-            expectSucceeded(`supabase gen types --project-id <ref> --lang ${lang}`, result);
+            expectSucceeded(`supabase gen types --remote=<ref> --lang ${lang}`, result);
             expectLanguageShape(lang, result.stdout);
           }
         }),

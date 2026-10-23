@@ -15,7 +15,7 @@ describe("supabase sso", () => {
         const fs = yield* FileSystem.FileSystem;
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "sso-e2e-" });
         const { exitCode, stdout } = yield* runSupabaseEffect(
-          ["sso", "info", "--project-ref", TEST_PROJECT_REF, "--output-format", "json"],
+          ["sso", "info", "--output-format", "json", `--remote=${TEST_PROJECT_REF}`],
           { cwd, env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
         );
         expect(exitCode).toBe(0);
@@ -35,7 +35,7 @@ describe("supabase sso", () => {
         const fs = yield* FileSystem.FileSystem;
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "sso-e2e-" });
         const { exitCode, stdout } = yield* runSupabaseEffect(
-          ["sso", "info", "--project-ref", TEST_PROJECT_REF],
+          ["sso", "info", `--remote=${TEST_PROJECT_REF}`],
           { cwd, env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
         );
         expect(exitCode).toBe(0);
@@ -48,13 +48,13 @@ describe("supabase sso", () => {
   );
 
   it.live(
-    "show with invalid UUID exits 1 with Go-format message",
+    "show with invalid UUID exits 1 with the formatted message",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "sso-e2e-" });
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["sso", "show", "not-a-uuid", "--project-ref", TEST_PROJECT_REF],
+          ["sso", "show", "not-a-uuid", `--remote=${TEST_PROJECT_REF}`],
           { cwd, env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
         );
         expect(exitCode).toBe(1);
@@ -64,13 +64,13 @@ describe("supabase sso", () => {
   );
 
   it.live(
-    "remove with invalid UUID exits 1 with Go-format message",
+    "remove with invalid UUID exits 1 with the formatted message",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "sso-e2e-" });
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["sso", "remove", "not-a-uuid", "--project-ref", TEST_PROJECT_REF],
+          ["sso", "remove", "not-a-uuid", "--yes", `--remote=${TEST_PROJECT_REF}`],
           { cwd, env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
         );
         expect(exitCode).toBe(1);
@@ -80,13 +80,13 @@ describe("supabase sso", () => {
   );
 
   it.live(
-    "update with invalid UUID exits 1 with Go-format message",
+    "update with invalid UUID exits 1 with the formatted message",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "sso-e2e-" });
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["sso", "update", "not-a-uuid", "--project-ref", TEST_PROJECT_REF],
+          ["sso", "update", "not-a-uuid", "--yes", `--remote=${TEST_PROJECT_REF}`],
           { cwd, env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
         );
         expect(exitCode).toBe(1);
@@ -100,13 +100,13 @@ describe("supabase sso", () => {
   // `Flag.Literals` validation runs during parsing, before that point, so an
   // invalid `--type` value still shows a usage block.
   it.live(
-    "add without --type: stdout stays clean, stderr is a single Go-parity line (no usage block)",
+    "add without --type: stdout stays clean, stderr is a single line (no usage block)",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "sso-e2e-" });
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["sso", "add", "--project-ref", TEST_PROJECT_REF],
+          ["sso", "add", `--remote=${TEST_PROJECT_REF}`],
           { cwd },
         );
         expect(exitCode).toBe(1);
@@ -125,7 +125,7 @@ describe("supabase sso", () => {
         const fs = yield* FileSystem.FileSystem;
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "sso-e2e-" });
         const { exitCode, stdout, stderr } = yield* runSupabaseEffect(
-          ["sso", "add", "--type", "bogus", "--project-ref", TEST_PROJECT_REF],
+          ["sso", "add", "--type", "bogus", `--remote=${TEST_PROJECT_REF}`],
           { cwd },
         );
         expect(exitCode).toBe(1);

@@ -143,9 +143,7 @@ export async function exec(
 
   // The CLI resolves its API base URL through the profile system, not
   // SUPABASE_API_URL: `CommandSettings` accepts a built-in profile name or a YAML
-  // file path, and the still-proxied Go binary reads the same file via
-  // SUPABASE_PROFILE. Write a temp profile file pointing at the replay server so
-  // both paths reach it.
+  // file path. Write a temp profile file pointing at the replay server.
   const profilePath = join(tmpdir(), `cli-e2e-profile-${randomUUID()}.yaml`);
   const url = harness.options.apiUrl;
   writeFileSync(

@@ -1,6 +1,6 @@
 import { type V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
+import { Cause, Effect, Exit, Layer, Option, FileSystem, Schema } from "effect";
 
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -10,13 +10,18 @@ import {
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApi,
+  type MockCommandPlatformApiOpts,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  unverifiedTargetBanner,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { describeHostedConsent } from "../../../../tests/helpers/hosted-consent.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { realLinkedProjectCache } from "../../../../tests/helpers/permission-real-layers.ts";
 import type { BranchesPauseFlags } from "./pause.command.ts";
 import { branchesPause } from "./pause.handler.ts";
+import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { TargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 // Pause/restore endpoints accept a plain project ref, unlike getABranchConfig's oneOf.
 const BRANCH_REF = "cccccccccccccccccccc";
@@ -69,6 +74,14 @@ const PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
 
 const tempRoot = useTempWorkdir("supabase-branches-pause-int-");
 
+const buildRuntime = (opts: Parameters<typeof buildTestRuntime>[0]) =>
+  Layer.mergeAll(
+    buildTestRuntime(opts),
+    Layer.succeed(YesFlag, true),
+    Layer.succeed(TargetPolicy, { group: "hosted", consent: "no" }),
+  );
+
+const confirmed = `Confirmed by --yes: Pause preview branch ${BRANCH_REF} on project ${VALID_REF}\n`;
 const sequence = (requests: ReadonlyArray<{ method: string; url: string }>) =>
   requests.map(({ method, url }) => `${method} ${url}`);
 
@@ -103,9 +116,9 @@ interface SetupOpts {
   readonly pauseStatus?: number;
 }
 
-function buildApi(opts: SetupOpts) {
+function apiOptions(opts: SetupOpts): MockCommandPlatformApiOpts {
   const pauseStatus = opts.pauseStatus ?? 200;
-  return mockCommandPlatformApi({
+  return {
     handler: (request) =>
       Effect.sync(() => {
         if (request.method === "POST" && request.url.endsWith("/pause")) {
@@ -122,14 +135,18 @@ function buildApi(opts: SetupOpts) {
         }
         return jsonResponse(request, 200, null);
       }),
-  });
+  };
+}
+
+function buildApi(opts: SetupOpts) {
+  return mockCommandPlatformApi(apiOptions(opts));
 }
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: "text" });
   const api = buildApi(opts);
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
-  const layer = buildTestRuntime({ out, api, cliSettings });
+  const layer = buildRuntime({ out, api, cliSettings });
   return { layer, out, api };
 }
 
@@ -139,7 +156,7 @@ function setupTracked(opts: SetupOpts = {}) {
   const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
   const telemetry = mockTelemetryStateTracked();
   const cache = mockLinkedProjectCacheTracked();
-  const layer = buildTestRuntime({
+  const layer = buildRuntime({
     out,
     api,
     cliSettings,
@@ -151,6 +168,7 @@ function setupTracked(opts: SetupOpts = {}) {
 
 const baseFlags: BranchesPauseFlags = {
   name: Option.none(),
+  remote: Option.none(),
   projectRef: Option.none(),
 };
 
@@ -202,12 +220,12 @@ describe("branches pause integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("does not emit anything on stdout/stderr on success (silent like Go)", () => {
+  it.effect("does not emit anything on stdout/stderr on success", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       yield* branchesPause({ ...baseFlags, name: Option.some(BRANCH_REF) });
       expect(out.stdoutText).toBe("");
-      expect(out.stderrText).toBe("");
+      expect(out.stderrText).toBe(unverifiedTargetBanner() + confirmed);
     }).pipe(Effect.provide(layer));
   });
 
@@ -244,7 +262,7 @@ describe("branches pause integration", () => {
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildTestRuntime({
+      const layer = buildRuntime({
         out,
         api,
         cliSettings,
@@ -279,7 +297,7 @@ describe("branches pause integration", () => {
   it.effect("prompts with the branch listing when the branch argument is an empty string", () => {
     const out = mockOutput({ format: "text", promptSelectResponses: [BRANCH_REF] });
     const api = pickerApi();
-    const layer = buildTestRuntime({
+    const layer = buildRuntime({
       out,
       api,
       cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
@@ -295,4 +313,9 @@ describe("branches pause integration", () => {
       assertPermissionDrift({ command: "branches pause", requests: api.requests });
     }).pipe(Effect.provide(layer));
   });
+});
+
+describeHostedConsent("branches pause", {
+  api: apiOptions({}),
+  invoke: () => ({ run: branchesPause({ ...baseFlags, name: Option.some(BRANCH_REF) }) }),
 });

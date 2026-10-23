@@ -77,12 +77,14 @@ supabase link
 
 ## Manage Your Database
 
-Create migrations, compare schemas, and apply changes locally or to your linked project:
+Create migrations, compare schemas, and apply changes to your local database. Add `--remote` to act
+on your linked project instead:
 
 ```sh
 supabase migration new create_profiles
 supabase db diff
 supabase db push
+supabase db push --remote
 supabase db reset
 ```
 
@@ -101,8 +103,8 @@ supabase functions deploy hello-world
 Generate TypeScript types from your local database or linked project:
 
 ```sh
-supabase gen types --local
-supabase gen types --linked
+supabase gen types
+supabase gen types --remote
 ```
 
 ## Reference
@@ -137,7 +139,6 @@ Useful source entry points:
 | Path              | Purpose                              |
 | ----------------- | ------------------------------------ |
 | `apps/cli`        | TypeScript/Bun CLI package           |
-| `apps/cli-go`     | Go CLI source used by the CLI        |
 | `packages/stack`  | Local Supabase stack runtime         |
 | `packages/config` | Config schema and generated types    |
 | `packages/api`    | Typed Supabase Management API client |

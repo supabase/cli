@@ -1,11 +1,13 @@
 # `supabase projects api-keys`
 
+Target: hosted, no consent — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
-| Path                                   | Format                    | When                                                                    |
-| -------------------------------------- | ------------------------- | ----------------------------------------------------------------------- |
-| `~/.supabase/access-token`             | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable              |
-| `<workdir>/supabase/.temp/project-ref` | plain text (ref string)   | when `--project-ref` is not provided, to resolve the linked project ref |
+| Path                                   | Format                    | When                                                                                                                                                  |
+| -------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/access-token`             | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                            |
+| `<workdir>/supabase/.temp/project-ref` | plain text (ref string)   | when `--remote=<ref>` and `SUPABASE_PROJECT_ID` are not provided, to resolve the linked project ref, and as the linked parent for `--remote=<branch>` |
 
 ## Files Written
 
@@ -15,9 +17,11 @@
 
 ## API Routes
 
-| Method | Path                                        | Auth         | Request body | Response (used fields)                      |
-| ------ | ------------------------------------------- | ------------ | ------------ | ------------------------------------------- |
-| `GET`  | `/v1/projects/{ref}/api-keys[?reveal=true]` | Bearer token | none         | `[{name: string, api_key: string \| null}]` |
+| Method | Path                                        | Auth         | Request body | Response (used fields)                                                                                                                                                                                                                                   |
+| ------ | ------------------------------------------- | ------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/projects/{parent}/branches`            | Bearer token | none         | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>` (or the deprecated `--project-ref=<branch>`), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
+| `GET`  | `/v1/branches/{id}`                         | Bearer token | none         | `{ref, status, …}` — only for `--remote=<branch UUID>` when no project is linked                                                                                                                                                                         |
+| `GET`  | `/v1/projects/{ref}/api-keys[?reveal=true]` | Bearer token | none         | `[{name: string, api_key: string \| null}]`                                                                                                                                                                                                              |
 
 The `reveal=true` query param is sent only when `--reveal` is passed; it instructs the
 Management API to return the full secret keys (`sb_secret_...`) in `api_key` instead of
@@ -32,10 +36,11 @@ Management API to return the full secret keys (`sb_secret_...`) in `api_key` ins
 
 ## Flags
 
-| Flag            | Type    | Required | Description                                                                 |
-| --------------- | ------- | -------- | --------------------------------------------------------------------------- |
-| `--project-ref` | string  | no       | Project ref of the Supabase project (resolved from linked config if absent) |
-| `--reveal`      | boolean | no       | Reveal the secret API keys in full (sends `reveal=true`); default redacted  |
+| Flag            | Type    | Required | Description                                                                                                                                                   |
+| --------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--remote`      | string  | no       | Project to read keys from: `--remote=<ref>`, `--remote=<branch>` of the linked project, or a bare `--remote` for the linked project (linked config if absent) |
+| `--project-ref` | string  | no       | Deprecated hidden alias of `--remote=<ref>`; prints a deprecation warning on stderr                                                                           |
+| `--reveal`      | boolean | no       | Reveal the secret API keys in full (sends `reveal=true`); default redacted                                                                                    |
 
 ## Exit Codes
 
@@ -49,9 +54,9 @@ Management API to return the full secret keys (`sb_secret_...`) in `api_key` ins
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                                                                                            |
-| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` is telemetry-safe; `--reveal`'s boolean value is logged but never the key values) |
+| Event                  | When                                       | Notable properties / groups                                                                                                                                                                                       |
+| ---------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--remote` → `true` (bare), the ref, or `<redacted>`; `--project-ref` is recorded only when it is ref-shaped; `--reveal`'s boolean value is logged but never the key values) |
 
 ## Output
 
@@ -61,7 +66,7 @@ Two-axis: `--output {pretty|json|yaml|toml|env}` wins when set; otherwise
 
 ### `--output-format text`
 
-Glamour ASCII table. Column order: `NAME`, `KEY VALUE`. A null api key renders as `******`.
+ASCII table. Column order: `NAME`, `KEY VALUE`. A null api key renders as `******`.
 
 ```
   NAME         | KEY VALUE
@@ -102,7 +107,4 @@ On failure, an `error` event is emitted instead:
 - API keys with null values (redacted by the API) render as `******` in text mode and
   in the toml/env env map; the json/yaml encodings preserve the raw `null`. Passing
   `--reveal` makes the API return the secret values, so they print in full across all
-  formats (issue #4775). This is a TS-only flag with no Go CLI equivalent.
-- The `--project-ref` flag is optional when the CLI is linked to a project via `supabase link`.
-  When omitted, the ref is resolved flag → env → `.temp/project-ref` → prompt on a TTY,
-  failing with a not-linked error otherwise.
+  formats (issue #4775).

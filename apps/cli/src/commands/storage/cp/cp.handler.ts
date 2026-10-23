@@ -4,11 +4,11 @@ import { Effect, FileSystem, Option, Path, Ref, Result, Stream } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import { requireTargetMutationConsent } from "../../../command-internal/hosted-consent/hosted-consent.ts";
 import {
   contentTypeForUpload,
   readSniffBytes,
@@ -24,21 +24,21 @@ import type {
   StorageGatewayStatusError,
 } from "../../../command-internal/storage-gateway.errors.ts";
 import {
-  GoUrlParseError,
+  UrlParseError,
   STORAGE_SCHEME,
-  goUrlParse,
+  parseUrl,
   splitBucketPrefix,
 } from "../../../command-internal/storage-url.ts";
 import {
   assertStorageWorkdir,
   connectStorageGateway,
   loadStorageConfig,
+  resolveStorageTarget,
 } from "../storage.frame.ts";
 import { StorageConfigError } from "../../../command-internal/storage-credentials.errors.ts";
 import {
   StorageCopyBetweenBucketsError,
   StorageFileError,
-  StorageMutuallyExclusiveFlagsError,
   StorageObjectNotFoundError,
   StorageUnsupportedOperationError,
   StorageUrlParseError,
@@ -63,7 +63,6 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
   const cliSettings = yield* CommandSettings;
   const telemetryState = yield* TelemetryState;
   const linkedProjectCache = yield* LinkedProjectCache;
-  const resolver = yield* RemoteTarget;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
@@ -83,15 +82,7 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
   yield* Effect.gen(function* () {
     yield* assertStorageWorkdir(cliSettings.workdir);
 
-    // `--project-ref` only applies to the linked project; it never implies `--linked`.
-    if (Option.isSome(flags.projectRef) && flags.local) {
-      return yield* new StorageMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-      });
-    }
-
-    const projectRef = flags.local ? "" : (yield* resolver.load(flags.projectRef)).ref;
+    const { target, projectRef } = yield* resolveStorageTarget(flags);
     if (projectRef !== "") {
       yield* Ref.set(linkedRef, Option.some(projectRef));
     }
@@ -106,6 +97,13 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
     const dstUrl = yield* parseCpUrl(flags.dst, "dst");
     const srcIsStorage = srcUrl.scheme === STORAGE_SCHEME;
     const dstIsStorage = dstUrl.scheme === STORAGE_SCHEME;
+
+    if (srcUrl.scheme === "" && dstIsStorage) {
+      yield* requireTargetMutationConsent(target, {
+        action: `Upload ${flags.src} to ${flags.dst}`,
+        details: flags.recursive ? ["Existing objects under the destination are overwritten."] : [],
+      });
+    }
 
     const summary: CpSummary = { uploaded: [], downloaded: [] };
 
@@ -180,11 +178,11 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
 
 const parseCpUrl = (raw: string, which: "src" | "dst") =>
   Effect.try({
-    try: () => goUrlParse(raw),
+    try: () => parseUrl(raw),
     catch: (cause) =>
       new StorageUrlParseError({
         message: `failed to parse ${which} url: ${
-          cause instanceof GoUrlParseError ? cause.message : String(cause)
+          cause instanceof UrlParseError ? cause.message : String(cause)
         }`,
       }),
   });

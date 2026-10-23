@@ -27,7 +27,8 @@ import {
   startReleaseFixture,
   type ReleaseFixture,
 } from "../../../tests/helpers/release-fixture.ts";
-import { projectStateModeLayer } from "../../command-internal/project-state-mode.ts";
+import { cliConfigValuesTestLayer } from "../../../tests/helpers/config-values-layer.ts";
+import { projectStateModeLayer } from "../../shared/config/project-state-mode.ts";
 import { ExperimentalFlag } from "../../command-internal/global-flags.ts";
 import { stackUpdate } from "../experimental/stack/update/update.handler.ts";
 import { link } from "./link.handler.ts";
@@ -195,6 +196,7 @@ const layerFor = (
       telemetry: mockTelemetryStateTracked().layer,
       ...(fileSystem === undefined ? {} : { fileSystem }),
     }),
+    cliConfigValuesTestLayer,
     projectStateModeLayer("stack"),
     mockRuntimeInfo({ platform: "linux", arch: "x64" }),
     Layer.succeed(ExperimentalFlag, false),

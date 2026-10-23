@@ -1,16 +1,15 @@
 import { type CliConfig, CliConfigSchema } from "@supabase/config/effect";
-import { loadCliConfig, type InternalLoadCliConfigOptions } from "@supabase/config/internal";
 import { BunPath } from "@effect/platform-bun";
-import { Effect, FileSystem, Path, Schema } from "effect";
+import { Effect, FileSystem, Option, Path, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
 import { Output } from "../shared/output/output.service.ts";
 import { resolveYesWithProjectEnv } from "./global-flags.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { bold, yellow } from "./colors.ts";
-import { loadProjectEnv } from "./db-config.toml-read.ts";
-import { relativeConfigPath } from "./workdir-project.ts";
-import { shouldSearchAncestors } from "./workdir-search.ts";
+import { describeConfigLoadFailure, loadResolvedConfigContext } from "./resolved-config-context.ts";
+import { isConfigValueFailure } from "./config-value-passthrough.ts";
+import { loadCliProjectEnvFiles } from "../shared/config/cli-config-env.ts";
 import { promptYesNo } from "./prompt-yes-no.ts";
 import {
   resolveStorageCredentials,
@@ -33,8 +32,12 @@ import {
   isVectorBucketsFeatureNotEnabled,
 } from "../commands/seed/buckets/buckets.classify.ts";
 import { SeedConfigLoadError } from "../commands/seed/buckets/buckets.errors.ts";
+import { describeConfigParseError } from "./workdir-project.ts";
 import { bucketObjectKey } from "../commands/seed/buckets/buckets.upload.ts";
-import { configParseCauseMessage } from "../shared/output/normalize-error.ts";
+
+// Re-exported so `stack start` can report a project-context config-load failure with the
+// same tag `seedBucketsRun` itself fails with, without importing across command boundaries.
+export { SeedConfigLoadError };
 
 const CONFIG_PATH = "supabase/config.toml";
 const UPLOAD_CONCURRENCY = 5;
@@ -108,7 +111,12 @@ const decodeDefaultCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
  * `emitSummary` gates the stdout summary; `interactive` (default `true`) gates overwrite/prune
  * prompts. The caller owns project-ref resolution, cache writes, and telemetry.
  */
-export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
+export const seedBucketsRun = Effect.fnUntraced(function* <
+  EA = never,
+  RA = never,
+  EC = never,
+  RC = never,
+>(opts: {
   readonly projectRef: string;
   readonly emitSummary: boolean;
   readonly interactive?: boolean;
@@ -120,7 +128,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
    */
   readonly yes?: boolean;
   /**
-   * Skips this function's own `loadCliConfig` reload in favor of a config the caller already
+   * Skips this function's own resolved config load in favor of a config the caller already
    * resolved through its own nested-env walk, so a fresh reload here can't drop an override
    * that exists only in the shell/dotenv, not in `config.toml`.
    */
@@ -149,6 +157,13 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
    * would swallow the next line of a `curl … | bash` script. Declined prunes say so instead.
    */
   readonly promptless?: boolean;
+  /** Announces the local Storage endpoint as the run's target once its URL is known. */
+  readonly announceLocalEndpoint?: (baseUrl: string) => Effect.Effect<void, EA, RA>;
+  /**
+   * Asks for consent to the hosted plan's writes before the first one. One answer covers every
+   * bucket overwrite and prune, so no per-bucket prompt follows it.
+   */
+  readonly confirmHostedWrites?: (details: ReadonlyArray<string>) => Effect.Effect<unknown, EC, RC>;
 }) {
   const output = yield* Output;
   const cliSettings = yield* CommandSettings;
@@ -156,44 +171,52 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
-  const projectEnvValues = opts.projectEnvValues ?? (yield* loadProjectEnv(fs, path, workdir));
-  // `--yes` OR `SUPABASE_YES`.
-  const yes = opts.yes ?? (yield* resolveYesWithProjectEnv(projectEnvValues));
   const { projectRef, emitSummary } = opts;
   const interactive = opts.interactive ?? true;
   const promptless = opts.promptless ?? false;
 
-  // Loads config.toml, merging `[remotes.*]` overrides for `--linked`; skipped when the
-  // caller already supplied `resolvedConfig`.
-  // An explicit `opts.workdir` is the exact project root; only the caller's own workdir
-  // (`cliSettings.workdir`) may still search ancestors for `config.toml`.
-  const search = opts.workdir === undefined && shouldSearchAncestors(cliSettings);
-  const loadOptions: InternalLoadCliConfigOptions =
-    projectRef !== ""
-      ? { projectRef, goViperCompat: true, search }
-      : { goViperCompat: true, search };
-  const loaded =
+  // Skipped when the caller already supplied `resolvedConfig`. A missing config file behaves as
+  // the embedded defaults, not an early exit: local + no-config falls into the no-op
+  // short-circuit below, while `--linked` + no-config still falls through to the remote path so
+  // auth/project/API failures surface.
+  const context =
     opts.resolvedConfig !== undefined
-      ? null
-      : yield* loadCliConfig(workdir, loadOptions).pipe(
+      ? undefined
+      : yield* loadResolvedConfigContext(
+          workdir,
+          projectRef === "" ? Option.none() : Option.some(projectRef),
+        ).pipe(
           Effect.catchTag(
             "CliConfigParseError",
             (cause) =>
               new SeedConfigLoadError({
-                message: `failed to parse ${relativeConfigPath(workdir, cause.path)}: ${configParseCauseMessage(cause.cause)}`,
+                message: describeConfigParseError(workdir, cause),
               }),
           ),
+          Effect.mapError((cause) =>
+            cause instanceof SeedConfigLoadError || isConfigValueFailure(cause)
+              ? cause
+              : new SeedConfigLoadError({ message: describeConfigLoadFailure(cause) }),
+          ),
         );
-  // A missing config file behaves as embedded defaults, not an early exit: local + no-config
-  // falls into the no-op short-circuit below, while `--linked` + no-config still falls
-  // through to the remote path so auth/project/API failures surface.
-  const config =
-    opts.resolvedConfig?.config ?? (loaded === null ? decodeDefaultCliConfig({}) : loaded.config);
-  const document = opts.resolvedConfig?.document ?? (loaded === null ? undefined : loaded.document);
+  const projectEnvValues =
+    opts.projectEnvValues ??
+    context?.projectEnvValues ??
+    (yield* loadCliProjectEnvFiles(workdir).pipe(
+      Effect.map((loaded) => loaded.values),
+      Effect.mapError((cause) => new SeedConfigLoadError({ message: cause.message })),
+    ));
+  // `--yes` OR `SUPABASE_YES`.
+  const yes = opts.yes ?? (yield* resolveYesWithProjectEnv(projectEnvValues));
+  const config = opts.resolvedConfig?.config ?? context?.config ?? decodeDefaultCliConfig({});
+  const document = opts.resolvedConfig?.document ?? context?.document;
 
   // Printed whenever a `[remotes.*]` block matched the linked ref; stderr in all output modes.
-  if (loaded !== null && loaded.appliedRemote !== undefined) {
-    yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
+  const appliedRemote = Option.getOrUndefined(
+    context?.resolvedConfig.appliedRemote ?? Option.none(),
+  );
+  if (appliedRemote !== undefined) {
+    yield* output.raw(`Loading config override: [remotes.${appliedRemote}]\n`, "stderr");
   }
   const bucketsConfig = config.storage.buckets ?? {};
   const bucketNames = Object.keys(bucketsConfig);
@@ -227,7 +250,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
     // consults these legacy-only inputs, so it skips this validation entirely.
     const backend = yield* currentStackBackend;
     if (backend.kind !== "stack") {
-      yield* validateLocalStorageConfig(config, projectEnvValues);
+      yield* validateLocalStorageConfig();
     }
     if (emitSummary && output.format !== "text") {
       yield* output.success("", { ...emptySummary() });
@@ -236,13 +259,10 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
   }
 
   // Build the Storage service-gateway client (local or remote).
-  const credentials =
-    opts.credentials ??
-    (yield* resolveStorageCredentials({
-      projectRef,
-      config,
-      projectEnvValues,
-    }));
+  const credentials = opts.credentials ?? (yield* resolveStorageCredentials({ projectRef }));
+  if (projectRef === "" && opts.announceLocalEndpoint !== undefined) {
+    yield* opts.announceLocalEndpoint(credentials.baseUrl);
+  }
 
   // Gateway operations use plain `globalThis.fetch` instead of the DoH fetch, with the Kong CA in
   // `FetchHttpClient.RequestInit` for local + https; the api-keys lookup in
@@ -256,16 +276,36 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
 
     const summary = emptySummary();
 
-    yield* upsertBuckets(output, yes, interactive, promptless, gateway, bucketPropsByName, summary);
+    const existingBuckets = yield* gateway.listBuckets;
+
+    // A hosted run never prompts per item: one consent covers every overwrite and prune.
+    const confirmHostedWrites = projectRef === "" ? undefined : opts.confirmHostedWrites;
+    if (confirmHostedWrites !== undefined) {
+      const details = yield* planHostedWrites(gateway, config, bucketPropsByName, existingBuckets);
+      if (details.length > 0) yield* confirmHostedWrites(details);
+    }
+    const approved = confirmHostedWrites !== undefined || yes;
+    const skipPrompts = confirmHostedWrites !== undefined || promptless;
+
+    yield* upsertBuckets(
+      output,
+      approved,
+      interactive,
+      skipPrompts,
+      gateway,
+      existingBuckets,
+      bucketPropsByName,
+      summary,
+    );
 
     // Upsert analytics buckets (remote --linked only).
     if (config.storage.analytics.enabled && projectRef !== "") {
       yield* output.raw("Updating analytics buckets...\n", "stderr");
       yield* upsertAnalyticsBuckets(
         output,
-        yes,
+        approved,
         interactive,
-        promptless,
+        skipPrompts,
         gateway,
         Object.keys(config.storage.analytics.buckets),
         summary,
@@ -277,9 +317,9 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
       yield* output.raw("Updating vector buckets...\n", "stderr");
       yield* upsertVectorBuckets(
         output,
-        yes,
+        approved,
         interactive,
-        promptless,
+        skipPrompts,
         gateway,
         vectorBucketNames,
         summary,
@@ -336,6 +376,8 @@ const computeBucketProps = (
       }),
   });
 
+type ExistingBucket = { readonly id: string; readonly name: string };
+
 // `propsByName` is precomputed and size-validated before this runs.
 const upsertBuckets = Effect.fnUntraced(function* (
   output: typeof Output.Service,
@@ -343,10 +385,10 @@ const upsertBuckets = Effect.fnUntraced(function* (
   interactive: boolean,
   promptless: boolean,
   gateway: StorageGateway,
+  existing: ReadonlyArray<ExistingBucket>,
   propsByName: ReadonlyMap<string, UpsertBucketProps>,
   summary: SeedSummary,
 ) {
-  const existing = yield* gateway.listBuckets;
   const byName = new Map(existing.map((b) => [b.name, b.id]));
 
   for (const [name, props] of propsByName) {
@@ -472,6 +514,71 @@ const upsertAnalyticsBuckets = Effect.fnUntraced(function* (
     yield* gateway.deleteAnalyticsBucket(name);
     summary.analytics_pruned.push(name);
   }
+});
+
+const joinNames = (names: ReadonlyArray<string>): string => names.join(", ");
+
+/**
+ * The hosted writes `seedBucketsRun` is about to make, as consent detail lines; empty when it
+ * would write nothing. Reads the remote bucket lists but changes nothing.
+ */
+const planHostedWrites = Effect.fnUntraced(function* (
+  gateway: StorageGateway,
+  config: CliConfig,
+  propsByName: ReadonlyMap<string, UpsertBucketProps>,
+  existingBuckets: ReadonlyArray<ExistingBucket>,
+) {
+  const details: Array<string> = [];
+  const existing = new Set(existingBuckets.map((bucket) => bucket.name));
+  const configured = [...propsByName.keys()];
+  const create = configured.filter((name) => !existing.has(name));
+  const overwrite = configured.filter((name) => existing.has(name));
+  if (create.length > 0) details.push(`Create buckets: ${joinNames(create)}`);
+  if (overwrite.length > 0)
+    details.push(`Overwrite the properties of buckets: ${joinNames(overwrite)}`);
+
+  const withObjects = Object.entries(config.storage.buckets ?? {})
+    .filter(([, bucket]) => bucket.objects_path.length > 0)
+    .map(([name]) => name);
+  if (withObjects.length > 0) {
+    details.push(
+      `Upload objects, overwriting existing ones, to buckets: ${joinNames(withObjects)}`,
+    );
+  }
+
+  if (config.storage.analytics.enabled) {
+    const declared = Object.keys(config.storage.analytics.buckets);
+    const present = new Set(yield* gateway.listAnalyticsBuckets);
+    const created = declared.filter((name) => !present.has(name));
+    const pruned = [...present].filter((name) => !declared.includes(name));
+    if (created.length > 0) details.push(`Create analytics buckets: ${joinNames(created)}`);
+    if (pruned.length > 0) {
+      details.push(`Delete analytics buckets not declared in ${CONFIG_PATH}: ${joinNames(pruned)}`);
+    }
+  }
+
+  const declaredVector = Object.keys(config.storage.vector.buckets);
+  if (config.storage.vector.enabled && declaredVector.length > 0) {
+    const listed = yield* gateway.listVectorBuckets.pipe(
+      Effect.map(Option.some),
+      Effect.catch((error) =>
+        isVectorBucketsFeatureNotEnabled(error.message) ||
+        isLocalVectorBucketsUnavailable(error.message)
+          ? Effect.succeed(Option.none<ReadonlyArray<string>>())
+          : Effect.fail(error),
+      ),
+    );
+    if (Option.isSome(listed)) {
+      const present = new Set(listed.value);
+      const created = declaredVector.filter((name) => !present.has(name));
+      const pruned = listed.value.filter((name) => !declaredVector.includes(name));
+      if (created.length > 0) details.push(`Create vector buckets: ${joinNames(created)}`);
+      if (pruned.length > 0) {
+        details.push(`Delete vector buckets not declared in ${CONFIG_PATH}: ${joinNames(pruned)}`);
+      }
+    }
+  }
+  return details;
 });
 
 /**

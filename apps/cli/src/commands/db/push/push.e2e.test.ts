@@ -28,12 +28,12 @@ describe("supabase db push --skip-vault", () => {
       Effect.gen(function* () {
         const projectDir = yield* makeVaultProject;
         const { exitCode, stderr } = yield* runSupabaseEffect(
-          ["db", "push", "--db-url", UNREACHABLE_DB_URL],
+          ["db", "push", `--remote=${UNREACHABLE_DB_URL}`],
           { cwd: projectDir },
         );
         expect(exitCode).toBe(1);
         expect(stderr).toContain("failed to parse config:");
-        expect(stderr).not.toContain("Connecting to remote database...");
+        expect(stderr).not.toContain("Target: ");
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     E2E_TIMEOUT_MS,
   );
@@ -44,11 +44,11 @@ describe("supabase db push --skip-vault", () => {
       Effect.gen(function* () {
         const projectDir = yield* makeVaultProject;
         const { exitCode, stderr } = yield* runSupabaseEffect(
-          ["db", "push", "--db-url", UNREACHABLE_DB_URL, "--skip-vault"],
+          ["db", "push", "--skip-vault", `--remote=${UNREACHABLE_DB_URL}`],
           { cwd: projectDir },
         );
         expect(exitCode).toBe(1);
-        expect(stderr).toContain("Connecting to remote database...");
+        expect(stderr).toContain("Target: custom Postgres (127.0.0.1:1)");
         expect(stderr).toContain("failed to connect");
         expect(stderr).not.toContain("failed to parse config:");
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),

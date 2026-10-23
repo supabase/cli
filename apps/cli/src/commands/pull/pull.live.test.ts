@@ -21,11 +21,10 @@ test("pulls config, migration history, db schema, and functions from a fresh pro
     Effect.gen(function* () {
       const result = yield* cliEffect([
         "pull",
-        "--project-ref",
-        project.ref,
         "--output-format",
         "json",
         "--yes",
+        `--remote=${project.ref}`,
       ]);
       yield* Effect.try({
         try: () => requireLiveSuccess(result, "pull"),
@@ -42,7 +41,7 @@ test("pulls config, migration history, db schema, and functions from a fresh pro
       expect(payload).toEqual(
         expect.objectContaining({
           schema_version: 1,
-          target: expect.objectContaining({ project_ref: project.ref }),
+          target: expect.objectContaining({ kind: "linked", project_ref: project.ref }),
           steps: expect.objectContaining({
             config: expect.objectContaining({ status: expect.not.stringMatching(/^failed$/) }),
             migration_history: expect.objectContaining({

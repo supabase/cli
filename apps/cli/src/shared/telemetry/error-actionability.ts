@@ -38,6 +38,7 @@ export const CliErrorCategory = {
   PlanLimit: "plan_limit",
   ProjectPaused: "project_paused",
   InvalidInput: "invalid_input",
+  ConsentRequired: "consent_required",
   ResourceLimit: "resource_limit",
   Network: "network",
   ApiStatus: "api_status",
@@ -71,6 +72,7 @@ const CLI_SUGGESTED_COMMANDS = [
   "supabase branches create",
   "supabase link",
   "supabase login",
+  "supabase network-bans remove",
   "supabase seed buckets",
   "supabase start",
   "supabase stop",
@@ -152,6 +154,8 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "query",
   "registry_pull",
   "release_mismatch",
+  "removed_command",
+  "removed_flag",
   "replication_slots_active",
   "replication_slots_query",
   "request_encoding",
@@ -200,6 +204,7 @@ type UserActionableErrorCategory =
   | typeof CliErrorCategory.PlanLimit
   | typeof CliErrorCategory.ProjectPaused
   | typeof CliErrorCategory.InvalidInput
+  | typeof CliErrorCategory.ConsentRequired
   | typeof CliErrorCategory.ResourceLimit;
 
 type CliErrorKindCategory =
@@ -248,6 +253,7 @@ type CliErrorSuggestion =
       readonly suggestion_type: typeof CliSuggestionType.RunCommand;
       readonly suggested_command?:
         | "supabase branches create"
+        | "supabase network-bans remove"
         | "supabase seed buckets"
         | "supabase start"
         | "supabase stop";
@@ -336,6 +342,13 @@ export const actionability = {
     error_category: CliErrorCategory.InvalidInput,
     has_suggestion: false,
     suggestion_type: CliSuggestionType.None,
+  },
+  /** A hosted mutation needs confirmation this run cannot ask for; `--yes` or a TTY supplies it. */
+  consentRequired: {
+    error_kind: CliErrorKind.UserActionable,
+    error_category: CliErrorCategory.ConsentRequired,
+    has_suggestion: true,
+    suggestion_type: CliSuggestionType.ProvideFlags,
   },
   invalidConfig: {
     error_kind: CliErrorKind.UserActionable,
@@ -443,6 +456,13 @@ export const actionability = {
     error_category: CliErrorCategory.ResourceLimit,
     has_suggestion: true,
     suggestion_type: CliSuggestionType.UpdateConfig,
+  },
+  /** A removed command path or flag; the suggestion is free-form replacement guidance. */
+  removedSurface: {
+    error_kind: CliErrorKind.UserActionable,
+    error_category: CliErrorCategory.InvalidInput,
+    has_suggestion: true,
+    suggestion_type: CliSuggestionType.RunCommand,
   },
   externalNetwork: {
     error_kind: CliErrorKind.ExternalService,
@@ -692,6 +712,7 @@ function isUserActionableCategory(value: unknown): value is UserActionableErrorC
     value === CliErrorCategory.PlanLimit ||
     value === CliErrorCategory.ProjectPaused ||
     value === CliErrorCategory.InvalidInput ||
+    value === CliErrorCategory.ConsentRequired ||
     value === CliErrorCategory.ResourceLimit
   );
 }
@@ -964,6 +985,7 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
 
   // @supabase/config
   CliConfigParseError: () => actionability.invalidConfig,
+  CliConfigRemovedKeyError: () => actionability.invalidConfig,
   CliProjectEnvParseError: () => actionability.invalidConfig,
   DuplicateRemoteProjectIdError: () => actionability.invalidConfig,
   InvalidRemoteProjectIdError: () => actionability.invalidConfig,

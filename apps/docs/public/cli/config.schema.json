@@ -2422,7 +2422,8 @@
         },
         "orioledb_version": {
           "type": "string",
-          "description": "Deprecated: use `db.orioledb_version` instead. Postgres storage engine version for OrioleDB."
+          "enum": [""],
+          "description": "Removed: use `db.orioledb_version` instead. Only an empty value is accepted, for older generated config files."
         },
         "s3_host": {
           "type": "string",
@@ -2460,8 +2461,8 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "description": "Use pg-delta as the schema diff engine for db diff / db pull / db remote commit. Set false to fall back to the legacy migra engine.",
-              "default": false
+              "description": "Use pg-delta as the schema diff engine for db diff / db pull (the default). Set false to fall back to the legacy migra engine.",
+              "default": true
             },
             "declarative_schema_path": {
               "type": "string",
@@ -5111,7 +5112,8 @@
                       },
                       "orioledb_version": {
                         "type": "string",
-                        "description": "Deprecated: use `db.orioledb_version` instead. Postgres storage engine version for OrioleDB."
+                        "enum": [""],
+                        "description": "Removed: use `db.orioledb_version` instead. Only an empty value is accepted, for older generated config files."
                       },
                       "s3_host": {
                         "type": "string",
@@ -5149,8 +5151,8 @@
                         "properties": {
                           "enabled": {
                             "type": "boolean",
-                            "description": "Use pg-delta as the schema diff engine for db diff / db pull / db remote commit. Set false to fall back to the legacy migra engine.",
-                            "default": false
+                            "description": "Use pg-delta as the schema diff engine for db diff / db pull (the default). Set false to fall back to the legacy migra engine.",
+                            "default": true
                           },
                           "declarative_schema_path": {
                             "type": "string",
