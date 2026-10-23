@@ -1,4 +1,4 @@
-# `supabase feedback add [message...] [--project-ref <ref>]`
+# `supabase feedback add [message...] [--project-ref <ref>] [--target <json>]...`
 
 ## Files Read
 
@@ -17,9 +17,9 @@
 
 ## API Routes
 
-| Method | Path                                                        | Auth                                 | Request body                                                                                                                                                                                    | Response (used fields)                                     |
-| ------ | ----------------------------------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `POST` | `<feedback-env-url>/rest/v1/rpc/submit_interfaces_feedback` | `apikey` = committed publishable key | `{ feedback, user_agent, project_ref (omitted when unlinked), user_id (omitted when logged out or consent-denied), metadata: { cli_version, source: "cli", os, arch, is_agent, agent_name? } }` | uuid delete token (issued exactly once, shown to the user) |
+| Method | Path                                                        | Auth                                 | Request body                                                                                                                                                                                                                          | Response (used fields)                                     |
+| ------ | ----------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `POST` | `<feedback-env-url>/rest/v1/rpc/submit_interfaces_feedback` | `apikey` = committed publishable key | `{ feedback, user_agent, project_ref (omitted when unlinked), user_id (omitted when logged out or consent-denied), metadata: { cli_version, source: "cli", os, arch, is_agent, agent_name?, targets?: [{ url, quote, heading? }] } }` | uuid delete token (issued exactly once, shown to the user) |
 
 `<feedback-env-url>` follows the resolved profile (`feedback.layers.ts`):
 `supabase-staging` / `supabase-local` → the persistent staging branch of the
@@ -50,6 +50,8 @@ every command.
 | `0`  | success                                                                                             |
 | `1`  | no message from args, piped stdin, or an interactive prompt (`-o json` never prompts)               |
 | `1`  | message over the 1000-character limit (checked client-side, no request sent)                        |
+| `1`  | invalid `--target` (not a JSON object, or a bad `url`, `quote` or `heading`; no request sent)       |
+| `1`  | more than 3 `--target` flags (validated pre-run)                                                    |
 | `1`  | `--project-ref` or `SUPABASE_PROJECT_ID` is set but not a well-formed project ref (no request sent) |
 | `1`  | submit failure (PostgREST error, network failure, or 10s timeout)                                   |
 | `1`  | `-o`/`--output` value outside the command's `pretty\|json` enum (validated pre-run)                 |
@@ -64,7 +66,8 @@ The feedback message content is NEVER included in any telemetry event: the
 message is a positional argument, which `extractChangedFlagNames` structurally
 excludes from the `flags` property (it only scans `-`-prefixed argv tokens).
 `--project-ref` is recorded by name only; its value is redacted (no
-telemetry-safe marking, same as `feedback delete`). Regression-tested in
+telemetry-safe marking, same as `feedback delete`). `--target` values are
+redacted the same way. Regression-tested in
 `add.integration.test.ts`. The message goes only to the `interfaces_feedback`
 table via the API route above.
 

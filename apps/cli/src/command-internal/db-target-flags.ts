@@ -112,6 +112,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "sub",
   ...GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES,
   "tail",
+  "target",
   "template",
   "timestamp",
   "to",
