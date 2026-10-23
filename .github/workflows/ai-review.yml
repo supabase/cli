@@ -160,7 +160,9 @@ jobs:
       # behavior mid-rollout. Installed from the trusted checkout with npm config isolation so a
       # PR-supplied `.npmrc` in the untrusted `pr` checkout can never redirect this install to a
       # hostile registry.
-      # 2.1.280 is the first release that accepts claude-opus-5-5.
+      # 2.1.280 is the first release that accepts claude-opus-5-5. The CLI stays outside the
+      # repository's lockfile so the untrusted checkout's dependencies never reach it.
+      # jactionlint ignore=adhoc-packages
       - name: Install Claude Code CLI
         working-directory: trusted
         run: |

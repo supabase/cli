@@ -135,6 +135,7 @@ jobs:
           bun-version-file: trusted/.bun-version
 
       # Same pinned release and isolated npm config as the AI review workflow.
+      # jactionlint ignore=adhoc-packages
       - name: Install Claude Code CLI
         run: |
           npm install -g \
@@ -263,6 +264,7 @@ jobs:
           bun-version-file: trusted/.bun-version
 
       # Same pinned release and isolated npm config as the AI review workflow.
+      # jactionlint ignore=adhoc-packages
       - name: Install Claude Code CLI
         run: |
           npm install -g \

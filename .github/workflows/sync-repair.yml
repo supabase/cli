@@ -78,6 +78,7 @@ jobs:
           persist-credentials: false
 
       # Same pinned release and isolated npm config as the AI review workflow.
+      # jactionlint ignore=adhoc-packages
       - name: Install Claude Code CLI
         if: steps.collect.outputs.action == 'repair'
         run: |
