@@ -3,7 +3,7 @@ min_version = '2026.10.17'
 [tools]
 go = "1.26.5"
 golangci-lint = "2.12.2"
-jactionlint = "1"
+jactionlint = "2"
 shellcheck = "0.11.0"
 
 [settings]
