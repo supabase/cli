@@ -17,7 +17,7 @@ test("reads advisor findings over the database connection", ({ cliEffect, projec
           queryLiveDb(project.dbUrl, `create table public.${table} (id int)`),
         );
 
-        const result = yield* cliEffect(["db", "advisors", "--db-url", project.dbUrl]);
+        const result = yield* cliEffect(["db", "advisors", `--remote=${project.dbUrl}`]);
         expect(result.exitCode, result.stderr).toBe(0);
         expect(result.stdout, result.stderr).not.toBe("");
         const findings = yield* Schema.decodeEffect(

@@ -4,8 +4,9 @@ This document describes the legacy backend. With `SUPABASE_EXPERIMENTAL_STACK=1`
 `[experimental] stack = true` when the environment override is unset or empty, `supabase start`
 uses the new [`supabase stack start` implementation](../experimental/stack/start/SIDE_EFFECTS.md).
 `SUPABASE_EXPERIMENTAL_STACK=0` forces the legacy backend. See [backend selection](../../../docs/stack-commands.md).
-Backend routing reads `supabase/config.json` when present, otherwise `supabase/config.toml`; the
-legacy handler reads TOML only. Backend selection happens before command parsing. When the
+Backend routing and the legacy handler both read `supabase/config.json` when present, otherwise
+`supabase/config.toml`. Config values resolve as flag > shell env > project `.env*` > config >
+default (ADR 0032); `start` applies no `[remotes.*]` block. Backend selection happens before command parsing. When the
 environment override is unset or empty, an unreadable, malformed, or invalid project configuration
 falls back to the legacy backend; an invalid environment override remains an error.
 
@@ -15,20 +16,19 @@ Compose, and it does not go through `@supabase/stack/effect`'s orchestration mod
 (see the CLI-1323 plan's "Critical architectural finding" for why: that runtime is a
 deliberately different local-dev product — no Kong gateway, native-binary-first,
 auto-allocated ports, opaque API keys — that would break the compatibility contract
-this port exists to provide).
+of this command).
 
 ## Scope
 
 Edge Runtime bring-up, the fresh-volume DB schema/migration/seed setup pipeline, and
-fresh-volume storage-bucket seeding are all now natively implemented (see below) — this
-section previously listed them as out-of-scope follow-ups.
+fresh-volume storage-bucket seeding are all natively implemented (see below).
 
-One piece of the old Go CLI's `start` remains explicitly **out of scope**:
+One piece of `start` is explicitly **out of scope**:
 
 1. **Linked-project version-check suggestion** — a best-effort Management API call, made
    only when a project happens to be linked _and_ the user is logged in, purely to print
-   an "update available" hint. Omitted entirely — this port has zero Management API
-   dependency for `start`, by design. The runtime layer does compose the lazy
+   an "update available" hint. Omitted entirely — `start` has zero Management API
+   dependency, by design. The runtime layer does compose the lazy
    Management-API factory — a static requirement of the shared storage-credentials
    resolver whose hosted branch `start` never reaches — so building the layer loads the
    credential subsystem: the keyring module import (skipped under `SUPABASE_NO_KEYRING=1`
@@ -53,8 +53,9 @@ seeds `supabase/roles.sql`: the `Seeding globals from roles.sql...` stderr line 
 prints first, whether or not the file exists — a missing file is silently tolerated (no SQL
 runs), any other read/exec error still fails the run. Finally runs every pending migration +
 seed — UNLESS `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experimental.pgdelta]
-enabled` is false, in which case `db.migrations.schema_paths` files are applied INSTEAD of
-`migrations/*.sql`; seed still runs either way.
+enabled = false` is set explicitly (it defaults to true), in which case `db.migrations.schema_paths` files are applied INSTEAD of
+`migrations/*.sql`; seed still runs either way. With `--experimental`, pg-delta enabled, and a
+non-empty `schema_paths`, a stderr warning says `schema_paths` is not applied.
 A failure at any step rolls back the whole `start` run (same as any other bring-up failure).
 
 `startInitCurrentBranch` (writes `supabase/.branches/_current_branch` = `"main"` if
@@ -98,7 +99,7 @@ command.
 | Path                                                                                            | Format       | When                                                                                                                                                                                                                                                                                                                           |
 | ----------------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `<workdir>/supabase/config.json` or `config.toml`                                               | JSON or TOML | backend routing before command parsing when `SUPABASE_EXPERIMENTAL_STACK` is unset or empty; JSON takes precedence when both exist                                                                                                                                                                                             |
-| `<workdir>/supabase/config.toml`                                                                | TOML         | always in the legacy handler                                                                                                                                                                                                                                                                                                   |
+| `<workdir>/supabase/config.json` or `config.toml`                                               | JSON or TOML | always in the legacy handler; JSON takes precedence when both exist                                                                                                                                                                                                                                                            |
 | `<workdir>/supabase/.env`, `.env.local`                                                         | dotenv       | always (`.env.local` skipped when `SUPABASE_ENV=test`)                                                                                                                                                                                                                                                                         |
 | project-root / `SUPABASE_ENV`-selected dotenv file                                              | dotenv       | always, same precedence chain as `stop`/`status`                                                                                                                                                                                                                                                                               |
 | `auth.signing_keys_path` file                                                                   | JSON         | when configured                                                                                                                                                                                                                                                                                                                |
@@ -109,7 +110,7 @@ command.
 | `<workdir>/supabase/migrations/*.sql`, `supabase/seed.sql`                                      | SQL          | on a fresh volume, via the standard migration-apply + seed pipeline                                                                                                                                                                                                                                                            |
 | `<workdir>/supabase/<db.migrations.schema_paths entries>` (files/directories/globs)             | SQL          | on a fresh volume, INSTEAD of `migrations/*.sql`, when `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experimental.pgdelta] enabled` is false                                                                                                                                                                           |
 | `<workdir>/supabase/.branches/_current_branch`                                                  | text         | on every start, existence check before writing (see "Files Written")                                                                                                                                                                                                                                                           |
-| `<workdir>/supabase/functions/**`                                                               | —            | when Edge Runtime starts, and independently when Studio starts (function discovery/config resolution + Docker bind mounts, regardless of whether Edge Runtime itself is enabled)                                                                                                                                               |
+| `<workdir>/supabase/functions/**`                                                               | —            | in the preflight, before any container is created, when Edge Runtime or Studio is enabled (function discovery/config resolution + Docker bind mounts), then again when Edge Runtime starts; probes `<slug>/import_map.json` when a function has no `deno.json*` and no configured import map                                   |
 | `<workdir>/supabase/.temp/storage-migration`                                                    | text         | always — linked-project Storage migration pin (`DB_MIGRATIONS_FREEZE_AT`), written by `supabase link`; absent/unreadable resolves to no pin                                                                                                                                                                                    |
 | `<workdir>/supabase/.temp/{gotrue,rest,storage,realtime,studio,pgmeta,logflare,pooler}-version` | text         | always — linked-project per-service image version pins, written by `supabase link`; absent/unreadable resolves to the embedded default image. Under `SUPABASE_USE_SLIM_IMAGES`, only a pin that matches the current Dockerfile tag is slim-translated; a historical pin stays on docker.io (those slim tags are not published) |
 | `~/.docker/config.json`                                                                         | JSON         | via the `docker`/`podman` CLI itself, for registry auth — never read directly by this process                                                                                                                                                                                                                                  |
@@ -189,21 +190,20 @@ mounts and require a daemon that can see the project directory.
 
 Local-only: the Storage bucket-seeding step (fresh volume + Storage enabled) talks to the
 LOCAL Storage service through Kong, never the Management API. See "Scope" above for the
-one Go behavior (`CheckVersions`) that _would_ call the Management API and is deliberately
-not implemented.
+version check that _would_ call the Management API and is deliberately not implemented.
 
 ## Environment Variables
 
 | Variable                                                                                                             | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Required? |
 | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_*` (any dotted config field)                                                                               | Generic Viper-style `AutomaticEnv` override of any `config.toml` field (e.g. `SUPABASE_AUTH_ENABLED`, `SUPABASE_API_PORT`)                                                                                                                                                                                                                                                                                                                                                                                                                                | no        |
+| `SUPABASE_*` (any dotted config field)                                                                               | Overrides the config key at the matching path, `SUPABASE_` plus the upper-snake path (e.g. `SUPABASE_AUTH_ENABLED`, `SUPABASE_API_PORT`). Shell beats project `.env*`, which beats config. An unparsable value fails the command; an empty value is ignored. Env for a key inside an optional section (e.g. an SMS provider) applies only when the section exists in config                                                                                                                                                                               | no        |
 | `SUPABASE_EXPERIMENTAL` (or `--experimental`)                                                                        | Fresh volume + no pg-delta: applies `db.migrations.schema_paths` files instead of `migrations/*.sql` (see "Fresh-volume DB setup" above)                                                                                                                                                                                                                                                                                                                                                                                                                  | no        |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                                                   | Overrides the image registry used to resolve every service's image                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | no        |
-| `SUPABASE_PROJECT_ID`                                                                                                | Overrides the resolved local project id (env → config.toml → workdir basename)                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | no        |
+| `SUPABASE_PROJECT_ID`                                                                                                | Overrides the resolved local project id (shell → project `.env*` → config → workdir basename)                                                                                                                                                                                                                                                                                                                                                                                                                                                             | no        |
 | `SUPABASE_WORKDIR`                                                                                                   | Resolves `CommandSettings.workdir`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | no        |
 | `SUPABASE_YES` (or `--yes`)                                                                                          | Auto-confirms the fresh-volume bucket-seed overwrite/prune prompts (shell or project dotenv, same as `seed buckets`)                                                                                                                                                                                                                                                                                                                                                                                                                                      | no        |
 | `BITBUCKET_CLONE_DIR`                                                                                                | When non-empty, drops named volumes and `--security-opt` from every container create                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | no        |
-| `DOCKER_HOST` / `DOCKER_CONTEXT` / `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` / `DOCKER_API_VERSION` / `DOCKER_CONFIG` | Read (ambient shell OR a project `.env`/`.env.<env>`/`.env.local` file) to discover the Docker daemon this whole command talks to; `DOCKER_HOST` is also re-derived and set on Vector's container env so it can reach the host's Docker socket for log collection                                                                                                                                                                                                                                                                                         | no        |
+| `DOCKER_HOST` / `DOCKER_CONTEXT` / `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` / `DOCKER_API_VERSION` / `DOCKER_CONFIG` | Read from the ambient shell only (a project `.env`/`.env.<env>`/`.env.local` file never selects the daemon) to discover the Docker daemon this whole command talks to; `DOCKER_HOST` is also re-derived and set on Vector's container env so it can reach the host's Docker socket for log collection                                                                                                                                                                                                                                                     | no        |
 | `KONG_NGINX_WORKER_PROCESSES`                                                                                        | Read (ambient shell or project dotenv) into Kong's own container env (defaults to `"1"` when unset)                                                                                                                                                                                                                                                                                                                                                                                                                                                       | no        |
 | `HTTP_PROXY` / `http_proxy` / `HTTPS_PROXY` / `https_proxy` / `NO_PROXY` / `no_proxy`                                | Bun proxy settings. After project dotenv and container creation, `start` appends `localhost,127.0.0.1,[::1]` to the effective no-proxy value before local Kong probes and seeding; it never changes project/container env and ends with this CLI process.                                                                                                                                                                                                                                                                                                 | no        |
 | `SUPABASE_USE_SLIM_IMAGES`                                                                                           | Ambient `process.env` only (`true`/`1` enable) — not project dotenv. Rewrites current Dockerfile pins to `ghcr.io/supabase/cli/<service>` (including PG15+ realtime/storage/auth migrate jobs). Kong, PG14, OrioleDB tags the catalog does not pin, historical Postgres pins, and `deno_version = 1` remain non-slim (still subject to `SUPABASE_INTERNAL_IMAGE_REGISTRY`). Majors 13/15 use the published slim PG15 pin (`15.14.1.167`) when the flag is on; flag-off keeps `15.8.1.085`. `SUPABASE_INTERNAL_IMAGE_REGISTRY` does not apply to slim refs | no        |
@@ -224,10 +224,12 @@ code is surfaced on failure.
 | `1`  | `--ignore-health-check` set, the fresh-volume/Storage-healthy recheck-and-seed path ran (see "Storage bucket seeding"), and that seed itself failed — rolls back despite the flag                                                                                                                                                                                      |
 | `1`  | malformed CSV in an `--exclude`/`-x` value — fails during flag parsing, before the handler and telemetry, with the exact diagnostic text on stderr; the shorthand frames it with both spellings (e.g. `invalid argument "a\"b" for "-x, --exclude" flag: parse error on line 1, column 2: bare " in non-quoted-field`; a blank-only value fails with `EOF`) — CLI-2005 |
 | `1`  | malformed `config.toml` / `Config.Validate` failure, including an `auth.email.*.content_path` that resolves outside the project root, or that resolves in-root but is missing/unreadable (checked eagerly, before any Docker work, regardless of `auth.enabled` — see Notes)                                                                                           |
+| `1`  | an enabled function has `import_map.json` but no `deno.json`/`deno.jsonc` and no `functions.<slug>.import_map` — `import_map.json in a function directory is no longer supported: <slugs>`; checked in the preflight whenever Edge Runtime or Studio is enabled, so it fails before any container is created                                                           |
+| `1`  | an unparsable `SUPABASE_*` config override (e.g. a non-boolean `SUPABASE_AUTH_ENABLED`)                                                                                                                                                                                                                                                                                |
 | `1`  | stopped Postgres detected but the project id sanitizes to empty — aborts before recovery removes any containers                                                                                                                                                                                                                                                        |
 | `1`  | `docker`/`podman` not spawnable, or the daemon is unreachable                                                                                                                                                                                                                                                                                                          |
 | `1`  | stopped-stack recovery cannot list, stop, or prune current-project containers, or prune matching networks — aborts before startup; named volumes are preserved                                                                                                                                                                                                         |
-| `1`  | image pull exhausted across every registry candidate, or the Docker daemon becomes unreachable during the pre-pull — even with `--ignore-health-check` (intentional divergence from the old Go CLI's exit-0 swallow quirk; see the CLI-1987 note under "Notes")                                                                                                        |
+| `1`  | image pull exhausted across every registry candidate, or the Docker daemon becomes unreachable during the pre-pull — even with `--ignore-health-check` (never swallowed into exit 0; see the `--ignore-health-check` note under "Notes")                                                                                                                               |
 | `1`  | Studio is enabled and `<workdir>/supabase/snippets/` cannot be created (a file is in the way, or the workdir is not writable) — fails before any network or container is created                                                                                                                                                                                       |
 | `1`  | network, volume, container create, or container start failure (including a port conflict) — rolls back everything created so far                                                                                                                                                                                                                                       |
 | `1`  | health check timeout **without** `--ignore-health-check` — rolls back                                                                                                                                                                                                                                                                                                  |
@@ -290,8 +292,7 @@ buckets to prune.` for a bucket left in place. These seeding lines use the raw w
   `<container> container logs:` header and that container's `docker logs` output, then one
   `<container>: <reason>` line each. Containers are named `supabase_<service>_<project id>`
   throughout, rather than the id `docker create` returns.
-- stderr (conditional, `exec format error` in those logs) — **TS-port-only, beyond the old
-  Go CLI's own behavior**: a recovery `suggestion` printed after the reasons, naming each affected
+- stderr (conditional, `exec format error` in those logs) — a recovery `suggestion` printed after the reasons, naming each affected
   container **with** its image (they can be named after different things —
   `supabase_inbucket_*` runs `mailpit`), then a `supabase stop` / `<runtime> image rm -f` /
   `supabase start` sequence, then a closing line for the case re-pulling cannot fix. The
@@ -301,7 +302,7 @@ buckets to prune.` for a bucket left in place. These seeding lines use the raw w
   the reader to run it from the project directory or with the same `--workdir`, rather than
   embedding the resolved path, which would need shell quoting that differs per platform. Being a
   `suggestion` also replaces the usual "rerun with --debug" line, which cannot help here.
-  Nothing is ever removed automatically, and the old Go CLI printed no such guidance.
+  Nothing is ever removed automatically.
 - stdout: the `status` pretty table (rounded box, same renderer `supabase status` uses).
 - stderr: the local-dev security notice block (bind-to-`0.0.0.0` / shared-default-keys /
   no-auth-on-Studio-pgMeta-analytics warning).
@@ -317,9 +318,9 @@ prose, not structured data.
 
 ## Notes
 
-- **`pg_net` converges with `[experimental.webhooks]` on every non-backup start** (see
-  `docs/go-cli-divergences.md`): a fresh volume installs `pg_net` only when webhooks are
-  enabled or migration history contains a `create extension … pg_net`; an existing volume
+- **`pg_net` converges with `[experimental.webhooks]` on every non-backup start**: a fresh
+  volume installs `pg_net` only when webhooks are enabled or migration history contains a
+  `create extension … pg_net`; an existing volume
   additionally DROPS a `pg_net` that migration history does not own when webhooks are
   disabled. Accepted, documented edge: `pg_net` installed outside migrations (local Studio
   SQL editor / extension toggle) is dropped on the next start, and a tracked dependency on
@@ -341,30 +342,18 @@ prose, not structured data.
   healthy, buckets are seeded anyway — a failure in THAT seed step still rolls back and
   fails the command despite the flag (see "Storage bucket seeding" and the `Exit Codes`
   table).
-- **Intentional divergence from the old Go CLI — image-pull/daemon failure under
-  `--ignore-health-check` (CLI-1987, ruled 2026-07-30):** the old Go CLI's unhealthy-error
-  classifier treated ANY joined error as "unhealthy", which accidentally also matched the
-  image pre-pull step's joined pull errors. So in the old Go CLI, with `--ignore-health-check`
-  set, a total image-pull failure — every registry candidate exhausted, or the Docker daemon
-  becoming unreachable during the pre-pull — was swallowed: it printed the error, skipped
-  rollback, printed `Started supabase local development setup.` + the status table + the
-  security notice, and exited 0 even though no container ever started. That was an
-  unintended quirk of a shape-based check, and it is deliberately NOT reproduced here —
-  enforced by control flow, not by a classifier: unlike a single outer check on the whole
-  run result, this port consults `isUnhealthyStartError` (`start.rollback.ts`) only
-  inside its two health-wait failure branches, and the image pre-pull runs before
-  bring-up, so its failure propagates out without ever reaching a downgrade branch. The
-  same scenario exits 1 with no success banner and no status table, flag or no flag.
-  `--ignore-health-check` downgrades health-check timeouts only. Rollback is NOT part of
-  the divergence — the pre-pull runs before any container/network is created, so there
-  is nothing to roll back either way; the observable delta is exit code + success
-  banner + status table + security notice (the old Go CLI printed all three of the latter
-  unconditionally at the end of its run; this port's failure exits before
-  any of them). Note the flag's own help text ("Ignore unhealthy services and exit 0")
-  over-promises in this scenario — a pre-pull failure is not an
-  "unhealthy service", but a user reading only `--help` may still expect exit 0 here.
-- `--preview` is a hidden, parsed-but-inert flag, inherited from the old Go CLI (never
-  read by its own `start.Run`).
+- **Image-pull/daemon failure under `--ignore-health-check`:** a total image-pull failure —
+  every registry candidate exhausted, or the Docker daemon becoming unreachable during the
+  pre-pull — is never swallowed into exit 0. This is enforced by control flow, not by a
+  classifier: `isUnhealthyStartError` (`start.rollback.ts`) is consulted only inside the two
+  health-wait failure branches, and the image pre-pull runs before bring-up, so its failure
+  propagates out without ever reaching a downgrade branch. The scenario exits 1 with no success
+  banner and no status table, flag or no flag. `--ignore-health-check` downgrades health-check
+  timeouts only. There is nothing to roll back, because the pre-pull runs before any
+  container/network is created. Note the flag's own help text ("Ignore unhealthy services and
+  exit 0") over-promises in this scenario — a pre-pull failure is not an "unhealthy service",
+  but a user reading only `--help` may still expect exit 0 here.
+- `--preview` is a hidden, parsed-but-inert flag.
 - The already-running check uses `docker container inspect` on the Postgres container,
   not a health check. For a verified
   stopped container outside Bitbucket Pipelines, `start` removes all current-project
@@ -383,12 +372,11 @@ prose, not structured data.
 - Docker status `created` is not considered a recoverable stopped stack: the container and
   named volume are preserved because the volume may not have completed its first database
   initialization, and `start` reports the existing not-running status instead.
-- **Intentional divergence from Go — spec-strict import-map key matching (CLI-2179, ruled
-  2026-08-12):** Edge Runtime bind mounts are computed by the same functions import scanner
-  as `functions deploy`/`functions serve` (`walkImportPaths`/`substituteImportMapValue`,
-  shared code), which now matches import-map keys per the import-maps spec Deno/edge-runtime
-  implement (exact match, or prefix match only for a `/`-suffixed key) instead of Go's
-  any-key `strings.HasPrefix` (`pkg/function/deno.go:150-155`). Bind mounts may shrink vs
-  the Go CLI for maps that relied on bare-key prefix matching; an unwalkable target
-  (`ENOTDIR` — a value routed through a file) is skipped with a `WARN`, matching the same
-  divergence documented on the `functions deploy`/`functions serve` SIDE_EFFECTS.md.
+- **Spec-strict import-map key matching:** Edge Runtime bind mounts are computed by the same
+  functions import scanner as `functions deploy`/`functions serve`
+  (`walkImportPaths`/`substituteImportMapValue`, shared code), which matches import-map keys
+  per the import-maps spec Deno/edge-runtime implement (exact match, or prefix match only for a
+  `/`-suffixed key), so a bare-key prefix does not match and bind mounts are limited to
+  spec-matching keys; an unwalkable target (`ENOTDIR` — a value routed through a file) is
+  skipped with a `WARN`, as documented on the `functions deploy`/`functions serve`
+  SIDE_EFFECTS.md.

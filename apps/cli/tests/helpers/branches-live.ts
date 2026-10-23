@@ -158,7 +158,7 @@ export function runLiveBranchCreateEffect<E>(
   const create = Effect.suspend(() =>
     command(
       cli,
-      ["branches", "create", name, "--project-ref", project.ref, "--output-format", "json"],
+      ["branches", "create", name, `--remote=${project.ref}`, "--output-format", "json", "--yes"],
       "branches create",
       undefined,
     ),
@@ -209,7 +209,7 @@ function getBranchReady<E>(
   name: string,
 ): Effect.Effect<true, BranchError<E>, never> {
   const response: Effect.Effect<BranchCliResult, E, never> = cli(
-    ["branches", "get", name, "--project-ref", project.ref],
+    ["branches", "get", name, `--remote=${project.ref}`],
     {
       exitTimeoutMs: COMMAND_TIMEOUT,
     },
@@ -250,7 +250,7 @@ function listBranches<E>(
 ): Effect.Effect<ReadonlyArray<Schema.Schema.Type<typeof BranchListItem>>, BranchError<E>, never> {
   return command(
     cli,
-    ["branches", "list", "--output", "json", "--project-ref", project.ref],
+    ["branches", "list", "--output", "json", `--remote=${project.ref}`],
     phase,
     COMMAND_TIMEOUT,
   ).pipe(
@@ -289,7 +289,7 @@ function deleteBranch<E>(
   phase: string,
 ): Effect.Effect<true, BranchError<E>, never> {
   const response: Effect.Effect<BranchCliResult, E, never> = cli(
-    ["branches", "delete", target, "--project-ref", project.ref, "--yes"],
+    ["branches", "delete", target, `--remote=${project.ref}`, "--yes"],
     {
       exitTimeoutMs: COMMAND_TIMEOUT,
     },

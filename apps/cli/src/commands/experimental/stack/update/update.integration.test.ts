@@ -32,6 +32,7 @@ import {
 import { ExperimentalFlag } from "../../../../command-internal/global-flags.ts";
 import { StackCommandUpdateError } from "./update.errors.ts";
 import { stackUpdate } from "./update.handler.ts";
+import { cliConfigValuesTestLayer } from "../../../../../tests/helpers/config-values-layer.ts";
 
 const UPSTREAM = "v99.0.0";
 
@@ -69,6 +70,7 @@ const layer = (root: string, output: ReturnType<typeof mockOutput>) =>
     output.layer,
     mockTelemetryStateTracked().layer,
     mockCommandSettings({ workdir: root }),
+    cliConfigValuesTestLayer,
     Layer.succeed(ExperimentalFlag, false),
     // No linked entry is re-resolved here, so nothing asks the hosted project.
     Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),

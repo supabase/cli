@@ -5,13 +5,13 @@ import { publish } from "@supabase/stack/effect";
 
 import { CommandCredentials } from "../auth/command-credentials.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { PROJECT_REF_PATTERN } from "../config/remote-target.service.ts";
+import { PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { identifyProjectGroups } from "../shared/telemetry/identify-project-groups.ts";
-import { legacyProjectStatePaths } from "../command-internal/legacy-project-state.paths.ts";
-import { readLinkSnapshotSoft } from "../command-internal/link-snapshot.ts";
-import { currentProjectStateMode } from "../command-internal/project-state-mode.ts";
+import { legacyProjectStatePaths } from "../shared/config/legacy-project-state.paths.ts";
+import { readLinkSnapshotSoft } from "../shared/config/link-snapshot.ts";
+import { currentProjectStateMode } from "../shared/config/project-state-mode.ts";
 import { LinkedProjectCache } from "./linked-project-cache.service.ts";
 import { block } from "../command-internal/command-permissions/model.ts";
 
@@ -51,7 +51,7 @@ const encodeLinkedProjectCache = Schema.encodeEffect(
  *
  * In legacy mode it also skips the write when the linked ref names a different project than
  * `ref` — see the inline comment at the check itself for the failure mode this closes. That
- * cache feeds `RemoteTarget.parent`.
+ * cache feeds the linked parent resolution.
  */
 export const linkedProjectCacheLayer = Layer.effect(
   LinkedProjectCache,
@@ -93,7 +93,7 @@ export const linkedProjectCacheLayer = Layer.effect(
           // (e.g. B is merely paused, not gone/forbidden), this would otherwise cache B as the
           // linked project even though the linked ref itself was never updated to B. Skip the
           // write when the link names a different ref. An absent link falls through to the write
-          // below, since `RemoteTarget.parent` already refuses to trust a cache with no linked
+          // below, since the linked parent resolution already refuses to trust a cache with no linked
           // ref. The per-ref stack cache is keyed by `ref`, so it cannot describe another project.
           if (!stackMode) {
             const linkedRef = (yield* readLinkSnapshotSoft(fs, path, resolvedWorkdir)).ref;

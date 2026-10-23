@@ -2,6 +2,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
+import { ConfigEnvPins, definedEnv } from "./config-env-pins.ts";
 import { Console, ConfigProvider, Deferred, Effect, Layer, Option, Stream } from "effect";
 import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
 import { testRunEnvVar as stackTestRunEnvVar } from "@supabase/stack/internal/test-run-label";
@@ -11,7 +12,7 @@ import {
   ProjectLinkState,
   type ProjectLinkStateValue,
 } from "../../src/shared/config/project-link-state.service.ts";
-import { legacyProjectStateLayer } from "../../src/command-internal/legacy-project-state.layer.ts";
+import { legacyProjectStateLayer } from "../../src/shared/config/legacy-project-state.layer.ts";
 import { CliProjectContext } from "../../src/shared/config/cli-project-context.service.ts";
 import { NonInteractiveError } from "../../src/shared/output/errors.ts";
 import { Output } from "../../src/shared/output/output.service.ts";
@@ -568,7 +569,7 @@ function applyProcessEnv(values: Readonly<Record<string, string | undefined>>) {
 export function processEnvLayer(
   values: Readonly<Record<string, string | undefined>> = {},
 ): Layer.Layer<never> {
-  return ConfigProvider.layer(
+  const providerLayer = ConfigProvider.layer(
     Effect.acquireRelease(
       Effect.sync(() => {
         const ambientTestRun = process.env[stackTestRunEnvVar];
@@ -588,6 +589,11 @@ export function processEnvLayer(
         }),
     ).pipe(Effect.map(({ provider }) => provider)),
   );
+  const pinsLayer = Layer.effect(
+    ConfigEnvPins,
+    Effect.sync(() => definedEnv(process.env)),
+  );
+  return pinsLayer.pipe(Layer.provideMerge(providerLayer));
 }
 
 export function mockCliProjectContext(

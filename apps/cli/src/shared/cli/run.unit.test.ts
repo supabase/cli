@@ -1,11 +1,11 @@
-import { Cause } from "effect";
+import { Cause, Data, Runtime } from "effect";
 import { CliError, Command } from "effect/cli";
 import { describe, expect, it } from "vitest";
 
+import { rootCommandForFeatures } from "../../cli/root.ts";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { migrationCommand } from "../../commands/migration/migration.command.ts";
 import { ssoCommand } from "../../commands/sso/sso.command.ts";
-import { GoChildExitError } from "../../command-internal/go-child-exit.error.ts";
 import {
   classifyParseErrorConsoleOutput,
   exitCodeForFailure,
@@ -22,6 +22,14 @@ import {
 const testRoot = Command.make("supabase").pipe(
   Command.withSubcommands([branchesCommand, migrationCommand, ssoCommand]),
 );
+
+/** Local stand-in for a typed error opting into a custom process exit code. */
+class CustomExitCodeError extends Data.TaggedError("CustomExitCodeError")<{
+  readonly exitCode: number;
+  readonly message: string;
+}> {
+  override readonly [Runtime.errorExitCode] = this.exitCode;
+}
 
 describe("extractCommandPath", () => {
   it("returns positional command-path tokens", () => {
@@ -133,9 +141,9 @@ describe("exitCodeForFailure", () => {
     expect(exitCodeForFailure(Cause.interrupt())).toBe(130);
   });
 
-  it("exits with a GoChildExitError's exact exit code", () => {
+  it("exits with a typed error's exact custom exit code", () => {
     const cause = Cause.fail(
-      new GoChildExitError({ exitCode: 130, message: "supabase-go exited with code 130" }),
+      new CustomExitCodeError({ exitCode: 130, message: "exited with code 130" }),
     );
     expect(exitCodeForFailure(cause)).toBe(130);
   });
@@ -143,32 +151,15 @@ describe("exitCodeForFailure", () => {
 
 describe("shouldReportFailure", () => {
   it("does not report a clean exit (0)", () => {
-    expect(shouldReportFailure(Cause.fail(new Error("unused")), 0)).toBe(false);
+    expect(shouldReportFailure(0)).toBe(false);
   });
 
   it("does not report an interrupt (130)", () => {
-    expect(shouldReportFailure(Cause.interrupt(), 130)).toBe(false);
+    expect(shouldReportFailure(130)).toBe(false);
   });
 
-  it("does not report a GoChildExitError", () => {
-    const cause = Cause.fail(
-      new GoChildExitError({ exitCode: 1, message: "supabase-go exited with code 1" }),
-    );
-    expect(shouldReportFailure(cause, 1)).toBe(false);
-  });
-
-  it("reports a non-ShowHelp failure", () => {
-    expect(shouldReportFailure(Cause.fail(new Error("boom")), 1)).toBe(true);
-  });
-
-  it("still reports a ShowHelp failure carrying a genuine validation error (e.g. a missing required flag)", () => {
-    const cause = Cause.fail(
-      new CliError.ShowHelp({
-        commandPath: ["sso", "add"],
-        errors: [new CliError.MissingOption({ option: "--type" })],
-      }),
-    );
-    expect(shouldReportFailure(cause, 1)).toBe(true);
+  it("reports every other exit code", () => {
+    expect(shouldReportFailure(1)).toBe(true);
   });
 });
 
@@ -406,6 +397,109 @@ describe("classifyParseErrorConsoleOutput", () => {
         args: [],
       }),
     ).toBe("flush-unchanged");
+  });
+});
+
+describe("classifyParseErrorConsoleOutput for --remote", () => {
+  const root = rootCommandForFeatures();
+  const remoteInvalid = new CliError.InvalidValue({
+    option: "remote",
+    value: "false",
+    expected: "--remote doesn't take false. Leave it out to target the local database.",
+    kind: "flag",
+  });
+
+  it("drops the help dump for an invalid --remote value", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({ commandPath: ["supabase", "db", "push"], errors: [remoteInvalid] }),
+    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: root,
+        args: ["db", "push", "--remote=false"],
+      }),
+    ).toBe("drop");
+  });
+
+  it.each([
+    { name: "link", path: ["supabase", "link"] },
+    { name: "a local-only command", path: ["supabase", "start"] },
+  ])("drops the help dump for --remote on $name", ({ path }) => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: path,
+        errors: [
+          new CliError.UnrecognizedOption({ option: "--remote", command: path, suggestions: [] }),
+        ],
+      }),
+    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: root,
+        args: [...path.slice(1), "--remote"],
+      }),
+    ).toBe("drop");
+  });
+
+  it("keeps the help dump for --remote on a command that takes no such flag and has no message for it", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["supabase", "projects", "list"],
+        errors: [
+          new CliError.UnrecognizedOption({
+            option: "--remote",
+            command: ["supabase", "projects", "list"],
+            suggestions: [],
+          }),
+        ],
+      }),
+    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: root,
+        args: ["projects", "list", "--remote"],
+      }),
+    ).toBe("flush-help-doc-to-stderr");
+  });
+
+  it("keeps the help dump when a --remote error comes with an unrelated one", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["supabase", "db", "push"],
+        errors: [
+          remoteInvalid,
+          new CliError.UnrecognizedOption({ option: "--bogus", suggestions: [] }),
+        ],
+      }),
+    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: root,
+        args: ["db", "push", "--remote=false", "--bogus"],
+      }),
+    ).toBe("flush-help-doc-to-stderr");
+  });
+
+  it("keeps the help dump for another flag's invalid value", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["supabase", "db", "push"],
+        errors: [
+          new CliError.InvalidValue({
+            option: "output-format",
+            value: "xml",
+            expected: "Expected one of text, json",
+            kind: "flag",
+          }),
+        ],
+      }),
+    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: root,
+        args: ["db", "push", "--output-format=xml"],
+      }),
+    ).toBe("flush-help-doc-to-stderr");
   });
 });
 

@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, inject, test } from "vitest";
 import { createHarness, exec, type CLIResult } from "@supabase/cli-test-helpers";
+import { getRequestLog } from "./request-log.ts";
 import { testBehaviour } from "./test-context.ts";
 import { ACCESS_TOKEN } from "./env.ts";
 
@@ -122,9 +123,7 @@ describe("seed buckets", () => {
     );
     const result = await run(["seed", "buckets"]);
     expect(result.exitCode).toBe(0);
-    const requests = await fetch(`${apiUrl}/_ctrl/requests`).then(
-      (r) => r.json() as Promise<Array<{ method: string; pathname: string }>>,
-    );
+    const requests = await getRequestLog(apiUrl);
     expect(requests.some((r) => r.method === "POST" && r.pathname === "/storage/v1/bucket")).toBe(
       true,
     );

@@ -1,12 +1,14 @@
 # `supabase network-restrictions get`
 
+Target: hosted, no consent — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
-| Path                                           | Format                    | When                                                                                                                 |
-| ---------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                           |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always, after the project ref resolves — `linkedProjectCache` checks it exists to decide whether to write            |
-| `<workdir>/supabase/.temp/project-ref`         | plain text (project ref)  | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are both unset; also by `linkedProjectCache` on a cache miss |
+| Path                                           | Format                    | When                                                                                                                                                               |
+| ---------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                         |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always, after the project ref resolves — `linkedProjectCache` checks it exists to decide whether to write                                                          |
+| `<workdir>/supabase/.temp/project-ref`         | plain text (project ref)  | when `--remote=<ref>` and `SUPABASE_PROJECT_ID` env are both unset, and as the linked parent for `--remote=<branch>`; also by `linkedProjectCache` on a cache miss |
 
 ## Files Written
 
@@ -17,20 +19,22 @@
 
 ## API Routes
 
-| Method | Path                                      | Auth         | Request body | Response (used fields)                                                                                                                                                                                       |
-| ------ | ----------------------------------------- | ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET`  | `/v1/projects`                            | Bearer token | none         | project list for the interactive picker — only when no ref comes from `--project-ref`, `SUPABASE_PROJECT_ID` or `.temp/project-ref` and stdin is a TTY with interactive output                               |
-| `GET`  | `/v1/projects/{ref}/network-restrictions` | Bearer token | none         | `{ config: { dbAllowedCidrs?: string[], dbAllowedCidrsV6?: string[] }, status: "stored" \| "applied" }` (see `V1GetNetworkRestrictionsOutput` in `packages/api`)                                             |
-| `GET`  | `/v1/projects/{ref}`                      | Bearer token | none         | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available |
+| Method | Path                                      | Auth         | Request body | Response (used fields)                                                                                                                                                                                                                                   |
+| ------ | ----------------------------------------- | ------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/projects`                            | Bearer token | none         | project list for the interactive picker — only when no ref comes from `--remote=<ref>`, `SUPABASE_PROJECT_ID` or `.temp/project-ref` and stdin is a TTY with interactive output                                                                          |
+| `GET`  | `/v1/projects/{parent}/branches`          | Bearer token | none         | `[{id, name, project_ref, is_default}]` — only for `--remote=<branch>` (or the deprecated `--project-ref=<branch>`), and for a bare `--remote` followed by a word that could name a branch; `{parent}` is `SUPABASE_PROJECT_ID`, else the linked project |
+| `GET`  | `/v1/branches/{id}`                       | Bearer token | none         | `{ref, status, …}` — only for `--remote=<branch UUID>` when no project is linked                                                                                                                                                                         |
+| `GET`  | `/v1/projects/{ref}/network-restrictions` | Bearer token | none         | `{ config: { dbAllowedCidrs?: string[], dbAllowedCidrsV6?: string[] }, status: "stored" \| "applied" }` (see `V1GetNetworkRestrictionsOutput` in `packages/api`)                                                                                         |
+| `GET`  | `/v1/projects/{ref}`                      | Bearer token | none         | `{ref, name, organization_id, organization_slug}` — `linkedProjectCache` fill, best-effort, skipped when `.temp/linked-project.json` exists, `.temp/project-ref` names another ref, or no token is available                                             |
 
 ## Environment Variables
 
-| Variable                | Purpose                                                  | Required?                                                                                     |
-| ----------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)     | no (falls back to keyring → `~/.supabase/access-token`)                                       |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                  | no (falls back to `~/.supabase/profile` -> `supabase`)                                        |
-| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset       | no (falls back to `supabase/.temp/project-ref`, then the interactive project picker on a TTY) |
-| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag | no (pass `--experimental` instead; one of the two is required)                                |
+| Variable                | Purpose                                                                                                                   | Required?                                                                                     |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                      | no (falls back to keyring → `~/.supabase/access-token`)                                       |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                                                   | no (falls back to `~/.supabase/profile` -> `supabase`)                                        |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--remote=<ref>` is unset; also the parent project that `--remote=<branch>` is resolved against | no (falls back to `supabase/.temp/project-ref`, then the interactive project picker on a TTY) |
+| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag                                                                  | no (pass `--experimental` instead; one of the two is required)                                |
 
 ## Exit Codes
 
@@ -38,15 +42,15 @@
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success — network-restrictions status printed to stdout                                                                                   |
 | `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`ExperimentalRequiredError`) — checked before ref resolution/API/telemetry |
-| `1`  | project ref unresolved (`ProjectRefNotLinkedError` / `InvalidProjectRefError`)                                                            |
+| `1`  | project ref unresolved (`ProjectRefNotLinkedError`; `InvalidProjectRefError` for a malformed `SUPABASE_PROJECT_ID` or link-file ref)      |
 | `1`  | API non-200 (`NetworkRestrictionsGetUnexpectedStatusError`)                                                                               |
 | `1`  | transport failure (`NetworkRestrictionsGetNetworkError`)                                                                                  |
 
 ## Telemetry Events Fired
 
-| Event                  | When                                                                                           | Notable properties / groups                                          |
-| ---------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper); not fired when the `--experimental` gate is closed | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`) |
+| Event                  | When                                                                                           | Notable properties / groups                                                                                                                              |
+| ---------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper); not fired when the `--experimental` gate is closed | `exit_code`, `duration_ms`, `flags` (`--remote` → `true` (bare), the ref, or `<redacted>`; `--project-ref` → the ref when ref-shaped, else `<redacted>`) |
 
 ## Output
 
@@ -76,7 +80,7 @@ CLI-1975 struct-spec ones):
 - `json` — alphabetical struct-field order with trailing newline.
 - `yaml` — `stringifyYaml(response)`.
 - `toml` — `stringifyToml(response)` with trailing newline.
-- `env` — Viper-flattened SCREAMING_SNAKE_CASE keys.
+- `env` — flattened SCREAMING_SNAKE_CASE keys.
 
 ### `--output pretty`
 

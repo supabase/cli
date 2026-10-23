@@ -1,30 +1,63 @@
-import { Effect, Option } from "effect";
+import { Config, ConfigProvider, Effect, FileSystem, Option, Path } from "effect";
 
 import { aqua } from "../../../command-internal/colors.ts";
+import { loadProjectEnvValues } from "../../../command-internal/db-config.toml-read.ts";
+import {
+  resolveExperimentalWithProjectEnv,
+  WorkdirFlag,
+} from "../../../command-internal/global-flags.ts";
+import { resolveWorkdir } from "../../../config/command-settings.layer.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { runDbPull, type DbPullInvoke } from "../../../command-internal/db-pull-run.ts";
-import { warnLinkedTargetDefault } from "../../../command-internal/target-default-warning.ts";
+import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import { runDbPull } from "../../../command-internal/db-pull-run.ts";
+import { resolveTarget } from "../../../command-internal/target/resolve-target.ts";
+import { DbPullEngineConflictError } from "./pull.errors.ts";
 import type { DbPullFlags } from "./pull.command.ts";
+
+/**
+ * Resolves the removed `--experimental` structured-dump mode and the project `.env` values from
+ * the same workdir `CommandSettings` computes, without loading the profile. Skipped under
+ * `--declarative`. Kept out of `runDbPull` so `supabase pull` ignores `SUPABASE_EXPERIMENTAL`.
+ */
+export const resolveRemovedExperimental = Effect.fn("db.pull.resolveRemovedExperimental")(
+  function* (flags: DbPullFlags) {
+    if (Option.getOrElse(flags.declarative, () => false)) {
+      return { experimental: false, projectEnv: undefined };
+    }
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const runtimeInfo = yield* RuntimeInfo;
+    const provider = yield* ConfigProvider.ConfigProvider;
+    const workdirEnvValue = yield* Config.option(Config.String("SUPABASE_WORKDIR")).parse(provider);
+    const { workdir } = yield* resolveWorkdir(
+      yield* WorkdirFlag,
+      workdirEnvValue,
+      runtimeInfo.cwd,
+      path,
+    );
+    const projectEnv = yield* loadProjectEnvValues(fs, path, workdir);
+    return { experimental: yield* resolveExperimentalWithProjectEnv(projectEnv), projectEnv };
+  },
+);
 
 /**
  * `dbPull`'s established external behavior (stdout/stderr, JSON payload,
  * "Finished" line), reimplemented on top of {@link runDbPull}: run the
  * pull, then emit based on the returned outcome.
  */
-export const dbPull = Effect.fn("db.pull")(function* (flags: DbPullFlags, invoke?: DbPullInvoke) {
+export const dbPull = Effect.fn("db.pull")(function* (
+  flags: DbPullFlags,
+  projectEnv?: Record<string, string>,
+) {
   const output = yield* Output;
-  // `db remote commit` reuses this handler and keeps its own linked default.
-  if (invoke === undefined) {
-    yield* warnLinkedTargetDefault({
-      command: "db pull",
-      targetSelected:
-        Option.isSome(flags.dbUrl) ||
-        Option.isSome(flags.linked) ||
-        Option.isSome(flags.local) ||
-        Option.isSome(flags.projectRef),
+  if (Option.isSome(flags.declarative) && Option.isSome(flags.diffEngine)) {
+    return yield* new DbPullEngineConflictError({
+      message:
+        "if any flags in the group [declarative diff-engine] are set none of the others can be; [declarative diff-engine] were all set",
     });
   }
-  const outcome = yield* runDbPull(flags, invoke);
+  const target = yield* resolveTarget(flags);
+  const outcome = yield* runDbPull(flags, target, { projectEnv });
 
   yield* Effect.annotateCurrentSpan({
     "db.pull.outcome": outcome.kind,
@@ -59,7 +92,7 @@ export const dbPull = Effect.fn("db.pull")(function* (flags: DbPullFlags, invoke
         engine: outcome.engine,
       });
     }
-  } else if (invoke?.skipFinishedLine !== true) {
+  } else {
     yield* output.raw(`Finished ${aqua("supabase db pull")}.\n`);
   }
 });

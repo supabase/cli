@@ -3,19 +3,19 @@ import { InvalidProjectRefError } from "../../config/project-ref.errors.ts";
 import {
   INVALID_PROJECT_REF_MESSAGE,
   PROJECT_REF_PATTERN,
-} from "../../config/remote-target.service.ts";
-import { readLinkSnapshotSoft } from "../../command-internal/link-snapshot.ts";
+} from "../../config/project-ref.service.ts";
+import { readLinkSnapshotSoft } from "../../shared/config/link-snapshot.ts";
 
-// Mirrors `RemoteTarget` (`remote-target.layer.ts`) source by source:
+// Mirrors `ProjectRefResolver` (`project-ref.layer.ts`) source by source:
 //
 // - The caller-supplied override (`--project-ref` and/or `SUPABASE_PROJECT_ID`,
 //   captured by `CommandSettings`) is validated against `PROJECT_REF_PATTERN`
 //   and fails with the shared `InvalidProjectRefError` when malformed — the
-//   same hard check every `resolve`/`load` caller applies to a value
+//   same hard check every project-ref caller applies to a value
 //   the user typed, so a typo is reported instead of silently falling through
 //   to a different project's context.
 // - The link `supabase link` records is the soft half (`resolveOptional`): it is
-//   read directly rather than through `RemoteTarget`, because that layer requires
+//   read directly rather than through `ProjectRefResolver`, because that layer requires
 //   `CommandPlatformApiFactory` for its prompt path, and feedback must keep working
 //   when the user isn't logged in. A broken or malformed link degrades to
 //   "unlinked" instead of failing the command — the workdir can be an untrusted

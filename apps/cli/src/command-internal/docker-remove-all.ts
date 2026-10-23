@@ -89,7 +89,7 @@ function parsePrunedNames(stdout: string): ReadonlyArray<string> {
 const reportPruned = (debug: boolean, label: string, stdout: string) =>
   Effect.sync(() => {
     if (!debug) return;
-    globalThis.process.stderr.write(`${label} [${parsePrunedNames(stdout).join(" ")}]\n`);
+    process.stderr.write(`${label} [${parsePrunedNames(stdout).join(" ")}]\n`);
   });
 
 /**

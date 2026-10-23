@@ -1,9 +1,9 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
-import { ExperimentalFeatureFlagError } from "../../../command-internal/experimental-feature.ts";
-import { readLinkSnapshot } from "../../../command-internal/link-snapshot.ts";
-import { projectStateModeLayer } from "../../../command-internal/project-state-mode.ts";
+import { ExperimentalFeatureFlagError } from "../../../shared/config/experimental-feature.ts";
+import { readLinkSnapshot } from "../../../shared/config/link-snapshot.ts";
+import { projectStateModeLayer } from "../../../shared/config/project-state-mode.ts";
 import { respondToComplete } from "../../../cli/complete.ts";
 import { rootCommandForFeatures } from "../../../cli/root.ts";
 import {
@@ -11,11 +11,17 @@ import {
   StackRoutingError,
   resolveProjectStateSelection,
 } from "../../../command-internal/stack-backend.ts";
+import { withConfigEnv } from "../../../../tests/helpers/command-mocks.ts";
 
-const select = (input: Parameters<typeof resolveProjectStateSelection>[0]) =>
-  resolveProjectStateSelection(input).pipe(Effect.provide(BunServices.layer));
+const select = ({
+  env,
+  ...input
+}: Parameters<typeof resolveProjectStateSelection>[0] & {
+  readonly env: Readonly<Record<string, string>>;
+}) =>
+  withConfigEnv(env, resolveProjectStateSelection(input)).pipe(Effect.provide(BunServices.layer));
 
-const resolve = (input: Parameters<typeof resolveProjectStateSelection>[0]) =>
+const resolve = (input: Parameters<typeof select>[0]) =>
   select(input).pipe(Effect.map(({ stackBackend }) => stackBackend));
 
 const project = (config: string, format: "toml" | "json" = "toml") =>
@@ -202,7 +208,7 @@ stack = true
           expect(Option.isSome(error)).toBe(true);
           if (Option.isSome(error)) {
             expect(error.value).toBeInstanceOf(StackRoutingError);
-            expect(String(error.value)).toContain("0 or 1");
+            expect(String(error.value)).toContain("expected true or false");
           }
         }
         expect(
