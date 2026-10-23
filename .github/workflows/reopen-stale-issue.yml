@@ -1,6 +1,8 @@
 name: Reopen stale issue
 
 on:
+  # /reopen must work for the issue author; the script runs no code from the comment.
+  # jactionlint ignore=dangerous-triggers
   issue_comment:
     types:
       - created

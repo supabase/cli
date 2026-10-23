@@ -1,6 +1,8 @@
 name: Live E2E Notifications
 
 on:
+  # Only the run's conclusion and metadata are read; nothing from the run is executed.
+  # jactionlint ignore=dangerous-triggers
   workflow_run:
     workflows: [Live E2E, Release]
     types: [completed]

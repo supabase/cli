@@ -3,6 +3,8 @@ name: Sync repair
 # Once CI and the AI review finish on a Claude-resolved sync/develop-into-next pull request, lets Claude fix what
 # the merge broke and answer the review. See apps/cli/docs/release-process.md#claude-resolved-develop-into-next.
 on:
+  # Repairs the sync branch after its checks; scripts run from the trusted checkout only.
+  # jactionlint ignore=dangerous-triggers
   workflow_run:
     workflows:
       - CI

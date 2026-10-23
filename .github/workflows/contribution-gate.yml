@@ -1,6 +1,8 @@
 name: Contribution Gate
 
 on:
+  # The gate must comment on fork pull requests; it checks out the base branch only.
+  # jactionlint ignore=dangerous-triggers
   pull_request_target:
     types:
       - opened

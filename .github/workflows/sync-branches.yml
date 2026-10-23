@@ -1,6 +1,8 @@
 name: Sync branches
 
 on:
+  # Runs after Release on the default branch; scripts run from the trusted checkout only.
+  # jactionlint ignore=dangerous-triggers
   workflow_run:
     workflows:
       - Release

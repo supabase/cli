@@ -16,6 +16,9 @@ on:
         description: "PR number to review"
         required: true
         type: string
+  # Comments are the /ai-review command surface; the resolve job authorizes the commenter and
+  # only the write job runs, from the default branch.
+  # jactionlint ignore=dangerous-triggers
   issue_comment:
     types:
       - created

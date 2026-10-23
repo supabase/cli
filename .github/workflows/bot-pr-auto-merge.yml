@@ -1,6 +1,8 @@
 name: Bot PR auto-merge
 
 on:
+  # Needed for the environment secret; the job never checks out or runs pull request code.
+  # jactionlint ignore=dangerous-triggers
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review]
     branches: [develop]
