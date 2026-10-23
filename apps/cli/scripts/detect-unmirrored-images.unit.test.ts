@@ -91,7 +91,8 @@ describe("detect unmirrored images", () => {
       return Promise.resolve();
     };
 
-    const responses = [rateLimited, rateLimited, { exit: 0, stderr: "" }];
+    const quotaExceeded = { exit: 1, stderr: "ERROR: toomanyrequests: Data limit exceeded\n" };
+    const responses = [rateLimited, quotaExceeded, { exit: 0, stderr: "" }];
     await expect(
       inspectWithRateLimitRetry(target, () => responses.shift()!, sleep, [1, 2, 3]),
     ).resolves.toBe(true);

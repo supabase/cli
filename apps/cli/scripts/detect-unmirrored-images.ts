@@ -104,7 +104,11 @@ export async function inspectWithRateLimitRetry(
   for (let attempt = 0; ; attempt++) {
     const { exit, stderr } = inspect();
     const delay = delaysMs[attempt];
-    if (exit !== 0 && stderr.includes("429 Too Many Requests") && delay !== undefined) {
+    if (
+      exit !== 0 &&
+      /429 Too Many Requests|toomanyrequests/i.test(stderr) &&
+      delay !== undefined
+    ) {
       console.error(`rate limited inspecting ${target}, retrying in ${delay}ms`);
       await sleep(delay);
       continue;
