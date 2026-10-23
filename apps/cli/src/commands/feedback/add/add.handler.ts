@@ -1,4 +1,4 @@
-import { Effect, Option, Stream } from "effect";
+import { Effect, Option, Schema, SchemaIssue, Stream } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import { FeedbackClient } from "../../../shared/feedback/feedback-client.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -21,8 +21,31 @@ import {
   FEEDBACK_PIPE_TOO_LONG_MESSAGE,
   FeedbackEmptyMessageError,
   FeedbackMessageTooLongError,
+  FeedbackTargetInvalidError,
+  feedbackTargetInvalidMessage,
   feedbackTooLongMessage,
 } from "./add.errors.ts";
+
+const decodeDocsTarget = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      url: Schema.String.check(
+        Schema.isMaxLength(500),
+        Schema.makeFilter((value: string) => {
+          const url = URL.parse(value);
+          // The parser resolves dot segments and encodes unsafe characters, so a changed href means unsafe input.
+          return (
+            url?.href === value &&
+            value.startsWith("https://supabase.com/") &&
+            /^\/(docs|kb)(\/|$)|^\/llms(-full)?\.txt$|^\/llms\//.test(url.pathname)
+          );
+        }),
+      ),
+      quote: Schema.String.check(Schema.isPattern(/\S/), Schema.isMaxLength(400)),
+      heading: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+    }),
+  ),
+);
 
 // Collects piped stdin in constant memory, bailing out as over-limit once the
 // byte cap is crossed — the documented character limit makes anything past the
@@ -106,6 +129,29 @@ export const feedbackAdd = Effect.fn("feedback.add")(function* (args: FeedbackAd
   // the submission succeeds or fails — the telemetry-state finalizer every
   // command runs.
   yield* Effect.gen(function* () {
+    // Check the targets first, so a bad target does not discard a typed or piped message.
+    const targets = yield* Effect.forEach(args.target, (raw, index) =>
+      decodeDocsTarget(raw).pipe(
+        Effect.map(({ url, quote, heading }) => ({
+          url,
+          quote,
+          ...(heading?.trim() ? { heading } : {}),
+        })),
+        Effect.mapError((cause) => {
+          // The error names the field but not its value, because the value can be private docs text.
+          const segment = SchemaIssue.makeFormatterStandardSchemaV1()(cause.issue).issues[0]
+            ?.path?.[0];
+          return new FeedbackTargetInvalidError({
+            message: feedbackTargetInvalidMessage(
+              index + 1,
+              segment === undefined
+                ? undefined
+                : String(typeof segment === "object" ? segment.key : segment),
+            ),
+          });
+        }),
+      ),
+    );
     const message = yield* resolveFeedbackMessage(args);
     // The backend enforces the 1000-character limit; mirroring it client-side
     // keeps a user mistake from surfacing as a cryptic PostgREST error
@@ -158,6 +204,9 @@ export const feedbackAdd = Effect.fn("feedback.add")(function* (args: FeedbackAd
           isAgent,
           agentName,
         },
+        targets,
+        category: Option.getOrUndefined(args.category),
+        outcome: Option.getOrUndefined(args.outcome),
       })
       .pipe(settleFeedbackTask(sending));
 

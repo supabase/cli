@@ -55,3 +55,23 @@ export class FeedbackMessageTooLongError extends Data.TaggedError("FeedbackMessa
     return actionability.invalidInput;
   }
 }
+
+export function feedbackTargetInvalidMessage(position: number, field?: string): string {
+  return (
+    (field === undefined
+      ? `--target ${position} is not a JSON object. `
+      : `--target ${position} has a missing or invalid "${field}". `) +
+    `Pass JSON like {"url":"https://supabase.com/docs/guides/auth","quote":"..."}. ` +
+    `The URL must be https://supabase.com/ followed by docs, kb, llms/, llms.txt or llms-full.txt, with spaces percent-encoded and no ".." segments. ` +
+    `The quote must be 1-400 characters, and the optional heading at most 200 characters.`
+  );
+}
+
+/** A `--target` value that is not a valid docs target. */
+export class FeedbackTargetInvalidError extends Data.TaggedError("FeedbackTargetInvalidError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
