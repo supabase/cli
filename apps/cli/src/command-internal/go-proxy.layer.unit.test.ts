@@ -9,6 +9,8 @@ import {
   FileSystem,
   Layer,
   Path,
+  PlatformError,
+  Schema,
   Sink,
   Stream,
 } from "effect";
@@ -100,7 +102,7 @@ function mockProcessControl() {
           ).pipe(Effect.asVoid),
         exit,
         setExitCode: () => Effect.void,
-        getExitCode: Effect.succeed(undefined),
+        getExitCode: Effect.undefined,
       }),
     ),
   };
@@ -131,7 +133,14 @@ function mockSpawner(exit: ExitBehavior, spawnedBeforeExit?: Deferred.Deferred<v
             ? Effect.succeed(ChildProcessSpawner.ExitCode(exit.code))
             : exit.kind === "never"
               ? Effect.never
-              : Effect.fail(new Error(exit.error) as any);
+              : Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "Unknown",
+                    module: "ChildProcess",
+                    method: "exitCode",
+                    description: exit.error,
+                  }),
+                );
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(42_424),
           exitCode,
@@ -185,64 +194,68 @@ describe("formatGoBinaryNotFoundError - pinned snippet", () => {
   const TRIED = ["$SUPABASE_GO_BINARY (unset)"];
   const PINNED_VERSION = "2.100.0";
 
-  async function withMockedHost(
+  function withMockedHost(
     opts: { platform: NodeJS.Platform; arch: NodeJS.Architecture },
-    fn: (mod: typeof import("./go-proxy.layer.ts")) => void | Promise<void>,
-  ): Promise<void> {
-    vi.resetModules();
-    vi.doMock("../shared/cli/version.ts", () => ({ CLI_VERSION: PINNED_VERSION }));
-    const originalPlatform = process.platform;
-    const originalArch = process.arch;
-    Object.defineProperty(process, "platform", { value: opts.platform, configurable: true });
-    Object.defineProperty(process, "arch", { value: opts.arch, configurable: true });
-    try {
-      const mod = await import("./go-proxy.layer.ts");
-      await fn(mod);
-    } finally {
-      Object.defineProperty(process, "platform", {
-        value: originalPlatform,
-        configurable: true,
-      });
-      Object.defineProperty(process, "arch", { value: originalArch, configurable: true });
-      vi.doUnmock("../cli/version.ts");
-      vi.resetModules();
-    }
+    fn: (mod: typeof import("./go-proxy.layer.ts")) => void,
+  ): Effect.Effect<void> {
+    return Effect.acquireUseRelease(
+      Effect.sync(() => {
+        vi.resetModules();
+        vi.doMock("../shared/cli/version.ts", () => ({ CLI_VERSION: PINNED_VERSION }));
+        const originalPlatform = process.platform;
+        const originalArch = process.arch;
+        Object.defineProperty(process, "platform", { value: opts.platform, configurable: true });
+        Object.defineProperty(process, "arch", { value: opts.arch, configurable: true });
+        return { originalPlatform, originalArch };
+      }),
+      () => Effect.promise(() => import("./go-proxy.layer.ts")).pipe(Effect.map(fn)),
+      ({ originalPlatform, originalArch }) =>
+        Effect.sync(() => {
+          Object.defineProperty(process, "platform", {
+            value: originalPlatform,
+            configurable: true,
+          });
+          Object.defineProperty(process, "arch", { value: originalArch, configurable: true });
+          vi.doUnmock("../cli/version.ts");
+          vi.resetModules();
+        }),
+    );
   }
 
-  it("renders a copy-pasteable install snippet for linux x64", async () => {
-    await withMockedHost({ platform: "linux", arch: "x64" }, (mod) => {
+  it.effect("renders a copy-pasteable install snippet for linux x64", () =>
+    withMockedHost({ platform: "linux", arch: "x64" }, (mod) => {
       const message = mod.formatGoBinaryNotFoundError(TRIED);
       expect(message).toContain(
         `https://github.com/supabase/cli/releases/download/v${PINNED_VERSION}/supabase_${PINNED_VERSION}_linux_amd64.tar.gz`,
       );
       expect(message).toContain(`mkdir -p "$HOME/.local/share/supabase"`);
       expect(message).toContain(`export PATH="$HOME/.local/share/supabase:$PATH"`);
-    });
-  });
+    }),
+  );
 
-  it("maps Node's win32 platform to the release asset's `windows` slug", async () => {
-    await withMockedHost({ platform: "win32", arch: "x64" }, (mod) => {
+  it.effect("maps Node's win32 platform to the release asset's `windows` slug", () =>
+    withMockedHost({ platform: "win32", arch: "x64" }, (mod) => {
       const message = mod.formatGoBinaryNotFoundError(TRIED);
       expect(message).toContain(
         `https://github.com/supabase/cli/releases/download/v${PINNED_VERSION}/supabase_${PINNED_VERSION}_windows_amd64.tar.gz`,
       );
       expect(message).not.toContain("win32");
-    });
-  });
+    }),
+  );
 
-  it("maps darwin arm64 to the matching release asset", async () => {
-    await withMockedHost({ platform: "darwin", arch: "arm64" }, (mod) => {
+  it.effect("maps darwin arm64 to the matching release asset", () =>
+    withMockedHost({ platform: "darwin", arch: "arm64" }, (mod) => {
       expect(mod.formatGoBinaryNotFoundError(TRIED)).toContain(
         `supabase_${PINNED_VERSION}_darwin_arm64.tar.gz`,
       );
-    });
-  });
+    }),
+  );
 
-  it("omits the snippet on unsupported architectures (no release asset)", async () => {
-    await withMockedHost({ platform: "linux", arch: "ia32" }, (mod) => {
+  it.effect("omits the snippet on unsupported architectures (no release asset)", () =>
+    withMockedHost({ platform: "linux", arch: "ia32" }, (mod) => {
       expect(mod.formatGoBinaryNotFoundError(TRIED)).not.toContain("curl -sL");
-    });
-  });
+    }),
+  );
 });
 
 const proxyDeps = (
@@ -408,7 +421,7 @@ describe("makeGoProxyLayer", () => {
           );
         const linked = {
           stackState: "1",
-          linked: JSON.stringify({
+          linked: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
             ref: "abcdefghijklmnopqrst",
             name: "Acme",
             organization_id: "org_123",
