@@ -145,6 +145,7 @@ Warning: supabase db push will target the local database by default in the next 
   whenever `PGSERVICE` names a service. The pooler route also reads `.pgpass` (`PGPASSFILE`, else
   `~/.pgpass`, or `%APPDATA%\postgresql\pgpass.conf` on Windows) and discards that password, and
   it keeps `PGAPPNAME` and a service's `options` and runtime keys, which the direct host drops.
-  Tool containers get none of these `PG*` TLS settings (migra gets the CLI's own bundled CA
+  `db dump` and the `pg_dump` seed of a first `db pull` also get them (see `db dump`). Other
+  tool containers get none of these `PG*` TLS settings (migra gets the CLI's own bundled CA
   outside its OOM fallback); migra and pgadmin get the timeout as `connect_timeout` and the
   pooler's `options` and runtime keys in their URL.
