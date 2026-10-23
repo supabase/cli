@@ -3,6 +3,9 @@ name: Sync repair
 # Once CI and the AI review finish on a Claude-resolved sync/develop-into-next pull request, lets Claude fix what
 # the merge broke and answer the review. See apps/cli/docs/release-process.md#claude-resolved-develop-into-next.
 on:
+  # Starts when the sync branch's checks finish. Every script runs from the default-branch
+  # checkout, never from the sync branch.
+  # jactionlint ignore=dangerous-triggers
   workflow_run:
     workflows:
       - CI
@@ -55,7 +58,8 @@ jobs:
           persist-credentials: false
 
       - name: Load Claude model
-        run: echo "CLAUDE_MODEL=$(jq -r .claude.opus trusted/.github/ai-models.json)" >> "$GITHUB_ENV"
+        id: model
+        run: echo "model=$(jq -r .claude.opus trusted/.github/ai-models.json)" >> "$GITHUB_OUTPUT"
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -77,6 +81,7 @@ jobs:
           persist-credentials: false
 
       # Same pinned release and isolated npm config as the AI review workflow.
+      # jactionlint ignore=adhoc-packages
       - name: Install Claude Code CLI
         if: steps.collect.outputs.action == 'repair'
         run: |
@@ -91,6 +96,7 @@ jobs:
         working-directory: trusted
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: ${{ steps.model.outputs.model }}
           WORK_DIR: ${{ github.workspace }}/work
           HEAD_SHA: ${{ steps.collect.outputs.head }}
         run: |
@@ -119,6 +125,7 @@ jobs:
           HEAD_SHA: ${{ steps.collect.outputs.head }}
           CHANGED: ${{ steps.repair.outputs.changed }}
         run: |
+          set -o pipefail
           if [ "$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)" != "$HEAD_SHA" ]; then
             echo "::notice::The sync branch moved since the checks settled; skipping."
             exit 0

@@ -24,7 +24,7 @@ const { values } = parseArgs({
 
 const version = values.version;
 if (!version) {
-  console.error("Usage: pnpm exec bun apps/cli/scripts/sync-versions.ts --version <version>");
+  console.error("Usage: bun apps/cli/scripts/sync-versions.ts --version <version>");
   process.exit(1);
 }
 

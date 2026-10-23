@@ -100,11 +100,11 @@ jobs:
           rcodesign --version
 
       - name: Sync versions
-        run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
+        run: bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
 
       - name: Build CLI artifacts
         timeout-minutes: ${{ inputs.build_timeout_minutes }}
-        run: pnpm exec bun apps/cli/scripts/build.ts --version "${VERSION}"
+        run: bun apps/cli/scripts/build.ts --version "${VERSION}"
 
       - name: Verify build artifacts
         run: |

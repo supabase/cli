@@ -191,6 +191,9 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
     steps:
+      # This job exists to run the published install script. That script checks the tarball it
+      # downloads against the release's checksums.txt before using it.
+      # jactionlint ignore=unverified-download
       - name: Install via the published install script
         shell: bash
         run: |
