@@ -3,11 +3,12 @@ import { randomUUID } from "node:crypto";
 import { Cause, Effect, Exit, Schema } from "effect";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, throwWithCleanup, test } from "../../../../tests/helpers/live.ts";
+import { throwWithCleanup, test } from "../../../../tests/helpers/live.ts";
 import {
   awaitLiveBranchEffect,
   awaitLiveBranchRemovedEffect,
   removeLiveBranchByNameEffect,
+  runLiveBranchCreateEffect,
 } from "../../../../tests/helpers/branches-live.ts";
 
 const CreatedBranchRef = Schema.Struct({ project_ref: Schema.String });
@@ -20,16 +21,7 @@ test("creates a preview branch", ({ cliEffect, project }) =>
       let branchRef: string | undefined;
 
       const target = Effect.gen(function* () {
-        const result = yield* cliEffect([
-          "branches",
-          "create",
-          name,
-          "--project-ref",
-          project.ref,
-          "--output-format",
-          "json",
-        ]);
-        requireLiveSuccess(result, "branches create");
+        const result = yield* runLiveBranchCreateEffect(cliEffect, project, name);
         const refBody = yield* Schema.decodeEffect(Schema.fromJsonString(CreatedBranchRef))(
           result.stdout,
         );

@@ -139,19 +139,57 @@ function branchRefFromCreate(
   );
 }
 
+// The platform rejects `branches create` with a 400 when the database it configures restarts mid-create.
+const PLATFORM_DATABASE_RESTART = /\b57P01\b|the database system is shutting down/u;
+
+function isPlatformDatabaseRestart(error: unknown): boolean {
+  return (
+    error instanceof BranchCommandFailed &&
+    PLATFORM_DATABASE_RESTART.test(`${error.stdout ?? ""}\n${error.stderr}`)
+  );
+}
+
+/** Runs `branches create`, re-issuing it once when the platform restarted the database mid-create. */
+export function runLiveBranchCreateEffect<E>(
+  cli: BranchCli<E>,
+  project: LiveProject,
+  name: string,
+): Effect.Effect<BranchCliResult, BranchError<E>, never> {
+  const create = Effect.suspend(() =>
+    command(
+      cli,
+      ["branches", "create", name, "--project-ref", project.ref, "--output-format", "json"],
+      "branches create",
+      undefined,
+    ),
+  );
+  const clearRejected = branchIsListed(cli, project, name, "name").pipe(
+    Effect.flatMap((listed) =>
+      listed ? removeLiveBranchByNameEffect(cli, project, name) : Effect.succeed(true as const),
+    ),
+  );
+  return create.pipe(
+    Effect.catch((rejected) =>
+      isPlatformDatabaseRestart(rejected)
+        ? clearRejected.pipe(
+            Effect.mapError(
+              (cleanup) =>
+                new AggregateError([rejected, cleanup], "Branch create retry cleanup failed"),
+            ),
+            Effect.flatMap(() => create),
+          )
+        : Effect.fail(rejected),
+    ),
+  );
+}
+
 /** Creates one named branch and captures its immutable reference before polling readiness. */
 export function createLiveBranchEffect<E>(
   cli: BranchCli<E>,
   project: LiveProject,
   name: string,
 ): Effect.Effect<string, BranchError<E>, never> {
-  const created = command(
-    cli,
-    ["branches", "create", name, "--project-ref", project.ref, "--output-format", "json"],
-    "branches create",
-    undefined,
-  );
-  return created.pipe(
+  return runLiveBranchCreateEffect(cli, project, name).pipe(
     Effect.flatMap((result) => branchRefFromCreate(result)),
     Effect.catch((primary) =>
       removeLiveBranchByNameEffect(cli, project, name).pipe(
