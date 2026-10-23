@@ -1614,6 +1614,8 @@ paths:
           description: Unauthorized
         '403':
           description: Forbidden action
+        '404':
+          description: API key not found for project
         '429':
           description: Rate limit exceeded
       security:
@@ -1674,6 +1676,8 @@ paths:
           description: Unauthorized
         '403':
           description: Forbidden action
+        '404':
+          description: API key not found for project
         '429':
           description: Rate limit exceeded
       security:
@@ -1744,6 +1748,8 @@ paths:
           description: Unauthorized
         '403':
           description: Forbidden action
+        '404':
+          description: API key not found for project
         '429':
           description: Rate limit exceeded
       security:
