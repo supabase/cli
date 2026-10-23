@@ -2,6 +2,7 @@ import { type V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 
+import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
@@ -153,6 +154,36 @@ describe("branches unpause integration", () => {
         expect(causeText).toContain("BranchesUnpauseUnexpectedStatusError");
         expect(causeText).toContain("unexpected unpause branch status 500");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("carries the plan-gate entitlement on a JSON-mode gated restore", () => {
+    const upgradeUrl = "https://supabase.com/dashboard/org/acme/billing";
+    const out = mockOutput({ format: "json" });
+    const api = mockCommandPlatformApi({
+      handler: (request) =>
+        Effect.sync(() =>
+          jsonResponse(request, 402, {
+            message: "Restoring this project requires a paid plan",
+            error: {
+              code: "entitlement_required",
+              feature: "project_restore_size",
+              upgrade_url: upgradeUrl,
+            },
+          }),
+        ),
+    });
+    const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+    const layer = buildTestRuntime({ out, api, cliSettings });
+    return Effect.gen(function* () {
+      yield* branchesUnpause({ ...baseFlags, name: Option.some(BRANCH_REF) }).pipe(
+        withJsonErrorHandling,
+      );
+      expect(out.failures).toHaveLength(1);
+      expect(out.failures[0]).toMatchObject({
+        code: "BranchesUnpauseUnexpectedStatusError",
+        entitlement: { feature: "project_restore_size", upgrade_url: upgradeUrl },
+      });
     }).pipe(Effect.provide(layer));
   });
 

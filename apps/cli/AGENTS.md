@@ -161,6 +161,11 @@ text layer. Therefore stdout is payload-only for either machine flag. Do not cha
 layer to move spinners; that would change text output globally. Handlers check `--output` first and
 use established encoders before the `output.format` branch.
 
+Plan-gated denials carry an optional `entitlement: { feature, upgrade_url }` on the json and
+stream-json error object. `mapHttpError` attaches it from the Management API's
+`entitlement_required` body, so a handler that rebuilds a mapped status error must forward it. The
+SSO handlers don't, because their v1 routes carry no plan gate.
+
 ## Tests
 
 Follow the root testing philosophy and use the package scripts in `package.json`. Cover meaningful

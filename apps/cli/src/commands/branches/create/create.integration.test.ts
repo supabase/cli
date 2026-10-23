@@ -28,6 +28,7 @@ import { branchesCreateCommand, type BranchesCreateFlags } from "./create.comman
 import { branchesCreate } from "./create.handler.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
+import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 
 type CreatedBranch = typeof V1CreateABranchOutput.Type;
 
@@ -484,6 +485,32 @@ describe("branches create integration", () => {
           properties: { feature_key: "branching_limit", org_slug: "env-org" },
         },
       ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("carries the envelope's entitlement on the JSON-mode failure", () => {
+    const upgradeUrl = "https://supabase.com/dashboard/org/env-org/billing";
+    const { layer, out } = setup({
+      format: "json",
+      status: 402,
+      response: {
+        message: "Branching is supported only on the Pro plan or above",
+        error: {
+          code: "entitlement_required",
+          feature: "branching_limit",
+          upgrade_url: upgradeUrl,
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      yield* branchesCreate({ ...baseFlags, name: Option.some("feat-x") }).pipe(
+        withJsonErrorHandling,
+      );
+      expect(out.failures).toHaveLength(1);
+      expect(out.failures[0]).toMatchObject({
+        code: "BranchesCreateUnexpectedStatusError",
+        entitlement: { feature: "branching_limit", upgrade_url: upgradeUrl },
+      });
     }).pipe(Effect.provide(layer));
   });
 
