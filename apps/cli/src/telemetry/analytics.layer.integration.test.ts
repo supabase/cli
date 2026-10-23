@@ -8,7 +8,7 @@ import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { mockRuntimeInfo, mockTty } from "../../tests/helpers/mocks.ts";
 import { CliSettings } from "../shared/config/cli-settings.service.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
-import { writeProjectLink } from "../command-internal/project-link.ts";
+import { writeProjectLink } from "../shared/config/project-link.ts";
 import { analyticsLayer, analyticsLayerFor } from "./analytics.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-analytics-destination-");

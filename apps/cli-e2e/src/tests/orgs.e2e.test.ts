@@ -74,14 +74,14 @@ describe("orgs", () => {
 
   describe("orgs:create", () => {
     testBehaviour.skipIf(isRecording)("creates organization with name", async ({ run }) => {
-      const result = await run(["orgs", "create", ORG_NAME]);
+      const result = await run(["orgs", "create", ORG_NAME, "--yes"]);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Created organization:");
       expect(result.stdout).toMatch(/[a-z]{20}/);
     });
 
     testBehaviour("exits non-zero without name in non-TTY", async ({ run }) => {
-      const result = await run(["orgs", "create"]);
+      const result = await run(["orgs", "create", "--yes"]);
       expect(result.exitCode).not.toBe(0);
     });
 
@@ -94,7 +94,7 @@ describe("orgs", () => {
           body: { message: "Organization name already in use" },
         }),
       });
-      const result = await run(["orgs", "create", ORG_NAME]);
+      const result = await run(["orgs", "create", ORG_NAME, "--yes"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Organization name already in use");
     });
@@ -105,7 +105,7 @@ describe("orgs", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 403, body: { message: "Organization limit reached" } }),
       });
-      const result = await run(["orgs", "create", ORG_NAME]);
+      const result = await run(["orgs", "create", ORG_NAME, "--yes"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Organization limit reached");
     });
@@ -116,7 +116,7 @@ describe("orgs", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 422, body: { message: "Invalid organization name" } }),
       });
-      const result = await run(["orgs", "create", ORG_NAME]);
+      const result = await run(["orgs", "create", ORG_NAME, "--yes"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid organization name");
     });
@@ -127,7 +127,7 @@ describe("orgs", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
       });
-      const result = await run(["orgs", "create", ORG_NAME]);
+      const result = await run(["orgs", "create", ORG_NAME, "--yes"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
     });
@@ -138,7 +138,7 @@ describe("orgs", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 429, body: { message: "Too Many Requests" } }),
       });
-      const result = await run(["orgs", "create", ORG_NAME]);
+      const result = await run(["orgs", "create", ORG_NAME, "--yes"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Too Many Requests");
     });
@@ -149,7 +149,7 @@ describe("orgs", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 500, body: { message: "Internal Server Error" } }),
       });
-      const result = await run(["orgs", "create", ORG_NAME]);
+      const result = await run(["orgs", "create", ORG_NAME, "--yes"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });

@@ -391,6 +391,7 @@ describe("src/index.ts export surface", () => {
       [
         "CLI_CONFIG_SCHEMA_URL",
         "CliConfigParseError",
+        "CliConfigRemovedKeyError",
         "CliConfigSchema",
         "CliProjectEnvParseError",
         "DuplicateRemoteProjectIdError",
@@ -430,6 +431,7 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
       [
         "CLI_CONFIG_SCHEMA_URL",
         "CliConfigParseError",
+        "CliConfigRemovedKeyError",
         "CliConfigSchema",
         "CliConfigStore",
         "CliProjectEnvParseError",
@@ -515,9 +517,11 @@ describe("src/internal.ts export surface", () => {
         "ENV_CAPTURE_REGEX",
         "applyConfigEdits",
         "decodeCliConfigDocumentForValidationEffect",
+        "decodeMergedCliConfig",
         "dualScopeProjectConfigPaths",
         "loadCliConfig",
-        "normalizeDeprecatedOrioleDBVersion",
+        "mergeParsedCliConfig",
+        "parseCliConfigDocumentFile",
         "projectConfigApiBlockKeys",
         "projectConfigMappingRows",
         "remoteNameForProjectRef",

@@ -10,6 +10,7 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { testNew } from "./new.handler.ts";
+import { withTargetPolicy } from "../../../command-internal/target/target-policy.ts";
 
 const TEMPLATE_VALUES = ["pgtap"] as const;
 
@@ -52,4 +53,5 @@ export const testNewCommand = Command.make("new", config).pipe(
     ),
   ),
   Command.provide(testNewRuntimeLayer),
+  withTargetPolicy({ group: "local-only", consent: "none" }),
 );

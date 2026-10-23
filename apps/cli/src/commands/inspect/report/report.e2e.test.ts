@@ -16,7 +16,7 @@ const TEXT_MODE = ["--agent", "no"];
 
 describe("supabase inspect report", () => {
   it.live(
-    "creates the dated output directory and prints the connect diagnostic before failing on an unreachable database",
+    "creates the dated output directory and prints the target banner before failing on an unreachable database",
     () =>
       withTempHome((home) =>
         Effect.gen(function* () {
@@ -24,11 +24,18 @@ describe("supabase inspect report", () => {
           const path = yield* Path.Path;
           const outputDir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-report-e2e-" });
           const { exitCode, stderr } = yield* runSupabaseEffect(
-            ["inspect", "report", ...TEXT_MODE, "--db-url", DEAD_DB_URL, "--output-dir", outputDir],
+            [
+              "inspect",
+              "report",
+              ...TEXT_MODE,
+              "--output-dir",
+              outputDir,
+              `--remote=${DEAD_DB_URL}`,
+            ],
             { home: home.dir, env: { HOME: home.dir } },
           );
           expect(exitCode).toBe(1);
-          expect(stderr).toContain("Connecting to remote database...");
+          expect(stderr).toContain("Target: custom Postgres (127.0.0.1:1)");
           expect(stderr).toMatch(/failed to connect to postgres|connection refused|ECONNREFUSED/i);
           const dated = (yield* fs.readDirectory(outputDir)).filter((name) =>
             /^\d{4}-\d{2}-\d{2}$/.test(name),

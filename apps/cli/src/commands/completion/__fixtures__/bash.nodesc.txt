@@ -31,7 +31,7 @@ __supabase_get_completion_results() {
 
     if [[ -z ${cur} && ${lastChar} != = ]]; then
         # If the last parameter is complete (there is a space following it)
-        # We add an extra empty parameter so we can indicate this to the go method.
+        # We add an extra empty parameter so we can indicate this to the completion program.
         __supabase_debug "Adding extra empty parameter"
         requestComp="${requestComp} ''"
     fi
@@ -69,7 +69,7 @@ __supabase_process_completion_results() {
 
     if (((directive & shellCompDirectiveError) != 0)); then
         # Error code.  No completion.
-        __supabase_debug "Received error from custom completion go code"
+        __supabase_debug "Received error from custom completion code"
         return
     else
         if (((directive & shellCompDirectiveNoSpace) != 0)); then
@@ -239,7 +239,6 @@ __supabase_handle_completion_types() {
         # Type: menu-complete/menu-complete-backward and insert-completions
         # If the user requested inserting one completion at a time, or all
         # completions at once on the command-line we must remove the descriptions.
-        # https://github.com/spf13/cobra/issues/1508
 
         # If there are no completions, we don't need to do anything
         (( ${#completions[@]} == 0 )) && return 0

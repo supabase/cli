@@ -82,10 +82,83 @@ Every applicable command must preserve these invariants:
    `--output-format`, as established by `config diff` and `config pull`.
 7. Preserve telemetry names, timing, identity, and payloads; see [Telemetry](#telemetry).
 
+### Removing a command or flag
+
+Removal is breaking. First ship a stable deprecation warning on stderr that names the replacement
+and the major that removes it, then remove on `next`. Replace a removed command with a tombstone
+rather than deleting it; `db remote commit` is the reference:
+
+- Fail with `removedCommand(suggestion)` (or `removedFlag` for a flag) from
+  `command-internal/removed-command.ts`, wrapped in `withCommandTelemetry()` and
+  `withJsonErrorHandling`. Provide only `commandRuntimeLayer` and `telemetryStateLayer`.
+- Keep the old flag and argument config so existing invocations reach the removal error, not a
+  parse error, and register the command with `Command.unlisted`.
+- Delete the handler, its tests, and its docs pages, and drop it from `DOCS_EXCLUDED`.
+- `SIDE_EFFECTS.md` documents exit 1, the removal message and suggestion, and the post-run
+  `telemetry.json` read and write under `SUPABASE_HOME`.
+- Test every tombstone through the real parser with and without its old flags, asserting the
+  `RemovedSurfaceError` message and suggestion.
+
+## Config values
+
+Every config value resolves in one order for every command: flag > shell env > project `.env*`
+(`supabase/` then the project root, by `SUPABASE_ENV`) > `config.toml` (a matched `[remotes.*]`
+block over the base document) > default. Do not reorder it or special-case it per command.
+
+**Read a value**
+
+- Load once per command and pass the result down: `const configValues = yield* CliConfigValues`,
+  then `const resolvedConfig = yield* configValues.load({ workdir, projectRef })`. Do not reload a
+  resolved config a caller already holds.
+- `resolvedConfig.get(CliConfigKeys.<path>)` returns `{ value, origin }`; `origin.tier` names the
+  tier that won.
+- For the whole document: `loaded` (what the project declares, every winner written in, no
+  defaults), `materialized.config` (`loaded` plus defaults and normalizers, what commands act on)
+  or `fileDeclared` (the config file alone, no flag or env overlay, for `config diff`/`pull`).
+  `envValues(names)` resolves `env(NAME)` references, shell before project `.env*`.
+- Wrap writes that change config or `.temp` in `configValues.writeThrough(...)` so the memoised
+  resolved config is dropped.
+
+**Add a flag that sets a config value**
+
+1. List the name in `CLI_CONFIG_FLAGS` (`config/cli-config-key-annotations.ts`).
+2. Declare it with `CliConfigKeys.<path>.flag({ name, description })` in the command config, never
+   a raw `Flag.*`.
+3. Pipe the command config through `withCliConfigFlags` and provide `cliConfigValuesLayer` with
+   `Command.provide`. Read the value with `get`; never merge a flag into a value by hand.
+
+**Add a config key or env var**
+
+Add the field to `CliConfigSchema`; the registry key and its `SUPABASE_<UPPER_SNAKE_PATH>` env name
+follow. Touch `config/cli-config-key-annotations.ts` only for a section gate, codec override,
+secret or exclusion. Never read a `SUPABASE_*` name anywhere else.
+
+**Variables that are not config keys**
+
+Names outside the registry (libpq `PG*`, Docker, proxy, `SUPABASE_YES`) come from
+`resolvedConfig.projectEnvValues` (project `.env*` only; a shell-set name is not in it) or
+`ambientEnvironment()` (the live process env). Importing `ambientEnvironment` is limited by
+`oxlint` to the audited files listed in `.oxlintrc.json`. Never read a registry name through
+either, and never read `process.env`, `Bun.env` or `globalThis.process` directly.
+
+**What fails the build**
+
+`code-structure.unit.test.ts` (registry env names as literals, direct env reads, a raw `Flag.*` for
+a registry flag, `loadCliConfig`, `resolveCliConfigSubtree` or `loadCliProjectEnvironment` outside
+`config/cli-config-*.ts` and `shared/config/cli-config-*.ts`), `oxlint` (`process.env`, `Bun.env`,
+`ambientEnvironment` imports), `cli-config-contract.unit.test.ts` and
+`cli-config-flag-ownership.unit.test.ts` (every registry key and `CLI_CONFIG_FLAGS` flag against
+the command tree), and `tsc` (a command that reads config without `withCliConfigFlags`).
+
+**Exceptions**
+
+They live in [ADR 0032](../../docs/adr/0032-config-value-precedence.md) and nowhere else. Do not add a
+per-command exception without updating the ADR and the guard's exemption list together.
+
 ## Experimental feature registration
 
-Resolve opt-in booleans with `command-internal/experimental-feature.ts`: environment `1`/`0`
-overrides the project setting, and an unset or empty value uses the config. Invalid environment
+Resolve opt-in booleans with `shared/config/experimental-feature.ts`: a shell boolean
+(`1`, `t`, `T`, `TRUE`, `true`, `True` / `0`, `f`, `F`, `FALSE`, `false`, `False`; other casings such as `tRue` fail) overrides the project setting, and an unset or empty value uses the config. Invalid environment
 values are typed failures on applicable command paths. Disabled families are absent from the
 command tree, help, and completion; enabled help is marked experimental and stays out of stable
 generated command documentation. Environment opt-ins do not write project configuration, except
@@ -100,15 +173,6 @@ compatibility decision in the PR. For the Compute transition, no local compatibi
 migrations are required. Compute error tags intentionally start new fingerprints; server-owned
 contracts remain unchanged. Update tests, generated schemas, and side-effect documentation.
 
-## Go delegation
-
-- TypeScript owns CLI behavior. Consult `apps/cli-go` only for existing delegated
-  operations listed in [the delegation document](docs/go-cli-porting-status.md); do not expand delegation.
-- Native replacements must preserve the public command, flags, output, side effects,
-  and exit behavior. Update the delegation document when removing a Go dependency.
-- Emit command telemetry exactly once: bare proxies rely on Go telemetry;
-  instrumented TypeScript handlers suppress child telemetry.
-
 ## Telemetry
 
 > An error’s tag is the PostHog `error_fingerprint` identity (`tag:<TagName>`); preserve it when
@@ -122,10 +186,14 @@ property shape (`flags`, `is_agent`, and `env_signals`), use canonical names and
 [event catalog](src/shared/telemetry/event-catalog.ts), and redact sensitive values.
 
 `safeFlags` may include only values that carry no user data. Keep the established safe project,
-project-id, org-id, and version cases. When `--project-ref` also accepts branch names, whitelist
-only values matching `PROJECT_REF_PATTERN`; never log a user-created branch name. Global boolean
-and choice flags are resolved by the wrapper from `globalFlagValues`; a command-local flag wins,
-so a local path-valued `--output` remains redacted. Keep free-form user content redacted.
+project-id, org-id, and version cases. For every command with a `hosted` or `selectable` target
+policy, `withCommandTelemetry` reads the target flags from the invoked arguments, so they need no
+entry in a command's `flags` or `safeFlags`: `--remote` (`true` when bare or linked, the project
+ref when it is one, otherwise redacted), `--linked` and `--local` (their boolean),
+`--project-ref`/`--project-id` (the value only when it matches `PROJECT_REF_PATTERN`, since it can
+be a user-created branch name) and `--db-url` (always redacted). Global boolean and choice flags
+are resolved by the wrapper from `globalFlagValues`; a command-local flag wins, so a local
+path-valued `--output` remains redacted. Keep free-form user content redacted.
 
 Do not remove, rename, or reshape custom events. Preserve login aliasing after token persistence,
 link project and organization identity after the link write (including branch-link metadata),
@@ -160,6 +228,31 @@ while delegating text format, raw payloads, logs, and stderr error rendering to 
 text layer. Therefore stdout is payload-only for either machine flag. Do not change the shared text
 layer to move spinners; that would change text output globally. Handlers check `--output` first and
 use established encoders before the `output.format` branch.
+
+## Targets and hosted consent
+
+Every leaf declares its target group and consent default with `withTargetPolicy`; the
+classification test in `src/command-internal/target/target-policy.unit.test.ts` fails a leaf
+without one. Declare the target flags only through `targetFlags` in
+`src/command-internal/target/target-flags.ts`.
+
+- Database, storage, and seed commands call `resolveTarget`, then `resolveConnection`. Never pass a
+  default target: the policy owns the default, so a call site cannot fall back to local or linked.
+- A command that binds `--password` passes `hasPasswordFlag: true` to `resolveConnection`.
+- The linked `Target:` banner comes from `resolveTarget` and `resolveRef`; never build a linked
+  `ResolvedTarget` by hand.
+- Hosted writes call `requireHostedMutationConsent` (or `requireTargetMutationConsent` when the
+  target may be local) after the plan and before the first persistent effect, and pass the
+  returned `HostedMutationConsent` to anything that needs proof of it.
+- Never read stdin for consent. JSON, piped, and agent runs need `--yes` or a shell
+  `SUPABASE_YES`; `supabase/.env` and a cwd `.env*` file do not count. Write the action as an
+  imperative sentence-case phrase with no trailing period (`Delete project <ref>`).
+- A `selectable` leaf with `consent: "none"` declares a `consentExemptReason`.
+- Every leaf with consent has a `describeHostedConsent("<command path>", …)` test from
+  `tests/helpers/hosted-consent.ts`.
+
+See [ADR 0033](../../docs/adr/0033-target-selection-and-hosted-mutation-consent.md) for the
+target-default and consent rules.
 
 ## Tests
 

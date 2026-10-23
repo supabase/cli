@@ -14,7 +14,7 @@ describe("gen", () => {
       async ({ run, projectRef }) => {
         // #5212 — with CLAUDECODE=1, piped/redirected output must not include the
         // plugin hint (would break `gen types > file.ts` and similar captures).
-        const result = await run(["gen", "types", "--project-id", projectRef], {
+        const result = await run(["gen", "types", `--remote=${projectRef}`], {
           env: { CLAUDECODE: "1" },
         });
         expect(result.exitCode).toBe(0);
@@ -28,7 +28,7 @@ describe("gen", () => {
     testBehaviour.skipIf(isRecording)(
       "includes debug output with --debug",
       async ({ run, projectRef }) => {
-        const result = await run(["gen", "types", "--debug", "--project-id", projectRef]);
+        const result = await run(["gen", "types", "--debug", `--remote=${projectRef}`]);
         expect(result.exitCode).toBe(0);
         expect(result.stderr).toMatch(/HTTP.*GET:/);
       },
@@ -40,7 +40,7 @@ describe("gen", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 401, body: { message: "Invalid token" } }),
       });
-      const result = await run(["gen", "types", "--project-id", PROJECT_REF]);
+      const result = await run(["gen", "types", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
     });
@@ -51,7 +51,7 @@ describe("gen", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 403, body: { message: "Forbidden" } }),
       });
-      const result = await run(["gen", "types", "--project-id", PROJECT_REF]);
+      const result = await run(["gen", "types", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Forbidden");
     });
@@ -62,15 +62,20 @@ describe("gen", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: 404, body: { message: "Project not found" } }),
       });
-      const result = await run(["gen", "types", "--project-id", PROJECT_REF]);
+      const result = await run(["gen", "types", `--remote=${PROJECT_REF}`]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Project not found");
     });
 
-    testBehaviour("exits non-zero with no data source specified", async ({ runNoProjectId }) => {
-      const result = await runNoProjectId(["gen", "types"]);
-      expect(result.exitCode).not.toBe(0);
-    });
+    testBehaviour(
+      "exits non-zero when the local stack is not running",
+      async ({ runNoProjectId }) => {
+        const result = await runNoProjectId(["gen", "types"]);
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("Target: local stack");
+        expect(result.stderr).toContain("supabase start is not running");
+      },
+    );
   });
 
   describe("gen:signing-key", () => {
