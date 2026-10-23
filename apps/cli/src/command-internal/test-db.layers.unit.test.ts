@@ -23,6 +23,7 @@ import {
   mockTelemetryStateLayer,
   useTempWorkdir,
 } from "../../tests/helpers/command-mocks.ts";
+import { cliConfigValuesTestLayer } from "../../tests/helpers/config-values-layer.ts";
 
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import {
@@ -38,6 +39,7 @@ import { DbConnection } from "./db-connection.service.ts";
 import { IdentityStitch } from "./identity-stitch.ts";
 
 import { testDbRuntimeLayer } from "./test-db.layers.ts";
+import { commandTargetLayer } from "../shared/output/command-target.layer.ts";
 
 const tempRoot = useTempWorkdir("supabase-test-db-layers-");
 
@@ -67,7 +69,7 @@ function ambientStubs() {
       connect: () => Effect.die("db-connection not needed for layer-exposure test"),
     }),
     Layer.succeed(DbConfigResolver, {
-      resolve: () => Effect.die("db-config-resolver not needed for layer-exposure test"),
+      resolveConnection: () => Effect.die("resolveConnection is not used by this test"),
       resolvePoolerFallback: () =>
         Effect.die("db-config-resolver not needed for layer-exposure test"),
     }),
@@ -81,8 +83,10 @@ function ambientStubs() {
     analytics.layer,
     mockTelemetryRuntime(),
     out.layer,
+    commandTargetLayer.pipe(Layer.provide(out.layer)),
     flagLayers,
     mockTelemetryStateLayer,
+    cliConfigValuesTestLayer,
     heavyServiceStubs,
   );
 }

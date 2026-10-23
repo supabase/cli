@@ -149,7 +149,7 @@ describe("awaitStorageReady", () => {
   );
 
   it.effect(
-    "is still retrying after 29 seconds, but fails once the 30th second is exhausted — pins Go's hardcoded 30s constant",
+    "is still retrying after 29 seconds, but fails once the 30th second is exhausted — pins the hardcoded 30s timeout",
     () =>
       Effect.gen(function* () {
         const mock = mockSpawner((args) => {

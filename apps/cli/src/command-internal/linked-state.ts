@@ -1,10 +1,10 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { PROJECT_REF_PATTERN } from "../config/remote-target.service.ts";
+import { PROJECT_REF_PATTERN } from "../config/project-ref.service.ts";
 import { findBranchName } from "./branch-target.ts";
 import { formatNamedRef, sanitizeInlineName } from "./http-errors.ts";
-import { type LinkSnapshot, readLinkSnapshotSoft } from "./link-snapshot.ts";
+import { type LinkSnapshot, readLinkSnapshotSoft } from "../shared/config/link-snapshot.ts";
 
 /**
  * Discriminated linked-state result.
@@ -32,7 +32,7 @@ export type LinkedState =
 
 /**
  * Soft lookup of the currently linked ref: env `SUPABASE_PROJECT_ID`, else the checkout's link.
- * Never prompts or fails, and does not depend on `RemoteTarget`, so runtimes like `status` can
+ * Never prompts or fails, and does not depend on `ProjectRefResolver`, so runtimes like `status` can
  * use it without wiring that resolver up.
  *
  * Candidates must match `PROJECT_REF_PATTERN`: the value is echoed verbatim by `status -o json`
@@ -117,7 +117,7 @@ export const resolveLinkedState = Effect.fn("LinkedState.resolve")(function* () 
   }
 
   // No cache at all: render the plain shape with zero API calls. Querying
-  // `RemoteTarget.parent` here would only match the ref's own default
+  // the linked parent here would only match the ref's own default
   // branch (misrendering it as "a branch of itself") or 403 when it
   // genuinely is a branch — there's no positive-confirmation case to attempt.
   return { linked: true, projectRef: linkedRef.value } as const;
@@ -188,7 +188,7 @@ export function formatLinkedStateBlock(state: LinkedState): string {
  * what signals "not linked" for these formats. A degraded branch-linked
  * state still emits every field it knows; only `linked_branch` is absent.
  */
-export function linkedStateGoFields(state: LinkedState): Readonly<Record<string, string>> {
+export function linkedStateFields(state: LinkedState): Readonly<Record<string, string>> {
   if (!state.linked) return {};
   return {
     linked_project_ref: state.projectRef,
@@ -202,7 +202,7 @@ export function linkedStateGoFields(state: LinkedState): Readonly<Record<string,
 
 /**
  * The `linked_project` shape merged into a `--output-format json`/
- * `stream-json` structured success payload. See {@link linkedStateGoFields}
+ * `stream-json` structured success payload. See {@link linkedStateFields}
  * for the `-o` machine-format counterpart.
  */
 export interface LinkedStateJsonField {

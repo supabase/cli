@@ -26,8 +26,7 @@ test("lists a preview branch for the project", ({ cliEffect, project }) =>
           "list",
           "--output",
           "json",
-          "--project-ref",
-          project.ref,
+          `--remote=${project.ref}`,
         ]);
         expect(result.exitCode, result.stderr).toBe(0);
         const branches = yield* Schema.decodeEffect(Schema.fromJsonString(ListedBranches))(

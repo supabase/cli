@@ -41,14 +41,3 @@ export class TestDbNoTestsError extends Data.TaggedError("TestDbNoTestsError")<{
     return actionability.invalidInput;
   }
 }
-
-/** More than one of `--db-url` / `--linked` / `--local` was set. */
-export class TestDbMutuallyExclusiveFlagsError extends Data.TaggedError(
-  "TestDbMutuallyExclusiveFlagsError",
-)<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}

@@ -1,18 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import {
-  Cause,
-  ConfigProvider,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-  Schema,
-  Sink,
-  Stream,
-} from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Sink, Stream } from "effect";
 import { CliOutput, Command } from "effect/cli";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -24,6 +12,7 @@ import {
   mockTty,
   processEnvLayer,
 } from "../../../../tests/helpers/mocks.ts";
+import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-values-layer.ts";
 import {
   buildTestRuntime,
   mockCommandSettings,
@@ -35,7 +24,7 @@ import {
 } from "../../../../tests/helpers/command-mocks.ts";
 import { assertPermissionDrift } from "../../../../tests/helpers/permission-drift.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { GLOBAL_FLAGS, YesFlag } from "../../../command-internal/global-flags.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
@@ -43,7 +32,7 @@ import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
 import { genSigningKeyCommand } from "./signing-key.command.ts";
 import { genSigningKey } from "./signing-key.handler.ts";
-import { DEFAULT_SIGNING_KEY } from "../../../command-internal/go-jwt.ts";
+import { DEFAULT_SIGNING_KEY } from "../../../command-internal/local-jwt.ts";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 
 const tempRoot = useTempWorkdir("supabase-gen-signing-key-int-");
@@ -107,6 +96,7 @@ function setup(options: SetupOptions = {}) {
   });
   const telemetry = options.trackTelemetry ? mockTelemetryStateTracked() : undefined;
   const layer = Layer.mergeAll(
+    cliConfigValuesTestLayer,
     buildTestRuntime({ out, api, cliSettings, tty, telemetry: telemetry?.layer }),
     Layer.succeed(YesFlag, options.yes ?? false),
     Layer.succeed(CliArgs, { args: options.cliArgs ?? [] }),
@@ -316,7 +306,7 @@ describe("gen signing-key integration", () => {
   );
 
   it.effect(
-    "ignores a stray config.json and uses the default config.toml path in the local setup hint (CLI-1961)",
+    "names config.json and shows a JSON snippet in the local setup hint when it is the config file",
     () => {
       const { layer, out } = setup();
       return Effect.gen(function* () {
@@ -324,9 +314,28 @@ describe("gen signing-key integration", () => {
         yield* writeJsonConfig("{}\n");
         yield* genSigningKey({ algorithm: "ES256", append: false });
 
-        expect(out.stderrText).toContain(path.join("supabase", "config.toml"));
-        expect(out.stderrText).not.toContain("config.json");
+        expect(out.stderrText).toContain(path.join("supabase", "config.json"));
+        expect(out.stderrText).toContain(
+          '{ "auth": { "signing_keys_path": "./signing_keys.json" } }',
+        );
+        expect(out.stderrText).not.toContain("config.toml");
+        expect(out.stderrText).not.toContain("[auth]");
         expect(out.stderrText).not.toContain(tempRoot.current);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "names config.toml and shows a TOML snippet in the local setup hint without a config file",
+    () => {
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        yield* genSigningKey({ algorithm: "ES256", append: false });
+
+        expect(out.stderrText).toContain(path.join("supabase", "config.toml"));
+        expect(out.stderrText).toContain('[auth]\nsigning_keys_path = "./signing_keys.json"');
+        expect(out.stderrText).not.toContain("config.json");
       }).pipe(Effect.provide(layer));
     },
   );
@@ -349,6 +358,25 @@ describe("gen signing-key integration", () => {
         expect(out.stderrText).toContain("JWT signing key appended to: ");
         expect(out.stderrText).toContain(path.join("supabase", "signing_keys.json"));
       }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "reads signing_keys_path from SUPABASE_AUTH_SIGNING_KEYS_PATH over the config file",
+    () => {
+      const { layer, out } = setup({ stdinIsTty: false });
+      return withConfigEnv(
+        { SUPABASE_AUTH_SIGNING_KEYS_PATH: "./signing_keys.json" },
+        Effect.gen(function* () {
+          yield* writeConfig('[auth]\nsigning_keys_path = "./unused.json"\n');
+          yield* writeSigningKeys("[]\n");
+
+          yield* genSigningKey({ algorithm: "ES256", append: false });
+
+          expect(yield* readSigningKeys()).toHaveLength(1);
+          expect(out.stderrText).toContain("JWT signing key appended to: ");
+        }),
+      ).pipe(Effect.provide(layer));
     },
   );
 
@@ -571,11 +599,9 @@ describe("gen signing-key integration", () => {
       yield* fs.writeFileString(path.join(supabaseDir, "from-env-local.json"), "[]\n");
       yield* fs.writeFileString(path.join(supabaseDir, "from-env.json"), "[]\n");
 
-      yield* genSigningKey({ algorithm: "ES256", append: false }).pipe(
-        Effect.provideService(
-          ConfigProvider.ConfigProvider,
-          ConfigProvider.fromEnvRecord({ SUPABASE_ENV: "test" }, { preserveEmptyStrings: true }),
-        ),
+      yield* withConfigEnv(
+        { SUPABASE_ENV: "test" },
+        genSigningKey({ algorithm: "ES256", append: false }),
       );
 
       expect(out.stderrText).toContain(path.join("supabase", "from-env.json"));
@@ -600,11 +626,9 @@ describe("gen signing-key integration", () => {
           "!=broken\n",
         );
 
-        yield* genSigningKey({ algorithm: "ES256", append: false }).pipe(
-          Effect.provideService(
-            ConfigProvider.ConfigProvider,
-            ConfigProvider.fromEnvRecord({ SUPABASE_ENV: "test" }, { preserveEmptyStrings: true }),
-          ),
+        yield* withConfigEnv(
+          { SUPABASE_ENV: "test" },
+          genSigningKey({ algorithm: "ES256", append: false }),
         );
 
         expect(yield* readSigningKeys()).toHaveLength(1);
@@ -821,7 +845,7 @@ describe("gen signing-key integration", () => {
 
         const error = yield* genSigningKey({ algorithm: "ES256", append: false }).pipe(Effect.flip);
         expect(error).toBeInstanceOf(DbConfigLoadError);
-        expect(error.message).toBe("failed to parse environment file: .env");
+        expect(error.message).toBe("failed to parse environment file: supabase/.env");
         expect(telemetry?.flushed).toBe(true);
       }).pipe(Effect.provide(layer));
     },

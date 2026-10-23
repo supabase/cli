@@ -9,7 +9,7 @@
 
 import { Predicate } from "effect";
 
-import { encodeGoJsonIndented } from "../../../command-internal/go-json.ts";
+import { encodeHtmlSafeJsonIndented } from "../../../command-internal/html-safe-json.ts";
 import { makeLevelEnum } from "../../../command-internal/fail-on.ts";
 
 /** Lowest severity first. */
@@ -57,7 +57,7 @@ export interface LintResult {
 function requireLintString(value: unknown, field: string): string {
   if (value === undefined || value === null) return "";
   if (typeof value !== "string") {
-    throw new TypeError(`cannot unmarshal lint ${field} into string`);
+    throw new TypeError(`invalid lint ${field}: expected a string`);
   }
   return value;
 }
@@ -66,7 +66,7 @@ function normalizeStatement(value: unknown): LintStatement | undefined {
   // absent/null → omitted; present non-object (string/number/array) → throw.
   if (value === undefined || value === null) return undefined;
   if (!Predicate.isObject(value)) {
-    throw new TypeError("cannot unmarshal lint statement into lint.Statement");
+    throw new TypeError("invalid lint statement: expected an object");
   }
   return {
     lineNumber: requireLintString(value["lineNumber"], "statement.lineNumber"),
@@ -77,7 +77,7 @@ function normalizeStatement(value: unknown): LintStatement | undefined {
 function normalizeQuery(value: unknown): LintQuery | undefined {
   if (value === undefined || value === null) return undefined;
   if (!Predicate.isObject(value)) {
-    throw new TypeError("cannot unmarshal lint query into lint.Query");
+    throw new TypeError("invalid lint query: expected an object");
   }
   return {
     position: requireLintString(value["position"], "query.position"),
@@ -132,7 +132,7 @@ export function parseLintResult(jsonText: string, functionName: string): LintRes
     return { function: functionName, issues: [] };
   }
   if (!Predicate.isObject(parsed)) {
-    throw new TypeError("cannot unmarshal payload into lint.Result");
+    throw new TypeError("invalid lint result: expected an object");
   }
   const issuesField = parsed["issues"];
   let issuesRaw: ReadonlyArray<unknown>;
@@ -141,13 +141,13 @@ export function parseLintResult(jsonText: string, functionName: string): LintRes
   } else if (Array.isArray(issuesField)) {
     issuesRaw = issuesField;
   } else {
-    throw new TypeError("cannot unmarshal issues into []lint.Issue");
+    throw new TypeError("invalid lint issues: expected an array");
   }
   // A null entry decodes to a zero-value issue (handled by `normalizeIssue`'s
   // fallback), not skipped.
   for (const entry of issuesRaw) {
     if (entry !== null && !Predicate.isObject(entry)) {
-      throw new TypeError("cannot unmarshal issue into lint.Issue");
+      throw new TypeError("invalid lint issue: expected an object");
     }
   }
   // Validates `function`'s type (throwing if non-string) before discarding it for
@@ -179,5 +179,5 @@ export function filterLintResult(
  * straight to the order-preserving encoder.
  */
 export function encodeLintResults(results: ReadonlyArray<LintResult>): string {
-  return encodeGoJsonIndented(results);
+  return encodeHtmlSafeJsonIndented(results);
 }

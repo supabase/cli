@@ -1,5 +1,7 @@
 # `supabase orgs create`
 
+Target: account, consent default Yes — see [Command target](../../../../docs/command-target.md)
+
 ## Files Read
 
 | Path                                      | Format                    | When                                                                                          |
@@ -31,16 +33,24 @@ linked-project cache is never written.
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                                                       | Required?                                               |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                          | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | selects API base URL (`supabase`, `supabase-staging`, `supabase-local`), or a filesystem path to a YAML profile (used by the cli-e2e harness) | no (defaults to `supabase`)                             |
+| Variable                | Purpose                                                                                                                                       | Required?                                                     |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                          | no (falls back to keyring → `~/.supabase/access-token`)       |
+| `SUPABASE_YES`          | answers the creation confirmation, as `--yes` does                                                                                            | no (defaults to prompting; a project `.env` value is ignored) |
+| `SUPABASE_PROFILE`      | selects API base URL (`supabase`, `supabase-staging`, `supabase-local`), or a filesystem path to a YAML profile (used by the cli-e2e harness) | no (defaults to `supabase`)                                   |
+
+## Confirmation
+
+Before the `POST /v1/organizations`, the command asks `create organization "<name>"?`
+(default **Yes**). Without consent the run makes no API write.
 
 ## Exit Codes
 
 | Code | Condition                                                                 |
 | ---- | ------------------------------------------------------------------------- |
 | `0`  | success — organization created                                            |
+| `1`  | confirmation declined                                                     |
+| `1`  | confirmation needed but this run can't prompt, and no `--yes`             |
 | `1`  | `AccessTokenRequiredError` — no token in env/keyring/file                 |
 | `1`  | `OrgsCreateUnexpectedStatusError` — non-201 response from create endpoint |
 | `1`  | `OrgsCreateNetworkError` — transport-level network failure                |
@@ -62,9 +72,9 @@ instead. `--output` wins over `--output-format` when both are supplied.
 
 ### `--output pretty` (default) / `--output-format text`
 
-`Created organization: <id>` followed by a Glamour-styled markdown table with columns
+`Created organization: <id>` followed by a styled markdown table with columns
 `ID`, `NAME` for the created organization. The rendered table always ends with a trailing
-newline (Glamour appends one).
+newline.
 
 ### `--output json`
 
@@ -106,9 +116,8 @@ message. No preamble line.
 
 ## Security Notes
 
-- The `Created organization: <id>` preamble and the rendered Glamour table interpolate the
-  API-supplied `id` and `name` strings without ANSI / control-character sanitization
-  (inherited from the old Go CLI's behavior). A malicious or compromised Management API
+- The `Created organization: <id>` preamble and the rendered table interpolate the
+  API-supplied `id` and `name` strings without ANSI / control-character sanitization. A malicious or compromised Management API
   could in principle return values containing terminal escape sequences. If sanitization
   is added later it should land at the renderer (and at any shared preamble helper) so
   every caller inherits the fix.

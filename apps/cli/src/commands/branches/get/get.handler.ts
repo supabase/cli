@@ -15,12 +15,12 @@ import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   encodeEnv,
-  encodeGoJson,
+  encodeSortedJson,
   encodeToml,
   encodeYaml,
-} from "../../../command-internal/go-output.encoders.ts";
+} from "../../../command-internal/output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { RemoteTarget } from "../../../config/remote-target.service.ts";
+import { resolveProjectTarget } from "../../../command-internal/target/resolve-project-target.ts";
 import {
   BranchesApiKeysNetworkError,
   BranchesApiKeysUnexpectedStatusError,
@@ -75,7 +75,7 @@ const mapPoolerError = mapHttpError({
 
 export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesGetFlags) {
   const output = yield* Output;
-  const goOutputFlag = yield* OutputFlag;
+  const outputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
@@ -83,8 +83,10 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
 
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
-  const remoteTarget = yield* RemoteTarget;
-  const { ref } = yield* remoteTarget.resolveParentScoped(flags.projectRef);
+  const ref = yield* resolveProjectTarget(
+    { remote: flags.remote, projectRef: flags.projectRef },
+    { parent: true },
+  );
   yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
@@ -114,11 +116,14 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
       jwt_secret: rawDetail.jwt_secret ?? "******",
     };
 
-    const goFmt = Option.getOrUndefined(goOutputFlag);
-    const wantsEnvMap = goFmt !== undefined && goFmt !== "pretty";
+    const outputFlagFormat = Option.getOrUndefined(outputFlag);
+    const wantsEnvMap = outputFlagFormat !== undefined && outputFlagFormat !== "pretty";
     const wantsTsStructured = output.format === "json" || output.format === "stream-json";
 
-    if (goFmt === "pretty" || (goFmt === undefined && output.format === "text")) {
+    if (
+      outputFlagFormat === "pretty" ||
+      (outputFlagFormat === undefined && output.format === "text")
+    ) {
       yield* output.raw(renderBranchGetTable(detail));
       return;
     }
@@ -146,19 +151,19 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
     }
     const envMap = projected.envs;
 
-    if (goFmt === "json") {
-      yield* output.raw(encodeGoJson(envMap));
+    if (outputFlagFormat === "json") {
+      yield* output.raw(encodeSortedJson(envMap));
       return;
     }
-    if (goFmt === "yaml") {
+    if (outputFlagFormat === "yaml") {
       yield* output.raw(encodeYaml(envMap));
       return;
     }
-    if (goFmt === "toml") {
+    if (outputFlagFormat === "toml") {
       yield* output.raw(encodeToml(envMap) + "\n");
       return;
     }
-    if (goFmt === "env") {
+    if (outputFlagFormat === "env") {
       yield* output.raw(encodeEnv(envMap) + "\n");
       return;
     }
@@ -170,6 +175,6 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
 
     // Unreachable in practice: wantsEnvMap is already true by this point.
     void wantsEnvMap;
-    yield* output.raw(encodeGoJson(envMap));
+    yield* output.raw(encodeSortedJson(envMap));
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

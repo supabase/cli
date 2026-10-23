@@ -23,7 +23,7 @@ import { FetchHttpClient, HttpClient } from "effect/http";
 import { homedir } from "node:os";
 
 import { spawnSupabase } from "../../../../tests/helpers/cli.ts";
-import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
+import { generateLocalJwt } from "../../../command-internal/local-jwt.ts";
 import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
 import { stackArtifactCacheRoot } from "../../../../tests/helpers/stack-artifacts.ts";
 import { selection } from "../../../../tests/helpers/pins.ts";
@@ -189,7 +189,9 @@ const invoke = Effect.fn("FunctionsServeE2e.invoke")(function* (
 ) {
   const http = yield* HttpClient.HttpClient;
   return yield* http.get(`${apiUrl}/functions/v1/hello`, {
-    headers: authenticated ? { Authorization: `Bearer ${generateGoJwt(jwtSecret, "anon")}` } : {},
+    headers: authenticated
+      ? { Authorization: `Bearer ${generateLocalJwt(jwtSecret, "anon")}` }
+      : {},
   });
 });
 
