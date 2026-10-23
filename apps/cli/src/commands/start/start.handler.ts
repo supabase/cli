@@ -1812,7 +1812,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
                 if (Result.isFailure(seedResult)) {
                   // No manual `rollbackStart` here — the outer
                   // `Effect.onError` below rolls back on this failure too.
-                  return yield* Effect.fail(seedResult.failure);
+                  return yield* seedResult.failure;
                 }
               }
             }

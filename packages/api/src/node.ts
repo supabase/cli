@@ -24,18 +24,15 @@ const nodeHttpClientLayer = NodeHttpClient.layerUndiciNoDispatcher.pipe(
 );
 
 /** Creates a Promise API client backed by a scoped Node HTTP dispatcher. */
-export async function createApiClient(
+export function createApiClient(
   config: SupabaseApiConfig = {},
   options?: SupabaseApiClientOptions,
 ): Promise<PromiseSupabaseApiClient> {
   const runtime = ManagedRuntime.make(nodeHttpClientLayer);
-  try {
-    const effectClient = await runtime.runPromise(makeApiClient(config, options));
-    return makePromiseClient(runtime, effectClient);
-  } catch (error) {
-    await runtime.dispose();
-    throw error;
-  }
+  return runtime
+    .runPromise(makeApiClient(config, options))
+    .then((effectClient) => makePromiseClient(runtime, effectClient))
+    .catch((error: unknown) => runtime.dispose().then(() => Promise.reject(error)));
 }
 
 /** Promise API client whose runtime and HTTP dispatcher are released by `dispose`. */
