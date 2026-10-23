@@ -377,13 +377,23 @@ jobs:
           done
 
       # Created empty; the next step uploads the assets so each one can be retried on its own.
+      # Idempotent: skips if the release already exists.
       - name: Create draft GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          tag_name: v${{ inputs.version }}
-          name: v${{ inputs.version }}
-          draft: true
-          prerelease: ${{ inputs.prerelease }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            echo "Release ${tag} already exists; skipping."
+          else
+            args=(--draft --verify-tag --title "${tag}")
+            if [[ "$PRERELEASE" == true ]]; then
+              args+=(--prerelease)
+            fi
+            gh release create "${tag}" "${args[@]}"
+          fi
 
       # One asset at a time with per-asset retries; see apps/cli/scripts/upload-release-assets.ts.
       - name: Upload release assets
