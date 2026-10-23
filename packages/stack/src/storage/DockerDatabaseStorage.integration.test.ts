@@ -45,6 +45,16 @@ const postgresImage = (pin: ArtifactPin) =>
 /** Falls back to the registry mirror the stack wires in production when the primary rate-limits. */
 const containerRuntime = (options: Parameters<typeof makeContainerRuntime>[0]) =>
   makeContainerRuntime({ imageMirrors: slimImageMirrors, ...options });
+/** Pulls a database image for direct engine runs, returning the mirror reference when it fell back. */
+const preparedPostgresImage = Effect.fnUntraced(function* (
+  pin: ArtifactPin,
+  target: EngineTarget = dockerTarget,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-image-" });
+  const container = yield* containerRuntime({ target, root });
+  return yield* container.prepareImage(yield* postgresImage(pin));
+});
 const Marker = Schema.Struct({
   backend: Schema.Literals(["docker", "host"]),
   volume: Schema.optionalKey(Schema.String),
@@ -651,7 +661,7 @@ describe.runIf(testEngine === "docker")(
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const crypto = yield* Crypto.Crypto;
-          const helperImage = yield* postgresImage(database15);
+          const helperImage = yield* preparedPostgresImage(database15);
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-pg15-" });
           const storageRoot = path.join(root, "state", "stack", "data");
           const cacheRoot = path.join(root, "cache");
@@ -757,7 +767,7 @@ describe.runIf(testEngine === "docker")(
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const crypto = yield* Crypto.Crypto;
-          const helperImage = yield* postgresImage(selection.database);
+          const helperImage = yield* preparedPostgresImage(selection.database);
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-" });
           const stateRoot = path.join(root, "state");
           const storageRoot = path.join(stateRoot, "stack", "data");
@@ -1060,7 +1070,7 @@ describe.runIf(testEngine === "docker")(
             const cacheRoot = path.join(root, "cache");
             yield* fs.makeDirectory(instanceRoot, { recursive: true });
             const markerPath = path.join(instanceRoot, ".supabase-database-storage.json");
-            const helperImage = yield* postgresImage(selection.database);
+            const helperImage = yield* preparedPostgresImage(selection.database);
             const storage = yield* makeDockerDatabaseStorage({
               runtime: "docker",
               target: dockerTarget,
@@ -1201,7 +1211,7 @@ describe.runIf(testEngine === "docker")(
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const crypto = yield* Crypto.Crypto;
-          const helperImage = yield* postgresImage(selection.database);
+          const helperImage = yield* preparedPostgresImage(selection.database);
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-unmarked-" });
           const storageRoot = path.join(root, "state", "stack", "data");
           const cacheRoot = path.join(root, "cache");
@@ -1469,7 +1479,7 @@ describe.runIf(testEngine === "docker")(
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const crypto = yield* Crypto.Crypto;
-          const helperImage = yield* postgresImage(selection.database);
+          const helperImage = yield* preparedPostgresImage(selection.database);
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-missing-" });
           const storageRoot = path.join(root, "state", "stack", "data");
           const cacheRoot = path.join(root, "cache");
@@ -1557,7 +1567,7 @@ describe.runIf(testEngine === "docker")(
             const fs = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
             const crypto = yield* Crypto.Crypto;
-            const helperImage = yield* postgresImage(selection.database);
+            const helperImage = yield* preparedPostgresImage(selection.database);
             const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-no-marker-" });
             const storageRoot = path.join(root, "state", "stack", "data");
             const cacheRoot = path.join(root, "cache");
@@ -1639,7 +1649,7 @@ describe.runIf(testEngine === "docker")(
             const fs = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
             const crypto = yield* Crypto.Crypto;
-            const helperImage = yield* postgresImage(selection.database);
+            const helperImage = yield* preparedPostgresImage(selection.database);
             // `root` is deleted entirely below; nest it under the scope's own temp dir so the test
             // framework's own cleanup of that outer, still-present directory does not fail.
             const tempDir = yield* fs.makeTempDirectoryScoped({
@@ -1724,7 +1734,7 @@ describe.runIf(testEngine === "docker")(
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const crypto = yield* Crypto.Crypto;
-          const helperImage = yield* postgresImage(selection.database);
+          const helperImage = yield* preparedPostgresImage(selection.database);
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-reopen-" });
           const stateRoot = path.join(root, "state");
           const storageRoot = path.join(stateRoot, "stack", "data");
@@ -1854,7 +1864,7 @@ describe.runIf(testEngine === "docker")(
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const crypto = yield* Crypto.Crypto;
-          const helperImage = yield* postgresImage(selection.database);
+          const helperImage = yield* preparedPostgresImage(selection.database);
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-line-" });
           const storageRoot = path.join(root, "state", "stack", "data");
           const cacheRoot = path.join(root, "cache");
@@ -2001,7 +2011,7 @@ describe("Host database storage", { timeout: 120_000 }, () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
-        const helperImage = yield* postgresImage(selection.database);
+        const helperImage = yield* preparedPostgresImage(selection.database, containerTarget);
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-host-" });
         const stateRoot = path.join(root, "state");
         const storageRoot = path.join(stateRoot, "stack", "data");
