@@ -88,12 +88,13 @@ export interface InspectResult {
   readonly stderr: string;
 }
 
-/** Backoff before each retry of a rate-limited (HTTP 429) registry probe. */
+/** Backoff before each retry of a rate-limited (HTTP 429 or OCI `toomanyrequests`) registry probe. */
 export const RATE_LIMIT_RETRY_DELAYS_MS: ReadonlyArray<number> = [10_000, 30_000, 60_000];
 
 /**
- * Runs a registry probe, retrying with backoff while the registry answers 429; the anonymous
- * public.ecr.aws quota is shared per runner IP and usually recovers within a minute.
+ * Runs a registry probe, retrying with backoff while the registry rate-limits it (HTTP 429 or OCI
+ * `toomanyrequests`); the anonymous public.ecr.aws quota is shared per runner IP and usually
+ * recovers within a minute.
  */
 export async function inspectWithRateLimitRetry(
   target: string,
@@ -104,7 +105,11 @@ export async function inspectWithRateLimitRetry(
   for (let attempt = 0; ; attempt++) {
     const { exit, stderr } = inspect();
     const delay = delaysMs[attempt];
-    if (exit !== 0 && stderr.includes("429 Too Many Requests") && delay !== undefined) {
+    if (
+      exit !== 0 &&
+      /429 Too Many Requests|toomanyrequests/i.test(stderr) &&
+      delay !== undefined
+    ) {
       console.error(`rate limited inspecting ${target}, retrying in ${delay}ms`);
       await sleep(delay);
       continue;
