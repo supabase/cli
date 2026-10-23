@@ -12,7 +12,7 @@
  *
  * `resolveDecision` is the pure orchestration function (I/O injected) a test
  * can drive without the network; `main()` wires up the real GitHub I/O,
- * writes `should_run`/`pr_number`/`head_ref`/`trigger` to `$GITHUB_OUTPUT`,
+ * writes `should_run`/`pr_number`/`head_sha`/`trigger` to `$GITHUB_OUTPUT`,
  * and surfaces the skip reason (if any) in `$GITHUB_STEP_SUMMARY`.
  *
  * Run in CI as: `bun .github/scripts/ai-review/resolve.ts`.
@@ -374,7 +374,6 @@ function writeOutputs(result: ResolveResult, prNumber: number): void {
   const entries: Record<string, string> = {
     should_run: String(result.shouldRun),
     pr_number: String(prNumber),
-    head_ref: `refs/pull/${prNumber}/head`,
     head_sha: result.headSha ?? "",
     trigger: result.trigger,
   };

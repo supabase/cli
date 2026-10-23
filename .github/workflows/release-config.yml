@@ -355,19 +355,24 @@ jobs:
           fi
           echo "dist-tag ${NPM_TAG} -> ${VERSION} confirmed."
 
+      # The CLI's install scripts and setup-cli resolve releases/latest/download/..., so a
+      # config release must never become the repo's "latest" release. Re-runs skip this step
+      # when the release already exists.
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          token: ${{ github.token }}
-          tag_name: config-v${{ needs.plan.outputs.version }}
-          name: "@supabase/config v${{ needs.plan.outputs.version }}"
-          body_path: ${{ runner.temp }}/config-release/config-release-notes.md
-          draft: false
-          prerelease: false
-          # The CLI's install scripts and setup-cli resolve
-          # releases/latest/download/..., so a config release must never
-          # become the repo's "latest" release.
-          make_latest: "false"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="config-v${VERSION}"
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            echo "Release ${tag} already exists; skipping."
+          else
+            gh release create "${tag}" \
+              --verify-tag \
+              --title "@supabase/config v${VERSION}" \
+              --notes-file "${RUNNER_TEMP}/config-release/config-release-notes.md" \
+              --latest=false
+          fi
 
   # Pages Slack the moment a real run arms the config-release approval gate. Runs in parallel
   # with the publish job's `waiting` state (needs only `plan`), so the ping and the pending
