@@ -264,7 +264,7 @@ describe("live branch lifecycle helpers", () => {
         expect(ref).toBe(branchRef);
         expect(creates).toBe(2);
         const deleteIndex = state.calls.indexOf(
-          `branches delete ${branch.name} --project-ref ${project.ref} --yes`,
+          `branches delete ${branch.name} --remote=${project.ref} --yes`,
         );
         expect(deleteIndex).toBeGreaterThan(-1);
         expect(
