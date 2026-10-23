@@ -355,6 +355,10 @@ jobs:
               break
             fi
           done
+          # download-artifact extracts a lone matching artifact into the path itself, not a subdirectory.
+          if [ -z "$stage" ] && [ -f "$ARTIFACTS/comment.md" ]; then
+            stage="$ARTIFACTS"
+          fi
           if [ "$RESOLVED" = true ]; then
             export REPO_DIR="$GITHUB_WORKSPACE" OUTPUT_DIR="$stage" HEAD_SHA
             if ! {
