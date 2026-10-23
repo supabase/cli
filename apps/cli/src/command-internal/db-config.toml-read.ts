@@ -1,15 +1,17 @@
 import { normalizeDeprecatedOrioleDBVersion } from "@supabase/config/internal";
-import { Config, Effect, Match, type FileSystem, Option, type Path } from "effect";
+import { Config, Effect, Match, FileSystem, Option, Path } from "effect";
 import * as SmolToml from "smol-toml";
 import {
   PROJECT_REF_PATTERN,
   type AnalyticsInput,
   type AuthInput,
   type CaptchaInput,
+  ConfigValidateError,
   type ConfigValidationInput,
   type DbInput,
   emailContentPathReadErrorMessage,
   type ExperimentalInput,
+  fsErrorCause,
   type HookInput,
   type MfaFactorInput,
   parseGoBool,
@@ -1093,7 +1095,9 @@ export const envOverrideLookup = Effect.fnUntraced(function* (
 export const warnDeprecatedOrioleDBVersionEnv = Effect.fnUntraced(function* (
   envLookup: DbTomlValues["envLookup"],
 ) {
-  const warning = yield* deprecatedOrioleDBVersionEnvWarning(envLookup);
+  const warning = yield* deprecatedOrioleDBVersionEnvWarning((name) =>
+    Effect.succeed(envLookup(name)),
+  );
   if (warning !== undefined) yield* (yield* Output).raw(`${warning}\n`, "stderr");
 });
 
@@ -1328,7 +1332,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const expandString = (value: unknown): Option.Option<string> =>
     typeof value === "string" ? nonEmptyString(expandEnv(value, lookup)) : Option.none();
   const orioledbVersionRaw =
-    (remoteWins("db.orioledb_version") ? undefined : readOrioleDBVersionEnvOverride(envOverride)) ??
+    (remoteWins("db.orioledb_version")
+      ? undefined
+      : yield* readOrioleDBVersionEnvOverride((name) => Effect.succeed(envOverride(name)))) ??
     db?.["orioledb_version"];
   const orioledbVersion = expandString(orioledbVersionRaw);
   // The defaults-only fallback says nothing about the project's engine.
@@ -1569,7 +1575,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     const signingKeysPath = str(authRawResolved, "signing_keys_path");
     if (signingKeysPath.length > 0) {
       const keysJson = yield* fs
-        .readFileString(resolveSigningKeysPath(workdir, signingKeysPath))
+        .readFileString(resolveSigningKeysPath(path, workdir, signingKeysPath))
         .pipe(
           Effect.mapError(
             (cause) => new DbConfigLoadError({ message: signingKeysReadErrorMessage(cause) }),
@@ -1647,20 +1653,22 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       for (const name of Object.keys(templatesRaw)) {
         const tmpl = asRecord(templatesRaw[name]);
         if (tmpl === undefined) continue;
-        const contentPath = yield* Effect.try({
-          try: () =>
-            resolveEmailTemplateContentPath({
-              section: "template",
-              name,
-              contentPath: str(tmpl, "content_path"),
-              contentPresent: tmpl["content"] !== undefined,
-              base: workdir,
-            }),
-          catch: (cause) =>
-            new DbConfigLoadError({
+        const contentPath = yield* resolveEmailTemplateContentPath({
+          section: "template",
+          name,
+          contentPath: str(tmpl, "content_path"),
+          contentPresent: tmpl["content"] !== undefined,
+          base: workdir,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+          Effect.mapError((error) => {
+            const cause = error instanceof ConfigValidateError ? error : fsErrorCause(error);
+            return new DbConfigLoadError({
               message: cause instanceof Error ? cause.message : String(cause),
-            }),
-        });
+            });
+          }),
+        );
         if (contentPath === undefined) continue;
         yield* fs.readFileString(contentPath).pipe(
           Effect.mapError(
@@ -1682,20 +1690,22 @@ const readDbTomlCore = Effect.fnUntraced(function* (
         ) {
           continue;
         }
-        const contentPath = yield* Effect.try({
-          try: () =>
-            resolveEmailTemplateContentPath({
-              section: "notification",
-              name,
-              contentPath: str(tmpl, "content_path"),
-              contentPresent: tmpl["content"] !== undefined,
-              base: workdir,
-            }),
-          catch: (cause) =>
-            new DbConfigLoadError({
+        const contentPath = yield* resolveEmailTemplateContentPath({
+          section: "notification",
+          name,
+          contentPath: str(tmpl, "content_path"),
+          contentPresent: tmpl["content"] !== undefined,
+          base: workdir,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+          Effect.mapError((error) => {
+            const cause = error instanceof ConfigValidateError ? error : fsErrorCause(error);
+            return new DbConfigLoadError({
               message: cause instanceof Error ? cause.message : String(cause),
-            }),
-        });
+            });
+          }),
+        );
         if (contentPath === undefined) continue;
         yield* fs.readFileString(contentPath).pipe(
           Effect.mapError(

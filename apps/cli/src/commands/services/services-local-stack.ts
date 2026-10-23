@@ -28,43 +28,38 @@ export const stackServiceVersions = Effect.fn("services.stackServiceVersions")(f
   let selection: ArtifactSelection = defaultArtifactSelection();
   if (Result.isFailure(context)) configError = context.failure;
   else {
-    const resolved = yield* Effect.try({
-      try: () => {
-        const value = envOverrideMajorVersion(
-          context.success.config.db.major_version,
+    const resolved = yield* Effect.gen(function* () {
+      const value = yield* envOverrideMajorVersion(
+        context.success.config.db.major_version,
+        context.success.projectEnvValues,
+      ).pipe(Effect.mapError((cause) => cause.message));
+      if (value !== 15 && value !== 17)
+        return yield* Effect.fail(`unsupported PostgreSQL major version: ${value}`);
+      const db = {
+        major_version: value,
+        orioledb_version: yield* envOverrideOrioleDBVersion(
+          context.success.config.db.orioledb_version,
           context.success.projectEnvValues,
-        );
-        if (value !== 15 && value !== 17)
-          throw new Error(`unsupported PostgreSQL major version: ${value}`);
-        const db = {
-          major_version: value,
-          orioledb_version: envOverrideOrioleDBVersion(
-            context.success.config.db.orioledb_version,
-            context.success.projectEnvValues,
+        ),
+      };
+      // A listing never resolves: it shows the locked pins, else the bundled ones.
+      return yield* readSelectionOrBundled({
+        projectRoot: workdir,
+        majorVersion: db.major_version,
+        orioledbVersion: db.orioledb_version,
+        services: context.success.config.local?.services,
+      }).pipe(
+        Effect.catchTag("LockResolutionError", (error) =>
+          Effect.sync(() => {
+            configError = error.message;
+          }).pipe(
+            Effect.andThen(stackArtifactSelection(db)),
+            Effect.mapError((cause) => new StackConfigError({ message: cause.message })),
           ),
-        };
-        // A listing never resolves: it shows the locked pins, else the bundled ones.
-        return readSelectionOrBundled({
-          projectRoot: workdir,
-          majorVersion: db.major_version,
-          orioledbVersion: db.orioledb_version,
-          services: context.success.config.local?.services,
-        }).pipe(
-          Effect.catchTag("LockResolutionError", (error) =>
-            Effect.sync(() => {
-              configError = error.message;
-            }).pipe(
-              Effect.andThen(stackArtifactSelection(db)),
-              Effect.mapError((cause) => new StackConfigError({ message: cause.message })),
-            ),
-          ),
-        );
-      },
-      catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
-    }).pipe(
-      Effect.flatMap((selected) => Effect.mapError(selected, (error) => error.message)),
-      Effect.result,
-    );
+        ),
+        Effect.mapError((error) => error.message),
+      );
+    }).pipe(Effect.result);
     if (Result.isFailure(resolved)) configError = resolved.failure;
     else selection = resolved.success;
   }
