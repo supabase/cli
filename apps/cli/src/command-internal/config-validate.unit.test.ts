@@ -284,6 +284,65 @@ layer(BunServices.layer)("resolveEmailTemplateContentPath", (it) => {
       }),
   );
 
+  /* Linux ignores a symlink's own mode, so a `readLink` denied by the symlink itself is driven
+     through a `FileSystem` that denies it, with the parent `stat` passing or failing. */
+  const denyingReadLink = (lockedPath: string, parentSearchable: boolean) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parentProbe = `${path.dirname(lockedPath)}${path.sep}.`;
+      const parentInfo = yield* fs.stat(parentProbe);
+      const denied = (method: string, pathOrDescriptor: string) =>
+        PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method,
+          pathOrDescriptor,
+        });
+      return FileSystem.FileSystem.of({
+        ...fs,
+        readLink: (p) => (p === lockedPath ? Effect.fail(denied("readLink", p)) : fs.readLink(p)),
+        stat: (p) =>
+          p !== parentProbe
+            ? fs.stat(p)
+            : parentSearchable
+              ? Effect.succeed(parentInfo)
+              : Effect.fail(denied("stat", p)),
+      });
+    });
+
+  it.effect("rejects a content_path whose own readLink is denied under a searchable parent", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const base = yield* setup();
+      const lockedFs = yield* denyingReadLink(path.join(base, "locked.html"), true);
+
+      const failure = yield* Effect.flip(
+        resolveContentPath("template", "./locked.html", base).pipe(
+          Effect.provideService(FileSystem.FileSystem, lockedFs),
+        ),
+      );
+      expect(
+        failure instanceof PlatformError.PlatformError &&
+          Predicate.isTagged(failure.reason, "PermissionDenied"),
+      ).toBe(true);
+    }),
+  );
+
+  it.effect("accepts a content_path whose readLink is denied by an unsearchable parent", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const base = yield* setup();
+      const lockedFs = yield* denyingReadLink(path.join(base, "locked.html"), false);
+
+      const resolved = yield* resolveContentPath("template", "./locked.html", base).pipe(
+        Effect.provideService(FileSystem.FileSystem, lockedFs),
+      );
+      expect(resolved).toBe(path.join(yield* fs.realPath(base), "locked.html"));
+    }),
+  );
+
   it.effect.each(["template", "notification"] as const)(
     "rejects a %s content_path that is an in-root symlink whose outside target sits behind an unsearchable (EACCES) directory",
     (section) =>
