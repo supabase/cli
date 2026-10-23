@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 
 import { useTempWorkdir, VALID_TOKEN } from "../../tests/helpers/command-mocks.ts";
 import { isolatedHomeLayer } from "../../tests/helpers/command-mocks.ts";
@@ -79,7 +79,7 @@ const writeStackLink = Effect.fnUntraced(function* (workdir: string, poolerUrl?:
   yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
   yield* fs.writeFileString(
     path.join(workdir, "supabase", ".link.json"),
-    JSON.stringify({
+    yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
       project: { ref: LINKED_REF },
       active_branch: {
         ref: LINKED_REF,
