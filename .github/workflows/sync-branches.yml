@@ -198,9 +198,9 @@ jobs:
           bun-version-file: trusted/.bun-version
 
       # Installs mise only; the script installs the merged tree's own toolchain.
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
-          version: 2026.9.0
+          version: 2026.10.17
           install: false
           working_directory: work
 

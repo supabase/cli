@@ -82,4 +82,4 @@ jobs:
       - name: Propose release notes
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: pnpm exec bun apps/cli/scripts/propose-release-notes.ts --tag "${TAG}" --apply
+        run: bun apps/cli/scripts/propose-release-notes.ts --tag "${TAG}" --apply

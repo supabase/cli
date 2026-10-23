@@ -126,11 +126,10 @@ runs:
         commit: ${{ steps.sticky.outputs.commit }}
 
     - name: Install toolchains
-      uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
       with:
-        version: 2026.9.0
+        version: 2026.10.17
         install_args: ${{ inputs.tools }}
-        cache_key: ${{ inputs.tools != '' && format('mise-{0}-{1}-{2}-{3}', runner.os, runner.arch, inputs.tools, hashFiles('mise.toml', 'mise.lock', '.node-version', '.bun-version', 'package.json')) || '' }}
 
     - name: Resolve pnpm store path
       if: inputs.dependency-cache == 'true'

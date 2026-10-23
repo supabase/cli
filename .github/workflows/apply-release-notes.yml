@@ -99,7 +99,7 @@ jobs:
             exit 1
           fi
           echo "==> Applying notes for $tag"
-          pnpm exec bun apps/cli/scripts/apply-release-notes.ts --tag "$tag"
+          bun apps/cli/scripts/apply-release-notes.ts --tag "$tag"
           release_url="https://github.com/${{ github.repository }}/releases/tag/${tag}"
           gh pr comment "$PR_NUMBER" --repo "${{ github.repository }}" --body \
             "Applied to [${tag}](${release_url}) after approval by @${APPROVER}."

@@ -497,8 +497,8 @@ Keep two to three stable majors supported at the same time, roughly six to twelv
 
 `**build` (ubuntu-latest):\*\*
 
-1. `[pnpm exec bun apps/cli/scripts/sync-versions.ts --version X.Y.Z](../scripts/sync-versions.ts)` — writes the release version into every `package.json` (umbrella + eight platform packages) and resolves the umbrella's `workspace:`\* `optionalDependencies` to `X.Y.Z`.
-2. `[pnpm exec bun apps/cli/scripts/build.ts --version X.Y.Z](../scripts/build.ts)` — cross-compiles the Bun SFE for all eight targets (including windows-arm64), cross-compiles the Go sidecar, **ad-hoc signs the macOS binaries** (see [Code signing (macOS)](#code-signing-macos)), builds the six Linux packages via `nfpm`, produces the tar/zip archives, and writes `dist/checksums.txt`.
+1. `[bun apps/cli/scripts/sync-versions.ts --version X.Y.Z](../scripts/sync-versions.ts)` — writes the release version into every `package.json` (umbrella + eight platform packages) and resolves the umbrella's `workspace:`\* `optionalDependencies` to `X.Y.Z`.
+2. `[bun apps/cli/scripts/build.ts --version X.Y.Z](../scripts/build.ts)` — cross-compiles the Bun SFE for all eight targets (including windows-arm64), cross-compiles the Go sidecar, **ad-hoc signs the macOS binaries** (see [Code signing (macOS)](#code-signing-macos)), builds the six Linux packages via `nfpm`, produces the tar/zip archives, and writes `dist/checksums.txt`.
 3. `actions/upload-artifact` preserves `packages/cli-*/bin/` and `dist/` for the downstream jobs.
 
 `**smoke-test` (matrix: `ubuntu-latest`, `macos-latest`, `macos-15-intel`, `windows-latest`):\*\*
@@ -510,7 +510,7 @@ The matrix does not yet include `windows-11-arm` (gate 6) or an Alpine musl runn
 `**publish` (ubuntu-latest, `if: !inputs.dry_run`):\*\*
 
 1. Re-runs `sync-versions.ts` (download-artifact restores file modes but not JSON mutations).
-2. `[pnpm exec bun apps/cli/scripts/publish.ts --tag <latest|beta|next|v<N>.stable>](../scripts/publish.ts)` — publishes the eight platform packages in parallel via OIDC trusted publishing (`bun publish --provenance`, no `NPM_TOKEN`), then the umbrella package last so `optionalDependencies` resolve cleanly at install time.
+2. `[bun apps/cli/scripts/publish.ts --tag <latest|beta|next|v<N>.stable>](../scripts/publish.ts)` — publishes the eight platform packages in parallel via OIDC trusted publishing (`bun publish --provenance`, no `NPM_TOKEN`), then the umbrella package last so `optionalDependencies` resolve cleanly at install time.
 3. `softprops/action-gh-release` creates an **empty draft** Release `v<version>` on `supabase/cli`.
 4. `[upload-release-assets.ts upload](../scripts/upload-release-assets.ts)` uploads the archives, packages, `checksums.txt`, unversioned aliases, and `install` script **one asset at a time** with `gh release upload --clobber`, up to three attempts each with a five-minute timeout. `gh` itself retries 5xx responses and dropped connections three times within a second; the outer loop covers longer stalls and the `--clobber` delete, which `gh` does not retry. `uploads.github.com` fails single uploads often enough that this is routine: in September 2026 one beta release hit a multi-hour backend degradation and another lost one connection on a healthy backend. The asset list, retry policy, and timeout handling are covered by the unit and integration tests next to the script.
 5. `upload-release-assets.ts verify` compares `gh release view --json assets` with the expected asset names. The job fails if any asset is missing or not `uploaded`, so a partial set is never published.
