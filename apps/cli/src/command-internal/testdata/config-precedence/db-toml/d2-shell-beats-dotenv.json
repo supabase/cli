@@ -22,7 +22,6 @@
       "enabled": false,
       "formatOptions": null
     },
-    "poolerConnectionString": null,
     "port": 56001,
     "projectEnv": {},
     "projectId": "golden-base",
