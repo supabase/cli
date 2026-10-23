@@ -38,8 +38,6 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
-    outputs:
-      image_digest: ${{ steps.build.outputs.digest }}
     steps:
       - run: docker context create builders
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0

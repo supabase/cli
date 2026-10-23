@@ -65,7 +65,6 @@ jobs:
     outputs:
       should_run: ${{ steps.resolve.outputs.should_run }}
       pr_number: ${{ steps.resolve.outputs.pr_number }}
-      head_ref: ${{ steps.resolve.outputs.head_ref }}
       # Every job reviews this commit, so a push during the run is never reported as reviewed.
       head_sha: ${{ steps.resolve.outputs.head_sha }}
       trigger: ${{ steps.resolve.outputs.trigger }}
