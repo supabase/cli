@@ -356,8 +356,8 @@ jobs:
           echo "dist-tag ${NPM_TAG} -> ${VERSION} confirmed."
 
       # The CLI's install scripts and setup-cli resolve releases/latest/download/..., so a
-      # config release must never become the repo's "latest" release. Idempotent: skips if
-      # the release already exists.
+      # config release must never become the repo's "latest" release. Re-runs skip this step
+      # when the release already exists.
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

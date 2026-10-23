@@ -12,7 +12,7 @@ self-hosted-runner:
     - blacksmith-8vcpu-windows-2025
     - blacksmith-32vcpu-ubuntu-2404
 paths:
-  # Git submodules of other projects; CI never checks them out.
+  # Other projects' repositories, pulled in as git submodules. CI never checks them out.
   ".repos/**":
     ignore:
       - ".*"

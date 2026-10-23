@@ -84,8 +84,8 @@ jobs:
     # `node:20-alpine` ships a musl-linked Node, required for JavaScript-based actions to launch
     # here — the runner's mounted glibc Node won't execute inside an Alpine container.
     container:
-      # A moving tag is accepted: this container only hosts the installer smoke test, and a
-      # digest here would never be bumped automatically.
+      # The image is pinned by tag, not by digest. It only hosts the installer smoke test, and
+      # nothing would update a digest here automatically.
       # jactionlint ignore=unpinned-images
       image: node:20-alpine
     env:

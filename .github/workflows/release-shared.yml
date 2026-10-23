@@ -307,7 +307,7 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
-      # The key carries this run's id, so only the build job of this run can have written it.
+      # The cache key includes this run's id, so only this run's build job can have written it.
       # jactionlint ignore=cache-poisoning
       - name: Restore build artifacts cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -379,7 +379,7 @@ jobs:
           done
 
       # Created empty; the next step uploads the assets so each one can be retried on its own.
-      # Idempotent: skips if the release already exists.
+      # Re-runs skip this step when the release already exists.
       - name: Create draft GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

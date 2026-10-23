@@ -16,8 +16,9 @@ on:
         description: "PR number to review"
         required: true
         type: string
-  # Comments are the /ai-review command surface; the resolve job authorizes the commenter and
-  # only the write job runs, from the default branch.
+  # A `/ai-review` comment on a pull request starts a review. The resolve job checks who
+  # commented, and the one job that can write to the pull request runs code from the default
+  # branch only, never from the pull request.
   # jactionlint ignore=dangerous-triggers
   issue_comment:
     types:
@@ -163,8 +164,9 @@ jobs:
       # behavior mid-rollout. Installed from the trusted checkout with npm config isolation so a
       # PR-supplied `.npmrc` in the untrusted `pr` checkout can never redirect this install to a
       # hostile registry.
-      # 2.1.280 is the first release that accepts claude-opus-5-5. The CLI stays outside the
-      # repository's lockfile so the untrusted checkout's dependencies never reach it.
+      # 2.1.280 is the first release that accepts claude-opus-5-5. The CLI is installed on its
+      # own, not through the repository's lockfile, so nothing in the pull request's checkout
+      # can change what gets installed.
       # jactionlint ignore=adhoc-packages
       - name: Install Claude Code CLI
         working-directory: trusted

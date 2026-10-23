@@ -1,7 +1,8 @@
 name: Reopen stale issue
 
 on:
-  # /reopen must work for the issue author; the script runs no code from the comment.
+  # Anyone who can comment must be able to use /reopen. The script only reads the comment
+  # text and never runs it.
   # jactionlint ignore=dangerous-triggers
   issue_comment:
     types:
@@ -9,7 +10,7 @@ on:
 
 permissions:
   contents: read
-  # The script only reopens, unlabels and comments; there is no narrower scope.
+  # The script reopens the issue, removes a label, and comments. Each needs issues: write.
   # jactionlint ignore=excessive-permissions
   issues: write
 

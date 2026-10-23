@@ -27,7 +27,7 @@ jobs:
     outputs:
       authorized: ${{ steps.check.outputs.authorized }}
     steps:
-      # App token needs org membership read, and PR write to comment.
+      # The token reads the approver's team membership and comments on the pull request.
       - id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
@@ -67,9 +67,9 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      # App token needs repo write to edit the release (plus workflows write when the tagged
-      # commit touched .github/workflows) and to delete the branch, and PR write to comment and
-      # close.
+      # The token edits the GitHub release, deletes the branch, and comments on and closes the
+      # pull request. GitHub also requires the workflows permission to edit a release whose
+      # tagged commit changed a file under .github/workflows.
       - id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
