@@ -1,20 +1,27 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "vitest";
 import { Effect, FileSystem, Path, Schema, SchemaIssue } from "effect";
+import type { LoadCliConfigOptions } from "./config-document.ts";
 import { loadCliConfigFile } from "./effect.ts";
 
-const loadToml = Effect.fn("MigrationChecksTest.loadToml")(function* (section: string) {
+const loadToml = Effect.fn("MigrationChecksTest.loadToml")(function* (
+  section: string,
+  options?: LoadCliConfigOptions,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "migration-checks-" });
   yield* fs.makeDirectory(path.join(cwd, "supabase"));
   const file = path.join(cwd, "supabase", "config.toml");
   yield* fs.writeFileString(file, `project_id = "checks-test"\n${section}\n`);
-  return yield* loadCliConfigFile(file);
+  return yield* loadCliConfigFile(file, options);
 });
 
-const loadIssues = Effect.fn("MigrationChecksTest.loadIssues")(function* (section: string) {
-  const error = yield* Effect.flip(loadToml(section));
+const loadIssues = Effect.fn("MigrationChecksTest.loadIssues")(function* (
+  section: string,
+  options?: LoadCliConfigOptions,
+) {
+  const error = yield* Effect.flip(loadToml(section, options));
   if (error._tag !== "CliConfigParseError") {
     return yield* Effect.die("Expected CliConfigParseError from config loading");
   }
@@ -171,6 +178,29 @@ describe("db.migrations.checks TOML loading", () => {
         ]);
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer), Effect.runPromise),
   );
+
+  it("accepts an empty exclusion list", () =>
+    Effect.gen(function* () {
+      const loaded = yield* loadToml("[db.migrations.checks.exclude]\nrls_disabled_in_public = []");
+      expect(loaded.config.db.migrations.checks).toEqual({
+        exclude: { rls_disabled_in_public: [] },
+      });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer), Effect.runPromise));
+
+  it("rejects a misspelled rule in the selected remote block", () =>
+    Effect.gen(function* () {
+      const issues = yield* loadIssues(
+        '[remotes.staging]\nproject_id = "abcdefghijklmnopqrst"\n[remotes.staging.db.migrations.checks]\nrls_disabled_in_publc = "off"',
+        { projectRef: "abcdefghijklmnopqrst" },
+      );
+      expect(issues).toEqual([
+        {
+          path: ["db", "migrations", "checks", "rls_disabled_in_publc"],
+          message:
+            'Unknown rule "rls_disabled_in_publc" in [db.migrations.checks]. Did you mean "rls_disabled_in_public"?',
+        },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer), Effect.runPromise));
 
   it("removes duplicate exclusions while keeping first-seen order", () =>
     Effect.gen(function* () {
