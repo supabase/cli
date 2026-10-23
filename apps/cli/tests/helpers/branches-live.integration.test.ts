@@ -293,6 +293,24 @@ describe("live branch lifecycle helpers", () => {
     }),
   );
 
+  it.effect("keeps the restart rejection when cleanup before the retry fails", () =>
+    Effect.gen(function* () {
+      const cli: BranchCli = (args) =>
+        Effect.sync(() =>
+          args[1] === "create"
+            ? result("", "status 400: FATAL:  57P01: terminating connection", 1)
+            : result("", "list forbidden", 1),
+        );
+      const exit = yield* Effect.exit(createLiveBranchEffect(cli, project, branch.name));
+      if (!Exit.isFailure(exit)) throw new Error("expected create failure");
+      const flatten = (error: unknown): string[] =>
+        error instanceof AggregateError ? error.errors.flatMap(flatten) : [String(error)];
+      const causes = flatten(Cause.squash(exit.cause)).join("\n");
+      expect(causes).toContain("57P01");
+      expect(causes).toContain("list forbidden");
+    }),
+  );
+
   it.effect("never echoes branches get stdout, which prints the branch secrets", () =>
     Effect.gen(function* () {
       const cli: BranchCli = () => Effect.succeed(result("DB_PASSWORD sentinel-secret", "", 1));

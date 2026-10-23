@@ -171,7 +171,13 @@ export function runLiveBranchCreateEffect<E>(
   return create.pipe(
     Effect.catch((rejected) =>
       isPlatformDatabaseRestart(rejected)
-        ? clearRejected.pipe(Effect.flatMap(() => create))
+        ? clearRejected.pipe(
+            Effect.mapError(
+              (cleanup) =>
+                new AggregateError([rejected, cleanup], "Branch create retry cleanup failed"),
+            ),
+            Effect.flatMap(() => create),
+          )
         : Effect.fail(rejected),
     ),
   );
