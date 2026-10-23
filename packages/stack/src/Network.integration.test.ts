@@ -7,6 +7,7 @@ import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node
 import { HttpBody, HttpClient } from "effect/http";
 import * as Network from "./Network.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
+import * as Ports from "./Ports.ts";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
 import { freshWrites } from "./host/Endpoints.ts";
 import * as StackNamespace from "./StackNamespace.ts";
@@ -598,18 +599,15 @@ it.live("addresses docker runtime endpoints through the stack host alias", () =>
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-/** Ports Windows runners listen on: RDP, WinRM, Delivery Optimization and Windows services. */
-const windowsHeldPorts = new Set([3389, 5040, 5357, 5985, 5986, 7680]);
-
 /**
  * A pinned port below the stack's native and auto port ranges and every OS ephemeral range, so
  * neither another test's auto allocation nor an outbound socket can already hold it. It stays
- * under 9000, where other files pin fixed ports.
+ * under 9000, where other files pin fixed ports, and is redrawn while a runner service answers it.
  */
-const pinnedPort = (): number => {
+const pinnedPort: Effect.Effect<number> = Effect.gen(function* () {
   const port = 1024 + (Math.abs(Hash.string(randomUUID())) % (9_000 - 1024));
-  return windowsHeldPorts.has(port) ? pinnedPort() : port;
-};
+  return (yield* Ports.accepts("127.0.0.1", port)) ? yield* pinnedPort : port;
+});
 
 it.live("addresses a pinned endpoint from its configured port without a registry row", () =>
   Effect.scoped(
@@ -619,7 +617,7 @@ it.live("addresses a pinned endpoint from its configured port without a registry
       const state = yield* makeTestState(root);
       yield* state.save(stack("stack"));
       const target = yield* backend;
-      const port = pinnedPort();
+      const port = yield* pinnedPort;
       const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
       const namespace = yield* network.register({
         id: "db",
@@ -642,7 +640,7 @@ it.live("a pinned port is reserved only while its listener is open", () =>
       yield* state.save(stack("first"));
       yield* state.save(stack("second"));
       const target = yield* backend;
-      const port = pinnedPort();
+      const port = yield* pinnedPort;
       const firstEnabled = yield* Ref.make(true);
       const firstNetwork = yield* makeTestNetwork({ stackId: "first", runtime: "native", state });
       const first = yield* firstNetwork.register({
@@ -676,7 +674,7 @@ it.live("a pinned shared listener keeps its reservation until its last route clo
       const state = yield* makeTestState(root);
       yield* state.save(stack("stack"));
       const target = yield* backend;
-      const port = pinnedPort();
+      const port = yield* pinnedPort;
       const firstEnabled = yield* Ref.make(true);
       const secondEnabled = yield* Ref.make(true);
       const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
