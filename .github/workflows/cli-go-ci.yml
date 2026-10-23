@@ -31,6 +31,7 @@ jobs:
       # Required by: internal/utils/credentials/keyring_test.go
       - uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae # v1.2.0
       - run: |
+          set -o pipefail
           pkgs=$(go list ./pkg/... | grep -Ev 'pkg/api' | paste -sd ',' -)
           go tool gotestsum -- -race -v -count=1 ./... \
           -coverpkg="./cmd/...,./internal/...,${pkgs}" -coverprofile=coverage.out

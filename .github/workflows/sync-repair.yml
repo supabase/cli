@@ -119,6 +119,7 @@ jobs:
           HEAD_SHA: ${{ steps.collect.outputs.head }}
           CHANGED: ${{ steps.repair.outputs.changed }}
         run: |
+          set -o pipefail
           if [ "$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)" != "$HEAD_SHA" ]; then
             echo "::notice::The sync branch moved since the checks settled; skipping."
             exit 0
