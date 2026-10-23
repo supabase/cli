@@ -490,7 +490,7 @@ describe("db advisors — linked", () => {
   };
 
   it.effect(
-    "mints a login role, fetches both advisors and fills the cache through the real layers",
+    "fetches both advisors and fills the cache through the real layers without minting a login role",
     () => {
       const { layer, api } = setup({
         securityLints: [securityLint],
@@ -504,10 +504,7 @@ describe("db advisors — linked", () => {
         yield* dbAdvisors(
           linkedFlags({ remote: Option.some({ _tag: "Ref", ref: VALID_REF } as const) }),
         );
-        expect(resolverRequests.map(({ method, path }) => `${method} ${path}`)).toEqual([
-          `GET /v1/projects/${VALID_REF}/config/database/pooler`,
-          `POST /v1/projects/${VALID_REF}/cli/login-role`,
-        ]);
+        expect(resolverRequests).toEqual([]);
         expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
           `GET https://api.supabase.com/v1/projects/${VALID_REF}/advisors/security`,
           `GET https://api.supabase.com/v1/projects/${VALID_REF}/advisors/performance`,
@@ -564,7 +561,7 @@ describe("db advisors — linked", () => {
   it.effect(
     "fails on a 403 from the security advisors without asking for the performance ones",
     () => {
-      const { layer, api } = setup({ securityStatus: 403 });
+      const { layer, api, cache } = setup({ securityStatus: 403 });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(dbAdvisors(linkedFlags({ type: Option.some("all") })));
         expect(Exit.isFailure(exit)).toBe(true);
@@ -574,6 +571,7 @@ describe("db advisors — linked", () => {
         expect(api.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([
           `GET https://api.supabase.com/v1/projects/${VALID_REF}/advisors/security`,
         ]);
+        expect(cache.cached).toBe(true);
         assertPermissionDrift({
           command: "db advisors",
           activeFlags: { remote: true, type: "all" },
@@ -631,31 +629,15 @@ describe("db advisors — linked", () => {
     },
   );
 
-  it.effect("resolves the linked DB config before fetching advisors", () => {
-    // Resolved even though the linked lint-gathering path discards the connection.
-    const { layer, resolver, api } = setup({
+  it.effect("never resolves a database connection for linked advisors", () => {
+    const { layer, resolver, api, cache } = setup({
+      ipv6Error: true,
       securityLints: [securityLint],
     });
     return Effect.gen(function* () {
       yield* dbAdvisors(linkedFlags({ type: Option.some("security") }));
-      expect(resolver.resolveInputs.some((input) => input.target.kind === "linked")).toBe(true);
+      expect(resolver.resolveInputs).toEqual([]);
       expect(api.requests.some((r) => r.url.includes("/advisors/security"))).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("fails on the linked DB-config error before any advisor API call", () => {
-    // The DB-config resolve fails before the linked lint-gathering path runs, so the advisors
-    // API is never reached — but the ref was already loaded and cached unconditionally on the
-    // error path.
-    const { layer, api, cache } = setup({ ipv6Error: true });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(dbAdvisors(linkedFlags()));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const causeText = Cause.pretty(exit.cause);
-        expect(causeText).toContain("IPv6 is not supported");
-      }
-      expect(api.requests).toHaveLength(0);
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -820,7 +802,14 @@ describeDbTargetSelection("db advisors", {
       layer: ctx.layer,
       out: ctx.out,
       run: dbAdvisors(flags(target)),
-      target: () => ctx.resolver.resolveInputs[0]?.target,
+      target: () => {
+        const hostedRef = ctx.api.requests
+          .map(({ url }) => /\/v1\/projects\/([^/]+)\/advisors\//u.exec(url)?.[1])
+          .find((ref) => ref !== undefined);
+        return hostedRef === undefined
+          ? ctx.resolver.resolveInputs[0]?.target
+          : { kind: "linked", ref: hostedRef };
+      },
       cachedRef: () => ctx.cache.cachedRef,
       branchLookups: () => ctx.api.requests.filter(({ url }) => url.endsWith("/branches")),
       apiRequests: () => ctx.api.requests,

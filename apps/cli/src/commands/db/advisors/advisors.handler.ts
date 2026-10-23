@@ -103,32 +103,20 @@ const runLocal = Effect.fn("db.advisors.runLocal")(function* (
   return filterAdvisorLints(lints, advisorType, level);
 });
 
-/** Gathers lints from the Management API for the linked project. */
+/** Gathers the linked project's lints from the Management API, never from its database. */
 const runLinked = Effect.fn("db.advisors.runLinked")(function* (
   target: Extract<ResolvedTarget, { readonly kind: "linked" }>,
-  dnsResolver: "native" | "https",
   advisorType: string,
   level: string,
 ) {
-  const resolver = yield* DbConfigResolver;
   const credentials = yield* CommandCredentials;
   const linkedProjectCache = yield* LinkedProjectCache;
 
   const { ref } = target;
 
-  // The linked-project cache is written whenever the project ref was resolved, even when the
-  // connection resolve below fails.
+  // The linked-project cache is written whenever the project ref was resolved, even when a later
+  // step fails.
   return yield* Effect.gen(function* () {
-    // The host probe / login-role mint / pooler / IPv6 fallback. The linked lint-gathering path
-    // ignores the resolved config — this runs purely for the side effects and early-failure
-    // ordering (before the token gate).
-    yield* resolver.resolveConnection({
-      target,
-      dnsResolver,
-      password: Option.none(),
-      networkBanRemoval: yield* hostedMutationPreapproval,
-    });
-
     // The access token is validated against the `sbp_` pattern before calling the API: a
     // malformed token maps to the invalid-token error, an absent token to missing.
     const tokenOpt = yield* credentials.getAccessToken.pipe(
@@ -217,7 +205,7 @@ const runAdvisors = Effect.fnUntraced(function* (
   // Linked goes through the Management API; local and `--db-url` read the database directly.
   const filtered =
     target.kind === "linked"
-      ? yield* runLinked(target, dnsResolver, advisorType, level)
+      ? yield* runLinked(target, advisorType, level)
       : yield* runLocal(target, dnsResolver, advisorType, level);
   yield* Effect.annotateCurrentSpan("advisor.reported_count", filtered.length);
 
