@@ -27,13 +27,14 @@ jobs:
     outputs:
       authorized: ${{ steps.check.outputs.authorized }}
     steps:
-      # App token needs org membership read, repo write to edit the release, and PR write to
-      # comment and close.
+      # App token needs org membership read, and PR write to comment.
       - id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-members: read
+          permission-pull-requests: write
 
       - name: Authorize approver against supabase/cli team
         id: check
@@ -66,11 +67,17 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+      # App token needs repo write to edit the release (plus workflows write when the tagged
+      # commit touched .github/workflows) and to delete the branch, and PR write to comment and
+      # close.
       - id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+          permission-pull-requests: write
 
       # Checkout the PR head so reviewer edits made before approval are captured;
       # apply-release-notes.ts reads from the working tree.
