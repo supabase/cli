@@ -164,7 +164,7 @@ export const resolveStorageCredentials = Effect.fnUntraced(function* (opts: {
 });
 
 /**
- * Converts a thrown config-load validation error (from `envOverride*`,
+ * Converts a config-load validation error (from `envOverride*`,
  * `decryptAuthSecret`, `resolveJwtSecret`, `validateApi*`) into a tagged
  * `StorageConfigError`, preserving the original message.
  */
@@ -178,37 +178,44 @@ const toStorageConfigError = (cause: unknown) =>
  * URL, so a stack started with an overridden port stays reachable here
  * instead of falling back to the raw `config.toml` value.
  */
-const resolveLocalApiConfig = (
+const resolveLocalApiConfig = Effect.fnUntraced(function* (
   api: StorageConfigView["api"],
   projectEnvValues: Readonly<Record<string, string>>,
-) =>
-  Effect.try({
-    try: () => {
-      const resolved = {
-        enabled: envOverrideBool(
-          "SUPABASE_API_ENABLED",
-          api.enabled,
-          "api.enabled",
-          projectEnvValues,
-        ),
-        external_url: envOverride("SUPABASE_API_EXTERNAL_URL", api.external_url, projectEnvValues),
-        port: envOverridePort("SUPABASE_API_PORT", api.port, "api.port", projectEnvValues),
-        tls: {
-          enabled: envOverrideBool(
-            "SUPABASE_API_TLS_ENABLED",
-            api.tls.enabled,
-            "api.tls.enabled",
-            projectEnvValues,
-          ),
-          cert_path: envOverride("SUPABASE_API_TLS_CERT_PATH", api.tls.cert_path, projectEnvValues),
-          key_path: envOverride("SUPABASE_API_TLS_KEY_PATH", api.tls.key_path, projectEnvValues),
-        },
-      } satisfies StorageConfigView["api"];
-      validateApiPort(resolved.enabled, resolved.port);
-      return resolved;
+) {
+  const resolved = {
+    enabled: yield* envOverrideBool(
+      "SUPABASE_API_ENABLED",
+      api.enabled,
+      "api.enabled",
+      projectEnvValues,
+    ),
+    external_url: yield* envOverride(
+      "SUPABASE_API_EXTERNAL_URL",
+      api.external_url,
+      projectEnvValues,
+    ),
+    port: yield* envOverridePort("SUPABASE_API_PORT", api.port, "api.port", projectEnvValues),
+    tls: {
+      enabled: yield* envOverrideBool(
+        "SUPABASE_API_TLS_ENABLED",
+        api.tls.enabled,
+        "api.tls.enabled",
+        projectEnvValues,
+      ),
+      cert_path: yield* envOverride(
+        "SUPABASE_API_TLS_CERT_PATH",
+        api.tls.cert_path,
+        projectEnvValues,
+      ),
+      key_path: yield* envOverride("SUPABASE_API_TLS_KEY_PATH", api.tls.key_path, projectEnvValues),
     },
+  } satisfies StorageConfigView["api"];
+  yield* Effect.try({
+    try: () => validateApiPort(resolved.enabled, resolved.port),
     catch: toStorageConfigError,
   });
+  return resolved;
+}, Effect.mapError(toStorageConfigError));
 
 /**
  * Resolves the service-role key for the local Storage gateway:
@@ -223,24 +230,14 @@ const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (
   auth: StorageConfigView["auth"],
   projectEnvValues: Readonly<Record<string, string>>,
 ) {
-  const jwtSecret = yield* Effect.try({
-    try: () =>
-      resolveJwtSecret(
-        decryptAuthSecret(
-          envOverride("SUPABASE_AUTH_JWT_SECRET", auth.jwt_secret, projectEnvValues),
-          projectEnvValues,
-        ),
-      ),
-    catch: toStorageConfigError,
-  });
-  const configuredKey = yield* Effect.try({
-    try: () =>
-      decryptAuthSecret(
-        envOverride("SUPABASE_AUTH_SERVICE_ROLE_KEY", auth.service_role_key, projectEnvValues),
-        projectEnvValues,
-      ),
-    catch: toStorageConfigError,
-  });
+  const jwtSecret = yield* decryptAuthSecret(
+    yield* envOverride("SUPABASE_AUTH_JWT_SECRET", auth.jwt_secret, projectEnvValues),
+    projectEnvValues,
+  ).pipe(Effect.flatMap(resolveJwtSecret), Effect.mapError(toStorageConfigError));
+  const configuredKey = yield* decryptAuthSecret(
+    yield* envOverride("SUPABASE_AUTH_SERVICE_ROLE_KEY", auth.service_role_key, projectEnvValues),
+    projectEnvValues,
+  ).pipe(Effect.mapError(toStorageConfigError));
   return configuredKey !== undefined && configuredKey.length > 0
     ? configuredKey
     : generateGoJwt(jwtSecret, "service_role");

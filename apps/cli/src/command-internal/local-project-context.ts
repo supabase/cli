@@ -158,7 +158,7 @@ export const loadLocalProjectContext = <E>(
 
 /** Records OrioleDB selection for commands whose only local config read is this context. */
 export const recordLocalProjectOrioleDbTelemetry = (context: LocalProjectContext) =>
-  Effect.try(() => ({
+  Effect.all({
     version: envOverrideOrioleDBVersion(
       context.config.db.orioledb_version,
       context.projectEnvValues,
@@ -167,7 +167,7 @@ export const recordLocalProjectOrioleDbTelemetry = (context: LocalProjectContext
       context.config.db.major_version,
       context.projectEnvValues,
     ),
-  })).pipe(
+  }).pipe(
     Effect.flatMap(({ version, majorVersion }) => recordOrioleDbTelemetry(version, majorVersion)),
     Effect.ignore,
   );

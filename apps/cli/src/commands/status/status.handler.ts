@@ -141,20 +141,20 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
     // 3. Config validation runs entirely before the health check/container listing below, so a
     // config error (`InvalidJwtSecretError`, a malformed `SUPABASE_*_PORT`/`_ENABLED` override, a
     // signing-keys-file error) fails here rather than being masked by a Docker/DB error.
-    const localState = yield* Effect.try({
-      try: () =>
-        resolveStatusLocalState(
-          context.config,
-          context.hostname,
-          cliSettings.workdir,
-          context.projectEnvValues,
-          context.loaded?.document,
-        ),
-      catch: (cause) =>
-        new StatusInvalidConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
+    const localState = yield* resolveStatusLocalState(
+      context.config,
+      context.hostname,
+      cliSettings.workdir,
+      context.projectEnvValues,
+      context.loaded?.document,
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new StatusInvalidConfigError({
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
+      ),
+    );
 
     // 4. `status` has no --project-id flag: resolution is env → toml → workdir basename, then
     // sanitized to match the same string the Docker label `start` writes (see
@@ -224,7 +224,7 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
 
     // The pretty renderer always uses a fresh, empty override map — `--override-name` only
     // affects the env/json/toml/yaml path, never the pretty table — remapped from the
-    // already-resolved `state` so it stays consistent without a second (throwing) resolution.
+    // already-resolved `state` so it stays consistent without a second (fallible) resolution.
     const renderPretty = Effect.fnUntraced(function* () {
       yield* output.raw(`${aqua("supabase")} local development setup is running.\n\n`, "stderr");
       const pretty = statusValuesFromState(state, new Map());

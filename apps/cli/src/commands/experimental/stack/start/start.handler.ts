@@ -281,13 +281,16 @@ const formatConfigPath = (path: string): string => {
 };
 
 /** The display key for a setting: its env var when that's what overrides it, else its config key. */
-const settingKeyLabel = (
+const settingKeyLabel = Effect.fnUntraced(function* (
   setting: StackEndpointSetting,
   projectEnvValues: Readonly<Record<string, string>>,
-): string =>
-  [setting.envVar, setting.deprecatedEnvVar].find(
-    (name) => name !== undefined && envOverride(name, undefined, projectEnvValues) !== undefined,
-  ) ?? formatConfigPath(setting.configPath);
+) {
+  for (const name of [setting.envVar, setting.deprecatedEnvVar]) {
+    if (name !== undefined && (yield* envOverride(name, undefined, projectEnvValues)) !== undefined)
+      return name;
+  }
+  return formatConfigPath(setting.configPath);
+});
 
 /**
  * One setting behind an incompatible path, reported as the JSON/stream-json error envelope's
@@ -303,14 +306,14 @@ interface StructuredSettingChange {
   readonly editable: boolean;
 }
 
-const describeSettingChange = (
+const describeSettingChange = Effect.fnUntraced(function* (
   service: PlannedInstance["service"],
   path: string,
   savedCreation: ServiceCreation | undefined,
   requestedCreation: ServiceCreationInput | undefined,
   projectEnvValues: Readonly<Record<string, string>>,
   databaseFromServices: boolean,
-): StructuredSettingChange | ReadonlyArray<StructuredSettingChange> => {
+): Effect.fn.Return<StructuredSettingChange | ReadonlyArray<StructuredSettingChange>> {
   if (service === "database" && path === "pin") {
     const savedVersion = databaseVersionOf(savedCreation);
     const requestedVersion = databaseVersionOf(requestedCreation);
@@ -334,7 +337,7 @@ const describeSettingChange = (
       changes.push({
         service,
         path,
-        key: settingKeyLabel(stackMajorVersionSetting, projectEnvValues),
+        key: yield* settingKeyLabel(stackMajorVersionSetting, projectEnvValues),
         saved: savedMajor,
         requested: requestedMajor,
         editable: true,
@@ -343,7 +346,7 @@ const describeSettingChange = (
       changes.push({
         service,
         path,
-        key: settingKeyLabel(stackOrioledbVersionSetting, projectEnvValues),
+        key: yield* settingKeyLabel(stackOrioledbVersionSetting, projectEnvValues),
         saved: savedOrioledb,
         requested: requestedOrioledb,
         // A catalog upgrade can retire the saved build, which the config then rejects.
@@ -358,7 +361,7 @@ const describeSettingChange = (
     return {
       service,
       path,
-      key: settingKeyLabel(setting, projectEnvValues),
+      key: yield* settingKeyLabel(setting, projectEnvValues),
       saved: endpointPortLabel(savedCreation?.endpoints, endpointName),
       requested: endpointPortLabel(requestedCreation?.endpoints, endpointName),
       editable: true,
@@ -373,7 +376,7 @@ const describeSettingChange = (
     requested: "changed",
     editable: false,
   };
-};
+});
 
 /** Whether `[local.services]` names a published database release, which `[db]` settings no longer select. */
 const databasePublishedBy = (source: CliConfig): boolean => {
@@ -383,30 +386,30 @@ const databasePublishedBy = (source: CliConfig): boolean => {
 };
 
 /** Every incompatible path across every rejected saved member, as one structured list. */
-const incompatibleSettingChanges = (
+const incompatibleSettingChanges = Effect.fnUntraced(function* (
   planned: ReadonlyArray<PlannedInstance>,
   savedConfigById: ReadonlyMap<string, ServiceCreation>,
   requested: ReadonlyArray<ServiceCreationInput>,
   projectEnvValues: Readonly<Record<string, string>>,
   databaseFromServices: boolean,
-): ReadonlyArray<StructuredSettingChange> =>
-  planned
-    .filter((entry) => entry.member && entry.change === "incompatible")
-    .flatMap((entry) =>
-      // Narrowed by the filter above; `Extract` isn't inferred through `.filter`.
-      entry.change === "incompatible"
-        ? entry.paths.flatMap((path) =>
-            describeSettingChange(
-              entry.service,
-              path,
-              savedConfigById.get(entry.id),
-              requested.find((creation) => creation.service === entry.service),
-              projectEnvValues,
-              databaseFromServices,
-            ),
-          )
-        : [],
-    );
+) {
+  const changes: Array<StructuredSettingChange> = [];
+  for (const entry of planned) {
+    if (!entry.member || entry.change !== "incompatible") continue;
+    for (const path of entry.paths) {
+      const described = yield* describeSettingChange(
+        entry.service,
+        path,
+        savedConfigById.get(entry.id),
+        requested.find((creation) => creation.service === entry.service),
+        projectEnvValues,
+        databaseFromServices,
+      );
+      changes.push(...[described].flat());
+    }
+  }
+  return changes;
+});
 
 /** One deduplicated text line per distinct setting change (shared API port lines collapse to one). */
 const settingChangeLines = (
@@ -442,7 +445,7 @@ const revertAdvice = (editableKeys: ReadonlyArray<string>): string | undefined =
       : "Revert the settings listed to their saved values";
 
 /** Rejects every saved member whose endpoints or database line or major the request would change. */
-const incompatibleChange = (
+const incompatibleChange = Effect.fnUntraced(function* (
   planned: ReadonlyArray<PlannedInstance>,
   savedConfigById: ReadonlyMap<string, ServiceCreation>,
   requested: ReadonlyArray<ServiceCreationInput>,
@@ -450,15 +453,16 @@ const incompatibleChange = (
   databaseFromServices: boolean,
   stackIdentity: { readonly id: string; readonly name?: string },
   ownerLive: boolean,
-):
+): Effect.fn.Return<
   | {
       readonly error: StackCommandStartError;
       readonly changes: ReadonlyArray<StructuredSettingChange>;
       /** The destroy invocation, when recreating the stack is among the remedies. */
       readonly command: string | undefined;
     }
-  | undefined => {
-  const changes = incompatibleSettingChanges(
+  | undefined
+> {
+  const changes = yield* incompatibleSettingChanges(
     planned,
     savedConfigById,
     requested,
@@ -497,7 +501,7 @@ const incompatibleChange = (
       suggestion,
     }),
   };
-};
+});
 
 const selectedCreations = (
   creations: ReadonlyArray<ServiceCreationInput>,
@@ -926,7 +930,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       ...(target.name === undefined ? {} : { name: target.name }),
     };
     const savedConfigById = new Map(currentStatuses.map(({ id, config: saved }) => [id, saved]));
-    const rejected = incompatibleChange(
+    const rejected = yield* incompatibleChange(
       planned,
       savedConfigById,
       requested,
