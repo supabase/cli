@@ -9,6 +9,8 @@ import {
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
 
+const encodePrettyJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
+
 /** Document name under `<workdir>/supabase`, local to one checkout. */
 const PROJECT_LINK_FILENAME = ".link.json";
 
@@ -167,7 +169,8 @@ export const writeProjectLink = Effect.fn("ProjectLink.write")(function* (
   yield* Effect.gen(function* () {
     yield* fs.makeDirectory(path.dirname(file), { recursive: true });
     yield* ensureGitignore(fs, path, workdir);
-    yield* publish(fs, path, { target: file, content: `${JSON.stringify(link, null, 2)}\n` });
+    const content = yield* encodePrettyJson(link).pipe(Effect.orDie);
+    yield* publish(fs, path, { target: file, content: `${content}\n` });
   }).pipe(
     Effect.catchTags({
       PlatformError: (error) =>
