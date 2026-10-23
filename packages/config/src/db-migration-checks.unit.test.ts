@@ -163,20 +163,28 @@ describe("db.migrations.checks TOML loading", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer), Effect.runPromise),
   );
 
-  it.each(['" public.t"', '"public.t "', '"public"', '".t"', '"public."', '""', "42"])(
-    "rejects malformed exclusion entry %s and names its value and index",
-    (entry) =>
-      Effect.gen(function* () {
-        const issues = yield* loadIssues(
-          `[db.migrations.checks.exclude]\nrls_disabled_in_public = ["public.valid", ${entry}]`,
-        );
-        expect(issues).toEqual([
-          {
-            path: ["db", "migrations", "checks", "exclude", "rls_disabled_in_public", 1],
-            message: `exclude entries are "schema.name", for example "public.countries" (got ${entry})`,
-          },
-        ]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer), Effect.runPromise),
+  it.each([
+    '" public.t"',
+    '"public.t "',
+    '"public .t"',
+    '"public. t"',
+    '"public"',
+    '".t"',
+    '"public."',
+    '""',
+    "42",
+  ])("rejects malformed exclusion entry %s and names its value and index", (entry) =>
+    Effect.gen(function* () {
+      const issues = yield* loadIssues(
+        `[db.migrations.checks.exclude]\nrls_disabled_in_public = ["public.valid", ${entry}]`,
+      );
+      expect(issues).toEqual([
+        {
+          path: ["db", "migrations", "checks", "exclude", "rls_disabled_in_public", 1],
+          message: `exclude entries are "schema.name", for example "public.countries" (got ${entry})`,
+        },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer), Effect.runPromise),
   );
 
   it("accepts an empty exclusion list", () =>

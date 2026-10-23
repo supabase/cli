@@ -311,6 +311,29 @@ instances = 3
 		assert.NoError(t, config.Load("", fsys))
 	})
 
+	t.Run("accepts the TS-owned db.migrations.checks section", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+project_id = "test"
+
+[db.migrations.checks]
+rls_disabled_in_public = "error"
+
+[db.migrations.checks.exclude]
+rls_disabled_in_public = ["public.countries"]
+
+[remotes.prod]
+project_id = "bvikqvbczudanvggcord"
+
+[remotes.prod.db.migrations.checks]
+function_search_path_mutable = "off"
+`)},
+		}
+
+		assert.NoError(t, config.Load("", fsys))
+	})
+
 	t.Run("accepts the TS-owned local section", func(t *testing.T) {
 		config := NewConfig()
 		fsys := fs.MapFS{

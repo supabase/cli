@@ -46,8 +46,10 @@ export const mapMigrationCheckRules = <A>(
 
 const Severity = Schema.Literals(SEVERITIES);
 
-// Only the first dot separates schema from name; whitespace is allowed inside either.
-const ObjectName = Schema.String.check(Schema.isPattern(/^(?!\s)[^.]+\.[\s\S]*\S(?![\s\S])/u));
+// Only the first dot separates schema from name; whitespace is allowed inside either, not at their edges.
+const ObjectName = Schema.String.check(
+  Schema.isPattern(/^(?!\s)[^.]*[^.\s]\.(?!\s)[\s\S]*\S(?![\s\S])/u),
+);
 
 const TypedMigrationChecks = Schema.Struct({
   ...mapMigrationCheckRules((rule) =>
@@ -78,7 +80,7 @@ const TypedMigrationChecks = Schema.Struct({
   ),
 }).annotate({
   description:
-    'Security checks run on each migration. Each rule takes "error", "warn" or "off"; a rule left unset uses "warn". Runs against --db-url read this section from config.toml only.',
+    'Security checks run on each migration. Each rule takes "error", "warn" or "off"; a rule left unset uses "warn". When migrations run against --db-url, this section is read only from the local config.toml.',
   tags,
 });
 
