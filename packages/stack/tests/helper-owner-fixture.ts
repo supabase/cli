@@ -1,6 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { slimImageMirrors } from "../src/Artifacts.ts";
 import { makeContainerRuntime } from "../src/runtime/Container.ts";
 import { makeDockerDatabaseStorage } from "../src/storage/DockerDatabaseStorage.ts";
 import { makeDockerHelperRegistry } from "../src/storage/DockerHelperRegistry.ts";
@@ -51,7 +52,7 @@ const run = Effect.gen(function* () {
       { mode: 0o600 },
     );
   const target = { engine: "docker" as const, argv: [], daemonId: "test-daemon-id" };
-  const container = yield* makeContainerRuntime({ target, root });
+  const container = yield* makeContainerRuntime({ target, root, imageMirrors: slimImageMirrors });
   const helpers = shared ? yield* makeDockerHelperRegistry(yield* crypto.randomUUIDv4) : undefined;
   const storage = yield* makeDockerDatabaseStorage({
     runtime: "docker",
