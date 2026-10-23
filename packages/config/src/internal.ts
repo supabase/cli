@@ -8,6 +8,13 @@
  */
 export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
 export {
+  DEFAULT_MIGRATION_CHECK_SEVERITY,
+  MIGRATION_CHECK_RULES,
+  mapMigrationCheckRules,
+  type MigrationCheckRule,
+  type MigrationCheckSeverity,
+} from "./db-migration-checks.ts";
+export {
   type AppliedConfigEdit,
   applyConfigEdits,
   type ConfigEdit,

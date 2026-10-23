@@ -2,7 +2,8 @@
  * Assembles a published JSON Schema document from a generated schema and its definitions.
  * Pattern-keyed records stay open: the generator now writes a boolean `additionalProperties`
  * on them (effect 4.0) and has no per-schema setting, while the published documents never
- * carried one there. Structs keep theirs.
+ * carried one there. Structs keep theirs. A bare object whose only constraint is one object
+ * schema in `allOf` is replaced by that schema, so editors read its properties directly.
  */
 export function toPublishedJsonSchemaDocument(document: {
   readonly schema: Record<string, unknown>;
@@ -25,7 +26,25 @@ function openPatternKeyedRecords<T>(node: T): T {
   if (isRecordLike(out) && typeof out["additionalProperties"] === "boolean") {
     delete out["additionalProperties"];
   }
-  return out as T;
+  return (singleObjectAllOf(out) ?? out) as T;
+}
+
+function singleObjectAllOf(node: Record<string, unknown>): Record<string, unknown> | undefined {
+  const allOf = node["allOf"];
+  if (Object.keys(node).length !== 2 || node["type"] !== "object") return undefined;
+  if (!Array.isArray(allOf) || allOf.length !== 1) return undefined;
+  const [member]: ReadonlyArray<unknown> = allOf;
+  return isObjectSchema(member) ? member : undefined;
+}
+
+function isObjectSchema(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    "type" in value &&
+    value.type === "object"
+  );
 }
 
 function isRecordLike(node: Record<string, unknown>): boolean {

@@ -1828,6 +1828,146 @@
               },
               "description": "Ordered list of schema files, directories, or glob patterns that describe your database.",
               "default": []
+            },
+            "checks": {
+              "type": "object",
+              "properties": {
+                "rls_disabled_in_public": {
+                  "type": "string",
+                  "enum": ["error", "warn", "off"],
+                  "description": "Severity for rls_disabled_in_public: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                  "default": "warn"
+                },
+                "rls_enabled_no_policy": {
+                  "type": "string",
+                  "enum": ["error", "warn", "off"],
+                  "description": "Severity for rls_enabled_no_policy: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                  "default": "warn"
+                },
+                "policy_exists_rls_disabled": {
+                  "type": "string",
+                  "enum": ["error", "warn", "off"],
+                  "description": "Severity for policy_exists_rls_disabled: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                  "default": "warn"
+                },
+                "security_definer_view": {
+                  "type": "string",
+                  "enum": ["error", "warn", "off"],
+                  "description": "Severity for security_definer_view: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                  "default": "warn"
+                },
+                "rls_policy_always_true": {
+                  "type": "string",
+                  "enum": ["error", "warn", "off"],
+                  "description": "Severity for rls_policy_always_true: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                  "default": "warn"
+                },
+                "sensitive_columns_exposed": {
+                  "type": "string",
+                  "enum": ["error", "warn", "off"],
+                  "description": "Severity for sensitive_columns_exposed: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                  "default": "warn"
+                },
+                "auth_users_exposed": {
+                  "type": "string",
+                  "enum": ["error", "warn", "off"],
+                  "description": "Severity for auth_users_exposed: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                  "default": "warn"
+                },
+                "function_search_path_mutable": {
+                  "type": "string",
+                  "enum": ["error", "warn", "off"],
+                  "description": "Severity for function_search_path_mutable: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                  "default": "warn"
+                },
+                "rls_references_user_metadata": {
+                  "type": "string",
+                  "enum": ["error", "warn", "off"],
+                  "description": "Severity for rls_references_user_metadata: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                  "default": "warn"
+                },
+                "exclude": {
+                  "type": "object",
+                  "properties": {
+                    "rls_disabled_in_public": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                      },
+                      "description": "Objects rls_disabled_in_public skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                    },
+                    "rls_enabled_no_policy": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                      },
+                      "description": "Objects rls_enabled_no_policy skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                    },
+                    "policy_exists_rls_disabled": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                      },
+                      "description": "Objects policy_exists_rls_disabled skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                    },
+                    "security_definer_view": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                      },
+                      "description": "Objects security_definer_view skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                    },
+                    "rls_policy_always_true": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                      },
+                      "description": "Objects rls_policy_always_true skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                    },
+                    "sensitive_columns_exposed": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                      },
+                      "description": "Objects sensitive_columns_exposed skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                    },
+                    "auth_users_exposed": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                      },
+                      "description": "Objects auth_users_exposed skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                    },
+                    "function_search_path_mutable": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                      },
+                      "description": "Objects function_search_path_mutable skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                    },
+                    "rls_references_user_metadata": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                      },
+                      "description": "Objects rls_references_user_metadata skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "description": "Objects each rule skips, keyed by rule."
+                }
+              },
+              "additionalProperties": false,
+              "description": "Security checks run on each migration. Each rule takes \"error\", \"warn\" or \"off\"; a rule left unset uses \"warn\". When migrations run against --db-url, this section is read only from the local config.toml."
             }
           },
           "additionalProperties": false
@@ -4517,6 +4657,146 @@
                             },
                             "description": "Ordered list of schema files, directories, or glob patterns that describe your database.",
                             "default": []
+                          },
+                          "checks": {
+                            "type": "object",
+                            "properties": {
+                              "rls_disabled_in_public": {
+                                "type": "string",
+                                "enum": ["error", "warn", "off"],
+                                "description": "Severity for rls_disabled_in_public: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                                "default": "warn"
+                              },
+                              "rls_enabled_no_policy": {
+                                "type": "string",
+                                "enum": ["error", "warn", "off"],
+                                "description": "Severity for rls_enabled_no_policy: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                                "default": "warn"
+                              },
+                              "policy_exists_rls_disabled": {
+                                "type": "string",
+                                "enum": ["error", "warn", "off"],
+                                "description": "Severity for policy_exists_rls_disabled: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                                "default": "warn"
+                              },
+                              "security_definer_view": {
+                                "type": "string",
+                                "enum": ["error", "warn", "off"],
+                                "description": "Severity for security_definer_view: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                                "default": "warn"
+                              },
+                              "rls_policy_always_true": {
+                                "type": "string",
+                                "enum": ["error", "warn", "off"],
+                                "description": "Severity for rls_policy_always_true: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                                "default": "warn"
+                              },
+                              "sensitive_columns_exposed": {
+                                "type": "string",
+                                "enum": ["error", "warn", "off"],
+                                "description": "Severity for sensitive_columns_exposed: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                                "default": "warn"
+                              },
+                              "auth_users_exposed": {
+                                "type": "string",
+                                "enum": ["error", "warn", "off"],
+                                "description": "Severity for auth_users_exposed: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                                "default": "warn"
+                              },
+                              "function_search_path_mutable": {
+                                "type": "string",
+                                "enum": ["error", "warn", "off"],
+                                "description": "Severity for function_search_path_mutable: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                                "default": "warn"
+                              },
+                              "rls_references_user_metadata": {
+                                "type": "string",
+                                "enum": ["error", "warn", "off"],
+                                "description": "Severity for rls_references_user_metadata: \"error\" will block the migration; until blocking ships it reports like \"warn\". \"warn\" reports it, \"off\" skips the rule.",
+                                "default": "warn"
+                              },
+                              "exclude": {
+                                "type": "object",
+                                "properties": {
+                                  "rls_disabled_in_public": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                                    },
+                                    "description": "Objects rls_disabled_in_public skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                                  },
+                                  "rls_enabled_no_policy": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                                    },
+                                    "description": "Objects rls_enabled_no_policy skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                                  },
+                                  "policy_exists_rls_disabled": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                                    },
+                                    "description": "Objects policy_exists_rls_disabled skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                                  },
+                                  "security_definer_view": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                                    },
+                                    "description": "Objects security_definer_view skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                                  },
+                                  "rls_policy_always_true": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                                    },
+                                    "description": "Objects rls_policy_always_true skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                                  },
+                                  "sensitive_columns_exposed": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                                    },
+                                    "description": "Objects sensitive_columns_exposed skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                                  },
+                                  "auth_users_exposed": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                                    },
+                                    "description": "Objects auth_users_exposed skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                                  },
+                                  "function_search_path_mutable": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                                    },
+                                    "description": "Objects function_search_path_mutable skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                                  },
+                                  "rls_references_user_metadata": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
+                                    },
+                                    "description": "Objects rls_references_user_metadata skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "description": "Objects each rule skips, keyed by rule."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "description": "Security checks run on each migration. Each rule takes \"error\", \"warn\" or \"off\"; a rule left unset uses \"warn\". When migrations run against --db-url, this section is read only from the local config.toml."
                           }
                         },
                         "additionalProperties": false

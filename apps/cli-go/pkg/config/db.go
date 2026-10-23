@@ -100,6 +100,8 @@ type (
 	migrations struct {
 		Enabled     bool `toml:"enabled" json:"enabled"`
 		SchemaPaths Glob `toml:"schema_paths" json:"schema_paths"`
+		// Checks is owned by the TS CLI; it is parsed only so UnmarshalExact accepts the section.
+		Checks map[string]any `toml:"-" json:"checks"`
 	}
 
 	seed struct {
