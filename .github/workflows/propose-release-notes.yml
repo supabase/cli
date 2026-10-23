@@ -62,7 +62,7 @@ jobs:
           client-id: ${{ vars.GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
           permission-contents: write
-          permission-issues: write
+          permission-issues: read
           permission-pull-requests: write
 
       - uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1
