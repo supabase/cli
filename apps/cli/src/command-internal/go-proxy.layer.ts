@@ -1,9 +1,7 @@
-import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
-import path from "node:path";
 import process from "node:process";
-import { Config, Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
+import { Config, Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
 import * as ChildProcess from "effect/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import { resolveWorkdir } from "../config/command-settings.layer.ts";
@@ -15,7 +13,10 @@ import { GoProxyInvocation } from "./go-proxy-invocation.ts";
 import { GoProxy } from "./go-proxy.service.ts";
 import { readProjectLinkFile } from "./project-link.ts";
 import { usesStackState } from "./stack-backend.ts";
+import { shellEnv } from "./viper-env.ts";
 import { withProcessSpan } from "../shared/telemetry/spans.ts";
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const markDelegated = Effect.serviceOption(GoProxyInvocation).pipe(
   Effect.flatMap((invocation) =>
@@ -43,12 +44,12 @@ const makeStackStateEnv = (
     const { project } = link.value;
     return {
       SUPABASE_INTERNAL_STACK_STATE: "1",
-      SUPABASE_INTERNAL_LINKED_PROJECT: JSON.stringify({
+      SUPABASE_INTERNAL_LINKED_PROJECT: yield* encodeJson({
         ref: project.ref,
         name: project.name ?? "",
         organization_id: project.organization_id ?? "",
         organization_slug: project.organization_slug ?? "",
-      }),
+      }).pipe(Effect.orDie),
     };
   });
 
@@ -73,10 +74,15 @@ export type BinaryResolution =
   | { readonly found: string }
   | { readonly notFound: ReadonlyArray<string> };
 
-function resolveBinary(): BinaryResolution {
+const resolveBinary = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+): Effect.fn.Return<BinaryResolution> {
+  const exists = (candidate: string) =>
+    fs.exists(candidate).pipe(Effect.orElseSucceed(() => false));
   const tried: string[] = [];
 
-  const envBin = process.env["SUPABASE_GO_BINARY"];
+  const envBin = yield* shellEnv("SUPABASE_GO_BINARY");
   if (envBin) return { found: envBin };
   tried.push("$SUPABASE_GO_BINARY (unset)");
 
@@ -85,25 +91,27 @@ function resolveBinary(): BinaryResolution {
   // When running as a compiled standalone binary (exec'd by the base shim), process.execPath is
   // this binary's own path; look for supabase-go co-located next to it.
   const colocated = path.join(path.dirname(process.execPath), `supabase-go${ext}`);
-  if (existsSync(colocated)) return { found: colocated };
+  if (yield* exists(colocated)) return { found: colocated };
   tried.push(`${colocated} (not found alongside the shim)`);
 
   // When running from source, resolve via installed npm packages.
-  // Guard with existsSync — in dev the workspace stub packages exist but their bin/ is empty.
+  // Guard with exists — in dev the workspace stub packages exist but their bin/ is empty.
   const candidates = PLATFORM_CANDIDATES[process.platform]?.[os.arch()] ?? [];
   for (const suffix of candidates) {
-    try {
-      const pkgPath = path.dirname(require.resolve(`@supabase/cli-${suffix}/package.json`));
-      const bin = path.join(pkgPath, "bin", `supabase-go${ext}`);
-      if (existsSync(bin)) return { found: bin };
-      tried.push(`${bin} (npm package present, binary missing)`);
-    } catch {
+    const pkgJson = yield* Effect.try(() =>
+      require.resolve(`@supabase/cli-${suffix}/package.json`),
+    ).pipe(Effect.option);
+    if (Option.isNone(pkgJson)) {
       tried.push(`@supabase/cli-${suffix} (npm package not installed)`);
+      continue;
     }
+    const bin = path.join(path.dirname(pkgJson.value), "bin", `supabase-go${ext}`);
+    if (yield* exists(bin)) return { found: bin };
+    tried.push(`${bin} (npm package present, binary missing)`);
   }
 
   return { notFound: tried };
-}
+});
 
 /**
  * Builds a `curl | tar` install snippet for the host platform, using the version baked into this
@@ -177,7 +185,7 @@ export function makeGoProxyLayer(opts?: {
   parentOwnsCapturedSuccessTail?: boolean;
   /**
    * Override binary resolution. Primarily a test seam so specs don't have to
-   * mutate `process.env.SUPABASE_GO_BINARY` or stub the filesystem:
+   * pin `SUPABASE_GO_BINARY` or stub the filesystem:
    *  - `string`              — treat as the resolved Go binary path.
    *  - `{ notFound: [...] }` — simulate the not-found path; `.exec` will print
    *                            the diagnostic and fail with a non-zero exit code.
@@ -202,7 +210,7 @@ export function makeGoProxyLayer(opts?: {
       const resolved: BinaryResolution =
         typeof opts?.binary === "string"
           ? { found: opts.binary }
-          : (opts?.binary ?? resolveBinary());
+          : (opts?.binary ?? (yield* resolveBinary(fs, path)));
       const globalArgs = opts?.globalArgs ?? [];
       const projectWorkdir = Effect.gen(function* () {
         const envValue = yield* Config.option(Config.String("SUPABASE_WORKDIR")).pipe(
@@ -227,12 +235,10 @@ export function makeGoProxyLayer(opts?: {
                 yield* Effect.sync(() => {
                   process.stderr.write(`${formatGoBinaryNotFoundError(resolved.notFound)}\n`);
                 });
-                return yield* Effect.fail(
-                  new GoChildExitError({
-                    exitCode: 1,
-                    message: "supabase-go binary not found",
-                  }),
-                );
+                return yield* new GoChildExitError({
+                  exitCode: 1,
+                  message: "supabase-go binary not found",
+                });
               }
               const binary = resolved.found;
 
@@ -273,12 +279,10 @@ export function makeGoProxyLayer(opts?: {
                     .pipe(Effect.orDie),
               );
               if (exitCode !== 0) {
-                return yield* Effect.fail(
-                  new GoChildExitError({
-                    exitCode,
-                    message: `supabase-go exited with code ${exitCode} (see stderr for details)`,
-                  }),
-                );
+                return yield* new GoChildExitError({
+                  exitCode,
+                  message: `supabase-go exited with code ${exitCode} (see stderr for details)`,
+                });
               }
               yield* markDelegated;
             }),
@@ -290,12 +294,10 @@ export function makeGoProxyLayer(opts?: {
                 yield* Effect.sync(() => {
                   process.stderr.write(`${formatGoBinaryNotFoundError(resolved.notFound)}\n`);
                 });
-                return yield* Effect.fail(
-                  new GoChildExitError({
-                    exitCode: 1,
-                    message: "supabase-go binary not found",
-                  }),
-                );
+                return yield* new GoChildExitError({
+                  exitCode: 1,
+                  message: "supabase-go binary not found",
+                });
               }
               const binary = resolved.found;
               yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
@@ -322,36 +324,30 @@ export function makeGoProxyLayer(opts?: {
                 { executable: binary, argCount: argv.length },
                 (traceEnv) =>
                   Effect.gen(function* () {
-                    const handle = yield* spawner
-                      .spawn(
-                        ChildProcess.make(binary, argv, {
-                          cwd: execOpts?.cwd ?? opts?.cwd,
-                          env: { ...env, ...traceEnv },
-                          extendEnv: true,
-                          stdin: execOpts?.stdin ?? "inherit",
-                          stdout: "pipe",
-                          stderr: "inherit",
-                          detached: false,
-                        }),
-                      )
-                      .pipe(Effect.orDie);
+                    const handle = yield* spawner.spawn(
+                      ChildProcess.make(binary, argv, {
+                        cwd: execOpts?.cwd ?? opts?.cwd,
+                        env: { ...env, ...traceEnv },
+                        extendEnv: true,
+                        stdin: execOpts?.stdin ?? "inherit",
+                        stdout: "pipe",
+                        stderr: "inherit",
+                        detached: false,
+                      }),
+                    );
                     // Drain stdout fully before awaiting exit so a full pipe buffer can't
                     // deadlock the child.
-                    const captured = yield* Stream.mkString(Stream.decodeText(handle.stdout)).pipe(
-                      Effect.orDie,
-                    );
-                    const exitCode = yield* handle.exitCode.pipe(Effect.orDie);
+                    const captured = yield* Stream.mkString(Stream.decodeText(handle.stdout));
+                    const exitCode = yield* handle.exitCode;
                     return { captured, exitCode };
-                  }),
+                  }).pipe(Effect.orDie),
                 (result) => result.exitCode,
               );
               if (exitCode !== 0) {
-                return yield* Effect.fail(
-                  new GoChildExitError({
-                    exitCode,
-                    message: `supabase-go exited with code ${exitCode} (see stderr for details)`,
-                  }),
-                );
+                return yield* new GoChildExitError({
+                  exitCode,
+                  message: `supabase-go exited with code ${exitCode} (see stderr for details)`,
+                });
               }
               if (opts?.parentOwnsCapturedSuccessTail !== true) {
                 yield* markDelegated;
