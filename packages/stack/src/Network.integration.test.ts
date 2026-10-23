@@ -602,11 +602,16 @@ it.live("addresses docker runtime endpoints through the stack host alias", () =>
 /**
  * A pinned port below the stack's native and auto port ranges and every OS ephemeral range, so
  * neither another test's auto allocation nor an outbound socket can already hold it. It stays
- * under 9000, where other files pin fixed ports, and is redrawn while a runner service answers it.
+ * under 9000, where other files pin fixed ports, and is redrawn until the bind's own vacancy guard
+ * would accept it.
  */
 const pinnedPort: Effect.Effect<number> = Effect.gen(function* () {
   const port = 1024 + (Math.abs(Hash.string(randomUUID())) % (9_000 - 1024));
-  return (yield* Ports.accepts("127.0.0.1", port)) ? yield* pinnedPort : port;
+  const vacant = Ports.probeVacant(process.platform)("pinned", "127.0.0.1", port).pipe(
+    Effect.as(true),
+    Effect.catchTag("PortError", () => Effect.succeed(false)),
+  );
+  return !(yield* Ports.accepts("127.0.0.1", port)) && (yield* vacant) ? port : yield* pinnedPort;
 });
 
 it.live("addresses a pinned endpoint from its configured port without a registry row", () =>
