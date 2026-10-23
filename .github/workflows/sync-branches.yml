@@ -120,7 +120,8 @@ jobs:
           persist-credentials: false
 
       - name: Load Claude model
-        run: echo "CLAUDE_MODEL=$(jq -r .claude.opus trusted/.github/ai-models.json)" >> "$GITHUB_ENV"
+        id: model
+        run: echo "model=$(jq -r .claude.opus trusted/.github/ai-models.json)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -146,6 +147,7 @@ jobs:
         working-directory: trusted
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: ${{ steps.model.outputs.model }}
           WORK_DIR: ${{ github.workspace }}/work
         run: |
           git -C "$WORK_DIR" config user.name "github-actions[bot]"
@@ -246,7 +248,8 @@ jobs:
           persist-credentials: false
 
       - name: Load Claude model
-        run: echo "CLAUDE_MODEL=$(jq -r .claude.opus trusted/.github/ai-models.json)" >> "$GITHUB_ENV"
+        id: model
+        run: echo "model=$(jq -r .claude.opus trusted/.github/ai-models.json)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -276,6 +279,7 @@ jobs:
         working-directory: trusted
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_MODEL: ${{ steps.model.outputs.model }}
           WORK_DIR: ${{ github.workspace }}/work
         run: |
           git -C "$WORK_DIR" fetch --no-tags "$OUTPUT_DIR/sync.bundle" HEAD
