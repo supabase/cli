@@ -1893,7 +1893,7 @@
                       "type": "array",
                       "items": {
                         "type": "string",
-                        "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                       },
                       "description": "Objects rls_disabled_in_public skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                     },
@@ -1901,7 +1901,7 @@
                       "type": "array",
                       "items": {
                         "type": "string",
-                        "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                       },
                       "description": "Objects rls_enabled_no_policy skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                     },
@@ -1909,7 +1909,7 @@
                       "type": "array",
                       "items": {
                         "type": "string",
-                        "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                       },
                       "description": "Objects policy_exists_rls_disabled skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                     },
@@ -1917,7 +1917,7 @@
                       "type": "array",
                       "items": {
                         "type": "string",
-                        "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                       },
                       "description": "Objects security_definer_view skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                     },
@@ -1925,7 +1925,7 @@
                       "type": "array",
                       "items": {
                         "type": "string",
-                        "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                       },
                       "description": "Objects rls_policy_always_true skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                     },
@@ -1933,7 +1933,7 @@
                       "type": "array",
                       "items": {
                         "type": "string",
-                        "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                       },
                       "description": "Objects sensitive_columns_exposed skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                     },
@@ -1941,7 +1941,7 @@
                       "type": "array",
                       "items": {
                         "type": "string",
-                        "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                       },
                       "description": "Objects auth_users_exposed skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                     },
@@ -1949,7 +1949,7 @@
                       "type": "array",
                       "items": {
                         "type": "string",
-                        "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                       },
                       "description": "Objects function_search_path_mutable skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                     },
@@ -1957,7 +1957,7 @@
                       "type": "array",
                       "items": {
                         "type": "string",
-                        "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                        "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                       },
                       "description": "Objects rls_references_user_metadata skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                     }
@@ -1967,7 +1967,7 @@
                 }
               },
               "additionalProperties": false,
-              "description": "Security checks run on each migration. Each rule takes \"error\", \"warn\" or \"off\"; a rule left unset uses \"warn\". Runs against --db-url read this section from config.toml only."
+              "description": "Security checks run on each migration. Each rule takes \"error\", \"warn\" or \"off\"; a rule left unset uses \"warn\". When migrations run against --db-url, this section is read only from the local config.toml."
             }
           },
           "additionalProperties": false
@@ -4723,7 +4723,7 @@
                                     "type": "array",
                                     "items": {
                                       "type": "string",
-                                      "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                                     },
                                     "description": "Objects rls_disabled_in_public skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                                   },
@@ -4731,7 +4731,7 @@
                                     "type": "array",
                                     "items": {
                                       "type": "string",
-                                      "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                                     },
                                     "description": "Objects rls_enabled_no_policy skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                                   },
@@ -4739,7 +4739,7 @@
                                     "type": "array",
                                     "items": {
                                       "type": "string",
-                                      "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                                     },
                                     "description": "Objects policy_exists_rls_disabled skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                                   },
@@ -4747,7 +4747,7 @@
                                     "type": "array",
                                     "items": {
                                       "type": "string",
-                                      "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                                     },
                                     "description": "Objects security_definer_view skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                                   },
@@ -4755,7 +4755,7 @@
                                     "type": "array",
                                     "items": {
                                       "type": "string",
-                                      "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                                     },
                                     "description": "Objects rls_policy_always_true skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                                   },
@@ -4763,7 +4763,7 @@
                                     "type": "array",
                                     "items": {
                                       "type": "string",
-                                      "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                                     },
                                     "description": "Objects sensitive_columns_exposed skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                                   },
@@ -4771,7 +4771,7 @@
                                     "type": "array",
                                     "items": {
                                       "type": "string",
-                                      "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                                     },
                                     "description": "Objects auth_users_exposed skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                                   },
@@ -4779,7 +4779,7 @@
                                     "type": "array",
                                     "items": {
                                       "type": "string",
-                                      "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                                     },
                                     "description": "Objects function_search_path_mutable skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                                   },
@@ -4787,7 +4787,7 @@
                                     "type": "array",
                                     "items": {
                                       "type": "string",
-                                      "pattern": "^(?!\\s)[^.]+\\.[\\s\\S]*\\S(?![\\s\\S])"
+                                      "pattern": "^(?!\\s)[^.]*[^.\\s]\\.(?!\\s)[\\s\\S]*\\S(?![\\s\\S])"
                                     },
                                     "description": "Objects rls_references_user_metadata skips, each written \"schema.name\", for example \"public.countries\". An entry like \"public.set_updated_at\" matches every overload of that function."
                                   }
@@ -4797,7 +4797,7 @@
                               }
                             },
                             "additionalProperties": false,
-                            "description": "Security checks run on each migration. Each rule takes \"error\", \"warn\" or \"off\"; a rule left unset uses \"warn\". Runs against --db-url read this section from config.toml only."
+                            "description": "Security checks run on each migration. Each rule takes \"error\", \"warn\" or \"off\"; a rule left unset uses \"warn\". When migrations run against --db-url, this section is read only from the local config.toml."
                           }
                         },
                         "additionalProperties": false
