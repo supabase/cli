@@ -22,7 +22,7 @@ import {
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
-import { resolveArtifact, type ArtifactPin } from "../Artifacts.ts";
+import { resolveArtifact, slimImageMirrors, type ArtifactPin } from "../Artifacts.ts";
 import {
   makeContainerRuntime,
   removeStackContainers,
@@ -42,6 +42,9 @@ const dockerTarget: EngineTarget = { engine: "docker", argv: [], daemonId: "test
 const containerTarget: EngineTarget = { ...engineTarget, argv: [] };
 const postgresImage = (pin: ArtifactPin) =>
   resolveArtifact({ service: "database", pin }).pipe(Effect.map(({ image }) => image));
+/** Falls back to the registry mirror the stack wires in production when the primary rate-limits. */
+const containerRuntime = (options: Parameters<typeof makeContainerRuntime>[0]) =>
+  makeContainerRuntime({ imageMirrors: slimImageMirrors, ...options });
 const Marker = Schema.Struct({
   backend: Schema.Literals(["docker", "host"]),
   volume: Schema.optionalKey(Schema.String),
@@ -203,7 +206,7 @@ const ownerDeathScenario = (mode: "instance" | "shared" | "stall-before-start") 
       const stackId = `storage-owner-death-${yield* crypto.randomUUIDv4}`;
       const filter = `label=com.supabase.stack=${stackId}`;
       // Pull before spawning so a cold image cache does not consume the owner's readiness timeout.
-      const container = yield* makeContainerRuntime({ target: dockerTarget, root });
+      const container = yield* containerRuntime({ target: dockerTarget, root });
       yield* container.prepareImage(yield* postgresImage(selection.database));
       const child = yield* spawner.spawn(
         ChildProcess.make(
@@ -657,7 +660,7 @@ describe.runIf(testEngine === "docker")(
           yield* fs.makeDirectory(sourceRoot, { recursive: true });
           yield* fs.makeDirectory(targetRoot, { recursive: true });
           yield* fs.makeDirectory(cacheRoot, { recursive: true });
-          const container = yield* makeContainerRuntime({
+          const container = yield* containerRuntime({
             target: dockerTarget,
             root,
           });
@@ -764,7 +767,7 @@ describe.runIf(testEngine === "docker")(
           yield* fs.makeDirectory(sourceRoot, { recursive: true });
           yield* fs.makeDirectory(targetRoot, { recursive: true });
           yield* fs.makeDirectory(cacheRoot, { recursive: true });
-          const container = yield* makeContainerRuntime({
+          const container = yield* containerRuntime({
             target: dockerTarget,
             root,
           });
@@ -961,7 +964,7 @@ describe.runIf(testEngine === "docker")(
           const cacheRoot = path.join(root, "cache");
           const instanceRoot = path.join(storageRoot, "database");
           yield* fs.makeDirectory(instanceRoot, { recursive: true });
-          const container = yield* makeContainerRuntime({
+          const container = yield* containerRuntime({
             target: dockerTarget,
             root,
           });
@@ -1069,7 +1072,7 @@ describe.runIf(testEngine === "docker")(
               fs,
               path,
               crypto,
-              container: yield* makeContainerRuntime({
+              container: yield* containerRuntime({
                 target: dockerTarget,
                 root: instanceRoot,
               }),
@@ -1224,7 +1227,7 @@ describe.runIf(testEngine === "docker")(
             "-c",
             "chown -R 100:101 /instance/data /instance/.supabase-snapshots; chmod -R 700 /instance/data /instance/.supabase-snapshots",
           ]);
-          const container = yield* makeContainerRuntime({
+          const container = yield* containerRuntime({
             target: dockerTarget,
             root,
           });
@@ -1281,7 +1284,7 @@ describe.runIf(testEngine === "docker")(
             fs,
             path,
             crypto,
-            container: yield* makeContainerRuntime({
+            container: yield* containerRuntime({
               target: dockerTarget,
               root,
             }),
@@ -1310,7 +1313,7 @@ describe.runIf(testEngine === "docker")(
           const instanceRoot = path.join(storageRoot, "recovery");
           yield* fs.makeDirectory(instanceRoot, { recursive: true });
           yield* fs.makeDirectory(cacheRoot, { recursive: true });
-          const container = yield* makeContainerRuntime({
+          const container = yield* containerRuntime({
             target: dockerTarget,
             root,
           });
@@ -1377,7 +1380,7 @@ describe.runIf(testEngine === "docker")(
           const instanceRoot = path.join(storageRoot, "database");
           yield* fs.makeDirectory(instanceRoot, { recursive: true });
           yield* fs.makeDirectory(cacheRoot, { recursive: true });
-          const container = yield* makeContainerRuntime({
+          const container = yield* containerRuntime({
             target: dockerTarget,
             root,
           });
@@ -1473,7 +1476,7 @@ describe.runIf(testEngine === "docker")(
           const instanceRoot = path.join(storageRoot, "missing");
           yield* fs.makeDirectory(instanceRoot, { recursive: true });
           yield* fs.makeDirectory(cacheRoot, { recursive: true });
-          const container = yield* makeContainerRuntime({
+          const container = yield* containerRuntime({
             target: dockerTarget,
             root,
           });
@@ -1561,7 +1564,7 @@ describe.runIf(testEngine === "docker")(
             const instanceRoot = path.join(storageRoot, "sleeping");
             yield* fs.makeDirectory(instanceRoot, { recursive: true });
             yield* fs.makeDirectory(cacheRoot, { recursive: true });
-            const container = yield* makeContainerRuntime({
+            const container = yield* containerRuntime({
               target: dockerTarget,
               root,
             });
@@ -1648,7 +1651,7 @@ describe.runIf(testEngine === "docker")(
             const instanceRoot = path.join(storageRoot, "sleeping");
             yield* fs.makeDirectory(instanceRoot, { recursive: true });
             yield* fs.makeDirectory(cacheRoot, { recursive: true });
-            const container = yield* makeContainerRuntime({
+            const container = yield* containerRuntime({
               target: dockerTarget,
               root,
             });
@@ -1731,7 +1734,7 @@ describe.runIf(testEngine === "docker")(
           yield* fs.makeDirectory(sourceRoot, { recursive: true });
           yield* fs.makeDirectory(targetRoot, { recursive: true });
           yield* fs.makeDirectory(cacheRoot, { recursive: true });
-          const container = yield* makeContainerRuntime({
+          const container = yield* containerRuntime({
             target: dockerTarget,
             root,
           });
@@ -1870,7 +1873,7 @@ describe.runIf(testEngine === "docker")(
             fs,
             path,
             crypto,
-            container: yield* makeContainerRuntime({ target: dockerTarget, root }),
+            container: yield* containerRuntime({ target: dockerTarget, root }),
             spawner,
           });
           let volume: string | undefined;
@@ -1959,7 +1962,7 @@ describe("Host database storage", { timeout: 120_000 }, () => {
           fs,
           path,
           crypto,
-          container: yield* makeContainerRuntime({ target: containerTarget, root }),
+          container: yield* containerRuntime({ target: containerTarget, root }),
           spawner,
         });
         yield* Effect.addFinalizer(() =>
@@ -2032,7 +2035,7 @@ describe("Host database storage", { timeout: 120_000 }, () => {
           path.join(instanceRoot, ".supabase-database-ready.json"),
           `{"runtime":"${testEngine}","profile":"supabase"}`,
         );
-        const container = yield* makeContainerRuntime({
+        const container = yield* containerRuntime({
           target: containerTarget,
           root,
         });
