@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: read
+  # The script only reopens, unlabels and comments; there is no narrower scope.
+  # jactionlint ignore=excessive-permissions
   issues: write
 
 concurrency:

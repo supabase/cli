@@ -16,10 +16,7 @@ on:
         type: boolean
         default: false
 
-permissions:
-  pull-requests: write
-  issues: read
-  contents: read
+permissions: {}
 
 concurrency:
   # Per-PR for pull_request_target; unique per run for manual sweeps (which
@@ -31,6 +28,10 @@ jobs:
   gate-single:
     name: Contribution Gate
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: read
+      contents: read
     # Exempt maintainers/collaborators and bots. External contributors are gated.
     if: >
       github.event_name == 'pull_request_target' &&
@@ -58,6 +59,10 @@ jobs:
   gate-all:
     name: Contribution Gate (all open PRs)
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: read
+      contents: read
     if: github.event_name == 'workflow_dispatch'
     steps:
       # Base-branch checkout only — the sweep makes API calls and never runs

@@ -26,17 +26,18 @@ concurrency:
   group: release-smoke-test-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
-permissions:
-  # release-shared.yml declares privileged publish jobs. They are gated by
-  # dry_run here, but GitHub validates nested-workflow permissions at startup.
-  actions: read
-  contents: write
-  id-token: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   smoke:
     name: Run release smoke tests
+    # release-shared.yml declares privileged publish jobs. They are gated by
+    # dry_run here, but GitHub validates nested-workflow permissions at startup.
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+      pull-requests: write
     # Fork heads are skipped: the shared workflow declares write permissions a
     # fork pull request token cannot hold, and hotfixes come from this repository.
     if: |
