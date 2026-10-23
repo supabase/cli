@@ -4,6 +4,7 @@ import { Config, Effect, FileSystem, Option, Path, Predicate } from "effect";
 import { assertDecodableJwkAlgorithm } from "../../command-internal/go-jwt.ts";
 import { goJsonKindName } from "../../command-internal/go-json.ts";
 import { resolveProjectEnvironmentValues } from "../../command-internal/project-environment.ts";
+import { configParseCauseMessage } from "../../shared/output/normalize-error.ts";
 
 /**
  * Shared `[auth].signing_keys_path` config-loading logic for `gen signing-key` and `gen
@@ -347,7 +348,11 @@ export const resolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
     tomlOnly: true,
   }).pipe(
     Effect.catchTag("CliConfigParseError", (cause) =>
-      Effect.fail(onConfigParseError(`failed to parse ${cause.path}: ${String(cause.cause)}`)),
+      Effect.fail(
+        onConfigParseError(
+          `failed to parse ${cause.path}: ${configParseCauseMessage(cause.cause)}`,
+        ),
+      ),
     ),
   );
   if (loaded === null) {

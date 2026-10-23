@@ -5,7 +5,7 @@ import { CliConfigSchema } from "./base.ts";
 import { fromConfigDocument } from "./project-config/project-config.ts";
 
 const decode = (toml: string) =>
-  Schema.decodeUnknownSync(CliConfigSchema)(parse(toml), { onExcessProperty: "error" });
+  Schema.decodeSync(CliConfigSchema)(parse(toml), { onExcessProperty: "error" });
 
 const services = (entries: string) => `[local.services]\n${entries}\n`;
 

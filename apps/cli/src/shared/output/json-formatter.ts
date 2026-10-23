@@ -1,10 +1,21 @@
 import type { CliOutput, HelpDoc } from "effect/cli";
+import {
+  permissionSectionForHelp,
+  withoutPermissionAnnotations,
+} from "../../command-internal/command-permissions/help-section.ts";
 import type { CliErrorSuggestionContext } from "../cli/subcommand-flag-suggestions.ts";
 import { cliErrorCode, formatCliErrorsForDisplay } from "../cli/subcommand-flag-suggestions.ts";
 
 export function jsonCliOutputFormatter(context?: CliErrorSuggestionContext): CliOutput.Formatter {
   return {
-    formatHelpDoc: (doc: HelpDoc.HelpDoc) => JSON.stringify({ _tag: "Help", doc }),
+    formatHelpDoc: (doc: HelpDoc.HelpDoc) => {
+      const permissions = permissionSectionForHelp(doc);
+      return JSON.stringify({
+        _tag: "Help",
+        doc: withoutPermissionAnnotations(doc),
+        ...(permissions === undefined ? {} : { permissions }),
+      });
+    },
     formatCliError: (error) =>
       JSON.stringify({
         _tag: "Error",

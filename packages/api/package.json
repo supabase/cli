@@ -9,6 +9,7 @@
       "default": "./src/node.ts"
     },
     "./effect": "./src/effect.ts",
+    "./permissions": "./src/generated/permissions.ts",
     "./openapi.json": "./src/generated/openapi.json"
   },
   "scripts": {

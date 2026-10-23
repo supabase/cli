@@ -33,6 +33,7 @@ import {
 import { ramInBytes } from "./size-units.ts";
 import { collectDotenvPrivateKeys, decryptSecret, isEncryptedSecret } from "./vault-decrypt.ts";
 import { Output } from "../shared/output/output.service.ts";
+import { configParseCauseMessage } from "../shared/output/normalize-error.ts";
 
 /** Resolves a config `env(VAR)` reference: shell env first, then project `.env`. */
 type EnvLookup = (name: string) => string | undefined;
@@ -1153,7 +1154,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       try: () => asRecord(SmolToml.parse(maybeContent.value)),
       catch: (cause) =>
         new DbConfigLoadError({
-          message: `failed to load config: ${cause instanceof Error ? cause.message : String(cause)}`,
+          message: `failed to load config: ${configParseCauseMessage(cause)}`,
         }),
     });
     // Same per-section promotion as the config loader, before the remote merge; the loader owns

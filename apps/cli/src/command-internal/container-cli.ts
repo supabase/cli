@@ -21,6 +21,10 @@ import {
 
 type Spawner = ChildProcessSpawner["Service"];
 
+/* Max container CLI calls a fan-out keeps in flight: each Podman-machine call opens its own ssh
+   connection, and the VM's sshd starts dropping them past ten mid-handshake; 8 leaves headroom. */
+export const CONTAINER_CLI_CONCURRENCY = 8;
+
 /**
  * Raised when neither `docker` nor `podman` can be spawned at all, as opposed to a spawned
  * process exiting non-zero. Callers fold this into their own tagged error via

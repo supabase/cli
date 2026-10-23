@@ -51,8 +51,9 @@ function clampDocumentUint(value: unknown): unknown {
  * Omits (rather than clamps) `api.max_rows` when the document value is non-positive
  * (including `0` and `NaN`): push only ever sends `max_rows` when it is strictly positive,
  * so any other value never round-trips and asserting it would be drift. Uses `!(value > 0)`
- * rather than `value <= 0` specifically because `NaN <= 0` is `false` — a TOML `nan` value
- * would otherwise ride through and poison every downstream comparison.
+ * rather than `value <= 0` specifically because `NaN <= 0` is `false` — a `NaN` in a caller-built
+ * `EffectiveConfig` (config decode already rejects TOML `nan`) would otherwise ride through and
+ * poison every downstream comparison.
  */
 function normalizeDocumentMaxRows(value: unknown): unknown {
   return typeof value === "number" && !(value > 0) ? undefined : value;

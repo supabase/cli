@@ -83,16 +83,50 @@ export function inspectResultIsMirrored(
   throw new Error(`could not inspect ${target} (exit ${exit}): ${stderr.trim()}`);
 }
 
-function imageExistsOnMirror(target: string): Promise<boolean> {
-  const result = spawnSync("docker", ["buildx", "imagetools", "inspect", target], {
-    encoding: "utf8",
-    stdio: ["ignore", "ignore", "pipe"],
-  });
-  if (result.error) {
-    throw result.error;
+export interface InspectResult {
+  readonly exit: number | NodeJS.Signals | null;
+  readonly stderr: string;
+}
+
+/** Backoff before each retry of a rate-limited (HTTP 429) registry probe. */
+export const RATE_LIMIT_RETRY_DELAYS_MS: ReadonlyArray<number> = [10_000, 30_000, 60_000];
+
+/**
+ * Runs a registry probe, retrying with backoff while the registry answers 429; the anonymous
+ * public.ecr.aws quota is shared per runner IP and usually recovers within a minute.
+ */
+export async function inspectWithRateLimitRetry(
+  target: string,
+  inspect: () => InspectResult,
+  sleep: (ms: number) => Promise<void>,
+  delaysMs: ReadonlyArray<number> = RATE_LIMIT_RETRY_DELAYS_MS,
+): Promise<boolean> {
+  for (let attempt = 0; ; attempt++) {
+    const { exit, stderr } = inspect();
+    const delay = delaysMs[attempt];
+    if (exit !== 0 && stderr.includes("429 Too Many Requests") && delay !== undefined) {
+      console.error(`rate limited inspecting ${target}, retrying in ${delay}ms`);
+      await sleep(delay);
+      continue;
+    }
+    return inspectResultIsMirrored(target, exit, stderr);
   }
-  return Promise.resolve(
-    inspectResultIsMirrored(target, result.status ?? result.signal, result.stderr),
+}
+
+function imageExistsOnMirror(target: string): Promise<boolean> {
+  return inspectWithRateLimitRetry(
+    target,
+    () => {
+      const result = spawnSync("docker", ["buildx", "imagetools", "inspect", target], {
+        encoding: "utf8",
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      if (result.error) {
+        throw result.error;
+      }
+      return { exit: result.status ?? result.signal, stderr: result.stderr };
+    },
+    (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   );
 }
 

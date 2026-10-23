@@ -15,7 +15,7 @@ image), to stdout or `--file`.
 | `~/.supabase/access-token`        | plain text | `--linked` when `SUPABASE_ACCESS_TOKEN` unset                                                                                                |
 | `supabase/.temp/project-ref`      | plain text | `--linked` (and the default target) ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`/config.toml `project_id`) is set |
 | `supabase/.env*`                  | dotenv     | always (project env, feeds `SUPABASE_DB_PASSWORD` / `PG*`)                                                                                   |
-| `PGSSL*` PEM, `pg_service.conf`   | PEM, libpq | linked project, when set: `pg_service.conf`, plus the PEM files on the pooler temp-role probe or a native `pg_dump`; see `db push`           |
+| `PGSSL*` PEM, `pg_service.conf`   | PEM, libpq | remote target, when set: `pg_service.conf`, plus the PEM files on the pooler temp-role probe and in `pg_dump`                                |
 
 ## Files Written
 
@@ -41,12 +41,13 @@ image), to stdout or `--file`.
 | `SUPABASE_ACCESS_TOKEN`                                                       | `--linked` auth                                                                                                                                                                                                                                                  |
 | `SUPABASE_DB_ORIOLEDB_VERSION`                                                | overrides `db.orioledb_version`, selecting the OrioleDB `pg_dump` image                                                                                                                                                                                          |
 | `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION`                                      | deprecated alias of `SUPABASE_DB_ORIOLEDB_VERSION`, used only while that is unset; when set, stderr gets `WARN: SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION is deprecated and will be removed in v3, use SUPABASE_DB_ORIOLEDB_VERSION instead.`                       |
-| `BITBUCKET_CLONE_DIR`                                                         | (no-op for dump — no `--security-opt` is set)                                                                                                                                                                                                                    |
+| `BITBUCKET_CLONE_DIR`                                                         | clears the `label:disable` security option that mounted TLS files add                                                                                                                                                                                            |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                            | rewrite the pg image registry for compose dumps; stack dumps use the catalog image pin unchanged                                                                                                                                                                 |
 | `SUPABASE_USE_SLIM_IMAGES`                                                    | resolve the current Postgres pin from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB tags the catalog does not pin, and flag-off `15.8.1.085` stay on docker.io |
 | `DOCKER_HOST`                                                                 | docker daemon endpoint                                                                                                                                                                                                                                           |
 | `MSYSTEM`, `TERM_PROGRAM`                                                     | suppress the piped-stdout non-ASCII warning in MSYS/mintty sessions                                                                                                                                                                                              |
-| `PG*` libpq                                                                   | linked-project TLS, timeout, service; see `db push`. An invalid value fails before `pg_dump` runs; the compose `pg_dump` container gets none, a native `pg_dump` sees shell values only                                                                          |
+| `PG*` libpq                                                                   | linked-project TLS, timeout, service; see `db push`. An invalid value fails before `pg_dump` runs; a remote target also hands them to `pg_dump` (see Notes)                                                                                                      |
+| `SSL_CERT_FILE`, `SSL_CERT_DIR`                                               | a native `pg_dump` on libpq 16+ keeps `sslrootcert=system` when either is set; libpq 15 uses only `SSL_CERT_FILE`                                                                                                                                                |
 
 ## Exit Codes
 
@@ -118,6 +119,18 @@ Warning: supabase db dump will target the local database by default in the next 
     suggestion uses the generic `ipv6Suggestion()` text rather than one that
     prefills the project's specific pooler connection string. Surfacing that
     exact URL needs the pooler string exposed at this seam.
+- **TLS settings in `pg_dump`.** A remote target (linked project or remote `--db-url`)
+  gets the resolved `sslmode` and connect timeout, the root cert only under
+  `require`/`verify-ca`/`verify-full`, and the client cert and key unless the key needs
+  `sslpassword` (libpq reads no passphrase from the environment). `system` pins
+  `verify-full`. Verifying without a root cert, or with `system`, uses the image's trust
+  store in a container and the host's CA bundle for a native `pg_dump`, which keeps
+  libpq's `~/.postgresql/root.crt` when no root cert is set, keeps `system` on libpq 16+
+  when `SSL_CERT_FILE` or `SSL_CERT_DIR` is set (libpq 15 uses only `SSL_CERT_FILE`),
+  and also inherits the shell's `PG*`. A container mounts the PEM files read-only under
+  `/run/supabase/tls` (the Docker daemon must see the same paths) and copies the key to
+  a private file. A missing or non-file path, or one containing `:` past a Windows
+  drive, fails before the container starts.
 - **Stack backend host rewrite.** Stack dumps always use catalog `pg_dump` (native
   artifact or a one-shot of the same image). `--local` native rewrites loopback to
   `127.0.0.1`. Native `--linked` / `--db-url` keep

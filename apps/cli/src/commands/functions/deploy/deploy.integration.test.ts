@@ -1269,6 +1269,42 @@ describe("functions deploy", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
+  it.effect("uploads modules loaded by a dynamic import() split across lines", () => {
+    const { out, layer } = apiDeployHarness(deployedHelloWorld);
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(
+        tempRoot.current,
+        "hello-world",
+        [
+          'await import(\n  "./multi.ts"\n);',
+          'await import(\n  "./comma.ts",\n);',
+          'await import(\n  "./data.json",\n  { with: { type: "json" } },\n);',
+          'await import(\n  "./locales/" + lang + ".json",\n  { with: { type: "json" } },\n);',
+          'await import("./it\'s.ts");',
+          "",
+        ].join("\n"),
+      );
+      const imported = ["multi.ts", "comma.ts", "data.json", "it's.ts"];
+      const functionDir = path.join(tempRoot.current, "supabase", "functions", "hello-world");
+      for (const file of imported) {
+        yield* fs.writeFileString(path.join(functionDir, file), "{}\n");
+      }
+
+      yield* functionsDeploy(baseFlags);
+
+      for (const file of imported) {
+        expect(out.stderrText).toContain(
+          `Uploading asset (hello-world): supabase/functions/hello-world/${file}\n`,
+        );
+      }
+      expect(out.stderrText).not.toContain("WARN:");
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
   it.live("reports a bundle output directory that cannot be created as an unknown error", () => {
     const out = mockOutput({ format: "text" });
     const child = mockDockerBundleSpawner();

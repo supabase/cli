@@ -68,7 +68,7 @@ import { extractCommandPath, type CliRootCommand } from "../shared/cli/run.ts";
 import { isBuiltInTextRequest, resolveAgentOutputFormat } from "../shared/cli/agent-output.ts";
 import type { OutputFormat } from "../shared/output/types.ts";
 import {
-  GLOBAL_FLAGS,
+  ROOT_GLOBAL_FLAGS,
   AgentFlag,
   CreateTicketFlag,
   DebugFlag,
@@ -276,7 +276,7 @@ export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
         }),
       ),
     ),
-    Command.withGlobalFlags([OutputFormatFlag, ...GLOBAL_FLAGS]),
+    Command.withGlobalFlags(ROOT_GLOBAL_FLAGS),
   ) satisfies CliRootCommand;
 
 /** Pairs the root with the agent default `runCli` applies before this root parses. */

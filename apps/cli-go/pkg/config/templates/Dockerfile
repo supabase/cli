@@ -25,7 +25,7 @@ FROM supabase/studio:2026.10.19-sha-b375769 AS studio
 
 FROM darthsim/imgproxy:v3.26.0 AS imgproxy
 
-FROM supabase/edge-runtime:v1.77.6 AS edgeruntime
+FROM supabase/edge-runtime:v1.77.8 AS edgeruntime
 
 FROM timberio/vector:0.58.0-alpine AS vector
 
@@ -33,9 +33,9 @@ FROM supabase/supavisor:2.9.13 AS supavisor
 
 FROM supabase/gotrue:v2.197.0 AS gotrue
 
-FROM supabase/realtime:v2.145.5 AS realtime
+FROM supabase/realtime:v2.147.1 AS realtime
 
-FROM supabase/storage-api:v1.84.0 AS storage
+FROM supabase/storage-api:v1.84.19 AS storage
 
 FROM supabase/logflare:1.50.15 AS logflare
 # One-shot job images (not started as long-running containers); differ's alias

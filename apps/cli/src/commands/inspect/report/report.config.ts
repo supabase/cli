@@ -8,6 +8,7 @@ import {
   loadProjectEnv,
 } from "../../../command-internal/db-config.toml-read.ts";
 import type { InspectRule } from "./report.rules.ts";
+import { configParseCauseMessage } from "../../../shared/output/normalize-error.ts";
 
 type RawDoc = { readonly [key: string]: unknown };
 
@@ -65,7 +66,7 @@ export const readInspectRules = Effect.fnUntraced(function* (
     try: () => asRecord(SmolToml.parse(content)),
     catch: (cause) =>
       new DbConfigLoadError({
-        message: `failed to load config: ${cause instanceof Error ? cause.message : String(cause)}`,
+        message: `failed to load config: ${configParseCauseMessage(cause)}`,
       }),
   });
 

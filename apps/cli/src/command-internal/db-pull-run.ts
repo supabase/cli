@@ -511,6 +511,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             keepComments: false,
             excludeTable: [],
             columnInsert: false,
+            remote: !resolved.isLocal,
           };
           const toDumpOpenError = (cause: { readonly message: string }) =>
             new DbPullDumpError({

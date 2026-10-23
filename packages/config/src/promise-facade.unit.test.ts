@@ -1,10 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { BunFileSystem, BunPath } from "@effect/platform-bun";
-import { mkdtempSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { Effect, Layer, Schema } from "effect";
+import { Effect, FileSystem, Layer, Path, Schema, type Scope } from "effect";
 import { CliConfigSchema } from "./base.ts";
 import { CliConfigParseError } from "./errors.ts";
 import * as bunFacade from "./bun.ts";
@@ -27,168 +23,199 @@ const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
 // Under the OS temp dir, never a path under this repo — otherwise ancestor-search could
 // walk up into this repo's own `apps/cli/docs/supabase` fixture.
-function makeTempProject(): string {
-  return mkdtempSync(join(tmpdir(), "supabase-promise-facade-"));
+function makeTempProject() {
+  return FileSystem.FileSystem.use((fs) =>
+    fs.makeTempDirectoryScoped({ prefix: "supabase-promise-facade-" }),
+  );
+}
+
+function runFacadeTest<A, E>(
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
+): Promise<A> {
+  return Effect.runPromise(
+    effect.pipe(Effect.scoped, Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer))),
+  );
 }
 
 describe("promise-facade via the Bun entrypoint", () => {
-  test("loadCliConfig resolves null when no Supabase project exists in the tree", async () => {
-    const cwd = makeTempProject();
+  test("loadCliConfig resolves null when no Supabase project exists in the tree", () =>
+    runFacadeTest(
+      Effect.gen(function* () {
+        const cwd = yield* makeTempProject();
 
-    try {
-      await expect(loadCliConfig(cwd)).resolves.toBeNull();
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        yield* Effect.promise(() => expect(loadCliConfig(cwd)).resolves.toBeNull());
+      }),
+    ));
 
-  test("loadCliConfig loads and decodes a real supabase/config.toml", async () => {
-    const cwd = makeTempProject();
+  test("loadCliConfig loads and decodes a real supabase/config.toml", () =>
+    runFacadeTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "facade-loaded-ref"\n');
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          'project_id = "facade-loaded-ref"\n',
+        );
 
-      const loaded = await loadCliConfig(cwd);
+        const loaded = yield* Effect.promise(() => loadCliConfig(cwd));
 
-      expect(loaded?.config.project_id).toBe("facade-loaded-ref");
-      expect(loaded?.config.db.major_version).toBe(17);
-      expect(loaded?.format).toBe("toml");
-      expect(loaded?.path).toBe(join(cwd, "supabase", "config.toml"));
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(loaded?.config.project_id).toBe("facade-loaded-ref");
+        expect(loaded?.config.db.major_version).toBe(17);
+        expect(loaded?.format).toBe("toml");
+        expect(loaded?.path).toBe(join(cwd, "supabase", "config.toml"));
+      }),
+    ));
 
-  test("saveCliConfig then loadCliConfigFile roundtrips the same effective config", async () => {
-    const cwd = makeTempProject();
+  test("saveCliConfig then loadCliConfigFile roundtrips the same effective config", () =>
+    runFacadeTest(
+      Effect.gen(function* () {
+        const cwd = yield* makeTempProject();
 
-    try {
-      const original = decodeCliConfig({
-        project_id: "facade-roundtrip-ref",
-        db: { pooler: { enabled: true } },
-      });
+        const original = decodeCliConfig({
+          project_id: "facade-roundtrip-ref",
+          db: { pooler: { enabled: true } },
+        });
 
-      const saved = await saveCliConfig({ cwd, config: original });
-      expect(saved.format).toBe("json");
+        const saved = yield* Effect.promise(() => saveCliConfig({ cwd, config: original }));
+        expect(saved.format).toBe("json");
 
-      const loaded = await loadCliConfigFile(saved.path);
+        const loaded = yield* Effect.promise(() => loadCliConfigFile(saved.path));
 
-      expect(loaded.config).toEqual(original);
-      expect(loaded.path).toBe(saved.path);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(loaded.config).toEqual(original);
+        expect(loaded.path).toBe(saved.path);
+      }),
+    ));
 
-  test("findCliProjectRoot and findCliProjectPaths resolve from a nested cwd inside a temp project", async () => {
-    const cwd = makeTempProject();
-    const nested = join(cwd, "apps", "web", "src", "components");
+  test("findCliProjectRoot and findCliProjectPaths resolve from a nested cwd inside a temp project", () =>
+    runFacadeTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const nested = join(cwd, "apps", "web", "src", "components");
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await mkdir(nested, { recursive: true });
-      await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "nested-ref"\n');
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.makeDirectory(nested, { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          'project_id = "nested-ref"\n',
+        );
 
-      const root = await findCliProjectRoot(nested);
-      const paths = await findCliProjectPaths(nested);
+        const root = yield* Effect.promise(() => findCliProjectRoot(nested));
+        const paths = yield* Effect.promise(() => findCliProjectPaths(nested));
 
-      expect(root).toBe(cwd);
-      expect(paths).toEqual({
-        projectRoot: cwd,
-        supabaseDir: join(cwd, "supabase"),
-        configPath: join(cwd, "supabase", "config.toml"),
-        envPath: join(cwd, "supabase", ".env"),
-        envLocalPath: join(cwd, "supabase", ".env.local"),
-      });
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(root).toBe(cwd);
+        expect(paths).toEqual({
+          projectRoot: cwd,
+          supabaseDir: join(cwd, "supabase"),
+          configPath: join(cwd, "supabase", "config.toml"),
+          envPath: join(cwd, "supabase", ".env"),
+          envLocalPath: join(cwd, "supabase", ".env.local"),
+        });
+      }),
+    ));
 
-  test("findCliProjectRoot and findCliProjectPaths resolve to null when there is no project", async () => {
-    const cwd = makeTempProject();
+  test("findCliProjectRoot and findCliProjectPaths resolve to null when there is no project", () =>
+    runFacadeTest(
+      Effect.gen(function* () {
+        const cwd = yield* makeTempProject();
 
-    try {
-      await expect(findCliProjectRoot(cwd)).resolves.toBeNull();
-      await expect(findCliProjectPaths(cwd)).resolves.toBeNull();
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        yield* Effect.promise(() => expect(findCliProjectRoot(cwd)).resolves.toBeNull());
+        yield* Effect.promise(() => expect(findCliProjectPaths(cwd)).resolves.toBeNull());
+      }),
+    ));
 
-  test("loadCliProjectEnvironment reads supabase/.env layered under an explicit baseEnv", async () => {
-    const cwd = makeTempProject();
+  test("loadCliProjectEnvironment reads supabase/.env layered under an explicit baseEnv", () =>
+    runFacadeTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "env-ref"\n');
-      await writeFile(join(cwd, "supabase", ".env"), "GREETING=hello-from-dotenv\n");
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(join(cwd, "supabase", "config.toml"), 'project_id = "env-ref"\n');
+        yield* fs.writeFileString(join(cwd, "supabase", ".env"), "GREETING=hello-from-dotenv\n");
 
-      // Explicit empty baseEnv, so no ambient process.env variable can satisfy this assertion.
-      const projectEnv = await loadCliProjectEnvironment({ cwd, baseEnv: {} });
+        // Explicit empty baseEnv, so no ambient process.env variable can satisfy this assertion.
+        const projectEnv = yield* Effect.promise(() =>
+          loadCliProjectEnvironment({ cwd, baseEnv: {} }),
+        );
 
-      expect(projectEnv?.values.GREETING).toBe("hello-from-dotenv");
-      expect(projectEnv?.sources.GREETING).toBe(".env");
-      expect(projectEnv?.loadedPaths).toEqual([join(cwd, "supabase", ".env")]);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(projectEnv?.values.GREETING).toBe("hello-from-dotenv");
+        expect(projectEnv?.sources.GREETING).toBe(".env");
+        expect(projectEnv?.loadedPaths).toEqual([join(cwd, "supabase", ".env")]);
+      }),
+    ));
 
-  test("loadCliProjectEnvironment honors an explicit baseEnv instead of silently defaulting to process.env", async () => {
-    const cwd = makeTempProject();
+  test("loadCliProjectEnvironment honors an explicit baseEnv instead of silently defaulting to process.env", () =>
+    runFacadeTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "env-ref"\n');
-      await writeFile(join(cwd, "supabase", ".env"), "GREETING=from-dotenv\n");
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(join(cwd, "supabase", "config.toml"), 'project_id = "env-ref"\n');
+        yield* fs.writeFileString(join(cwd, "supabase", ".env"), "GREETING=from-dotenv\n");
 
-      const projectEnv = await loadCliProjectEnvironment({
-        cwd,
-        baseEnv: { GREETING: "from-explicit-base-env" },
-      });
+        const projectEnv = yield* Effect.promise(() =>
+          loadCliProjectEnvironment({
+            cwd,
+            baseEnv: { GREETING: "from-explicit-base-env" },
+          }),
+        );
 
-      expect(projectEnv?.values.GREETING).toBe("from-explicit-base-env");
-      expect(projectEnv?.sources.GREETING).toBe("ambient");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(projectEnv?.values.GREETING).toBe("from-explicit-base-env");
+        expect(projectEnv?.sources.GREETING).toBe("ambient");
+      }),
+    ));
 
-  test("inferFunctionsManifest resolves an empty manifest when no functions directory exists", async () => {
-    const cwd = makeTempProject();
+  test("inferFunctionsManifest resolves an empty manifest when no functions directory exists", () =>
+    runFacadeTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "functions-ref"\n');
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          'project_id = "functions-ref"\n',
+        );
 
-      await expect(inferFunctionsManifest(cwd)).resolves.toEqual({});
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        yield* Effect.promise(() => expect(inferFunctionsManifest(cwd)).resolves.toEqual({}));
+      }),
+    ));
 
-  test("two sequential facade calls both succeed, exercising the shared lazy runtime", async () => {
-    const cwdA = makeTempProject();
-    const cwdB = makeTempProject();
+  test("two sequential facade calls both succeed, exercising the shared lazy runtime", () =>
+    runFacadeTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwdA = yield* makeTempProject();
+        const cwdB = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwdA, "supabase"), { recursive: true });
-      await writeFile(join(cwdA, "supabase", "config.toml"), 'project_id = "first-ref"\n');
-      await mkdir(join(cwdB, "supabase"), { recursive: true });
-      await writeFile(join(cwdB, "supabase", "config.toml"), 'project_id = "second-ref"\n');
+        yield* fs.makeDirectory(join(cwdA, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwdA, "supabase", "config.toml"),
+          'project_id = "first-ref"\n',
+        );
+        yield* fs.makeDirectory(join(cwdB, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwdB, "supabase", "config.toml"),
+          'project_id = "second-ref"\n',
+        );
 
-      const first = await loadCliConfig(cwdA);
-      const second = await loadCliConfig(cwdB);
+        const first = yield* Effect.promise(() => loadCliConfig(cwdA));
+        const second = yield* Effect.promise(() => loadCliConfig(cwdB));
 
-      expect(first?.config.project_id).toBe("first-ref");
-      expect(second?.config.project_id).toBe("second-ref");
-    } finally {
-      await rm(cwdA, { recursive: true, force: true });
-      await rm(cwdB, { recursive: true, force: true });
-    }
-  });
+        expect(first?.config.project_id).toBe("first-ref");
+        expect(second?.config.project_id).toBe("second-ref");
+      }),
+    ));
 });
 
 const expectedFacadeFunctionNames = [
@@ -244,86 +271,90 @@ describe("./io is a superset of src/index.ts", () => {
 describe("io-browser.ts stays side-effect-free", () => {
   // Dynamic import so a regression back to a top-level throw fails this test
   // specifically, instead of crashing the whole file at module-load time.
-  test("importing the module does not throw", async () => {
-    await expect(import("./io-browser.ts")).resolves.toBeDefined();
-  });
+  test("importing the module does not throw", () =>
+    expect(import("./io-browser.ts")).resolves.toBeDefined());
 
-  test("calling loadCliConfig rejects with the curated browser-unavailable message", async () => {
-    await expect(ioBrowserFacade.loadCliConfig("/irrelevant")).rejects.toThrow(
+  test("calling loadCliConfig rejects with the curated browser-unavailable message", () =>
+    expect(ioBrowserFacade.loadCliConfig("/irrelevant")).rejects.toThrow(
       '@supabase/config/io is not available in browser bundles; import the pure surface from "@supabase/config" instead.',
-    );
-  });
+    ));
 });
 
 describe("promise-facade singleton runtime", () => {
-  test("builds the underlying ManagedRuntime exactly once across multiple facade calls", async () => {
-    const cwd = makeTempProject();
-    let builds = 0;
+  test("builds the underlying ManagedRuntime exactly once across multiple facade calls", () =>
+    runFacadeTest(
+      Effect.gen(function* () {
+        const cwd = yield* makeTempProject();
+        let builds = 0;
 
-    try {
-      const countingLayer = Layer.mergeAll(
-        BunFileSystem.layer,
-        BunPath.layer,
-        Layer.effectDiscard(
-          Effect.sync(() => {
-            builds += 1;
-          }),
-        ),
-      );
-      const io = makeCliConfigIo(countingLayer);
+        const countingLayer = Layer.mergeAll(
+          BunFileSystem.layer,
+          BunPath.layer,
+          Layer.effectDiscard(
+            Effect.sync(() => {
+              builds += 1;
+            }),
+          ),
+        );
+        const io = makeCliConfigIo(countingLayer);
 
-      await io.findCliProjectRoot(cwd);
-      await io.findCliProjectRoot(cwd);
+        yield* Effect.promise(() => io.findCliProjectRoot(cwd));
+        yield* Effect.promise(() => io.findCliProjectRoot(cwd));
 
-      expect(builds).toBe(1);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(builds).toBe(1);
+      }),
+    ));
 });
 
 describe("promise-facade via the Node entrypoint", () => {
-  test("loadCliConfig loads and decodes a real supabase/config.toml", async () => {
-    const cwd = makeTempProject();
+  test("loadCliConfig loads and decodes a real supabase/config.toml", () =>
+    runFacadeTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "node-facade-ref"\n');
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          join(cwd, "supabase", "config.toml"),
+          'project_id = "node-facade-ref"\n',
+        );
 
-      const loaded = await nodeFacade.loadCliConfig(cwd);
+        const loaded = yield* Effect.promise(() => nodeFacade.loadCliConfig(cwd));
 
-      expect(loaded?.config.project_id).toBe("node-facade-ref");
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        expect(loaded?.config.project_id).toBe("node-facade-ref");
+      }),
+    ));
 });
 
 describe("promise-facade rejection shapes", () => {
-  test("loadCliConfigFile rejects with a CliConfigParseError for a malformed config.toml", async () => {
-    const cwd = makeTempProject();
-    const configPath = join(cwd, "supabase", "config.toml");
+  test("loadCliConfigFile rejects with a CliConfigParseError for a malformed config.toml", () =>
+    runFacadeTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const configPath = join(cwd, "supabase", "config.toml");
 
-    try {
-      await mkdir(join(cwd, "supabase"), { recursive: true });
-      await writeFile(configPath, "this is not === valid toml\n");
+        yield* fs.makeDirectory(join(cwd, "supabase"), { recursive: true });
+        yield* fs.writeFileString(configPath, "this is not === valid toml\n");
 
-      await expect(loadCliConfigFile(configPath)).rejects.toBeInstanceOf(CliConfigParseError);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        yield* Effect.promise(() =>
+          expect(loadCliConfigFile(configPath)).rejects.toBeInstanceOf(CliConfigParseError),
+        );
+      }),
+    ));
 
-  test("loadCliConfigFile rejects for a nonexistent path", async () => {
-    const cwd = makeTempProject();
-    const configPath = join(cwd, "supabase", "config.toml");
+  test("loadCliConfigFile rejects for a nonexistent path", () =>
+    runFacadeTest(
+      Effect.gen(function* () {
+        const { join } = yield* Path.Path;
+        const cwd = yield* makeTempProject();
+        const configPath = join(cwd, "supabase", "config.toml");
 
-    try {
-      await expect(loadCliConfigFile(configPath)).rejects.toThrow();
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
+        yield* Effect.promise(() => expect(loadCliConfigFile(configPath)).rejects.toThrow());
+      }),
+    ));
 });
 
 // The stdin-leak guard lives in `promise-facade.stdin.unit.test.ts`, which needs its own
