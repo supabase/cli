@@ -184,12 +184,12 @@ function canonicalJson(value: unknown): string {
 
 /**
  * The two-state behavior `applyApiPrivileges` derives from the tri-state
- * `api.auto_expose_new_tables`: unset and explicit `true` both keep the grants; only `false`
- * revokes them. Hashing the raw tri-state would split unset from `true` into different keys for a
- * config edit that changes nothing on disk.
+ * `api.auto_expose_new_tables`: unset and explicit `false` both revoke the grants; only explicit
+ * `true` keeps them. Hashing the raw tri-state would split unset from `false` into different keys
+ * for a config edit that changes nothing on disk.
  */
 const effectiveShadowApiGrantsKept = (value: Option.Option<boolean>): boolean =>
-  Option.getOrElse(value, () => true);
+  Option.getOrElse(value, () => false);
 
 /**
  * The cache key: a 16-hex-char (64-bit) scrypt prefix over a fixed field order. 64 bits is ample

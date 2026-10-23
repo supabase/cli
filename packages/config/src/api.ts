@@ -59,7 +59,7 @@ export const api = Schema.Struct({
   auto_expose_new_tables: Schema.optionalKey(
     Schema.Boolean.annotate({
       description:
-        'Controls whether newly-created tables, views, sequences and functions in the `public` schema by `postgres` are reachable through the Data API roles (`anon`, `authenticated`, `service_role`) without explicit GRANTs. When unset, new entities are auto-exposed, matching the cloud default. Set to `false` to revoke the default Data API privileges so new entities require explicit GRANTs, matching a cloud project with the "Default privileges for new entities" toggle turned off.',
+        "Controls whether newly-created tables, views, sequences and functions in the `public` schema by `postgres` are reachable through the Data API roles (`anon`, `authenticated`, `service_role`) without explicit GRANTs. When unset, new entities are not auto-exposed, matching the cloud default. Set to `true` to keep the legacy behaviour of auto-exposing new entities without explicit GRANTs.",
       tags,
       links,
     }),

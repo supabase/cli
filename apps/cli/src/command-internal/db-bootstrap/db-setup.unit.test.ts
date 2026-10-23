@@ -48,6 +48,8 @@ const SCHEMA_13_FINGERPRINT =
 const SCHEMA_14_FINGERPRINT_SUFFIX = "CREATE SCHEMA IF NOT EXISTS graphql";
 const REVOKE_PRIVILEGES_FINGERPRINT =
   "revoke execute on functions from anon, authenticated, service_role";
+const REVOKE_SEQUENCES_FINGERPRINT =
+  "revoke all on sequences from anon, authenticated, service_role";
 const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
 
 function fakeSession() {
@@ -584,12 +586,13 @@ describe("startSetupLocalDatabase", () => {
         yield* run(baseInput(workdir, session, { majorVersion: 14 }), out, docker);
         const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
         expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(true);
+        expect(execSql.some((sql) => sql.includes(REVOKE_SEQUENCES_FINGERPRINT))).toBe(true);
         yield* fs.remove(workdir, { recursive: true, force: true });
       }).pipe(Effect.provide(BunServices.layer));
     });
 
     it.effect(
-      "unset (no config.toml at all) matches the true behavior — no revoke SQL exec'd",
+      "unset (no config.toml at all) matches the false behavior — execs the revoke SQL",
       () => {
         return Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -599,7 +602,8 @@ describe("startSetupLocalDatabase", () => {
           const docker = mockDockerRun();
           yield* run(baseInput(workdir, session, { majorVersion: 14 }), out, docker);
           const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
-          expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(false);
+          expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(true);
+          expect(execSql.some((sql) => sql.includes(REVOKE_SEQUENCES_FINGERPRINT))).toBe(true);
           yield* fs.remove(workdir, { recursive: true, force: true });
         }).pipe(Effect.provide(BunServices.layer));
       },

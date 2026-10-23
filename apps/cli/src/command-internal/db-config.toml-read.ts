@@ -149,8 +149,8 @@ interface BaselineTomlConfig {
   readonly realtimeEnabled: boolean;
   /**
    * `[api] auto_expose_new_tables`, tri-state (`None` when unset). The cache
-   * key folds in the effective bool — unset and `true` both mean grants are
-   * kept.
+   * key folds in the effective bool — unset and `false` both mean grants are
+   * revoked.
    */
   readonly apiAutoExposeNewTables: Option.Option<boolean>;
   /** `[db.vault]` secret names (sorted), created during setup. */

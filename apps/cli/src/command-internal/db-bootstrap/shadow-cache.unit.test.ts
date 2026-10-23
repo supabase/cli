@@ -77,7 +77,7 @@ describe("shadowCacheKey", () => {
       { label: "db settings", inputs: { ...base, dbSettings: { max_connections: 200 } } },
       {
         label: "auto expose new tables",
-        inputs: { ...base, autoExposeNewTables: Option.some(false) },
+        inputs: { ...base, autoExposeNewTables: Option.some(true) },
       },
       { label: "effective webhooks / pg_net", inputs: { ...base, webhooksEnabled: false } },
       { label: "roles.sql", inputs: { ...base, rolesSql: "" } },
@@ -168,8 +168,8 @@ describe("shadowCacheKey", () => {
       ...base,
       autoExposeNewTables: Option.some(false),
     });
-    expect(explicitTrue).toBe(unset);
-    expect(explicitFalse).not.toBe(unset);
+    expect(explicitFalse).toBe(unset);
+    expect(explicitTrue).not.toBe(unset);
   });
 
   it("excludes a disabled service's image tag entirely", () => {

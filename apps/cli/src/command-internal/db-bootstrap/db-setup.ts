@@ -52,7 +52,7 @@ export const START_REVOKE_API_PRIVILEGES_SQL = `
 alter default privileges for role postgres in schema public
   revoke select, insert, update, delete on tables from anon, authenticated, service_role;
 alter default privileges for role postgres in schema public
-  revoke usage, select on sequences from anon, authenticated, service_role;
+  revoke all on sequences from anon, authenticated, service_role;
 alter default privileges for role postgres in schema public
   revoke execute on functions from anon, authenticated, service_role;
 `;
@@ -605,10 +605,10 @@ const startInitSchema = Effect.fn("DbSetup.initSchema")(function* (
 });
 
 /**
- * Applies the `api.auto_expose_new_tables` tri-state: unset and `true` are both a no-op (keeps
- * the bundled initial-schema grants); an explicit `false` execs
- * {@link START_REVOKE_API_PRIVILEGES_SQL}. Always execs over `session` directly, regardless of PG
- * major version — never part of the PG15+ one-shot Docker jobs.
+ * Applies the `api.auto_expose_new_tables` tri-state: unset and `false` both revoke the default
+ * Data API privileges by exec'ing {@link START_REVOKE_API_PRIVILEGES_SQL}; an explicit `true` is
+ * a no-op (keeps the bundled initial-schema grants). Always execs over `session` directly,
+ * regardless of PG major version — never part of the PG15+ one-shot Docker jobs.
  *
  * Takes `session`/`fs`/`path` directly rather than the whole {@link StartSetupLocalDatabaseInput}
  * because `db reset`'s PG14 path calls it too, without any of `setupDatabase`'s other steps.
@@ -620,7 +620,7 @@ export const applyApiPrivileges = Effect.fnUntraced(function* (
   tmpDir: string,
   autoExposeNewTables: Option.Option<boolean>,
 ) {
-  if (Option.getOrElse(autoExposeNewTables, () => true)) return;
+  if (Option.getOrElse(autoExposeNewTables, () => false)) return;
   yield* execSqlConstant(
     session,
     fs,
