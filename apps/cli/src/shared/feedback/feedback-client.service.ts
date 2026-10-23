@@ -16,6 +16,18 @@ interface FeedbackContext {
   readonly agentName?: string;
 }
 
+export const FEEDBACK_CATEGORIES = [
+  "missing_information",
+  "unclear",
+  "incorrect",
+  "outdated",
+  "conflicting",
+  "example_broken",
+  "hard_to_find",
+] as const;
+
+export const FEEDBACK_OUTCOMES = ["blocked", "worked_around", "resolved"] as const;
+
 export interface FeedbackSubmission {
   readonly message: string;
   readonly projectRef?: string;
@@ -25,6 +37,14 @@ export interface FeedbackSubmission {
    */
   readonly userId?: string;
   readonly context: FeedbackContext;
+  /** A type alias, not an interface, so it is assignable to the `Json` metadata type. */
+  readonly targets?: Array<{
+    readonly url: string;
+    readonly quote: string;
+    readonly heading?: string;
+  }>;
+  readonly category?: (typeof FEEDBACK_CATEGORIES)[number];
+  readonly outcome?: (typeof FEEDBACK_OUTCOMES)[number];
 }
 
 /**

@@ -75,6 +75,11 @@ function toRpcArgs(submission: FeedbackSubmission): RpcArgs {
       arch: context.arch,
       is_agent: context.isAgent,
       ...(context.agentName === undefined ? {} : { agent_name: context.agentName }),
+      ...(submission.targets === undefined || submission.targets.length === 0
+        ? {}
+        : { targets: submission.targets }),
+      ...(submission.category === undefined ? {} : { category: submission.category }),
+      ...(submission.outcome === undefined ? {} : { outcome: submission.outcome }),
     },
   };
 }
