@@ -550,7 +550,7 @@ jobs:
     steps:
       # Security-critical: this is the only job with write permission, so it must only ever
       # execute trusted base-branch code — never the PR head. Checking out `develop` explicitly
-      # (never `needs.resolve.outputs.head_ref`) keeps a malicious PR from smuggling a script
+      # (never the PR's own ref) keeps a malicious PR from smuggling a script
       # change into the one job that can write back to the PR. (For `pull_request` events GitHub
       # runs the workflow file from the PR's own ref; acceptable since the auto path only admits
       # same-repo PRs, whose authors hold write access anyway, and fork PRs run with a read-only
