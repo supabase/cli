@@ -93,8 +93,8 @@ export const RATE_LIMIT_RETRY_DELAYS_MS: ReadonlyArray<number> = [10_000, 30_000
 
 /**
  * Runs a registry probe, retrying with backoff while the registry rate-limits it (HTTP 429 or OCI
- * `toomanyrequests`); the anonymous
- * public.ecr.aws quota is shared per runner IP and usually recovers within a minute.
+ * `toomanyrequests`); the anonymous public.ecr.aws quota is shared per runner IP and usually
+ * recovers within a minute.
  */
 export async function inspectWithRateLimitRetry(
   target: string,
