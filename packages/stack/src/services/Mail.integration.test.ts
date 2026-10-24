@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Path } from "effect";
+import { Data, Effect, Exit, FileSystem, Layer, Path, Ref, Stream } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
@@ -59,6 +59,28 @@ const sendTestEmail = (
     yield* HttpClientResponse.filterStatusOk(response);
   });
 
+class MailStallError extends Data.TaggedError("MailStallError")<{ readonly message: string }> {}
+
+/** Fails a stalled phase within the test timeout, naming the phase and the Mailpit output so far. */
+const guardPhase =
+  (phase: string, duration: `${number} seconds`, logs: Ref.Ref<string>) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.timeoutOrElse({
+        duration,
+        orElse: () =>
+          Ref.get(logs).pipe(
+            Effect.flatMap((output) =>
+              Effect.fail(
+                new MailStallError({
+                  message: `Mailpit ${phase} did not finish within ${duration}; output:\n${output || "(none)"}`,
+                }),
+              ),
+            ),
+          ),
+      }),
+    );
+
 describe("service catalog", () => {
   it.live("launches the real Mailpit recipe and serves its HTTP endpoint", () =>
     Effect.scoped(
@@ -70,16 +92,23 @@ describe("service catalog", () => {
           { service: "mail", pin: selection.mail, config: {} },
           dockerOptions(root),
         );
+        const logs = yield* Ref.make("");
+        yield* Stream.fromSubscription(yield* recipe.logs).pipe(
+          Stream.runForEach(({ bytes }) =>
+            Ref.update(logs, (text) => text + new TextDecoder().decode(bytes)),
+          ),
+          Effect.forkScoped({ startImmediately: true }),
+        );
         const instance = yield* makeStandaloneService(recipe.definition, {
           id: "mail",
           config: recipe.creation,
         });
-        yield* instance.start;
-        yield* instance.ready;
+        yield* instance.start.pipe(guardPhase("start", "20 seconds", logs));
+        yield* instance.ready.pipe(guardPhase("readiness", "6 seconds", logs));
         const endpoint = yield* recipe.endpoint("http");
-        const response = yield* client.execute(
-          HttpClientRequest.get(`http://${httpHost(endpoint)}:${endpoint.port}/readyz`),
-        );
+        const response = yield* client
+          .execute(HttpClientRequest.get(`http://${httpHost(endpoint)}:${endpoint.port}/readyz`))
+          .pipe(guardPhase("/readyz request", "3 seconds", logs));
         expect(response.status).toBe(200);
         yield* instance.stop;
       }),
