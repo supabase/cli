@@ -375,7 +375,10 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       );
 
       const engineCommand = Effect.fn("DockerDatabaseStorage.engineCommand")(
-        (args: ReadonlyArray<string>): Effect.Effect<string, DockerDatabaseStorageError> =>
+        (
+          args: ReadonlyArray<string>,
+          output: "stdout" | "all" = "stdout",
+        ): Effect.Effect<string, DockerDatabaseStorageError> =>
           Effect.scoped(
             Effect.gen(function* () {
               yield* Effect.annotateCurrentSpan({
@@ -415,7 +418,9 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                   "engine",
                   stderr.trim() || `Container engine exited with ${code}`,
                 );
-              return stdout.trim();
+              return output === "all"
+                ? [stdout.trim(), stderr.trim()].filter((part) => part !== "").join("\n")
+                : stdout.trim();
             }),
           ).pipe(Effect.mapError((cause) => errorFor("engine", cause))),
       );
@@ -648,11 +653,15 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                   "{{.State.Status}} (exit {{.State.ExitCode}}){{if .State.Error}}: {{.State.Error}}{{end}}",
                   name,
                 ]),
-                engineCommand(["logs", "--tail", "20", name]),
+                // `logs` relays the helper's stderr on the engine's own stderr.
+                engineCommand(["logs", "--tail", "20", name], "all"),
               ].map((command) =>
                 command.pipe(
-                  Effect.timeout("5 seconds"),
-                  Effect.orElseSucceed(() => "unavailable"),
+                  Effect.timeoutOrElse({
+                    duration: "5 seconds",
+                    orElse: () => Effect.succeed("unavailable: timed out after 5 seconds"),
+                  }),
+                  Effect.catch((cause) => Effect.succeed(`unavailable: ${cause.message}`)),
                 ),
               ),
               { concurrency: "unbounded" },
