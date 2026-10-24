@@ -266,7 +266,7 @@ describe("role dump parameter grants", () => {
 ALTER ROLE "app_user" SET "pgrst.multiline_sql" TO 'SELECT 1;
 GRANT SET ON PARAMETER "log_min_messages" TO "postgres";
 SELECT 2;';
-ALTER ROLE "app_user" SET "pgrst.escaped_sql" TO E'backslash\\\\ and ''quote''
+ALTER ROLE "app_user" SET "pgrst.escaped_sql" TO E'backslash\\\\''quote''
 GRANT SET ON PARAMETER "log_min_messages" TO "postgres";
 last line';
 `;
