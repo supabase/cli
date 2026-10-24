@@ -343,6 +343,47 @@ last line';
               expect(output).toBe(expected);
             }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
         );
+
+        it.live(
+          `preserves role setting bytes with keep-comments=${keepComments}, dry-run=${dryRun}`,
+          () =>
+            Effect.gen(function* () {
+              const encoder = new TextEncoder();
+              const setting = Uint8Array.from([
+                ...encoder.encode('ALTER ROLE "app_user" SET "myapp.bytes" TO \'café'),
+                0xff,
+                ...encoder.encode("';\n"),
+              ]);
+              const bytes = Uint8Array.from([...setting, ...encoder.encode(`${reservedGrant}\n`)]);
+              const expectedBytes = Uint8Array.from([
+                ...setting,
+                ...encoder.encode(`${keepComments ? `-- ${reservedGrant}\n` : ""}RESET ALL;\n`),
+              ]);
+              const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+              const script = dryRun ? expandScript(dumpRoleScript, env) : dumpRoleScript;
+              /* Keep sed byte-oriented so its existing locale behavior cannot mask awk's. */
+              const child = yield* spawner.spawn(
+                ChildProcess.make(
+                  "bash",
+                  ["-c", `pg_dumpall() { cat; }\nsed() { LC_ALL=C command sed "$@"; }\n${script}`],
+                  {
+                    env: {
+                      ...env,
+                      LC_ALL: process.platform === "darwin" ? "en_US.UTF-8" : "C.UTF-8",
+                    },
+                    stdin: Stream.make(bytes),
+                    stderr: "inherit",
+                  },
+                ),
+              );
+              const [exitCode, chunks] = yield* Effect.all(
+                [child.exitCode, Stream.runCollect(child.stdout)],
+                { concurrency: "unbounded" },
+              );
+              expect(exitCode).toBe(0);
+              expect(Uint8Array.from(chunks.flatMap((chunk) => [...chunk]))).toEqual(expectedBytes);
+            }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+        );
       }
     });
   }
