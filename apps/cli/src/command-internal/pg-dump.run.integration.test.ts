@@ -321,9 +321,10 @@ last line';
     );
 
     describe.skipIf(process.platform === "win32")("Bash script", () => {
+      const longSetting = `ALTER ROLE "app_user" SET "myapp.large" TO '${"x".repeat(512 * 1024)}';\n`;
       for (const dryRun of [false, true]) {
         it.live(
-          `preserves quoted settings with keep-comments=${keepComments}, dry-run=${dryRun}`,
+          `preserves long quoted settings with keep-comments=${keepComments}, dry-run=${dryRun}`,
           () =>
             Effect.gen(function* () {
               const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -331,7 +332,7 @@ last line';
               const child = yield* spawner.spawn(
                 ChildProcess.make("bash", ["-c", `pg_dumpall() { cat; }\n${script}`], {
                   env,
-                  stdin: Stream.make(new TextEncoder().encode(input)),
+                  stdin: Stream.make(new TextEncoder().encode(`${longSetting}${input}`)),
                   stderr: "inherit",
                 }),
               );
@@ -340,7 +341,7 @@ last line';
                 { concurrency: "unbounded" },
               );
               expect(exitCode).toBe(0);
-              expect(output).toBe(expected);
+              expect(output).toBe(`${longSetting}${expected}`);
             }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
         );
 
