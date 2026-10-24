@@ -1,8 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer, Option, Stream } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { Stack } from "@supabase/stack/effect";
 import { streamPgDumpWithClient, transformManagedDumpLine } from "./pg-dump.run.ts";
+import { dumpRoleScript } from "./pg-dump.scripts.ts";
 import { NetworkIdFlag } from "./global-flags.ts";
 import { DockerRun } from "./docker-run.service.ts";
 import { BundledPostgresClient } from "./bundled-postgres-client.ts";
@@ -32,100 +34,137 @@ const stackFixture = (output: string) => {
 };
 
 describe("managed pg_dump runner", () => {
-  it("keeps the managed dump filters equivalent to the CLI scripts", () => {
-    const cases = [
-      [
-        'CREATE TABLE "public" (id integer);',
-        "pg_dump --schema-only",
-        {},
-        'CREATE TABLE IF NOT EXISTS "public" (id integer);',
-      ],
-      ["\\unrestrict 123", "pg_dump --data-only", {}, "-- \\unrestrict 123"],
-      ["--user-data", "pg_dump --data-only", { EXTRA_SED: "/^--/d" }, "--user-data"],
-      ["\\restrict 123", "pg_dumpall --roles-only", { EXTRA_SED: "/^--/d" }, undefined],
-      [
-        'CREATE ROLE "postgres";',
-        "pg_dumpall --roles-only",
-        { RESERVED_ROLES: "postgres" },
-        '-- CREATE ROLE "postgres";',
-      ],
-      [
-        'ALTER ROLE "postgres" SET "statement_timeout" TO "5s";',
-        "pg_dumpall --roles-only",
-        { ALLOWED_CONFIGS: "statement_timeout" },
-        'ALTER ROLE "postgres" SET "statement_timeout" TO "5s";',
-      ],
-      [
-        '-- ALTER ROLE "postgres" SET "pgrst.db_schemas" TO "public";',
-        "pg_dumpall --roles-only",
-        { ALLOWED_CONFIGS: "pgrst.*", EXTRA_SED: "/^--/d" },
-        'ALTER ROLE "postgres" SET "pgrst.db_schemas" TO "public";',
-      ],
-      [
-        'GRANT "member" TO "dashboard_user";',
-        "pg_dumpall --roles-only",
-        { RESERVED_ROLES: "dashboard_user", EXTRA_SED: "/^--/d" },
-        undefined,
-      ],
-      [
-        'GRANT SET ON PARAMETER "log_min_messages" TO "supabase_realtime_admin";',
-        "pg_dumpall --roles-only",
-        { RESERVED_ROLES: "supabase_realtime_admin" },
-        '-- GRANT SET ON PARAMETER "log_min_messages" TO "supabase_realtime_admin";',
-      ],
-      [
-        'GRANT ALL ON PARAMETER "log_min_messages" TO "supabase_admin" WITH GRANT OPTION;',
-        "pg_dumpall --roles-only",
-        { RESERVED_ROLES: "supabase_.*" },
-        '-- GRANT ALL ON PARAMETER "log_min_messages" TO "supabase_admin" WITH GRANT OPTION;',
-      ],
-      [
-        'GRANT SET ON PARAMETER "log_min_messages" TO "app_user";',
-        "pg_dumpall --roles-only",
-        { RESERVED_ROLES: "supabase_.*" },
-        'GRANT SET ON PARAMETER "log_min_messages" TO "app_user";',
-      ],
-      [
-        `ALTER ROLE "app_user" SET "myapp.restore_sql" TO 'GRANT SET ON PARAMETER "log_min_messages" TO "postgres";';`,
-        "pg_dumpall --roles-only",
-        { RESERVED_ROLES: "postgres" },
-        `ALTER ROLE "app_user" SET "myapp.restore_sql" TO 'GRANT SET ON PARAMETER "log_min_messages" TO "postgres";';`,
-      ],
-      [
-        'CREATE EXTENSION IF NOT EXISTS "pg_tle" WITH SCHEMA "pgtle";',
-        "pg_dump --schema-only",
-        {},
-        'CREATE EXTENSION IF NOT EXISTS "pg_tle";',
-      ],
-      [
-        'GRANT SELECT ON TABLE "public"."storage" TO "anon";',
-        "pg_dump --schema-only",
-        { EXCLUDED_SCHEMAS: "storage" },
-        'GRANT SELECT ON TABLE "public"."storage" TO "anon";',
-      ],
-      [
-        'REVOKE SELECT ON TABLE "storage" FROM "anon";',
-        "pg_dump --schema-only",
-        { EXCLUDED_SCHEMAS: "storage" },
-        '-- REVOKE SELECT ON TABLE "storage" FROM "anon";',
-      ],
-      [
-        'GRANT ALL ON FOREIGN DATA WRAPPER "wrapper" TO "authenticated";',
-        "pg_dump --schema-only",
-        {},
-        'GRANT ALL ON FOREIGN DATA WRAPPER "wrapper" TO "authenticated";',
-      ],
-      [
-        'GRANT ALL ON FOREIGN DATA WRAPPER "wrapper" TO "postgres" WITH GRANT OPTION;',
-        "pg_dump --schema-only",
-        {},
-        '-- GRANT ALL ON FOREIGN DATA WRAPPER "wrapper" TO "postgres" WITH GRANT OPTION;',
-      ],
-    ] as const;
+  const cases = [
+    [
+      'CREATE TABLE "public" (id integer);',
+      "pg_dump --schema-only",
+      {},
+      'CREATE TABLE IF NOT EXISTS "public" (id integer);',
+    ],
+    ["\\unrestrict 123", "pg_dump --data-only", {}, "-- \\unrestrict 123"],
+    ["--user-data", "pg_dump --data-only", { EXTRA_SED: "/^--/d" }, "--user-data"],
+    ["\\restrict 123", "pg_dumpall --roles-only", { EXTRA_SED: "/^--/d" }, undefined],
+    [
+      'CREATE ROLE "postgres";',
+      "pg_dumpall --roles-only",
+      { RESERVED_ROLES: "postgres" },
+      '-- CREATE ROLE "postgres";',
+    ],
+    [
+      'ALTER ROLE "postgres" SET "statement_timeout" TO "5s";',
+      "pg_dumpall --roles-only",
+      { ALLOWED_CONFIGS: "statement_timeout" },
+      'ALTER ROLE "postgres" SET "statement_timeout" TO "5s";',
+    ],
+    [
+      '-- ALTER ROLE "postgres" SET "pgrst.db_schemas" TO "public";',
+      "pg_dumpall --roles-only",
+      { ALLOWED_CONFIGS: "pgrst.*", EXTRA_SED: "/^--/d" },
+      'ALTER ROLE "postgres" SET "pgrst.db_schemas" TO "public";',
+    ],
+    [
+      'GRANT "member" TO "dashboard_user";',
+      "pg_dumpall --roles-only",
+      { RESERVED_ROLES: "dashboard_user", EXTRA_SED: "/^--/d" },
+      undefined,
+    ],
+    [
+      'GRANT SET ON PARAMETER "log_min_messages" TO "supabase_realtime_admin";',
+      "pg_dumpall --roles-only",
+      { RESERVED_ROLES: "supabase_realtime_admin" },
+      '-- GRANT SET ON PARAMETER "log_min_messages" TO "supabase_realtime_admin";',
+    ],
+    [
+      'GRANT ALL ON PARAMETER "log_min_messages" TO "supabase_admin" WITH GRANT OPTION;',
+      "pg_dumpall --roles-only",
+      { RESERVED_ROLES: "supabase_.*" },
+      '-- GRANT ALL ON PARAMETER "log_min_messages" TO "supabase_admin" WITH GRANT OPTION;',
+    ],
+    [
+      'GRANT SET ON PARAMETER "log_min_messages" TO "app_user";',
+      "pg_dumpall --roles-only",
+      { RESERVED_ROLES: "supabase_.*" },
+      'GRANT SET ON PARAMETER "log_min_messages" TO "app_user";',
+    ],
+    [
+      `ALTER ROLE "app_user" SET "myapp.restore_sql" TO 'GRANT SET ON PARAMETER "log_min_messages" TO "postgres";';`,
+      "pg_dumpall --roles-only",
+      { RESERVED_ROLES: "postgres" },
+      `ALTER ROLE "app_user" SET "myapp.restore_sql" TO 'GRANT SET ON PARAMETER "log_min_messages" TO "postgres";';`,
+    ],
+    [
+      'CREATE EXTENSION IF NOT EXISTS "pg_tle" WITH SCHEMA "pgtle";',
+      "pg_dump --schema-only",
+      {},
+      'CREATE EXTENSION IF NOT EXISTS "pg_tle";',
+    ],
+    [
+      'GRANT SELECT ON TABLE "public"."storage" TO "anon";',
+      "pg_dump --schema-only",
+      { EXCLUDED_SCHEMAS: "storage" },
+      'GRANT SELECT ON TABLE "public"."storage" TO "anon";',
+    ],
+    [
+      'REVOKE SELECT ON TABLE "storage" FROM "anon";',
+      "pg_dump --schema-only",
+      { EXCLUDED_SCHEMAS: "storage" },
+      '-- REVOKE SELECT ON TABLE "storage" FROM "anon";',
+    ],
+    [
+      'GRANT ALL ON FOREIGN DATA WRAPPER "wrapper" TO "authenticated";',
+      "pg_dump --schema-only",
+      {},
+      'GRANT ALL ON FOREIGN DATA WRAPPER "wrapper" TO "authenticated";',
+    ],
+    [
+      'GRANT ALL ON FOREIGN DATA WRAPPER "wrapper" TO "postgres" WITH GRANT OPTION;',
+      "pg_dump --schema-only",
+      {},
+      '-- GRANT ALL ON FOREIGN DATA WRAPPER "wrapper" TO "postgres" WITH GRANT OPTION;',
+    ],
+  ] as const;
 
+  it("keeps the managed dump filters equivalent to the CLI scripts", () => {
     for (const [input, script, env, expected] of cases)
       expect(transformManagedDumpLine(input, script, env)).toBe(expected);
   });
+
+  it.live.skipIf(process.platform === "win32")("filters role dumps through the CLI script", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      for (const [input, script, env, expected] of cases) {
+        if (!script.includes("pg_dumpall")) continue;
+        const child = yield* spawner.spawn(
+          ChildProcess.make(
+            "bash",
+            ["-c", `pg_dumpall() { printf '%s\\n' "$DUMP_INPUT"; }\n${dumpRoleScript}`],
+            {
+              env: {
+                PGHOST: "127.0.0.1",
+                PGPORT: "5432",
+                PGUSER: "postgres",
+                PGPASSWORD: "",
+                PGDATABASE: "postgres",
+                RESERVED_ROLES: "",
+                ALLOWED_CONFIGS: "",
+                EXTRA_SED: "",
+                ...env,
+                DUMP_INPUT: input,
+              },
+              stdin: "ignore",
+              stderr: "inherit",
+            },
+          ),
+        );
+        const [exitCode, stdout] = yield* Effect.all(
+          [child.exitCode, Stream.mkString(Stream.decodeText(child.stdout))],
+          { concurrency: "unbounded" },
+        );
+        expect(exitCode).toBe(0);
+        expect(stdout).toBe(`${expected === undefined ? "" : `${expected}\n`}RESET ALL;\n`);
+      }
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
   it.live("keeps data dump filters and quoted extra flags in the Stack tool arguments", () => {
     const fixture = stackFixture("\\unrestrict 123\n");
