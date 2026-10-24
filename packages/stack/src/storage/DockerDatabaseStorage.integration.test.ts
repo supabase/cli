@@ -413,7 +413,7 @@ describe.runIf(testEngine === "docker")(
       ).pipe(Effect.provide(NodeServices.layer)),
     );
 
-    it.effect("reports a helper readiness timeout alongside Docker warnings", () =>
+    it.effect("reports a helper readiness timeout with Docker warnings and the helper state", () =>
       Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -422,6 +422,7 @@ describe.runIf(testEngine === "docker")(
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-helper-timeout-" });
           const waiting = yield* Deferred.make<void>();
           const commands: string[][] = [];
+          let attachKilled = false;
           const warning =
             "WARNING: The requested image's platform does not match the host platform";
           const spawner = ChildProcessSpawner.make((command) =>
@@ -431,22 +432,36 @@ describe.runIf(testEngine === "docker")(
               commands.push([...command.args]);
               const creating = command.args[0] === "create";
               const attaching = command.args[0] === "start";
+              const encode = (text: string) => Stream.succeed(new TextEncoder().encode(text));
+              // `--rm` removes the helper once its attach is killed, so later inspection fails.
+              const removed = command.args[0] === "inspect" && attachKilled;
               return ChildProcessSpawner.makeHandle({
                 pid: ChildProcessSpawner.ProcessId(0),
-                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(removed ? 1 : 0)),
                 isRunning: Effect.succeed(false),
-                kill: () => Effect.void,
+                kill: () =>
+                  Effect.sync(() => {
+                    if (attaching) attachKilled = true;
+                  }),
                 stdin: Sink.drain,
                 stdout: attaching
                   ? Stream.fromEffect(Deferred.succeed(waiting, undefined)).pipe(
                       Stream.drain,
                       Stream.concat(Stream.never),
                     )
-                  : Stream.empty,
+                  : command.args[0] === "inspect" && !removed
+                    ? encode("running (exit 0)\n")
+                    : command.args[0] === "logs"
+                      ? encode("supabase-helper-ready\n")
+                      : Stream.empty,
                 // Docker prints the platform warning while creating the container, before start.
                 stderr: creating
-                  ? Stream.succeed(new TextEncoder().encode(`${warning}\n`))
-                  : Stream.empty,
+                  ? encode(`${warning}\n`)
+                  : removed
+                    ? encode("Error: No such container\n")
+                    : command.args[0] === "logs"
+                      ? encode("helper stderr line\n")
+                      : Stream.empty,
                 all: Stream.empty,
                 getInputFd: () => Sink.drain,
                 getOutputFd: () => Stream.empty,
@@ -482,7 +497,12 @@ describe.runIf(testEngine === "docker")(
           yield* TestClock.adjust("30 seconds");
           const failure = yield* Fiber.join(operation);
           expect(failure.message).toBe(
-            `Database helper did not become ready within 30 seconds: ${warning}`,
+            [
+              `Database helper did not become ready within 30 seconds: ${warning}`,
+              "helper state: running (exit 0)",
+              "helper logs: supabase-helper-ready",
+              "helper stderr line",
+            ].join("\n"),
           );
           const create = commands.find((args) => args[0] === "create");
           const name = create?.[create.indexOf("--name") + 1];
