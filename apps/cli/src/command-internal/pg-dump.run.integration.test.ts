@@ -68,6 +68,30 @@ describe("managed pg_dump runner", () => {
         undefined,
       ],
       [
+        'GRANT SET ON PARAMETER "log_min_messages" TO "supabase_realtime_admin";',
+        "pg_dumpall --roles-only",
+        { RESERVED_ROLES: "supabase_realtime_admin" },
+        '-- GRANT SET ON PARAMETER "log_min_messages" TO "supabase_realtime_admin";',
+      ],
+      [
+        'GRANT ALL ON PARAMETER "log_min_messages" TO "supabase_admin" WITH GRANT OPTION;',
+        "pg_dumpall --roles-only",
+        { RESERVED_ROLES: "supabase_.*" },
+        '-- GRANT ALL ON PARAMETER "log_min_messages" TO "supabase_admin" WITH GRANT OPTION;',
+      ],
+      [
+        'GRANT SET ON PARAMETER "log_min_messages" TO "app_user";',
+        "pg_dumpall --roles-only",
+        { RESERVED_ROLES: "supabase_.*" },
+        'GRANT SET ON PARAMETER "log_min_messages" TO "app_user";',
+      ],
+      [
+        `ALTER ROLE "app_user" SET "myapp.restore_sql" TO 'GRANT SET ON PARAMETER "log_min_messages" TO "postgres";';`,
+        "pg_dumpall --roles-only",
+        { RESERVED_ROLES: "postgres" },
+        `ALTER ROLE "app_user" SET "myapp.restore_sql" TO 'GRANT SET ON PARAMETER "log_min_messages" TO "postgres";';`,
+      ],
+      [
         'CREATE EXTENSION IF NOT EXISTS "pg_tle" WITH SCHEMA "pgtle";',
         "pg_dump --schema-only",
         {},

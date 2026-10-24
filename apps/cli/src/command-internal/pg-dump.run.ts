@@ -249,6 +249,8 @@ const transformDumpLine = (
       return dropComments(allowedConfig.test(line) ? line : `-- ${line}`);
     if (new RegExp(`GRANT ".*" TO "(${reservedRoles})"`, "u").test(line))
       return dropComments(`-- ${line}`);
+    if (new RegExp(`^GRANT [A-Z ,]+ ON PARAMETER ".*" TO "(${reservedRoles})"`, "u").test(line))
+      return dropComments(`-- ${line}`);
     if (line.startsWith("-- ") && allowedConfig.test(line.slice(3)))
       return dropComments(line.slice(3));
     if (line.startsWith("-- ") && line.includes(" GRANT ")) return dropComments(line);
