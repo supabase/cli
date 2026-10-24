@@ -5,6 +5,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { Stack } from "@supabase/stack/effect";
 import { streamPgDumpWithClient, transformManagedDumpLine } from "./pg-dump.run.ts";
 import { dumpRoleScript } from "./pg-dump.scripts.ts";
+import { expandScript } from "./pg-dump.env.ts";
 import { NetworkIdFlag } from "./global-flags.ts";
 import { DockerRun } from "./docker-run.service.ts";
 import { BundledPostgresClient } from "./bundled-postgres-client.ts";
@@ -12,7 +13,7 @@ import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { selection } from "../../tests/helpers/pins.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 
-const stackFixture = (output: string) => {
+const stackFixture = (output: string | ReadonlyArray<Uint8Array>) => {
   const calls: Array<{ readonly args: ReadonlyArray<string>; readonly command: string }> = [];
   const stack = {
     commands: {
@@ -25,12 +26,35 @@ const stackFixture = (output: string) => {
       ) =>
         Effect.gen(function* () {
           calls.push({ command: _tool.command, args: options.args ?? [] });
-          yield* options.stdout(new TextEncoder().encode(output));
+          yield* Effect.forEach(
+            typeof output === "string" ? [new TextEncoder().encode(output)] : output,
+            options.stdout,
+            { discard: true },
+          );
           return { jobId: "job", exitCode: 0 };
         }),
     },
   } as unknown as Stack;
-  return { stack, calls };
+  const layer = Layer.mergeAll(
+    BunServices.layer,
+    Layer.succeed(NetworkIdFlag, Option.none()),
+    Layer.succeed(RuntimeInfo, {
+      cwd: "/tmp",
+      platform: "linux",
+      arch: "x64",
+      homeDir: "/tmp",
+      execPath: "/usr/bin/bun",
+      pid: 1,
+    }),
+    Layer.succeed(BundledPostgresClient, { run: () => Effect.die("unused") }),
+    Layer.succeed(DockerRun, {
+      run: () => Effect.die("unused"),
+      runCapture: () => Effect.die("unused"),
+      runStream: () => Effect.die("unused"),
+    }),
+    mockOutput().layer,
+  );
+  return { stack, calls, layer };
 };
 
 describe("managed pg_dump runner", () => {
@@ -181,27 +205,7 @@ describe("managed pg_dump runner", () => {
       onStdout: () => Effect.void,
       client: { kind: "stack", stack: fixture.stack, command: "pg_dump", pin: selection.database },
     }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          BunServices.layer,
-          Layer.succeed(NetworkIdFlag, Option.none()),
-          Layer.succeed(RuntimeInfo, {
-            cwd: "/tmp",
-            platform: "linux",
-            arch: "x64",
-            homeDir: "/tmp",
-            execPath: "/usr/bin/bun",
-            pid: 1,
-          }),
-          Layer.succeed(BundledPostgresClient, { run: () => Effect.die("unused") }),
-          Layer.succeed(DockerRun, {
-            run: () => Effect.die("unused"),
-            runCapture: () => Effect.die("unused"),
-            runStream: () => Effect.die("unused"),
-          }),
-          mockOutput().layer,
-        ),
-      ),
+      Effect.provide(fixture.layer),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(fixture.calls[0]?.args).toContain("--exclude-table");
@@ -239,27 +243,7 @@ describe("managed pg_dump runner", () => {
         }),
       client: { kind: "stack", stack: fixture.stack, command: "pg_dump", pin: selection.database },
     }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          BunServices.layer,
-          Layer.succeed(NetworkIdFlag, Option.none()),
-          Layer.succeed(RuntimeInfo, {
-            cwd: "/tmp",
-            platform: "linux",
-            arch: "x64",
-            homeDir: "/tmp",
-            execPath: "/usr/bin/bun",
-            pid: 1,
-          }),
-          Layer.succeed(BundledPostgresClient, { run: () => Effect.die("unused") }),
-          Layer.succeed(DockerRun, {
-            run: () => Effect.die("unused"),
-            runCapture: () => Effect.die("unused"),
-            runStream: () => Effect.die("unused"),
-          }),
-          mockOutput().layer,
-        ),
-      ),
+      Effect.provide(fixture.layer),
       Effect.asVoid,
       Effect.tap(() =>
         Effect.sync(() => {
@@ -274,4 +258,92 @@ describe("managed pg_dump runner", () => {
       ),
     );
   });
+});
+
+describe("role dump parameter grants", () => {
+  const comment = "-- A comment with an unmatched quote: '\n";
+  const settings = `ALTER ROLE "app'role" SET "pgrst.db_schemas" TO 'public';
+ALTER ROLE "app_user" SET "pgrst.multiline_sql" TO 'SELECT 1;
+GRANT SET ON PARAMETER "log_min_messages" TO "postgres";
+SELECT 2;';
+ALTER ROLE "app_user" SET "pgrst.escaped_sql" TO E'backslash\\\\ and ''quote''
+GRANT SET ON PARAMETER "log_min_messages" TO "postgres";
+last line';
+`;
+  const reservedGrant = 'GRANT SET ON PARAMETER "log_min_messages" TO "supabase_realtime_admin";';
+  const customGrant = 'GRANT SET ON PARAMETER "log_lock_waits" TO "app_user";';
+  const quotedCustomGrant = 'GRANT SET ON PARAMETER "log_lock_waits" TO "postgres""custom";';
+  const input = `${comment}${settings}${reservedGrant}\n${customGrant}\n${quotedCustomGrant}\n`;
+
+  for (const keepComments of [false, true]) {
+    const env = {
+      PGHOST: "unused",
+      PGPORT: "5432",
+      PGUSER: "postgres",
+      PGPASSWORD: "",
+      PGDATABASE: "postgres",
+      RESERVED_ROLES: "postgres|supabase_.*",
+      ALLOWED_CONFIGS: "pgrst.*",
+      EXTRA_SED: keepComments ? "" : "/^--/d",
+    };
+    const expected = `${keepComments ? comment : ""}${settings}${keepComments ? `-- ${reservedGrant}\n` : ""}${customGrant}\n${quotedCustomGrant}\nRESET ALL;\n`;
+
+    it.live(
+      `preserves quoted settings across Stack chunks with keep-comments=${keepComments}`,
+      () => {
+        const bytes = new TextEncoder().encode(input);
+        const fixture = stackFixture(
+          Array.from({ length: Math.ceil(bytes.length / 7) }, (_, i) =>
+            bytes.slice(i * 7, (i + 1) * 7),
+          ),
+        );
+        return Effect.gen(function* () {
+          let output = "";
+          const result = yield* streamPgDumpWithClient({
+            image: "unused",
+            script: dumpRoleScript,
+            env,
+            onStdout: (chunk) =>
+              Effect.sync(() => {
+                output += new TextDecoder().decode(chunk);
+              }),
+            client: {
+              kind: "stack",
+              stack: fixture.stack,
+              command: "pg_dumpall",
+              pin: selection.database,
+            },
+          });
+          expect(result.exitCode).toBe(0);
+          expect(output).toBe(expected);
+        }).pipe(Effect.provide(fixture.layer));
+      },
+    );
+
+    describe.skipIf(process.platform === "win32")("Bash script", () => {
+      for (const dryRun of [false, true]) {
+        it.live(
+          `preserves quoted settings with keep-comments=${keepComments}, dry-run=${dryRun}`,
+          () =>
+            Effect.gen(function* () {
+              const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+              const script = dryRun ? expandScript(dumpRoleScript, env) : dumpRoleScript;
+              const child = yield* spawner.spawn(
+                ChildProcess.make("bash", ["-c", `pg_dumpall() { cat; }\n${script}`], {
+                  env,
+                  stdin: Stream.make(new TextEncoder().encode(input)),
+                  stderr: "inherit",
+                }),
+              );
+              const [exitCode, output] = yield* Effect.all(
+                [child.exitCode, Stream.mkString(Stream.decodeText(child.stdout))],
+                { concurrency: "unbounded" },
+              );
+              expect(exitCode).toBe(0);
+              expect(output).toBe(expected);
+            }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+        );
+      }
+    });
+  }
 });
