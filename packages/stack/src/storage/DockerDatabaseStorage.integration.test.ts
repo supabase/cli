@@ -413,7 +413,7 @@ describe.runIf(testEngine === "docker")(
       ).pipe(Effect.provide(NodeServices.layer)),
     );
 
-    it.effect("reports a helper readiness timeout alongside Docker warnings", () =>
+    it.effect("reports a helper readiness timeout with Docker warnings and the helper state", () =>
       Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -431,6 +431,11 @@ describe.runIf(testEngine === "docker")(
               commands.push([...command.args]);
               const creating = command.args[0] === "create";
               const attaching = command.args[0] === "start";
+              const engineOutput: Record<string, string> = {
+                inspect: "running (exit 0)\n",
+                logs: "supabase-helper-ready\n",
+              };
+              const output = engineOutput[command.args[0] ?? ""];
               return ChildProcessSpawner.makeHandle({
                 pid: ChildProcessSpawner.ProcessId(0),
                 exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
@@ -442,7 +447,9 @@ describe.runIf(testEngine === "docker")(
                       Stream.drain,
                       Stream.concat(Stream.never),
                     )
-                  : Stream.empty,
+                  : output === undefined
+                    ? Stream.empty
+                    : Stream.succeed(new TextEncoder().encode(output)),
                 // Docker prints the platform warning while creating the container, before start.
                 stderr: creating
                   ? Stream.succeed(new TextEncoder().encode(`${warning}\n`))
@@ -482,7 +489,11 @@ describe.runIf(testEngine === "docker")(
           yield* TestClock.adjust("30 seconds");
           const failure = yield* Fiber.join(operation);
           expect(failure.message).toBe(
-            `Database helper did not become ready within 30 seconds: ${warning}`,
+            [
+              `Database helper did not become ready within 30 seconds: ${warning}`,
+              "helper state: running (exit 0)",
+              "helper logs: supabase-helper-ready",
+            ].join("\n"),
           );
           const create = commands.find((args) => args[0] === "create");
           const name = create?.[create.indexOf("--name") + 1];
