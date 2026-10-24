@@ -61,19 +61,19 @@ const sendTestEmail = (
 
 class MailStallError extends Data.TaggedError("MailStallError")<{ readonly message: string }> {}
 
-/** Fails a stalled phase within the test timeout, naming the phase and the Mailpit output so far. */
-const guardPhase =
-  (phase: string, duration: `${number} seconds`, logs: Ref.Ref<string>) =>
+/** Fails a stalled launch within the test timeout, naming its current phase and Mailpit's output. */
+const guardLaunch =
+  (duration: `${number} seconds`, phase: Ref.Ref<string>, logs: Ref.Ref<string>) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.timeoutOrElse({
         duration,
         orElse: () =>
-          Ref.get(logs).pipe(
-            Effect.flatMap((output) =>
+          Effect.all([Ref.get(phase), Ref.get(logs)]).pipe(
+            Effect.flatMap(([stalled, output]) =>
               Effect.fail(
                 new MailStallError({
-                  message: `Mailpit ${phase} did not finish within ${duration}; output:\n${output || "(none)"}`,
+                  message: `Mailpit ${stalled} did not finish within ${duration}; output:\n${output || "(none)"}`,
                 }),
               ),
             ),
@@ -103,12 +103,17 @@ describe("service catalog", () => {
           id: "mail",
           config: recipe.creation,
         });
-        yield* instance.start.pipe(guardPhase("start", "20 seconds", logs));
-        yield* instance.ready.pipe(guardPhase("readiness", "6 seconds", logs));
-        const endpoint = yield* recipe.endpoint("http");
-        const response = yield* client
-          .execute(HttpClientRequest.get(`http://${httpHost(endpoint)}:${endpoint.port}/readyz`))
-          .pipe(guardPhase("/readyz request", "3 seconds", logs));
+        const phase = yield* Ref.make("start");
+        const response = yield* Effect.gen(function* () {
+          yield* instance.start;
+          yield* Ref.set(phase, "readiness");
+          yield* instance.ready;
+          yield* Ref.set(phase, "/readyz request");
+          const endpoint = yield* recipe.endpoint("http");
+          return yield* client.execute(
+            HttpClientRequest.get(`http://${httpHost(endpoint)}:${endpoint.port}/readyz`),
+          );
+        }).pipe(guardLaunch("25 seconds", phase, logs));
         expect(response.status).toBe(200);
         yield* instance.stop;
       }),
