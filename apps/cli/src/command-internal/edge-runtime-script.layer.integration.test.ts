@@ -214,7 +214,7 @@ describe("edgeRuntimeScriptLayer sentinel handling", () => {
             ),
           ),
         );
-        seedLegacyStateDecoys(workdir);
+        yield* seedLegacyStateDecoys(workdir);
 
         const { layer, docker } = setup(
           { exitCode: 1, stdout: "", stderr: "main worker has been destroyed\n" },

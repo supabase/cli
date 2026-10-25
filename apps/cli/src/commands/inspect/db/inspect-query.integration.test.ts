@@ -677,19 +677,19 @@ describe("inspect db target default warning", () => {
     },
   ] as const;
 
-  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) => {
-    setLinkedRefFile(tempRoot.current, linked);
-    const { layer, out } = setup({
-      rows: [DB_STATS_ROW],
-      cliArgs: selector?.args ?? [],
-      workdir: tempRoot.current,
-      noProjectId: true,
+  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) =>
+    Effect.andThen(setLinkedRefFile(tempRoot.current, linked), () => {
+      const { layer, out } = setup({
+        rows: [DB_STATS_ROW],
+        cliArgs: selector?.args ?? [],
+        workdir: tempRoot.current,
+        noProjectId: true,
+      });
+      return inspectDbDbStats(flags(selector?.over)).pipe(
+        Effect.provide(layer),
+        Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
+      );
     });
-    return inspectDbDbStats(flags(selector?.over)).pipe(
-      Effect.provide(layer),
-      Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
-    );
-  };
 
   it.effect(
     "warns on a bare run in a linked workdir and stays silent with every selector or when unlinked",

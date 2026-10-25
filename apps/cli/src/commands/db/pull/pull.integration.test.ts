@@ -2540,23 +2540,23 @@ describe("db pull target default warning", () => {
     { label: "--project-ref", over: { projectRef: Option.some("flagflagflagflagflag") } },
   ] as const;
 
-  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) => {
-    setLinkedRefFile(tmp.current, linked);
-    const s = setup(tmp.current, {
-      migrations: ["20240101000000"],
-      remoteVersions: ["20240101000000"],
-      edgeStdout: "",
-      projectId: Option.none(),
+  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) =>
+    Effect.andThen(setLinkedRefFile(tmp.current, linked), () => {
+      const s = setup(tmp.current, {
+        migrations: ["20240101000000"],
+        remoteVersions: ["20240101000000"],
+        edgeStdout: "",
+        projectId: Option.none(),
+      });
+      return dbPull(flags(selector?.over)).pipe(
+        Effect.exit,
+        Effect.provide(s.layer),
+        Effect.map(() => ({
+          stdout: streamText(s.out, "stdout"),
+          stderr: streamText(s.out, "stderr"),
+        })),
+      );
     });
-    return dbPull(flags(selector?.over)).pipe(
-      Effect.exit,
-      Effect.provide(s.layer),
-      Effect.map(() => ({
-        stdout: streamText(s.out, "stdout"),
-        stderr: streamText(s.out, "stderr"),
-      })),
-    );
-  };
 
   it.effect(
     "warns on a bare run in a linked workdir and stays silent with every selector or when unlinked",

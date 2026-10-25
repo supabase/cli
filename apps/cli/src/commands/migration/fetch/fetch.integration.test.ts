@@ -577,18 +577,18 @@ describe("migration fetch target default warning", () => {
     },
   ] as const;
 
-  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) => {
-    setLinkedRefFile(tmp.current, linked);
-    const { layer, out } = setup(tmp.current, {
-      cliArgs: selector?.args ?? [],
-      rows: [],
-      noProjectId: true,
+  const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) =>
+    Effect.andThen(setLinkedRefFile(tmp.current, linked), () => {
+      const { layer, out } = setup(tmp.current, {
+        cliArgs: selector?.args ?? [],
+        rows: [],
+        noProjectId: true,
+      });
+      return migrationFetch(flags(selector?.over)).pipe(
+        Effect.provide(layer),
+        Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
+      );
     });
-    return migrationFetch(flags(selector?.over)).pipe(
-      Effect.provide(layer),
-      Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
-    );
-  };
 
   it.effect(
     "warns on a bare run in a linked workdir and stays silent with every selector or when unlinked",

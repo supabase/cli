@@ -1309,7 +1309,6 @@ describe("db reset", () => {
     });
 
     it.effect("a stack reset never reads or writes supabase/.temp", () => {
-      seedLegacyStateDecoys(tmp.current);
       const { layer, accessed } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         args: ["db", "reset", "--local"],
@@ -1317,6 +1316,7 @@ describe("db reset", () => {
         stackBackend: true,
       });
       return Effect.gen(function* () {
+        yield* seedLegacyStateDecoys(tmp.current);
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(accessed.some((entry) => entry.endsWith("config.toml"))).toBe(true);
         expect(legacyStateAccesses(accessed)).toEqual([]);

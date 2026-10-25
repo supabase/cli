@@ -1,8 +1,6 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
+import { BunServices } from "@effect/platform-bun";
 import { expect } from "@effect/vitest";
-import { Cause, Effect, Exit } from "effect";
+import { Cause, Effect, Exit, FileSystem, Path } from "effect";
 
 import { stripAnsi } from "./ansi.ts";
 import { VALID_REF } from "./command-mocks.ts";
@@ -24,15 +22,18 @@ export const describeFailure = (exit: Exit.Exit<unknown, unknown>): string | und
 };
 
 /** Writes (`linked`) or removes the `supabase link` ref file in `workdir`. */
-export const setLinkedRefFile = (workdir: string, linked: boolean, ref = VALID_REF) => {
-  const tempDir = join(workdir, "supabase", ".temp");
-  if (linked) {
-    mkdirSync(tempDir, { recursive: true });
-    writeFileSync(join(tempDir, "project-ref"), ref);
-  } else {
-    rmSync(join(tempDir, "project-ref"), { force: true });
-  }
-};
+export const setLinkedRefFile = (workdir: string, linked: boolean, ref = VALID_REF) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const tempDir = path.join(workdir, "supabase", ".temp");
+    if (linked) {
+      yield* fs.makeDirectory(tempDir, { recursive: true });
+      yield* fs.writeFileString(path.join(tempDir, "project-ref"), ref);
+    } else {
+      yield* fs.remove(path.join(tempDir, "project-ref"), { force: true });
+    }
+  }).pipe(Effect.provide(BunServices.layer));
 
 /**
  * A bare run warns exactly once and otherwise prints what the `sameTarget` selector prints; every

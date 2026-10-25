@@ -2345,7 +2345,7 @@ describe("functions deploy", () => {
               ),
             ),
           );
-          seedLegacyStateDecoys(tempRoot.current);
+          yield* seedLegacyStateDecoys(tempRoot.current);
 
           yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
@@ -2404,7 +2404,7 @@ describe("functions deploy", () => {
               ),
             ),
           );
-          seedLegacyStateDecoys(tempRoot.current);
+          yield* seedLegacyStateDecoys(tempRoot.current);
 
           yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 

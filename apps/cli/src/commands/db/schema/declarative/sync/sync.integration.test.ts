@@ -1087,21 +1087,25 @@ describe("db schema declarative sync integration", () => {
         stackBackend: true,
         applyFails: true,
       });
-      seedLegacyStateDecoys(tmp.current);
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        yield* seedDeclarative(tmp.current);
-        const error = yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
-          Effect.flip,
-        );
-        expect(error._tag).toBe("DeclarativeApplyError");
-        const pgdeltaRoot = path.join(tmp.current, ".supabase", "tmp", "pgdelta");
-        const projectRoots = yield* fs.readDirectory(pgdeltaRoot);
-        expect(projectRoots).toHaveLength(1);
-        expect(yield* fs.exists(path.join(pgdeltaRoot, projectRoots[0] ?? "", "debug"))).toBe(true);
-        expect(legacyStateAccesses(s.accessed)).toEqual([]);
-      }).pipe(Effect.provide(s.layer));
+      return Effect.andThen(
+        seedLegacyStateDecoys(tmp.current),
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* seedDeclarative(tmp.current);
+          const error = yield* dbSchemaDeclarativeSync(flags({ apply: Option.some(true) })).pipe(
+            Effect.flip,
+          );
+          expect(error._tag).toBe("DeclarativeApplyError");
+          const pgdeltaRoot = path.join(tmp.current, ".supabase", "tmp", "pgdelta");
+          const projectRoots = yield* fs.readDirectory(pgdeltaRoot);
+          expect(projectRoots).toHaveLength(1);
+          expect(yield* fs.exists(path.join(pgdeltaRoot, projectRoots[0] ?? "", "debug"))).toBe(
+            true,
+          );
+          expect(legacyStateAccesses(s.accessed)).toEqual([]);
+        }).pipe(Effect.provide(s.layer)),
+      );
     },
   );
 

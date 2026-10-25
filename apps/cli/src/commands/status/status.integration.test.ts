@@ -1314,15 +1314,17 @@ content_path = "./supabase/templates/password_changed_notification.html"
       "stack mode: never reads or writes supabase/.temp and ignores a legacy link there",
       () => {
         const { layer, out, workdir, accessed } = setup({ projectStateMode: "stack" });
-        seedLegacyStateDecoys(workdir);
-        return Effect.gen(function* () {
-          yield* writeConfig();
-          yield* status(flags());
-          expect(out.stdoutText).not.toContain("Linked Project");
-          expect(out.stdoutText).not.toContain("decoy");
-          expect(accessed.some((entry) => entry.endsWith("config.toml"))).toBe(true);
-          expect(legacyStateAccesses(accessed)).toEqual([]);
-        }).pipe(Effect.provide(layer));
+        return Effect.andThen(
+          seedLegacyStateDecoys(workdir),
+          Effect.gen(function* () {
+            yield* writeConfig();
+            yield* status(flags());
+            expect(out.stdoutText).not.toContain("Linked Project");
+            expect(out.stdoutText).not.toContain("decoy");
+            expect(accessed.some((entry) => entry.endsWith("config.toml"))).toBe(true);
+            expect(legacyStateAccesses(accessed)).toEqual([]);
+          }).pipe(Effect.provide(layer)),
+        );
       },
     );
 

@@ -802,19 +802,19 @@ describe("inspect report target default warning", () => {
     () =>
       Effect.gen(function* () {
         const base = yield* tempDir("supabase-report-out-");
-        const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) => {
-          setLinkedRefFile(tempRoot.current, linked);
-          const { layer, out } = setupReport({
-            csvs: DEFAULT_RULE_CSVS,
-            cliArgs: selector?.args ?? [],
-            workdir: tempRoot.current,
-            noProjectId: true,
+        const runWith = (linked: boolean) => (selector: (typeof selectors)[number] | undefined) =>
+          Effect.andThen(setLinkedRefFile(tempRoot.current, linked), () => {
+            const { layer, out } = setupReport({
+              csvs: DEFAULT_RULE_CSVS,
+              cliArgs: selector?.args ?? [],
+              workdir: tempRoot.current,
+              noProjectId: true,
+            });
+            return inspectReport(flags({ outputDir: base, ...selector?.over })).pipe(
+              Effect.provide(layer),
+              Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
+            );
           });
-          return inspectReport(flags({ outputDir: base, ...selector?.over })).pipe(
-            Effect.provide(layer),
-            Effect.map(() => ({ stdout: out.stdoutText, stderr: out.stderrText })),
-          );
-        };
         yield* assertTargetDefaultWarning({
           command: "inspect report",
           sameTarget: selectors[0],

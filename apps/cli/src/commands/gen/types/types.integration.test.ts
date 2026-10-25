@@ -2744,7 +2744,7 @@ describe("gen types", () => {
               }),
             ),
         });
-        seedLegacyStateDecoys(workdir);
+        yield* seedLegacyStateDecoys(workdir);
 
         yield* genTypes(defaultFlags({ local: true })).pipe(
           Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))),

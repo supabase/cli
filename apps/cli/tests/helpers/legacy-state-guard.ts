@@ -1,10 +1,12 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { BunPath, BunServices } from "@effect/platform-bun";
+import { Effect, FileSystem, Layer, Path } from "effect";
 
-import { BunServices } from "@effect/platform-bun";
-import { Effect, FileSystem, Layer } from "effect";
-
-const LEGACY_STATE_SEGMENT = join("supabase", ".temp");
+const LEGACY_STATE_SEGMENT = Effect.runSync(
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    return path.join("supabase", ".temp");
+  }).pipe(Effect.provide(BunPath.layer)),
+);
 
 /** Wrong-on-purpose values for every `supabase/.temp` file a stack-mode command might still read. */
 const LEGACY_STATE_DECOYS: Readonly<Record<string, string>> = {
@@ -27,13 +29,20 @@ const LEGACY_STATE_DECOYS: Readonly<Record<string, string>> = {
 };
 
 /** Writes the decoys into `<root>/supabase/.temp`, outside any recording filesystem. */
-export function seedLegacyStateDecoys(root: string): void {
-  const dir = join(root, LEGACY_STATE_SEGMENT);
-  mkdirSync(dir, { recursive: true });
-  for (const [name, value] of Object.entries(LEGACY_STATE_DECOYS)) {
-    writeFileSync(join(dir, name), value);
-  }
-}
+export const seedLegacyStateDecoys = (root: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = path.join(root, LEGACY_STATE_SEGMENT);
+    yield* fs.makeDirectory(dir, { recursive: true });
+    for (const [name, value] of Object.entries(LEGACY_STATE_DECOYS)) {
+      yield* fs.writeFileString(path.join(dir, name), value);
+    }
+  }).pipe(
+    /* A host failure surfaces as the raw host error. */
+    Effect.catchTag("PlatformError", (error) => Effect.die(error.cause ?? error)),
+    Effect.provide(BunServices.layer),
+  );
 
 /** The recorded paths that fall under a `supabase/.temp` directory. */
 export function legacyStateAccesses(accessed: ReadonlyArray<string>): ReadonlyArray<string> {

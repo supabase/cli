@@ -388,14 +388,16 @@ describe("unlink integration", () => {
 
     it.effect("leaves the legacy temp dir alone without reading or writing it", () => {
       const { layer, workdir, accessed } = setup({ stack: true });
-      seedLegacyStateDecoys(workdir);
-      return Effect.gen(function* () {
-        yield* seedLinkDocument(workdir, VALID_REF);
-        yield* unlink();
-        expect(accessed.some((entry) => entry.includes(".link.json"))).toBe(true);
-        expect(legacyStateAccesses(accessed)).toEqual([]);
-        expect(yield* tempDirExists(workdir)).toBe(true);
-      }).pipe(Effect.provide(layer));
+      return Effect.andThen(
+        seedLegacyStateDecoys(workdir),
+        Effect.gen(function* () {
+          yield* seedLinkDocument(workdir, VALID_REF);
+          yield* unlink();
+          expect(accessed.some((entry) => entry.includes(".link.json"))).toBe(true);
+          expect(legacyStateAccesses(accessed)).toEqual([]);
+          expect(yield* tempDirExists(workdir)).toBe(true);
+        }).pipe(Effect.provide(layer)),
+      );
     });
 
     it.effect("fails with ProjectRefNotLinkedError when only legacy state exists", () => {

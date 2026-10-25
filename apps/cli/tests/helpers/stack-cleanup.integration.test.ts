@@ -27,7 +27,7 @@ describe("test stack cleanup", () => {
           });
           const result = yield* Effect.exit(
             Effect.acquireUseRelease(
-              Effect.succeed(undefined),
+              Effect.void,
               () =>
                 Effect.gen(function* () {
                   yield* stack.services.create({
