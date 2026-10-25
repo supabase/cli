@@ -26,8 +26,6 @@
     "apps/cli/src/shared/compute/stacks/**",
     "apps/cli/src/shared/feedback/database.types.ts",
     "apps/cli/tests/helpers/cli.ts",
-    "apps/cli/tests/helpers/command-mocks.ts",
-    "apps/cli/tests/helpers/mocks.ts",
     "apps/cli/tests/helpers/npm-registry.ts",
     "apps/cli/tests/helpers/stack-e2e-cleanup.ts",
     "!apps/cli/src/command-internal/agent-mode.*",

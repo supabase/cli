@@ -92,7 +92,7 @@ function ambientStubs() {
     isolatedHomeLayer(tempRoot.current, { SUPABASE_ACCESS_TOKEN: VALID_TOKEN }),
     mockTty(),
     mockProcessControl().layer,
-    mockBrowser(),
+    mockBrowser,
     mockStdin(false),
     analytics.layer,
     mockTelemetryRuntime(),

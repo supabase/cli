@@ -1,18 +1,22 @@
 import { legacyProjectStateLayer } from "../../src/command-internal/legacy-project-state.layer.ts";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
-import { BunServices } from "@effect/platform-bun";
-import { type ApiClient, makeApiClient, type SupabaseApiConfigError } from "@supabase/api/effect";
+import { BunFileSystem, BunPath, BunServices } from "@effect/platform-bun";
+import {
+  type ApiClient,
+  makeApiClient,
+  type SupabaseApiConfigError,
+  type SupabaseApiError,
+} from "@supabase/api/effect";
 import {
   ConfigProvider,
   Effect,
   FileSystem,
   Layer,
   Option,
+  Path,
   Predicate,
   Redacted,
+  Schema,
   Sink,
   Stream,
 } from "effect";
@@ -76,6 +80,12 @@ import {
   mockTty,
   processEnvLayer,
 } from "./mocks.ts";
+
+const hostPath = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
+
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const encodeJson = (value: unknown) => encodeUnknownJson(value).pipe(Effect.orDie);
 
 // Fixtures shared across every native-port integration test. Centralized so a change to the
 // project-ref schema (e.g. updated length) only needs to update one constant.
@@ -177,11 +187,9 @@ export function mockCommandCredentialsTracked(
       Effect.gen(function* () {
         deletedRefs.push(projectRef);
         if (opts.deleteFails === true) {
-          return yield* Effect.fail(
-            new CredentialDeleteError({
-              message: "failed to delete project credential: permission denied",
-            }),
-          );
+          return yield* new CredentialDeleteError({
+            message: "failed to delete project credential: permission denied",
+          });
         }
         return true;
       }),
@@ -419,7 +427,7 @@ export function mockCommandSettings(opts: {
     githubToken: opts.githubToken ?? Option.none(),
     profile: opts.profile ?? "supabase",
     profileEnvValue: opts.profileEnvValue ?? Option.none(),
-    supabaseHome: opts.supabaseHome ?? join(opts.workdir, ".supabase"),
+    supabaseHome: opts.supabaseHome ?? hostPath.join(opts.workdir, ".supabase"),
     apiUrl: opts.apiUrl ?? DEFAULT_API_URL,
     projectHost: opts.projectHost ?? "supabase.co",
     poolerHost: opts.poolerHost ?? "supabase.com",
@@ -553,11 +561,7 @@ export function mockCommandPlatformApi(
       let body: unknown = undefined;
       if (request.body._tag === "Uint8Array") {
         const decoded = new TextDecoder().decode(request.body.body);
-        try {
-          body = JSON.parse(decoded);
-        } catch {
-          body = decoded;
-        }
+        body = yield* decodeJson(decoded).pipe(Effect.orElseSucceed(() => decoded));
       }
       const params = UrlParams.toString(request.urlParams);
       const recorded: RecordedRequest = {
@@ -571,7 +575,7 @@ export function mockCommandPlatformApi(
       requests.push(recorded);
 
       if (opts.network === "fail") {
-        return yield* Effect.fail(transportFailure(request));
+        return yield* transportFailure(request);
       }
       if (opts.handler !== undefined) {
         return yield* opts.handler(request, recorded);
@@ -660,7 +664,7 @@ export function mockCommandPlatformApiService(
         Effect.gen(function* () {
           requests.push({ method: prop, input });
           const stub = (stubs as Record<string, unknown>)[prop] as
-            | ((i: unknown) => Effect.Effect<unknown, unknown>)
+            | ((i: unknown) => Effect.Effect<unknown, SupabaseApiError>)
             | undefined;
           if (stub === undefined) {
             return yield* Effect.die(`Unmocked CommandPlatformApi.v1.${prop}`);
@@ -691,7 +695,7 @@ export function mockCommandPlatformApiService(
         `https://api.supabase.com/mock-raw/${definition.id}`,
       );
       if (stub === "fail") {
-        return yield* Effect.fail(transportFailure(request));
+        return yield* transportFailure(request);
       }
       return jsonResponse(request, stub.status, stub.body);
     });
@@ -737,15 +741,30 @@ export function useTempWorkdir(prefix = "supabase-test-"): {
   readonly current: string;
 } {
   let root: string | undefined;
-  beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), prefix));
-  });
-  afterEach(() => {
-    if (root !== undefined) {
-      rmSync(root, { recursive: true, force: true });
-      root = undefined;
-    }
-  });
+  beforeEach(() =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      root = yield* fs.makeTempDirectory({ prefix });
+    }).pipe(
+      /* A host failure rejects the hook with the raw host error. */
+      Effect.catch((error) => Effect.die(error.cause ?? error)),
+      Effect.provide(BunFileSystem.layer),
+      Effect.runPromise,
+    ),
+  );
+  afterEach(() =>
+    Effect.gen(function* () {
+      if (root !== undefined) {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.remove(root, { recursive: true, force: true });
+        root = undefined;
+      }
+    }).pipe(
+      Effect.catch((error) => Effect.die(error.cause ?? error)),
+      Effect.provide(BunFileSystem.layer),
+      Effect.runPromise,
+    ),
+  );
   return {
     get current() {
       if (root === undefined) {
@@ -758,6 +777,14 @@ export function useTempWorkdir(prefix = "supabase-test-"): {
   };
 }
 
+/* Sets or unsets `name` in `env` and returns the value it replaced. */
+function setEnvVar(env: NodeJS.ProcessEnv, name: string, value: string | undefined) {
+  const previous = env[name];
+  if (value === undefined) delete env[name];
+  else env[name] = value;
+  return previous;
+}
+
 /**
  * Sets `name` to `value` (or unsets it when `value` is `undefined`) for the duration of `body`,
  * restoring whatever was there before.
@@ -768,17 +795,11 @@ export const withEnvVar = <A, E, R>(
   body: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
   Effect.acquireUseRelease(
-    Effect.sync(() => {
-      const previous = process.env[name];
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-      return previous;
-    }),
+    Effect.sync(() => setEnvVar(process.env, name, value)),
     () => body,
     (previous) =>
       Effect.sync(() => {
-        if (previous === undefined) delete process.env[name];
-        else process.env[name] = previous;
+        setEnvVar(process.env, name, previous);
       }),
   );
 
@@ -980,15 +1001,13 @@ export function mockShadowContainerCliSpawner(
         const args = command._tag === "StandardCommand" ? command.args : [];
         spawned.push({ args });
         if (command._tag !== "StandardCommand") {
-          return yield* Effect.fail(
-            new PlatformError(
-              new SystemError({
-                _tag: "NotFound",
-                module: "ChildProcess",
-                method: "spawn",
-                description: "spawn failed",
-              }),
-            ),
+          return yield* new PlatformError(
+            new SystemError({
+              _tag: "NotFound",
+              module: "ChildProcess",
+              method: "spawn",
+              description: "spawn failed",
+            }),
           );
         }
         const isLocalDbInspect =
@@ -1016,7 +1035,7 @@ export function mockShadowContainerCliSpawner(
           });
         }
         if (isLocalDbInspect && opts.dbInspectImage !== undefined) {
-          const inspectJson = JSON.stringify([{ Config: { Image: opts.dbInspectImage } }]);
+          const inspectJson = yield* encodeJson([{ Config: { Image: opts.dbInspectImage } }]);
           return ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(7000 + spawned.length),
             stdout: Stream.fromIterable([encoder.encode(inspectJson)]),
@@ -1332,7 +1351,7 @@ export function mockDockerDaemonCliSpawner(
         stdout =
           container === undefined
             ? ""
-            : JSON.stringify({
+            : yield* encodeJson({
                 Running: container.running,
                 Status: container.running ? "running" : "exited",
                 Health: { Status: "healthy" },
