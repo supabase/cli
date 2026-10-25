@@ -19,6 +19,7 @@
     "!apps/cli/src/shared/**",
     "!apps/cli/src/telemetry/**",
     "!apps/cli/tests/**",
+    "!apps/cli/vitest.config.ts",
     // Last match wins across the whole list: keep bare re-exclusions after every
     // `!` entry that would otherwise re-include them.
     "apps/cli/src/shared/cli/bin.ts",
