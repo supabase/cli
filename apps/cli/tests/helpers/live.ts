@@ -7,11 +7,12 @@ import { expect, inject, test as vitestTest } from "vitest";
 import { rootCaBundle } from "../../src/commands/gen/types/types.shared.ts";
 import {
   type CliRunError,
-  makeTempHome,
   requireCliSuccess,
   runSupabase,
   runSupabaseEffect,
-  withTempHome,
+  createTempHome,
+  helperRejection,
+  type TempHome,
 } from "./cli.ts";
 import { LIVE_EXIT_TIMEOUT_MS, LIVE_SHADOW_PORT } from "./live-env.ts";
 import type { LiveCliProjectEnvironment } from "./live-project.ts";
@@ -34,7 +35,7 @@ export interface InvokeResult {
 export interface LiveFixtures {
   readonly project: LiveProject;
   readonly workspace: LiveWorkspace;
-  readonly home: ReturnType<typeof makeTempHome>;
+  readonly home: TempHome;
   readonly cli: (args: string[], options?: RunOptions) => Promise<RunResult>;
   readonly cliEffect: (
     args: string[],
@@ -63,10 +64,18 @@ const awaitForeign = <A>(run: () => Promise<A>) =>
 const callForeign = <A>(run: () => A) =>
   Effect.try({ try: run, catch: (cause) => new LiveForeignFailure({ cause }) });
 
-/** Runs a helper at its Promise edge, rejecting with a foreign failure's original value. */
+/**
+ * Runs a helper at its Promise edge, rejecting with a foreign failure's original value and with a
+ * plain `Error` for a fixture failure.
+ */
 function runLive<A>(effect: Effect.Effect<A, LiveFixtureError | LiveForeignFailure>): Promise<A> {
   return Effect.runPromise(
-    effect.pipe(Effect.catchTag("LiveForeignFailure", (failure) => Effect.die(failure.cause))),
+    effect.pipe(
+      Effect.catchTags({
+        LiveForeignFailure: (failure) => Effect.die(failure.cause),
+        LiveFixtureError: (failure) => Effect.die(new Error(failure.message)),
+      }),
+    ),
   );
 }
 
@@ -115,7 +124,16 @@ const base = vitestTest.extend<LiveFixtures>({
 
   home: ({ task: _task }, use) =>
     runLive(
-      withTempHome((home) => Effect.promise(() => use(home))).pipe(Effect.mapError(foreignFailure)),
+      /* `try { use } finally { dispose }`: a failed disposal replaces the fixture's outcome. */
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const home = yield* createTempHome.pipe(Effect.mapError(foreignFailure));
+          yield* withFinally(
+            restore(awaitForeign(() => use(home))),
+            home.dispose.pipe(Effect.mapError(foreignFailure)),
+          );
+        }),
+      ),
     ),
 
   workspace: ({ task, home }, use) =>
@@ -128,19 +146,20 @@ const base = vitestTest.extend<LiveFixtures>({
           .pipe(Effect.mapError(foreignFailure));
         yield* withFinally(
           Effect.gen(function* () {
-            const initialized = yield* awaitForeign(() =>
-              runSupabase(["init"], {
-                cwd: directory,
-                home: home.dir,
-                env: { SUPABASE_PROFILE: inject("liveProfilePath") },
-              }),
+            const initialized = yield* runSupabaseEffect(["init"], {
+              cwd: directory,
+              home: home.dir,
+              env: { SUPABASE_PROFILE: inject("liveProfilePath") },
+            }).pipe(
+              /* The fixture rejects with what `runSupabase` rejects with for the same failure. */
+              Effect.mapError((cause) => new LiveForeignFailure({ cause: helperRejection(cause) })),
             );
             if (initialized.exitCode !== 0) {
               return yield* new LiveFixtureError({
                 message: `supabase init failed (exit ${initialized.exitCode})\n${initialized.stderr || initialized.stdout}`,
               });
             }
-            yield* Effect.promise(() => use({ path: directory }));
+            yield* awaitForeign(() => use({ path: directory }));
           }),
           fs
             .remove(directory, { recursive: true, force: true })
@@ -327,15 +346,13 @@ export function expectPostgresConfigLiveOverride(
     return config[key];
   });
   const readPromise = (): Promise<unknown> => runLive(read);
-  return runLive(
-    Effect.gen(function* () {
-      if (Object.is(yield* read, expected)) return;
-      yield* awaitForeign(() =>
-        expect
+  /* Polling stays at the Promise edge: vitest's `expect.poll` drives its own reads. */
+  return readPromise().then((first) =>
+    Object.is(first, expected)
+      ? undefined
+      : expect
           .poll(readPromise, { interval: 2_000, timeout: 60_000, message: label })
           .toBe(expected),
-      );
-    }),
   );
 }
 
@@ -368,7 +385,7 @@ export function queryLiveDb<T extends Record<string, unknown>>(
   connectionTimeoutMillis?: number,
 ): Promise<T[]> {
   return runLive(
-    Effect.acquireUseRelease(
+    Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         // Verified TLS against the Supabase CA, so the query works whatever the project's SSL enforcement.
         const client = yield* callForeign(
@@ -381,14 +398,17 @@ export function queryLiveDb<T extends Record<string, unknown>>(
         );
         // A restart that drops an idle or closing client surfaces only as an `error` event.
         client.on("error", () => {});
-        yield* awaitForeign(() => client.connect());
-        return client;
+        yield* restore(awaitForeign(() => client.connect()));
+        /* `try { query } finally { end }`: a failed `end()` replaces the query's outcome. */
+        return yield* withFinally(
+          restore(
+            awaitForeign(() =>
+              client.query<T>(query, values === undefined ? undefined : [...values]),
+            ).pipe(Effect.map((result) => result.rows)),
+          ),
+          awaitForeign(() => client.end()),
+        );
       }),
-      (client) =>
-        awaitForeign(() =>
-          client.query<T>(query, values === undefined ? undefined : [...values]),
-        ).pipe(Effect.map((result) => result.rows)),
-      (client) => Effect.promise(() => client.end()),
     ),
   );
 }

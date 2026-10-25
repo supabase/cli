@@ -19,7 +19,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { makeTempHome, runSupabase } from "../../../tests/helpers/cli.ts";
+import { createTempHome, runSupabase, type TempHome } from "../../../tests/helpers/cli.ts";
 
 const CLEANUP_TIMEOUT_MS = 120_000;
 
@@ -97,7 +97,7 @@ const mtimeMs = Effect.fnUntraced(function* (filePath: string) {
 
 describe("shadow baseline cache (e2e, local Docker stack)", () => {
   let projectDir: string | undefined;
-  let home: ReturnType<typeof makeTempHome> | undefined;
+  let home: TempHome | undefined;
 
   afterEach(() =>
     Effect.runPromise(
@@ -116,7 +116,7 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
           yield* fs.remove(projectDir, { recursive: true, force: true }).pipe(Effect.ignore);
         }
         // Disposes the temp `SUPABASE_HOME`, and with it the ~90MB baseline tar this suite published.
-        home?.[Symbol.dispose]();
+        if (home !== undefined) yield* home.dispose;
         projectDir = undefined;
         home = undefined;
       }).pipe(Effect.provide(BunServices.layer)),
@@ -140,7 +140,7 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
           projectDir = yield* fs.makeTempDirectory({ prefix: "sb-shadow-cache-e2e-" });
           // One temp `SUPABASE_HOME` per test run so both `db diff` processes share the same cache
           // directory; `runSupabase` otherwise mints a fresh home per invocation.
-          home = makeTempHome();
+          home = yield* createTempHome;
           const homeDir = home.dir;
           const cacheDir = path.join(home.dir, "cache", "shadow-baseline");
 
