@@ -1,13 +1,18 @@
+import { Schema } from "effect";
+
 /**
- * Assembles a published JSON Schema document from a generated schema and its definitions.
- * Pattern-keyed records stay open: the generator now writes a boolean `additionalProperties`
- * on them (effect 4.0) and has no per-schema setting, while the published documents never
- * carried one there. Structs keep theirs.
+ * Renders a published JSON Schema document, carrying the `x-secret` marker through and keeping
+ * pattern-keyed records open: the generator writes a boolean `additionalProperties` on them
+ * (effect 4.0) with no per-schema setting, while the published documents never carried one there.
  */
-export function toPublishedJsonSchemaDocument(document: {
-  readonly schema: Record<string, unknown>;
-  readonly definitions: Record<string, unknown>;
-}) {
+export function toPublishedJsonSchemaDocument(
+  schema: Schema.Constraint,
+  options: { readonly onExcessProperty: "ignore" | "error" },
+) {
+  const document = Schema.toJsonSchemaDocument(schema, {
+    onExcessProperty: options.onExcessProperty,
+    includeAnnotationKey: (key) => key === "x-secret",
+  });
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     ...openPatternKeyedRecords(document.schema),
