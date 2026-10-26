@@ -16,7 +16,7 @@ port = 54321
 schemas = ["public", "graphql_public"]
 # Extra schemas to add to the search_path of every request.
 extra_search_path = ["public", "extensions"]
-# The maximum number of rows returns from a view, table, or stored procedure. Limits payload size
+# The maximum number of rows returned from a view, table, or stored procedure. Limits payload size
 # for accidental or malicious requests.
 max_rows = 1000
 # Controls whether new tables, views, sequences and functions created in the \`public\` schema by
@@ -343,6 +343,10 @@ email_optional = false
 # You can configure "web3" rate limit in the [auth.rate_limit] section and set up [auth.captcha] if self-hosting.
 [auth.web3.solana]
 enabled = false
+
+# Allow Ethereum wallet holders to sign in to your project via the Sign in with Ethereum (SIWE, EIP-4361) standard.
+# [auth.web3.ethereum]
+# enabled = true
 
 # Use Firebase Auth as a third-party provider alongside Supabase Auth.
 [auth.third_party.firebase]

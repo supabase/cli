@@ -65,6 +65,14 @@ const NATIVE_AUTO_EXPOSE_COMMENT = `# without explicit GRANTs, matching the clou
 # instead. Left unset, a fresh project falls back to \`true\`.
 # auto_expose_new_tables = true`;
 
+/* Only the native template documents the Ethereum web3 provider and spells the
+   `max_rows` comment correctly; the vendored scaffold is left as shipped. */
+const NATIVE_WEB3_ETHEREUM_EXAMPLE = `
+# Allow Ethereum wallet holders to sign in to your project via the Sign in with Ethereum (SIWE, EIP-4361) standard.
+# [auth.web3.ethereum]
+# enabled = true
+`;
+
 const renderExpectedNativeEject = renderExpectedGoEject.pipe(
   Effect.map((eject) =>
     eject
@@ -72,7 +80,12 @@ const renderExpectedNativeEject = renderExpectedGoEject.pipe(
         '# content_path = "./templates/password_changed_notification.html"',
         '# content_path = "./supabase/templates/password_changed_notification.html"',
       )
-      .replace(GO_AUTO_EXPOSE_COMMENT, NATIVE_AUTO_EXPOSE_COMMENT),
+      .replace(GO_AUTO_EXPOSE_COMMENT, NATIVE_AUTO_EXPOSE_COMMENT)
+      .replace("rows returns from", "rows returned from")
+      .replace(
+        "[auth.web3.solana]\nenabled = false\n",
+        `[auth.web3.solana]\nenabled = false\n${NATIVE_WEB3_ETHEREUM_EXAMPLE}`,
+      ),
   ),
 );
 
