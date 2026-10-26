@@ -65,8 +65,8 @@ const NATIVE_AUTO_EXPOSE_COMMENT = `# without explicit GRANTs, matching the clou
 # instead. Left unset, a fresh project falls back to \`true\`.
 # auto_expose_new_tables = true`;
 
-/* Only the native template documents the Ethereum web3 provider and spells the
-   `max_rows` comment correctly; the vendored scaffold is left as shipped. */
+/* Only the native template documents Ethereum web3, cites SIWS without EIP-4361 and fixes
+   the `max_rows` comment typo; the vendored scaffold is left as shipped. */
 const NATIVE_WEB3_ETHEREUM_EXAMPLE = `
 # Allow Ethereum wallet holders to sign in to your project via the Sign in with Ethereum (SIWE, EIP-4361) standard.
 # [auth.web3.ethereum]
@@ -82,6 +82,7 @@ const renderExpectedNativeEject = renderExpectedGoEject.pipe(
       )
       .replace(GO_AUTO_EXPOSE_COMMENT, NATIVE_AUTO_EXPOSE_COMMENT)
       .replace("rows returns from", "rows returned from")
+      .replace("(SIWS, EIP-4361)", "(SIWS)")
       .replace(
         "[auth.web3.solana]\nenabled = false\n",
         `[auth.web3.solana]\nenabled = false\n${NATIVE_WEB3_ETHEREUM_EXAMPLE}`,
