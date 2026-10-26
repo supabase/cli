@@ -113,6 +113,7 @@ const handleAddError = <R>(
           body: mapped.body,
           message: mapped.message,
           upgradeSuggested,
+          entitlement: mapped.entitlement,
         });
       }),
     ),

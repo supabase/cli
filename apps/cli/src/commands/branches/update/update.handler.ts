@@ -74,6 +74,7 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
                       body: mapped.body,
                       message: mapped.message,
                       upgradeSuggested,
+                      entitlement: mapped.entitlement,
                     }),
                   ),
                 ),
