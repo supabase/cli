@@ -1,6 +1,6 @@
 import type { ErrorObject, ValidateFunction } from "ajv";
 import Ajv2020 from "ajv/dist/2020";
-import { Schema } from "effect";
+import { Result, Schema, SchemaIssue } from "effect";
 import { describe, expect, test } from "vitest";
 import { CliConfigSchema, toCliConfigJsonSchema } from "./base.ts";
 import { toPublishedJsonSchemaDocument } from "./json-schema-document.ts";
@@ -26,7 +26,6 @@ const isNode = (value: unknown): value is Node =>
 
 const DATA_KEYWORDS = new Set(["default", "examples", "enum", "const"]);
 const SCHEMA_MAP_KEYWORDS = new Set(["properties", "patternProperties", "$defs"]);
-const COERCED_TYPES = new Set(["number", "integer", "boolean"]);
 
 type Path = ReadonlyArray<string | number>;
 
@@ -65,33 +64,12 @@ const isEnvBranch = (node: unknown): boolean =>
   typeof node.pattern === "string" &&
   Object.keys(node).length === 2;
 
-const isEnvReferenceLeaf = (node: Node): boolean =>
-  typeof node.type === "string" &&
-  (COERCED_TYPES.has(node.type) || (node.type === "string" && Array.isArray(node.enum)));
-
 const collectEnvBranches = (document: unknown): Array<Node> => {
   const found: Array<Node> = [];
   visitSchemas(document, (node, _path, siblings) => {
     if (siblings !== undefined && isEnvBranch(node)) found.push(node);
   });
   return found;
-};
-
-const findEnvReferenceGaps = (document: unknown) => {
-  const gaps: Array<string> = [];
-  let leaves = 0;
-  visitSchemas(document, (node, path, siblings) => {
-    const where = path.join(".");
-    if (isEnvReferenceLeaf(node)) {
-      leaves += 1;
-      const branches = siblings?.filter(isEnvBranch).length ?? 0;
-      if (branches !== 1) gaps.push(`${where}: ${branches} env branches next to ${node.type}`);
-    }
-    if (Array.isArray(node.anyOf) && node.anyOf.filter(isEnvBranch).length > 1) {
-      gaps.push(`${where}: more than one env branch in the same anyOf`);
-    }
-  });
-  return { gaps, leaves };
 };
 
 const patternOf = (node: Node): string => {
@@ -114,6 +92,93 @@ const failingPaths = (validate: ValidateFunction, value: unknown): ReadonlyArray
 
 const envPatternOf = (document: Node): string =>
   patternOf(at(document, "properties", "api", "properties", "max_rows", "anyOf", 1));
+
+const RECORD_KEYS = ["sample", "SAMPLE"];
+
+const collectLeaves = (node: unknown, path: Path = []): Array<readonly [Path, Node]> => {
+  if (!isNode(node)) return [];
+  const { properties, patternProperties, additionalProperties, anyOf, items } = node;
+  if (isNode(properties) || isNode(patternProperties) || isNode(additionalProperties)) {
+    return [
+      ...Object.entries(isNode(properties) ? properties : {}).flatMap(([name, child]) =>
+        collectLeaves(child, [...path, name]),
+      ),
+      ...Object.entries(isNode(patternProperties) ? patternProperties : {}).flatMap(
+        ([pattern, child]) => {
+          const key = RECORD_KEYS.find((candidate) => new RegExp(pattern, "u").test(candidate));
+          return key === undefined ? [] : collectLeaves(child, [...path, key]);
+        },
+      ),
+      ...collectLeaves(additionalProperties, [...path, "sample"]),
+    ];
+  }
+  if (Array.isArray(anyOf) && anyOf.some((member) => isNode(member) && member.type === "object")) {
+    return anyOf.flatMap((member) => collectLeaves(member, path));
+  }
+  if (isNode(items) && items.type === "object") return collectLeaves(items, [...path, 0]);
+  return [[path, node]];
+};
+
+const envValueFor = (leaf: Node): string | undefined => {
+  const typed = Array.isArray(leaf.anyOf) ? at(leaf, "anyOf", 0) : leaf;
+  switch (typed.type) {
+    case "boolean":
+      return "false";
+    case "number":
+    case "integer":
+      return "1";
+    case "array":
+      return "a,b";
+    case "string":
+      return Array.isArray(typed.enum) ? String(typed.enum.find((value) => value !== "")) : "x";
+    default:
+      return undefined;
+  }
+};
+
+const documentAt = (path: Path, value: unknown): unknown =>
+  path.reduceRight<unknown>(
+    (child, key) => (typeof key === "number" ? [child] : { [key]: child }),
+    value,
+  );
+
+const isAtOrBelow = (issuePath: ReadonlyArray<unknown>, path: Path): boolean =>
+  path.every((key, index) => String(issuePath[index]) === String(key));
+
+const schemaAcceptsAt = (validate: ValidateFunction, path: Path, value: unknown): boolean =>
+  !failingPaths(validate, documentAt(path, value)).some((pointer) =>
+    isAtOrBelow(pointer.split("/").slice(1), path),
+  );
+
+// Checks are off so only type acceptance is compared, not value rules such as port ranges.
+const decodeCli = Schema.decodeUnknownResult(CliConfigSchema, {
+  errors: "all",
+  disableChecks: true,
+});
+const toIssues = SchemaIssue.makeFormatterStandardSchemaV1();
+
+const loaderAcceptsAt = (
+  path: Path,
+  value: unknown,
+  env: Readonly<Record<string, string>>,
+): boolean => {
+  const resolved = interpolateEnvReferencesAgainstSchema(
+    documentAt(path, value),
+    env,
+    CliConfigSchema,
+    {
+      goViperCompat: true,
+    },
+  );
+  const result = decodeCli(resolved);
+  if (Result.isSuccess(result)) return true;
+  return !toIssues(result.failure.issue).issues.some((issue) =>
+    isAtOrBelow(
+      (issue.path ?? []).map((segment) => (typeof segment === "object" ? segment.key : segment)),
+      path,
+    ),
+  );
+};
 
 const collectSecretPaths = (document: unknown): Array<string> => {
   const found = new Set<string>();
@@ -217,6 +282,10 @@ describe("env() references in the published CLI JSON Schema", () => {
       ["storage.file_size_limit", { storage: { file_size_limit: "env(FILE_SIZE_LIMIT)" } }],
       ["db.pooler.pool_mode", { db: { pooler: { pool_mode: "env(POOL_MODE)" } } }],
       ["realtime.ip_version", { realtime: { ip_version: "env(IP_VERSION)" } }],
+      [
+        "auth.additional_redirect_urls",
+        { auth: { additional_redirect_urls: "env(REDIRECT_URLS)" } },
+      ],
       ["remotes.<name>.api.max_rows", { remotes: { staging: { api: { max_rows: "env(ROWS)" } } } }],
       [
         "remotes.<name>.auth.enable_signup",
@@ -317,15 +386,6 @@ describe("env() references in the published CLI JSON Schema", () => {
       expect(at(fileSizeLimit, "anyOf", 1)).toEqual({ type: "number" });
       expect(at(fileSizeLimit, "anyOf", 2)).toEqual({ type: "string", pattern: envPatternOf(cli) });
     });
-
-    test("every number, integer, boolean and string-enum node sits next to exactly one env branch", () => {
-      const { gaps, leaves } = findEnvReferenceGaps(cli);
-      const typeKeywords =
-        JSON.stringify(cli).match(/"type":"(?:number|integer|boolean|string","enum)"/g) ?? [];
-      expect(leaves).toBeGreaterThan(0);
-      expect(leaves).toBe(typeKeywords.length);
-      expect(gaps).toEqual([]);
-    });
   });
 
   describe("agreement with the loader's env() matching", () => {
@@ -374,38 +434,24 @@ describe("env() references in the published CLI JSON Schema", () => {
       expect(new Set(branches.map(patternOf))).toEqual(new Set([envPatternOf(cli)]));
     });
 
-    test("a document using env() on numeric and boolean fields loads through the real loader", () => {
-      const document = {
-        api: { port: "env(API_PORT)", max_rows: "env(MAX_ROWS)" },
-        auth: { enable_signup: "env(ENABLE_SIGNUP)" },
-        db: {
-          settings: { max_connections: "env(MAX_CONN)" },
-          pooler: { pool_mode: "env(POOL_MODE)" },
-        },
-        compute: { web: { instances: "env(WEB_INSTANCES)" } },
-      };
-      expect(errorsFor(validateCli, document)).toEqual([]);
+    test("every field accepts env() in the schema exactly when the loader resolves it", () => {
+      const port = ["api", "port"];
+      expect(loaderAcceptsAt(port, "env(SAMPLE)", {})).toBe(false);
+      expect(loaderAcceptsAt(port, "env(SAMPLE)", { SAMPLE: "1" })).toBe(true);
 
-      const resolved = interpolateEnvReferencesAgainstSchema(
-        document,
-        {
-          API_PORT: "54329",
-          MAX_ROWS: "250",
-          ENABLE_SIGNUP: "false",
-          MAX_CONN: "80",
-          WEB_INSTANCES: "3",
-          POOL_MODE: "session",
-        },
-        CliConfigSchema,
-        { goViperCompat: true },
-      );
-      const decoded = Schema.decodeUnknownSync(CliConfigSchema)(resolved);
-      expect(decoded).toMatchObject({
-        api: { port: 54329, max_rows: 250 },
-        auth: { enable_signup: false },
-        db: { settings: { max_connections: 80 }, pooler: { pool_mode: "session" } },
-        compute: { web: { instances: 3 } },
+      const leaves = collectLeaves(cli).flatMap(([path, leaf]) => {
+        const value = envValueFor(leaf);
+        return value === undefined ? [] : [{ path, value }];
       });
+      const mismatches: Array<string> = [];
+      for (const { path, value } of leaves) {
+        const schema = schemaAcceptsAt(validateCli, path, "env(SAMPLE)");
+        const loader = loaderAcceptsAt(path, "env(SAMPLE)", { SAMPLE: value });
+        if (schema !== loader)
+          mismatches.push(`${path.join(".")}: schema ${schema}, loader ${loader}`);
+      }
+      expect(leaves.length).toBeGreaterThan(500);
+      expect(mismatches).toEqual([]);
     });
   });
 });
@@ -561,6 +607,19 @@ describe("toPublishedJsonSchemaDocument acceptEnvReferences", () => {
     );
   });
 
+  test("accepts env() in place of a whole string list but not a list of enums", () => {
+    const document = publish(
+      Schema.Struct({
+        names: Schema.Array(Schema.String),
+        modes: Schema.Array(Schema.Literals(["a", "b"])),
+      }),
+      true,
+    );
+    const validate = compile(document);
+    expect(errorsFor(validate, { names: "env(NAMES)", modes: ["a", "env(MODE)"] })).toEqual([]);
+    expect(failingPaths(validate, { names: [], modes: "env(MODES)" })).toContain("/modes");
+  });
+
   test("wraps numbers and booleans in shared definitions", () => {
     const Port = Schema.Finite.annotate({ identifier: "Port" });
     const Flag = Schema.Boolean.annotate({ identifier: "Flag" });
@@ -577,7 +636,6 @@ describe("toPublishedJsonSchemaDocument acceptEnvReferences", () => {
     const maxRows = at(project, "properties", "api", "properties", "max_rows");
     expect(maxRows.type).toBe("number");
     expect(maxRows).not.toHaveProperty("anyOf");
-    expect(findEnvReferenceGaps(project).leaves).toBeGreaterThan(0);
     expect(collectEnvBranches(project)).toEqual([]);
   });
 });

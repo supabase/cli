@@ -4,22 +4,16 @@ import { ENV_PATTERN } from "./lib/env.ts";
 type Node = Record<string, unknown>;
 
 const COERCED_TYPES = new Set(["number", "integer", "boolean"]);
-const HOISTED_ANNOTATIONS = new Set(["title", "description", "default", "examples", "deprecated"]);
+const HOISTED_ANNOTATIONS = new Set(["title", "description", "default", "examples"]);
 const DATA_KEYWORDS = new Set(["default", "examples", "enum", "const"]);
-const SCHEMA_MAP_KEYWORDS = new Set([
-  "properties",
-  "patternProperties",
-  "$defs",
-  "definitions",
-  "dependentSchemas",
-]);
+const SCHEMA_MAP_KEYWORDS = new Set(["properties", "patternProperties"]);
 
 /**
  * Renders a published JSON Schema document, carrying the `x-secret` marker through and keeping
  * pattern-keyed records open: the generator writes a boolean `additionalProperties` on them
  * (effect 4.0) with no per-schema setting, while the published documents never carried one there.
- * With `acceptEnvReferences`, number, integer, boolean and string-enum leaves also accept `env(VAR)`
- * strings.
+ * With `acceptEnvReferences`, number, integer, boolean, string-enum and string-list leaves also
+ * accept the `env(VAR)` references the loader resolves.
  */
 export function toPublishedJsonSchemaDocument(
   schema: Schema.Constraint,
@@ -112,9 +106,13 @@ function isEnvReferenceBranch(node: unknown): boolean {
 
 function isEnvReferenceTarget(node: unknown): node is Node {
   if (!isNode(node) || typeof node["type"] !== "string") return false;
-  return (
-    COERCED_TYPES.has(node["type"]) || (node["type"] === "string" && Array.isArray(node["enum"]))
-  );
+  if (COERCED_TYPES.has(node["type"])) return true;
+  if (node["type"] === "string") return !isFreeFormString(node);
+  return node["type"] === "array" && isFreeFormString(node["items"]);
+}
+
+function isFreeFormString(node: unknown): boolean {
+  return isNode(node) && node["type"] === "string" && !("enum" in node);
 }
 
 function isNode(value: unknown): value is Node {

@@ -109,20 +109,36 @@
           ]
         },
         "schemas": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "description": "Schemas to expose in your API. Tables, views and stored procedures in this schema will get API endpoints."
-          },
-          "default": ["public", "graphql_public"]
+          "default": ["public", "graphql_public"],
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "description": "Schemas to expose in your API. Tables, views and stored procedures in this schema will get API endpoints."
+              }
+            },
+            {
+              "type": "string",
+              "pattern": "^env\\((.*)\\)$"
+            }
+          ]
         },
         "extra_search_path": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "description": "Extra schemas to add to the search_path of every request."
-          },
-          "default": ["public", "extensions"]
+          "default": ["public", "extensions"],
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "description": "Extra schemas to add to the search_path of every request."
+              }
+            },
+            {
+              "type": "string",
+              "pattern": "^env\\((.*)\\)$"
+            }
+          ]
         },
         "max_rows": {
           "description": "The maximum number of rows returned from a view, table, or stored procedure. Limits payload size for accidental or malicious requests.",
@@ -205,13 +221,21 @@
           "default": "http://127.0.0.1:3000"
         },
         "additional_redirect_urls": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "description": "A URL that auth providers are permitted to redirect to."
-          },
           "description": "A list of exact URLs that auth providers are permitted to redirect to post authentication.",
-          "default": ["https://127.0.0.1:3000"]
+          "default": ["https://127.0.0.1:3000"],
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "description": "A URL that auth providers are permitted to redirect to."
+              }
+            },
+            {
+              "type": "string",
+              "pattern": "^env\\((.*)\\)$"
+            }
+          ]
         },
         "jwt_expiry": {
           "description": "How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 seconds (one week).",
@@ -2955,13 +2979,21 @@
               ]
             },
             "schema_paths": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "description": "Schema file path, directory, or glob relative to the supabase directory."
-              },
               "description": "Ordered list of schema files, directories, or glob patterns that describe your database.",
-              "default": []
+              "default": [],
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "description": "Schema file path, directory, or glob relative to the supabase directory."
+                  }
+                },
+                {
+                  "type": "string",
+                  "pattern": "^env\\((.*)\\)$"
+                }
+              ]
             }
           },
           "additionalProperties": false
@@ -2983,13 +3015,21 @@
               ]
             },
             "sql_paths": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "description": "Path to a SQL file used to seed the database."
-              },
               "description": "Ordered list of seed files to load during db reset.",
-              "default": ["./seed.sql"]
+              "default": ["./seed.sql"],
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "description": "Path to a SQL file used to seed the database."
+                  }
+                },
+                {
+                  "type": "string",
+                  "pattern": "^env\\((.*)\\)$"
+                }
+              ]
             }
           },
           "additionalProperties": false
@@ -3168,20 +3208,36 @@
               ]
             },
             "allowed_cidrs": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
               "description": "Allowed IPv4 CIDR blocks.",
-              "default": ["0.0.0.0/0"]
+              "default": ["0.0.0.0/0"],
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "string",
+                  "pattern": "^env\\((.*)\\)$"
+                }
+              ]
             },
             "allowed_cidrs_v6": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
               "description": "Allowed IPv6 CIDR blocks.",
-              "default": ["::/0"]
+              "default": ["::/0"],
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "string",
+                  "pattern": "^env\\((.*)\\)$"
+                }
+              ]
             }
           },
           "additionalProperties": false
@@ -3332,13 +3388,21 @@
                       "default": ""
                     },
                     "static_files": {
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "description": "Static file glob for the function."
-                      },
                       "description": "Static files to bundle with the function.",
-                      "default": []
+                      "default": [],
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "description": "Static file glob for the function."
+                          }
+                        },
+                        {
+                          "type": "string",
+                          "pattern": "^env\\((.*)\\)$"
+                        }
+                      ]
                     },
                     "env": {
                       "type": "object",
@@ -3563,13 +3627,21 @@
                     ]
                   },
                   "allowed_mime_types": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "description": "A MIME type allowed for the bucket."
-                    },
                     "description": "The list of allowed MIME types for the bucket.",
-                    "default": []
+                    "default": [],
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "description": "A MIME type allowed for the bucket."
+                        }
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^env\\((.*)\\)$"
+                      }
+                    ]
                   },
                   "objects_path": {
                     "type": "string",
@@ -3855,12 +3927,20 @@
                   "examples": ["packages/api"]
                 },
                 "exclude": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  },
                   "description": "Patterns for paths to leave out of the uploaded build context, read the way\n`.gitignore` reads them: a pattern without `/` matches that name at any depth,\none with `/` is anchored at the compute's source directory, a trailing `/`\nmatches directories only, and `**` spans directories. Excluding a directory\nexcludes everything under it; re-inclusion (`!`) is not supported. Only the\npatterns recorded here are excluded, so a compute with no list uploads its source\ndirectory whole.",
-                  "examples": [["node_modules", ".env"]]
+                  "examples": [["node_modules", ".env"]],
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^env\\((.*)\\)$"
+                    }
+                  ]
                 }
               },
               "additionalProperties": false
@@ -4297,20 +4377,36 @@
                         ]
                       },
                       "schemas": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "description": "Schemas to expose in your API. Tables, views and stored procedures in this schema will get API endpoints."
-                        },
-                        "default": ["public", "graphql_public"]
+                        "default": ["public", "graphql_public"],
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "description": "Schemas to expose in your API. Tables, views and stored procedures in this schema will get API endpoints."
+                            }
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^env\\((.*)\\)$"
+                          }
+                        ]
                       },
                       "extra_search_path": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "description": "Extra schemas to add to the search_path of every request."
-                        },
-                        "default": ["public", "extensions"]
+                        "default": ["public", "extensions"],
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "description": "Extra schemas to add to the search_path of every request."
+                            }
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^env\\((.*)\\)$"
+                          }
+                        ]
                       },
                       "max_rows": {
                         "description": "The maximum number of rows returned from a view, table, or stored procedure. Limits payload size for accidental or malicious requests.",
@@ -4393,13 +4489,21 @@
                         "default": "http://127.0.0.1:3000"
                       },
                       "additional_redirect_urls": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "description": "A URL that auth providers are permitted to redirect to."
-                        },
                         "description": "A list of exact URLs that auth providers are permitted to redirect to post authentication.",
-                        "default": ["https://127.0.0.1:3000"]
+                        "default": ["https://127.0.0.1:3000"],
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "description": "A URL that auth providers are permitted to redirect to."
+                            }
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^env\\((.*)\\)$"
+                          }
+                        ]
                       },
                       "jwt_expiry": {
                         "description": "How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 seconds (one week).",
@@ -7143,13 +7247,21 @@
                             ]
                           },
                           "schema_paths": {
-                            "type": "array",
-                            "items": {
-                              "type": "string",
-                              "description": "Schema file path, directory, or glob relative to the supabase directory."
-                            },
                             "description": "Ordered list of schema files, directories, or glob patterns that describe your database.",
-                            "default": []
+                            "default": [],
+                            "anyOf": [
+                              {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "description": "Schema file path, directory, or glob relative to the supabase directory."
+                                }
+                              },
+                              {
+                                "type": "string",
+                                "pattern": "^env\\((.*)\\)$"
+                              }
+                            ]
                           }
                         },
                         "additionalProperties": false
@@ -7171,13 +7283,21 @@
                             ]
                           },
                           "sql_paths": {
-                            "type": "array",
-                            "items": {
-                              "type": "string",
-                              "description": "Path to a SQL file used to seed the database."
-                            },
                             "description": "Ordered list of seed files to load during db reset.",
-                            "default": ["./seed.sql"]
+                            "default": ["./seed.sql"],
+                            "anyOf": [
+                              {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "description": "Path to a SQL file used to seed the database."
+                                }
+                              },
+                              {
+                                "type": "string",
+                                "pattern": "^env\\((.*)\\)$"
+                              }
+                            ]
                           }
                         },
                         "additionalProperties": false
@@ -7356,20 +7476,36 @@
                             ]
                           },
                           "allowed_cidrs": {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            },
                             "description": "Allowed IPv4 CIDR blocks.",
-                            "default": ["0.0.0.0/0"]
+                            "default": ["0.0.0.0/0"],
+                            "anyOf": [
+                              {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              {
+                                "type": "string",
+                                "pattern": "^env\\((.*)\\)$"
+                              }
+                            ]
                           },
                           "allowed_cidrs_v6": {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            },
                             "description": "Allowed IPv6 CIDR blocks.",
-                            "default": ["::/0"]
+                            "default": ["::/0"],
+                            "anyOf": [
+                              {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              {
+                                "type": "string",
+                                "pattern": "^env\\((.*)\\)$"
+                              }
+                            ]
                           }
                         },
                         "additionalProperties": false
@@ -7520,13 +7656,21 @@
                                     "default": ""
                                   },
                                   "static_files": {
-                                    "type": "array",
-                                    "items": {
-                                      "type": "string",
-                                      "description": "Static file glob for the function."
-                                    },
                                     "description": "Static files to bundle with the function.",
-                                    "default": []
+                                    "default": [],
+                                    "anyOf": [
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string",
+                                          "description": "Static file glob for the function."
+                                        }
+                                      },
+                                      {
+                                        "type": "string",
+                                        "pattern": "^env\\((.*)\\)$"
+                                      }
+                                    ]
                                   },
                                   "env": {
                                     "type": "object",
@@ -7751,13 +7895,21 @@
                                   ]
                                 },
                                 "allowed_mime_types": {
-                                  "type": "array",
-                                  "items": {
-                                    "type": "string",
-                                    "description": "A MIME type allowed for the bucket."
-                                  },
                                   "description": "The list of allowed MIME types for the bucket.",
-                                  "default": []
+                                  "default": [],
+                                  "anyOf": [
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "description": "A MIME type allowed for the bucket."
+                                      }
+                                    },
+                                    {
+                                      "type": "string",
+                                      "pattern": "^env\\((.*)\\)$"
+                                    }
+                                  ]
                                 },
                                 "objects_path": {
                                   "type": "string",
@@ -8043,12 +8195,20 @@
                                 "examples": ["packages/api"]
                               },
                               "exclude": {
-                                "type": "array",
-                                "items": {
-                                  "type": "string"
-                                },
                                 "description": "Patterns for paths to leave out of the uploaded build context, read the way\n`.gitignore` reads them: a pattern without `/` matches that name at any depth,\none with `/` is anchored at the compute's source directory, a trailing `/`\nmatches directories only, and `**` spans directories. Excluding a directory\nexcludes everything under it; re-inclusion (`!`) is not supported. Only the\npatterns recorded here are excluded, so a compute with no list uploads its source\ndirectory whole.",
-                                "examples": [["node_modules", ".env"]]
+                                "examples": [["node_modules", ".env"]],
+                                "anyOf": [
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  {
+                                    "type": "string",
+                                    "pattern": "^env\\((.*)\\)$"
+                                  }
+                                ]
                               }
                             },
                             "additionalProperties": false
