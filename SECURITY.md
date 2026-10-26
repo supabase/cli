@@ -8,8 +8,8 @@ Please report suspected vulnerabilities through our HackerOne program:
 <https://hackerone.com/supabase>. Please do not open public GitHub issues or
 pull requests for security problems.
 
-The program-wide rules (out-of-scope categories, testing, disclosure) are
-repeated in full at the end of this file. They also live at
+The program-wide rules are repeated below, under "Out of scope for every
+Supabase asset" and "Testing and disclosure". They also live at
 <https://supabase.com/.well-known/security.txt>.
 
 This repository contains the Supabase CLI. It runs on a developer's machine or
@@ -28,10 +28,10 @@ machine without the user choosing to: obtaining a Supabase access token or
 project secret the attacker should not have, redirecting the CLI's
 credentials to a server the user did not choose, connecting to a database or
 API without properly verifying who is on the other end, or turning data that
-the CLI downloads into a write outside the location it was meant for. The 
-attacker should not need the victim's credentials or a shell on the
-victim's machine, and the problem should be present in a released version of
-the CLI used as documented.
+the CLI downloads into a write outside the location it was meant for. The
+attacker should not need the victim's credentials or a shell on the victim's
+machine, and the problem should be present in a released version of the CLI
+used as documented.
 
 Examples of what this includes (these are illustrations, not a complete list):
 
@@ -124,8 +124,6 @@ you do not need to leave this repository to find them.
 - Dead links.
 - User enumeration.
 
-The sections above list what is *specific* to this repository.
-
 ## Known and documented behavior
 
 These are described in our public documentation. Please check them before
@@ -142,8 +140,9 @@ reporting.
 If your finding only applies when someone exposes the local stack to a
 network, changes its `config.toml` defaults, or runs a modified CLI, label it
 "local CLI, custom configuration" and list what you changed (see below). We
-accept findings against released CLI versions used as documented. We treat findings 
-that need the user to misconfigure their environment first as lower severity.
+accept findings against released CLI versions used as documented. We treat
+findings that need the user to misconfigure their environment first as lower
+severity.
 
 ## How to write a report that gets triaged quickly
 
@@ -216,7 +215,8 @@ tools acting on your behalf.
 
 **Reporting**
 
-- File a report through our HackerOne program at <https://hackerone.com/supabase>.
+- File a report through our HackerOne program at
+  <https://hackerone.com/supabase>.
 - Give enough information for us to reproduce the problem.
 
 **Disclosure**
