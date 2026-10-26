@@ -214,6 +214,6 @@ const main = Effect.gen(function* () {
 await Effect.runPromise(
   main.pipe(
     Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layer)),
-    Effect.catch((error) => Effect.die(error.cause)),
+    Effect.catch((error) => Effect.die(error.cause ?? error)),
   ),
 );
