@@ -8,10 +8,6 @@ Please report suspected vulnerabilities through our HackerOne program:
 <https://hackerone.com/supabase>. Please do not open public GitHub issues or
 pull requests for security problems.
 
-The program-wide rules are repeated below, under "Out of scope for every
-Supabase asset" and "Testing and disclosure". They also live at
-<https://supabase.com/.well-known/security.txt>.
-
 This repository contains the Supabase CLI. It runs on a developer's machine or
 in CI, starts the local development stack (`supabase start`), manages
 migrations, deploys and downloads Edge Functions, and talks to the hosted
@@ -137,12 +133,11 @@ reporting.
 
 ## Local development stack vs. custom setups
 
-If your finding only applies when someone exposes the local stack to a
-network, changes its `config.toml` defaults, or runs a modified CLI, label it
-"local CLI, custom configuration" and list what you changed (see below). We
-accept findings against released CLI versions used as documented. We treat
-findings that need the user to misconfigure their environment first as lower
-severity.
+We accept findings against released CLI versions used as documented. We treat
+findings that need the user to misconfigure their environment first, such as by
+exposing the local stack to a network, changing its `config.toml` defaults, or
+running a modified CLI, as lower severity. Label your report as described in
+the next section.
 
 ## How to write a report that gets triaged quickly
 
@@ -213,12 +208,6 @@ tools acting on your behalf.
 - Do not take advantage of a vulnerability you find, for example by downloading
   more data than necessary to demonstrate it, or by deleting or modifying other
   people's data.
-
-**Reporting**
-
-- File a report through our HackerOne program at
-  <https://hackerone.com/supabase>.
-- Give enough information for us to reproduce the problem.
 
 **Disclosure**
 
