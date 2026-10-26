@@ -161,6 +161,7 @@ severity.
   Reports that do not say which of the two they are about are slower to
   triage, and are often closed with a request to retest. A finding that works
   only on a custom configuration is not a finding against a default install.
+
 - **Test a real setup.** Run the released CLI binary, not only code you copied
   out of it. Code reading alone is rarely enough. Static analysis findings need
   a working proof of concept, and the code you cite must match the current
